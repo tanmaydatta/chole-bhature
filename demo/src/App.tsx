@@ -18,6 +18,7 @@ export default function App() {
   return (
     <Routes>
       <Route path="/promo/new" element={<PromoCreate />} />
+      <Route path="/promo/:id/edit" element={<PromoCreate />} />
       <Route path="/affiliates/new" element={<AffiliateCreate />} />
       <Route path="/referrals/new" element={<ReferralCreate />} />
       <Route path="/loyalty/new" element={<LoyaltyCreate />} />

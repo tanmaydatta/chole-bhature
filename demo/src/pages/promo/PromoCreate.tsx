@@ -4,10 +4,11 @@ import { CreateFlowShell } from '../../components/flow/CreateFlowShell';
 import { ConditionBuilder } from '../../components/builder/ConditionBuilder';
 import { RewardEditor } from '../../components/rewards/RewardEditor';
 import { useProgramStore } from '../../data/store';
+import { useVariablesStore } from '../../data/variablesStore';
 import { useToast } from '../../components/common/Toast';
-import { VARIABLES } from '../../data/variables';
 import { TYPE_META } from '../../lib/types';
 import { rewardSummaryFor } from '../../lib/rewards';
+import { useProgramEdit } from '../../hooks/useProgramEdit';
 import type { ConditionGroup, Program, Reward, Status } from '../../lib/types';
 
 const STEPS = [
@@ -23,31 +24,41 @@ const STEP_KEYS = STEPS.map(s => s.key);
 export default function PromoCreate() {
   const navigate = useNavigate();
   const addProgram = useProgramStore(s => s.addProgram);
+  const updateProgram = useProgramStore(s => s.updateProgram);
+  const variables = useVariablesStore(s => s.variables);
   const { toast } = useToast();
+  const { editMode, editing } = useProgramEdit('promo');
 
   // Step state
   const [activeStep, setActiveStep] = useState('basics');
 
   // Basics
-  const [name, setName] = useState('');
-  const [code, setCode] = useState('');
-  const [autoApply, setAutoApply] = useState(false);
+  const [name, setName] = useState(() => (editing ? (editing.name as string) : ''));
+  const [code, setCode] = useState(() => (editing ? ((editing.code as string | undefined) ?? '') : ''));
+  const [autoApply, setAutoApply] = useState(() => (editing ? Boolean(editing.autoApply) : false));
 
   // Eligibility
-  const [eligibility, setEligibility] = useState<ConditionGroup>({
-    match: 'ALL',
-    conditions: [],
-  });
+  const [eligibility, setEligibility] = useState<ConditionGroup>(() =>
+    editing
+      ? (editing.eligibility as ConditionGroup)
+      : { match: 'ALL', conditions: [] }
+  );
 
   // Discount
-  const [discount, setDiscount] = useState<Reward>({ kind: 'percent', value: 15 });
+  const [discount, setDiscount] = useState<Reward>(() =>
+    editing ? (editing.discount as Reward) : { kind: 'percent', value: 15 }
+  );
 
   // Limits & schedule
-  const [budget, setBudget] = useState<number | ''>('');
-  const [perCustomer, setPerCustomer] = useState<number | ''>('');
-  const [startDate, setStartDate] = useState('');
-  const [endDate, setEndDate] = useState('');
-  const [stackable, setStackable] = useState(false);
+  const [budget, setBudget] = useState<number | ''>(() =>
+    editing && editing.budget !== undefined ? (editing.budget as number) : ''
+  );
+  const [perCustomer, setPerCustomer] = useState<number | ''>(() =>
+    editing && editing.perCustomer !== undefined ? (editing.perCustomer as number) : ''
+  );
+  const [startDate, setStartDate] = useState(() => (editing ? ((editing.startDate as string | undefined) ?? '') : ''));
+  const [endDate, setEndDate] = useState(() => (editing ? ((editing.endDate as string | undefined) ?? '') : ''));
+  const [stackable, setStackable] = useState(() => (editing ? Boolean(editing.stackable) : false));
 
   function handleContinue() {
     const idx = STEP_KEYS.indexOf(activeStep);
@@ -70,7 +81,7 @@ export default function PromoCreate() {
   }
 
   function buildProgram(status: Status): Program {
-    const id = `promo-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const id = editing ? editing.id : `promo-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     const condCount = eligibility.conditions.length;
     const subtitle =
       condCount > 0
@@ -85,7 +96,7 @@ export default function PromoCreate() {
       type: 'promo',
       status,
       rewardSummary: rewardSummaryFor(discount),
-      redemptions: 0,
+      redemptions: editing ? editing.redemptions : 0,
       code: code || undefined,
       autoApply,
       stackable,
@@ -100,15 +111,27 @@ export default function PromoCreate() {
   }
 
   function handleSaveDraft() {
-    addProgram(buildProgram('draft'));
+    const draft = buildProgram('draft');
+    if (editMode && editing) {
+      updateProgram(editing.id, draft);
+    } else {
+      addProgram(draft);
+    }
     toast('Draft saved');
     navigate('/promo');
   }
 
   function handleCreate() {
-    addProgram(buildProgram('active'));
-    toast('Promo created');
-    navigate('/promo');
+    const program = buildProgram('active');
+    if (editMode && editing) {
+      updateProgram(editing.id, program);
+      toast('Promo updated');
+      navigate(`/promo/${editing.id}`);
+    } else {
+      addProgram(program);
+      toast('Promo created');
+      navigate('/promo');
+    }
   }
 
   const isReview = activeStep === 'review';
@@ -131,7 +154,7 @@ export default function PromoCreate() {
               style={{ background: 'var(--accent)' }}
               onClick={handleCreate}
             >
-              Create
+              {editMode ? 'Save changes' : 'Create'}
             </button>
           </div>
         ) : undefined
@@ -186,7 +209,7 @@ export default function PromoCreate() {
           <h2 className="text-[16px] font-[700] mb-[4px]">Eligibility</h2>
           <ConditionBuilder
             value={eligibility}
-            variables={VARIABLES}
+            variables={variables}
             onChange={setEligibility}
           />
         </div>

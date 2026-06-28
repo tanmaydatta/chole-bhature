@@ -5,6 +5,23 @@ import { ToastProvider } from '../../components/common/Toast';
 import { useProgramStore } from '../../data/store';
 import { PROGRAMS } from '../../data/programs';
 
+// Draft promo from seed data
+const DRAFT_PROMO = PROGRAMS.find(p => p.id === 'promo-draft-1')!;
+
+function renderPromoEdit(draftId: string) {
+  return render(
+    <ToastProvider>
+      <MemoryRouter initialEntries={[`/promo/${draftId}/edit`]}>
+        <Routes>
+          <Route path="/promo/:id/edit" element={<PromoCreate />} />
+          <Route path="/promo" element={<div data-testid="promo-list-page">Promo List</div>} />
+          <Route path="/promo/:id" element={<div data-testid="promo-detail-page">Promo Detail</div>} />
+        </Routes>
+      </MemoryRouter>
+    </ToastProvider>
+  );
+}
+
 function renderPromoCreate() {
   return render(
     <ToastProvider>
@@ -156,4 +173,59 @@ test('clicking Save draft shows a "Draft saved" toast', () => {
   fireEvent.click(screen.getByText('Save draft'));
 
   expect(screen.getByText('Draft saved')).toBeInTheDocument();
+});
+
+// ——— Edit mode tests ———
+
+test('editing a draft prefills the name field from the draft program', () => {
+  renderPromoEdit(DRAFT_PROMO.id);
+  // The name input should be pre-populated with the draft's name
+  const nameInput = screen.getByLabelText(/promo name/i) as HTMLInputElement;
+  expect(nameInput.value).toBe(DRAFT_PROMO.name);
+});
+
+test('editing a draft shows "Save changes" button on review step', () => {
+  renderPromoEdit(DRAFT_PROMO.id);
+  // Navigate to review step
+  fireEvent.click(screen.getByText('Continue →')); // → Eligibility
+  fireEvent.click(screen.getByText('Continue →')); // → Discount
+  fireEvent.click(screen.getByText('Continue →')); // → Limits
+  fireEvent.click(screen.getByText('Continue →')); // → Review
+  expect(screen.getByRole('button', { name: /save changes/i })).toBeInTheDocument();
+});
+
+test('edit mode: clicking "Save changes" calls updateProgram and navigates to /promo/:id', () => {
+  renderPromoEdit(DRAFT_PROMO.id);
+
+  // Navigate to review step
+  fireEvent.click(screen.getByText('Continue →')); // → Eligibility
+  fireEvent.click(screen.getByText('Continue →')); // → Discount
+  fireEvent.click(screen.getByText('Continue →')); // → Limits
+  fireEvent.click(screen.getByText('Continue →')); // → Review
+
+  const saveBtn = screen.getByRole('button', { name: /save changes/i });
+  fireEvent.click(saveBtn);
+
+  // The draft should now be active in the store
+  const updated = useProgramStore.getState().programs.find(p => p.id === DRAFT_PROMO.id);
+  expect(updated?.status).toBe('active');
+
+  // Should navigate to /promo/:id (promo detail)
+  expect(screen.getByTestId('promo-detail-page')).toBeInTheDocument();
+});
+
+test('create mode: "Create" button still works and navigates to /promo', () => {
+  renderPromoCreate();
+  const initialCount = useProgramStore.getState().byType('promo').length;
+
+  fireEvent.click(screen.getByText('Continue →')); // → Eligibility
+  fireEvent.click(screen.getByText('Continue →')); // → Discount
+  fireEvent.click(screen.getByText('Continue →')); // → Limits
+  fireEvent.click(screen.getByText('Continue →')); // → Review
+
+  const createBtn = screen.getByRole('button', { name: /create/i });
+  fireEvent.click(createBtn);
+
+  expect(useProgramStore.getState().byType('promo').length).toBe(initialCount + 1);
+  expect(screen.getByTestId('promo-list-page')).toBeInTheDocument();
 });
