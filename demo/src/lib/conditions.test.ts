@@ -8,3 +8,7 @@ test('falls back to variable default then program then system', () => {
   expect(resolveMessage({ id:'1', variable:'x', operator:'gt', value:'0', message:'Row msg' }, v)).toBe('Row msg');
 });
 test('operator label maps gte to ≥', () => { expect(operatorLabel('gte')).toBe('≥'); });
+test('empty or whitespace condition.message falls through to variable default', () => {
+  expect(resolveMessage({ id:'1', variable:'budget_remaining', operator:'gt', value:'0', message:'' }, v)).toBe('Offer ended');
+  expect(resolveMessage({ id:'1', variable:'budget_remaining', operator:'gt', value:'0', message:'   ' }, v)).toBe('Offer ended');
+});

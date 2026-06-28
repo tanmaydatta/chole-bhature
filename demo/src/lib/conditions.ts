@@ -24,15 +24,9 @@ export function operatorLabel(op: Operator): string {
   return OPERATOR_LABELS[op];
 }
 
-export function resolveMessage(
-  condition: Condition,
-  variable: Variable,
-  programFallback?: string,
-): string {
-  return (
-    condition.message ??
-    variable.defaultMessage ??
-    programFallback ??
-    "This code isn't valid for your order."
-  );
+export function resolveMessage(condition: Condition, variable: Variable, programFallback?: string): string {
+  for (const candidate of [condition.message, variable.defaultMessage, programFallback]) {
+    if (candidate && candidate.trim() !== '') return candidate;
+  }
+  return "This code isn't valid for your order.";
 }
