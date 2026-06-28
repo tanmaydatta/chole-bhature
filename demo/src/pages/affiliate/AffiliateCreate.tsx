@@ -7,6 +7,7 @@ import { CodeGenerator } from '../../components/codes/CodeGenerator';
 import { useProgramStore } from '../../data/store';
 import { VARIABLES } from '../../data/variables';
 import { TYPE_META } from '../../lib/types';
+import { rewardSummaryFor } from '../../lib/rewards';
 import type { ConditionGroup, Program, Reward, Status } from '../../lib/types';
 
 const STEPS = [
@@ -19,15 +20,6 @@ const STEPS = [
 ];
 
 const STEP_KEYS = STEPS.map(s => s.key);
-
-function rewardSummaryFor(reward: Reward): string {
-  if (reward.kind === 'percent') return `${reward.value ?? 0}% off`;
-  if (reward.kind === 'fixed') return `$${reward.value ?? 0} off`;
-  if (reward.kind === 'free_shipping') return 'Free shipping';
-  if (reward.kind === 'points') return `${reward.value ?? 0} points`;
-  if (reward.kind === 'credit') return `$${reward.value ?? 0} credit`;
-  return '';
-}
 
 export default function AffiliateCreate() {
   const navigate = useNavigate();

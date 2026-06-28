@@ -14,7 +14,7 @@ vi.mock('../../lib/codes', async () => {
   };
 });
 
-import { downloadCSV } from '../../lib/codes';
+import { downloadCSV, toCSV } from '../../lib/codes';
 
 describe('CodeGenerator', () => {
   beforeEach(() => {
@@ -72,6 +72,38 @@ describe('CodeGenerator', () => {
     // 1 header + 25 data rows = 26 lines
     expect(lines).toHaveLength(26);
     expect(lines[0]).toBe('code,status,uses_left');
+    // Default "Single use" → every data row carries uses_left = 1
+    const dataRows = lines.slice(1);
+    expect(dataRows.every(r => /,unused,1$/.test(r))).toBe(true);
+  });
+
+  it('downloads a CSV with uses_left = 5 after selecting "Up to 5 uses"', async () => {
+    const user = userEvent.setup();
+    render(<CodeGenerator />);
+
+    const countInput = screen.getByLabelText(/how many codes/i);
+    await user.clear(countInput);
+    await user.type(countInput, '25');
+
+    // Select "Up to 5 uses"
+    const usesSelect = screen.getByLabelText(/uses per code/i);
+    await user.selectOptions(usesSelect, 'up-to-5');
+
+    await user.click(screen.getByRole('button', { name: /generate codes/i }));
+    await user.click(screen.getByRole('button', { name: /download csv/i }));
+
+    const [, csv] = (downloadCSV as ReturnType<typeof vi.fn>).mock.calls[0];
+    const dataRows = (csv as string).trim().split('\n').slice(1);
+    expect(dataRows).toHaveLength(25);
+    expect(dataRows.every(r => /,unused,5$/.test(r))).toBe(true);
+    // At least one concrete data row matches the expected mapping
+    expect(dataRows[0]).toMatch(/,unused,5$/);
+  });
+
+  it('toCSV maps the uses-per-code option to the correct uses_left column', () => {
+    expect(toCSV(['ACME-1'], 1)).toMatch(/,unused,1$/);
+    expect(toCSV(['ACME-1'], 5)).toMatch(/,unused,5$/);
+    expect(toCSV(['ACME-1'], '∞')).toMatch(/,unused,∞$/);
   });
 
   it('Download CSV button is disabled before generating', async () => {
