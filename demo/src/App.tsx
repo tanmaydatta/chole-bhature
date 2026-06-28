@@ -6,6 +6,8 @@ import PromoCreate from './pages/promo/PromoCreate';
 import AffiliateList from './pages/affiliate/AffiliateList';
 import AffiliateCreate from './pages/affiliate/AffiliateCreate';
 import LoyaltyList from './pages/loyalty/LoyaltyList';
+import ReferralList from './pages/referral/ReferralList';
+import ReferralCreate from './pages/referral/ReferralCreate';
 
 const Placeholder = ({ name }: { name: string }) => (
   <div className="text-[var(--muted)] text-sm">{name} page — coming soon</div>
@@ -16,11 +18,12 @@ export default function App() {
     <Routes>
       <Route path="/promo/new" element={<PromoCreate />} />
       <Route path="/affiliates/new" element={<AffiliateCreate />} />
+      <Route path="/referrals/new" element={<ReferralCreate />} />
       <Route element={<AppShell />}>
         <Route index element={<Overview />} />
         <Route path="/promo" element={<PromoList />} />
         <Route path="/affiliates" element={<AffiliateList />} />
-        <Route path="/referrals" element={<Placeholder name="Referrals" />} />
+        <Route path="/referrals" element={<ReferralList />} />
         <Route path="/loyalty" element={<LoyaltyList />} />
         <Route path="/variables" element={<Placeholder name="Variables" />} />
         <Route path="/events" element={<Placeholder name="Events" />} />
