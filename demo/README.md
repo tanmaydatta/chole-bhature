@@ -91,9 +91,9 @@ Mock data lives in `demo/src/data/` (programs, variables, events). The Zustand s
 
 ## Viewing & editing entries
 
-**Programs** — every row on the Overview and each list page is clickable and navigates to a read-only detail page at `/<type>/:id` (e.g. `/promo/abc123`). Programs are editable only when their status is `draft`: the detail page for a draft shows an **Edit** button that opens the create flow pre-filled with the existing data at `/<type>/:id/edit`; saving writes "Save changes" to the in-memory store. Non-draft programs (active, scheduled, paused, ended) are view-only. There are **4 seeded drafts** — one per program type — visible under the **Drafts** filter on each list page.
+**Programs** — every row on the Overview and each list page is clickable and navigates to a read-only detail page. The route segment is pluralized for affiliate/referral, so detail pages live at `/promo/:id`, `/affiliates/:id`, `/referrals/:id`, and `/loyalty/:id`. Programs are editable only when their status is `draft`: the detail page for a draft shows an **Edit** button that opens the create flow pre-filled with the existing data at the same path + `/edit` (e.g. `/affiliates/:id/edit`); the form's submit reads "Save changes" and writes back to the in-memory store. Non-draft programs (active, scheduled, paused, ended) are view-only. There are **4 seeded drafts** — one per program type — visible under the **Drafts** filter on each list page.
 
-**Variables** — clicking any variable row opens a slide-over panel. `user` and `dynamic` variables are editable in the panel; `system` variables are read-only (the platform manages them). **＋ New variable** in the top-right creates a new `user` variable and opens it for immediate editing.
+**Variables** — clicking any variable row opens a slide-over panel. System variables are read-only (marked 🔒) and open view-only; all other variables open in an editable panel. **＋ New variable** in the top-right opens an empty editable panel; new variables default to the `user` origin (the origin selector offers `user` and `dynamic`).
 
 **Events** — clicking an event row opens a detail pane on the right with in-place editing (name, description, payload fields). **＋ New event** creates a blank event and enters edit mode immediately.
 
