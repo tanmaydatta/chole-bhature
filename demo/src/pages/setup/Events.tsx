@@ -114,7 +114,7 @@ export default function Events() {
                     </td>
                     <td className="px-[12px] py-[10px] text-[13px]">
                       {field.required ? (
-                        <span className="text-[10.5px] font-bold text-[#b42318] bg-[#fee4e2] px-[7px] py-[1px] rounded-full">
+                        <span className="text-[10.5px] font-bold px-[7px] py-[1px] rounded-full" style={{ color: 'var(--req)', background: 'var(--req-bg)' }}>
                           required
                         </span>
                       ) : (

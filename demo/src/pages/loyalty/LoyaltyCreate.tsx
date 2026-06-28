@@ -154,7 +154,7 @@ export default function LoyaltyCreate() {
           {/* No-stacking banner */}
           <div
             className="rounded-[10px] px-[14px] py-[10px] text-[13px] flex items-start gap-[10px]"
-            style={{ background: '#fdf0dc', color: '#92400e', border: '1px solid #fcd34d' }}
+            style={{ background: 'var(--loy-bg)', color: 'var(--loy)', border: '1px solid var(--loy)' }}
           >
             <span>💡</span>
             <div>
@@ -191,10 +191,10 @@ export default function LoyaltyCreate() {
                 <span
                   key={f.name}
                   className="inline-flex items-center gap-[5px] px-[10px] py-[4px] rounded-full text-[12px] font-[600]"
-                  style={{ background: '#f1f5f9', color: '#334155' }}
+                  style={{ background: 'var(--dyn-bg)', color: 'var(--dyn)' }}
                 >
                   <span>{f.name}</span>
-                  <span style={{ color: '#94a3b8', fontWeight: 400 }}>{f.type}</span>
+                  <span style={{ color: 'var(--muted)', fontWeight: 400 }}>{f.type}</span>
                 </span>
               ))}
             </div>
@@ -210,10 +210,10 @@ export default function LoyaltyCreate() {
                 <span
                   key={v.name}
                   className="inline-flex items-center gap-[5px] px-[10px] py-[4px] rounded-full text-[12px] font-[600]"
-                  style={{ background: '#f0fdf4', color: '#166534' }}
+                  style={{ background: 'var(--user-bg)', color: 'var(--user)' }}
                 >
                   <span>{v.name}</span>
-                  <span style={{ color: '#86efac', fontWeight: 400 }}>{v.type}</span>
+                  <span style={{ color: 'var(--muted)', fontWeight: 400 }}>{v.type}</span>
                 </span>
               ))}
             </div>

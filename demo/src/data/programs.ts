@@ -7,7 +7,7 @@ export const PROGRAMS: Program[] = [
   // Affiliate
   { id: 'aff-1', name: 'ACME-EMPLOYEES', type: 'affiliate', status: 'active', rewardSummary: '$25 off', redemptions: 318, subtitle: '500 unique codes', codeCount: 500 },
   // Referral
-  { id: 'ref-1', name: 'Give $10, Get $10', type: 'referral', status: 'active', rewardSummary: '$10 / $10', redemptions: 1902, subtitle: 'Priority 1 · all customers', priority: 3, referrerReward: '$10 credit', refereeReward: '$10 off', appliesTo: 'all customers' },
+  { id: 'ref-1', name: 'Give $10, Get $10', type: 'referral', status: 'active', rewardSummary: '$10 / $10', redemptions: 1902, subtitle: 'All customers', priority: 3, referrerReward: '$10 credit', refereeReward: '$10 off', appliesTo: 'all customers' },
   { id: 'ref-2', name: 'VIP Referral', type: 'referral', status: 'active', rewardSummary: '$25 / 20%', redemptions: 0, subtitle: 'Applies to gold tier', priority: 1, referrerReward: '$25 credit', refereeReward: '20% off', appliesTo: 'customer_tier is gold' },
   { id: 'ref-3', name: 'Holiday Referral', type: 'referral', status: 'scheduled', rewardSummary: '$15 / $15', redemptions: 0, subtitle: 'Applies today in Dec', priority: 2, referrerReward: '$15 credit', refereeReward: '$15 off', appliesTo: 'today in Dec' },
   // Loyalty
