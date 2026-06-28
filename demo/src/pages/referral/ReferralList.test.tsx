@@ -234,12 +234,23 @@ test('clicking a referral row navigates to its detail page', () => {
 test('changing the priority input does NOT trigger row navigation', () => {
   const { getPath } = renderPageWithLocationCapture();
   const inputs = screen.getAllByRole('spinbutton');
-  // Change priority input — should update store but NOT navigate
+  // The first input belongs to the priority-1 program (ref-2). Change THAT
+  // program's input and assert THAT program's resulting priority, so the
+  // assertion does not depend on reorder side-effects of sibling rows.
   fireEvent.change(inputs[0], { target: { value: '3' } });
-  // Path should remain at /referrals (not navigate to detail)
-  expect(getPath()).toBe('/');
-  // Store should have been updated
-  const programs = useProgramStore.getState().programs;
-  const ref2 = programs.find(p => p.id === 'ref-2');
+  // Must not navigate to a referral detail page.
+  expect(getPath()).not.toMatch(/^\/referrals\/.+/);
+  // The program whose input we changed must reflect the new priority.
+  const ref2 = useProgramStore.getState().programs.find(p => p.id === 'ref-2');
   expect(ref2?.priority).toBe(3);
+});
+
+test('clicking the kebab affordance does NOT navigate to the detail page', () => {
+  const { getPath } = renderPageWithLocationCapture();
+  // The kebab "⋮" affordance lives in each ranked/not-ranked row.
+  const kebabs = screen.getAllByText('⋮');
+  expect(kebabs.length).toBeGreaterThan(0);
+  fireEvent.click(kebabs[0]);
+  // Clicking the affordance must NOT navigate to a referral detail page.
+  expect(getPath()).not.toMatch(/^\/referrals\/.+/);
 });

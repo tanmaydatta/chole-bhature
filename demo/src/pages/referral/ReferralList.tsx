@@ -208,7 +208,11 @@ export default function ReferralList() {
                 </span>
 
                 {/* Menu affordance */}
-                <span className="text-[var(--muted)] text-[18px] cursor-pointer select-none">⋮</span>
+                <span
+                  onClick={e => e.stopPropagation()}
+                  onMouseDown={e => e.stopPropagation()}
+                  className="text-[var(--muted)] text-[18px] cursor-pointer select-none"
+                >⋮</span>
               </div>
             );
           })}
@@ -267,7 +271,11 @@ export default function ReferralList() {
                 <span>
                   <StatusBadge status={p.status} />
                 </span>
-                <span className="text-[var(--muted)] text-[18px] cursor-pointer select-none">⋮</span>
+                <span
+                  onClick={e => e.stopPropagation()}
+                  onMouseDown={e => e.stopPropagation()}
+                  className="text-[var(--muted)] text-[18px] cursor-pointer select-none"
+                >⋮</span>
               </div>
             );
           })}
