@@ -1,5 +1,5 @@
 import { render, screen, fireEvent, act } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, Routes, Route, useLocation } from 'react-router-dom';
 import _ProgramListPage from './_ProgramListPage';
 import { useProgramStore } from '../data/store';
 import { PROGRAMS } from '../data/programs';
@@ -9,12 +9,32 @@ beforeEach(() => {
   useProgramStore.setState({ programs: PROGRAMS.map(p => ({ ...p })) });
 });
 
+function LocationProbe({ onLocation }: { onLocation: (path: string) => void }) {
+  const loc = useLocation();
+  onLocation(loc.pathname);
+  return null;
+}
+
 function renderPage() {
   return render(
     <MemoryRouter>
       <_ProgramListPage type="promo" title="Promo Codes" newLabel="New promo" />
     </MemoryRouter>
   );
+}
+
+function renderPageWithLocationCapture() {
+  let currentPath = '/';
+  const setPath = (p: string) => { currentPath = p; };
+  render(
+    <MemoryRouter initialEntries={['/promo']}>
+      <Routes>
+        <Route path="/promo" element={<_ProgramListPage type="promo" title="Promo Codes" newLabel="New promo" />} />
+        <Route path="*" element={<LocationProbe onLocation={setPath} />} />
+      </Routes>
+    </MemoryRouter>
+  );
+  return { getPath: () => currentPath };
 }
 
 test('default view shows only Active programs (SUMMER15 present)', () => {
@@ -93,4 +113,12 @@ test('list reacts to addProgram: a new active promo appears without remount', ()
   expect(screen.getByText('FLASH20')).toBeInTheDocument();
   // Active count should now reflect the addition (was 1, now 2).
   expect(screen.getByRole('button', { name: /^Active/ })).toHaveTextContent('2');
+});
+
+test('clicking a program row navigates to its detail page', () => {
+  const { getPath } = renderPageWithLocationCapture();
+  // Active filter is default; SUMMER15 (promo-1) is visible
+  const row = screen.getByText('SUMMER15').closest('tr')!;
+  fireEvent.click(row);
+  expect(getPath()).toMatch(/^\/promo\/.+/);
 });

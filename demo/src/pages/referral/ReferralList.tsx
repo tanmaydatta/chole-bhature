@@ -160,6 +160,7 @@ export default function ReferralList() {
                 onDragStart={() => handleDragStart(p.id)}
                 onDragOver={e => e.preventDefault()}
                 onDrop={() => handleDrop(p.id)}
+                onClick={() => navigate(`/referrals/${p.id}`)}
                 className="grid items-center px-[12px] py-[10px] border-b border-[var(--border)] hover:bg-[var(--hover)] cursor-grab"
                 style={{ gridTemplateColumns: ROW_COLS }}
               >
@@ -170,6 +171,9 @@ export default function ReferralList() {
                     min={1}
                     max={ranked.length}
                     value={priority}
+                    onClick={e => e.stopPropagation()}
+                    onMouseDown={e => e.stopPropagation()}
+                    onKeyDown={e => e.stopPropagation()}
                     onChange={e => {
                       const v = parseInt(e.target.value, 10);
                       if (!isNaN(v)) handlePriorityChange(p.id, v);
@@ -241,7 +245,8 @@ export default function ReferralList() {
             return (
               <div
                 key={p.id}
-                className="grid items-center px-[12px] py-[10px] border-b border-[var(--border)] opacity-60"
+                onClick={() => navigate(`/referrals/${p.id}`)}
+                className="grid items-center px-[12px] py-[10px] border-b border-[var(--border)] opacity-60 cursor-pointer"
                 style={{ gridTemplateColumns: ROW_COLS }}
               >
                 <span className="text-[var(--faint)] text-[13px]">—</span>

@@ -6,6 +6,7 @@ import { DataTable } from '../components/common/DataTable';
 import { TypePill } from '../components/common/TypePill';
 import { StatusBadge } from '../components/common/StatusBadge';
 import { PageHeader } from '../components/common/PageHeader';
+import { typeToSegment } from '../lib/routes';
 
 const TYPE_CHOICES = [
   { label: 'Promo', route: '/promo/new' },
@@ -140,7 +141,11 @@ export default function Overview() {
             </div>
           }
         />
-        <DataTable columns={columns} rows={rows} />
+        <DataTable
+          columns={columns}
+          rows={rows}
+          onRowClick={(i) => navigate(`/${typeToSegment(programs[i].type)}/${programs[i].id}`)}
+        />
       </div>
     </div>
   );

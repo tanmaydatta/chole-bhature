@@ -1,5 +1,5 @@
 import { render, screen, fireEvent, act } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, Routes, Route, useLocation } from 'react-router-dom';
 import ReferralList from './ReferralList';
 import { useProgramStore } from '../../data/store';
 import { PROGRAMS } from '../../data/programs';
@@ -8,12 +8,32 @@ beforeEach(() => {
   useProgramStore.setState({ programs: PROGRAMS.map(p => ({ ...p })) });
 });
 
+function LocationProbe({ onLocation }: { onLocation: (path: string) => void }) {
+  const loc = useLocation();
+  onLocation(loc.pathname);
+  return null;
+}
+
 function renderPage() {
   return render(
     <MemoryRouter>
       <ReferralList />
     </MemoryRouter>
   );
+}
+
+function renderPageWithLocationCapture() {
+  let currentPath = '/';
+  const setPath = (p: string) => { currentPath = p; };
+  render(
+    <MemoryRouter initialEntries={['/referrals']}>
+      <Routes>
+        <Route path="/referrals" element={<ReferralList />} />
+        <Route path="*" element={<LocationProbe onLocation={setPath} />} />
+      </Routes>
+    </MemoryRouter>
+  );
+  return { getPath: () => currentPath };
 }
 
 test('default (All) view shows Active/Scheduled referral programs in the ranked section', () => {
@@ -201,4 +221,25 @@ test('renders Referrer and Referee column headers', () => {
 test('renders "+ New referral" button', () => {
   renderPage();
   expect(screen.getByRole('button', { name: /New referral/i })).toBeInTheDocument();
+});
+
+test('clicking a referral row navigates to its detail page', () => {
+  const { getPath } = renderPageWithLocationCapture();
+  // 'Give $10, Get $10' (ref-1) is visible in All view (ranked section)
+  const row = screen.getByText('Give $10, Get $10').closest('[draggable]')!;
+  fireEvent.click(row);
+  expect(getPath()).toMatch(/^\/referrals\/.+/);
+});
+
+test('changing the priority input does NOT trigger row navigation', () => {
+  const { getPath } = renderPageWithLocationCapture();
+  const inputs = screen.getAllByRole('spinbutton');
+  // Change priority input — should update store but NOT navigate
+  fireEvent.change(inputs[0], { target: { value: '3' } });
+  // Path should remain at /referrals (not navigate to detail)
+  expect(getPath()).toBe('/');
+  // Store should have been updated
+  const programs = useProgramStore.getState().programs;
+  const ref2 = programs.find(p => p.id === 'ref-2');
+  expect(ref2?.priority).toBe(3);
 });

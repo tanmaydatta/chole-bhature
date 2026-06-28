@@ -7,6 +7,7 @@ import { SegmentedFilter } from '../components/common/SegmentedFilter';
 import { DataTable } from '../components/common/DataTable';
 import { TypePill } from '../components/common/TypePill';
 import { StatusBadge } from '../components/common/StatusBadge';
+import { typeToSegment } from '../lib/routes';
 
 const TYPE_CREATE_ROUTE: Record<ProgramType, string> = {
   promo: '/promo/new',
@@ -113,7 +114,11 @@ export default function _ProgramListPage({ type, title, newLabel }: ProgramListP
           </p>
         </div>
       ) : (
-        <DataTable columns={columns} rows={rows} />
+        <DataTable
+          columns={columns}
+          rows={rows}
+          onRowClick={(i) => navigate(`/${typeToSegment(visible[i].type)}/${visible[i].id}`)}
+        />
       )}
     </div>
   );
