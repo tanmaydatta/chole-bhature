@@ -3,6 +3,7 @@ import { TypePill } from './TypePill';
 import { StatusBadge } from './StatusBadge';
 import { SegmentedFilter } from './SegmentedFilter';
 import { PageHeader } from './PageHeader';
+import { DataTable } from './DataTable';
 
 test('TypePill type="promo" renders text "Promo"', () => {
   render(<TypePill type="promo" />);
@@ -27,4 +28,11 @@ test('PageHeader root is full width so the action right-aligns', () => {
   const root = container.firstChild as HTMLElement;
   expect(root.className).toContain('w-full');
   expect(root.className).toContain('justify-between');
+});
+
+test('DataTable fires onRowClick with the row index', () => {
+  const onRowClick = vi.fn();
+  render(<DataTable columns={[{ key: 'name', header: 'Name' }]} rows={[{ name: 'A' }, { name: 'B' }]} onRowClick={onRowClick} />);
+  fireEvent.click(screen.getByText('B').closest('tr')!);
+  expect(onRowClick).toHaveBeenCalledWith(1);
 });

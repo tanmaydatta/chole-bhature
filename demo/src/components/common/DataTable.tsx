@@ -8,9 +8,10 @@ interface Column {
 interface DataTableProps {
   columns: Column[];
   rows: Record<string, React.ReactNode>[];
+  onRowClick?: (index: number) => void;
 }
 
-export function DataTable({ columns, rows }: DataTableProps) {
+export function DataTable({ columns, rows, onRowClick }: DataTableProps) {
   return (
     <div className="bg-[var(--panel)] border border-[var(--border)] rounded-[12px] overflow-hidden shadow-[var(--shadow)]">
       <table className="w-full border-collapse">
@@ -28,7 +29,22 @@ export function DataTable({ columns, rows }: DataTableProps) {
         </thead>
         <tbody>
           {rows.map((row, i) => (
-            <tr key={i} className="group">
+            <tr
+              key={i}
+              className="group"
+              {...(onRowClick && {
+                onClick: () => onRowClick(i),
+                role: 'button',
+                tabIndex: 0,
+                onKeyDown: (e: React.KeyboardEvent<HTMLTableRowElement>) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    onRowClick(i);
+                  }
+                },
+                className: 'group cursor-pointer',
+              })}
+            >
               {columns.map((col) => (
                 <td
                   key={col.key}
