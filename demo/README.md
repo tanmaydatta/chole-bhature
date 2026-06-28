@@ -1,6 +1,6 @@
 # Incentives Dashboard — Demo
 
-A static, front-end-only demo of an incentives and promotions management dashboard, built to validate customer demand. There is no backend, no authentication, and no persistence — all data is in-memory mock data that resets on page reload.
+A static, front-end-only demo of an incentives and promotions management dashboard, built to validate customer demand. There is no backend and no authentication. All program/mock data is in-memory and resets on page reload; the only thing persisted is the light/dark theme preference (stored in `localStorage`).
 
 ## Quick start
 
@@ -87,7 +87,7 @@ Mock data lives in `demo/src/data/` (programs, variables, events). The Zustand s
 | Affiliate CSV download — generate unique codes and download `.csv` | Affiliate → Create → Codes step |
 | Referral drag-to-rank — drag rows to reprioritise active referral programs | Referral list page |
 | Loyalty event swap — change trigger event, payload fields update instantly | Loyalty → Create → Trigger step |
-| Light / dark toggle — persists within session | Top bar (moon / sun button) |
+| Light / dark toggle — persists across reloads via `localStorage` | Top bar (moon / sun button) |
 
 ## Non-goals (explicit)
 
@@ -96,7 +96,7 @@ This demo does **not** include:
 - A real promotions engine or evaluation API
 - Authentication or multi-tenant isolation
 - Real code redemption or wallet debit
-- Data persistence (all state is in-memory and resets on reload)
+- Persistence of program/mock data (it is in-memory and resets on reload; only the theme preference is persisted, via `localStorage`)
 - Real analytics (the Analytics page shows placeholder charts)
 
 These are intentionally out of scope so the demo stays lightweight and deployable without any backend.
