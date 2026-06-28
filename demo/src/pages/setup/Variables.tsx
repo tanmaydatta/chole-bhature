@@ -76,7 +76,7 @@ export default function Variables() {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-4">
+      <div className="mb-4">
         <PageHeader
           title="Variables"
           action={

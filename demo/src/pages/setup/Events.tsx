@@ -10,7 +10,7 @@ export default function Events() {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-4">
+      <div className="mb-4">
         <PageHeader
           title="Events"
           action={
