@@ -12,7 +12,9 @@ export default function Overview() {
     name: (
       <div>
         <div className="font-medium text-[var(--ink)]">{p.name}</div>
-        <div className="text-[11px] text-[var(--muted)] mt-[2px]">{p.rewardSummary}</div>
+        {p.subtitle && (
+          <div className="text-[11px] text-[var(--muted)] mt-[2px]">{p.subtitle}</div>
+        )}
       </div>
     ),
     type: <TypePill type={p.type} />,

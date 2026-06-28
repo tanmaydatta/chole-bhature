@@ -12,6 +12,7 @@ export interface EventDef { name: string; description: string; live: boolean; us
 export interface Program {
   id: string; name: string; type: ProgramType; status: Status;
   rewardSummary: string; redemptions: number;
+  subtitle?: string;
   [k: string]: unknown;
 }
 export const TYPE_META: Record<ProgramType, { label: string; color: string; bg: string; icon: string }> = {

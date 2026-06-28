@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import Overview from './Overview';
 
@@ -13,12 +13,29 @@ test('renders all three stat card labels', () => {
   expect(screen.getByText('Incentive spend (30d)')).toBeInTheDocument();
 });
 
+test('renders stat card values', () => {
+  renderWithRouter(<Overview />);
+  expect(screen.getByText('11')).toBeInTheDocument();
+  expect(screen.getByText('8,412')).toBeInTheDocument();
+  expect(screen.getByText('$42,180')).toBeInTheDocument();
+});
+
 test('renders the programs table with at least one TypePill and StatusBadge', () => {
   renderWithRouter(<Overview />);
-  // TypePill labels
-  expect(screen.getAllByText(/Promo|Affiliate|Referral|Loyalty/).length).toBeGreaterThan(0);
-  // StatusBadge labels
-  expect(screen.getAllByText(/Active|Paused|Scheduled|Draft|Ended/).length).toBeGreaterThan(0);
+  const table = within(screen.getByRole('table'));
+  // TypePill labels (scoped to the table)
+  expect(table.getAllByText(/^(Promo|Affiliate|Referral|Loyalty)$/).length).toBeGreaterThan(0);
+  // StatusBadge labels (scoped to the table)
+  expect(table.getAllByText(/^(Active|Paused|Scheduled|Draft|Ended)$/).length).toBeGreaterThan(0);
+});
+
+test('Name cell renders subtitle, not a duplicate rewardSummary', () => {
+  renderWithRouter(<Overview />);
+  const table = within(screen.getByRole('table'));
+  // subtitle descriptor from seed
+  expect(table.getByText('Orders over $50')).toBeInTheDocument();
+  // rewardSummary appears once (Reward column only), not duplicated in Name sub-line
+  expect(table.getAllByText('15% off')).toHaveLength(1);
 });
 
 test('renders the "＋ New program" button', () => {
