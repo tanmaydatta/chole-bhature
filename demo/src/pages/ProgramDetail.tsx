@@ -73,7 +73,7 @@ export default function ProgramDetail() {
       count: Number(program.codeCount),
       usesPerCode: (program.usesPerCode as number | 'unlimited') ?? 1,
     });
-  }, [program?.id, program?.codeCount, program?.usesPerCode]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [program]);
 
   if (!program) {
     return (

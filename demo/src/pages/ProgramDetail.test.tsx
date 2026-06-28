@@ -125,8 +125,8 @@ test('affiliate detail shows a Codes panel with a status summary and preview row
   });
   renderAt('/affiliates/aff-codes-60', '/affiliates/:id');
   expect(screen.getByText('Codes')).toBeInTheDocument();
-  // status summary paragraph contains "unused"
-  expect(screen.getByText(/unused · \d+ redeemed/i)).toBeInTheDocument();
+  // status summary paragraph: full "{u} unused · {r} redeemed · {e} expired" format
+  expect(screen.getByText(/\d+ unused · \d+ redeemed · \d+ expired/i)).toBeInTheDocument();
   expect(screen.getByText(/\+\s*10 more/i)).toBeInTheDocument();
 });
 
@@ -155,6 +155,8 @@ test('affiliate detail Download CSV downloads codes-only', () => {
 });
 
 test('affiliate detail single-use codes show — in Uses column', () => {
+  // Re-seed explicitly so this test passes regardless of run order
+  useProgramStore.setState({ programs: PROGRAMS.map(p => ({ ...p })) });
   // aff-1 has usesPerCode: 1 (single-use)
   renderAt('/affiliates/aff-1', '/affiliates/:id');
   // Uses column header should be present
