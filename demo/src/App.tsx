@@ -4,6 +4,7 @@ import Overview from './pages/Overview';
 import PromoList from './pages/promo/PromoList';
 import PromoCreate from './pages/promo/PromoCreate';
 import AffiliateList from './pages/affiliate/AffiliateList';
+import AffiliateCreate from './pages/affiliate/AffiliateCreate';
 import LoyaltyList from './pages/loyalty/LoyaltyList';
 
 const Placeholder = ({ name }: { name: string }) => (
@@ -14,6 +15,7 @@ export default function App() {
   return (
     <Routes>
       <Route path="/promo/new" element={<PromoCreate />} />
+      <Route path="/affiliates/new" element={<AffiliateCreate />} />
       <Route element={<AppShell />}>
         <Route index element={<Overview />} />
         <Route path="/promo" element={<PromoList />} />
