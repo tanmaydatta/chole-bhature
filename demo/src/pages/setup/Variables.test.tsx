@@ -21,9 +21,9 @@ test('renders the three origin group headers', () => {
 test('system variable budget_remaining shows lock indicator and "auto"', () => {
   renderVariables();
   expect(screen.getByText('budget_remaining')).toBeInTheDocument();
-  // The lock emoji is rendered in the system variable row
-  const lockIcons = screen.getAllByText('🔒');
-  expect(lockIcons.length).toBeGreaterThan(0);
+  // Per-row read-only locks are titled "Read-only" (distinct from the group-header 🔒).
+  // Exactly one per system variable: budget_remaining, redemptions_total, customer_uses_count, today.
+  expect(screen.getAllByTitle('Read-only')).toHaveLength(4);
   // "auto" appears in the used-in column for system vars
   const autoEls = screen.getAllByText('auto');
   expect(autoEls.length).toBeGreaterThan(0);

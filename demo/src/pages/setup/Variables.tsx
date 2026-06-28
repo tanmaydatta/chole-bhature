@@ -147,7 +147,11 @@ export default function Variables() {
                             className={`w-[8px] h-[8px] rounded-[2px] flex-shrink-0 ${meta.swatchClass}`}
                           />
                           {v.name}
-                          {v.readOnly && <span className="text-[var(--faint)] text-[12px]">🔒</span>}
+                          {v.readOnly && (
+                            <span title="Read-only" className="text-[var(--faint)] text-[12px]">
+                              🔒
+                            </span>
+                          )}
                         </div>
                       </td>
                       <td className="px-[16px] py-[12px] align-middle text-[12.5px] text-[var(--muted)]">
