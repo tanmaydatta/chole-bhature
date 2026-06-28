@@ -89,6 +89,16 @@ Mock data lives in `demo/src/data/` (programs, variables, events). The Zustand s
 | Loyalty event swap — change trigger event, payload fields update instantly | Loyalty → Create → Trigger step |
 | Light / dark toggle — persists across reloads via `localStorage` | Top bar (moon / sun button) |
 
+## Viewing & editing entries
+
+**Programs** — every row on the Overview and each list page is clickable and navigates to a read-only detail page at `/<type>/:id` (e.g. `/promo/abc123`). Programs are editable only when their status is `draft`: the detail page for a draft shows an **Edit** button that opens the create flow pre-filled with the existing data at `/<type>/:id/edit`; saving writes "Save changes" to the in-memory store. Non-draft programs (active, scheduled, paused, ended) are view-only. There are **4 seeded drafts** — one per program type — visible under the **Drafts** filter on each list page.
+
+**Variables** — clicking any variable row opens a slide-over panel. `user` and `dynamic` variables are editable in the panel; `system` variables are read-only (the platform manages them). **＋ New variable** in the top-right creates a new `user` variable and opens it for immediate editing.
+
+**Events** — clicking an event row opens a detail pane on the right with in-place editing (name, description, payload fields). **＋ New event** creates a blank event and enters edit mode immediately.
+
+As with all demo data, new entries and edits are held in-memory and reset on page reload.
+
 ## Non-goals (explicit)
 
 This demo does **not** include:
