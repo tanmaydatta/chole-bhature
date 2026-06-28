@@ -9,11 +9,11 @@ import App from './App.tsx'
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <ThemeProvider>
-      <BrowserRouter>
-        <ToastProvider>
+      <ToastProvider>
+        <BrowserRouter>
           <App />
-        </ToastProvider>
-      </BrowserRouter>
+        </BrowserRouter>
+      </ToastProvider>
     </ThemeProvider>
   </StrictMode>,
 )

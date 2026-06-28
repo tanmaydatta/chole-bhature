@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useState, useRef } from 'react';
+import { createContext, useCallback, useContext, useEffect, useState, useRef } from 'react';
 import type { ReactNode } from 'react';
 
 interface ToastItem {
@@ -21,13 +21,26 @@ export function useToast(): ToastContextValue {
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<ToastItem[]>([]);
   const nextId = useRef(0);
+  const timers = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
 
   const toast = useCallback((message: string) => {
     const id = ++nextId.current;
     setToasts(prev => [...prev, { id, message }]);
-    setTimeout(() => {
+    const h = setTimeout(() => {
+      timers.current.delete(id);
       setToasts(prev => prev.filter(t => t.id !== id));
     }, 3000);
+    timers.current.set(id, h);
+  }, []);
+
+  // Clear any pending auto-dismiss timers on unmount to avoid firing
+  // setToasts on an unmounted tree.
+  useEffect(() => {
+    const map = timers.current;
+    return () => {
+      map.forEach(clearTimeout);
+      map.clear();
+    };
   }, []);
 
   return (
