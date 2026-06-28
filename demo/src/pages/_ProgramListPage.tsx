@@ -28,8 +28,11 @@ const FILTER_LABELS: FilterLabel[] = ['Active', 'Scheduled', 'Paused', 'Ended', 
 
 export default function _ProgramListPage({ type, title, newLabel }: ProgramListPageProps) {
   const [selected, setSelected] = useState<FilterLabel>('Active');
-  const byType = useProgramStore(state => state.byType);
-  const all = byType(type);
+  // Subscribe to programs (the data) so the list re-renders when it changes
+  // (e.g. when a create flow calls addProgram). Subscribing to the stable
+  // byType function reference would not trigger re-renders.
+  const programs = useProgramStore(state => state.programs);
+  const all = programs.filter(p => p.type === type);
 
   const counts: Record<FilterLabel, number> = {
     Active: all.filter(p => p.status === 'active').length,
@@ -41,7 +44,7 @@ export default function _ProgramListPage({ type, title, newLabel }: ProgramListP
   };
 
   const statusFilter = FILTER_TO_STATUS[selected];
-  const programs = statusFilter === null ? all : all.filter(p => p.status === statusFilter);
+  const visible = statusFilter === null ? all : all.filter(p => p.status === statusFilter);
 
   const options = FILTER_LABELS.map(label => ({
     label,
@@ -56,12 +59,12 @@ export default function _ProgramListPage({ type, title, newLabel }: ProgramListP
     { key: 'status', header: 'Status' },
   ];
 
-  const rows = programs.map(p => ({
+  const rows = visible.map(p => ({
     name: (
       <div>
         <div className="font-medium text-[var(--ink)]">{p.name}</div>
         {p.subtitle && (
-          <div className="text-[11px] text-[var(--muted)] mt-[2px]">{p.subtitle as string}</div>
+          <div className="text-[11px] text-[var(--muted)] mt-[2px]">{p.subtitle}</div>
         )}
       </div>
     ),

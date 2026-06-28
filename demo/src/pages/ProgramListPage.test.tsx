@@ -1,6 +1,13 @@
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, act } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import _ProgramListPage from './_ProgramListPage';
+import { useProgramStore } from '../data/store';
+import { PROGRAMS } from '../data/programs';
+
+beforeEach(() => {
+  // Reset store to seed so tests stay independent.
+  useProgramStore.setState({ programs: PROGRAMS.map(p => ({ ...p })) });
+});
 
 function renderPage() {
   return render(
@@ -48,8 +55,33 @@ test('renders page title and new button', () => {
   expect(screen.getByRole('button', { name: /New promo/i })).toBeInTheDocument();
 });
 
-test('Active filter is selected by default', () => {
+test('Active filter carries the selected styling by default', () => {
   renderPage();
-  // The active filter button should be visually selected — we check it's in the document
-  expect(screen.getByRole('button', { name: /^Active/ })).toBeInTheDocument();
+  const activeBtn = screen.getByRole('button', { name: /^Active/ });
+  const pausedBtn = screen.getByRole('button', { name: /^Paused/ });
+  // The selected button uses the panel background; unselected ones are transparent.
+  expect(activeBtn.className).toContain('bg-[var(--panel)]');
+  expect(pausedBtn.className).not.toContain('bg-[var(--panel)]');
+});
+
+test('list reacts to addProgram: a new active promo appears without remount', () => {
+  renderPage();
+  expect(screen.queryByText('FLASH20')).not.toBeInTheDocument();
+
+  act(() => {
+    useProgramStore.getState().addProgram({
+      id: 'promo-new',
+      name: 'FLASH20',
+      type: 'promo',
+      status: 'active',
+      rewardSummary: '20% off',
+      redemptions: 0,
+      subtitle: 'Flash sale',
+    });
+  });
+
+  // Same render — store update must re-render the list (reactivity).
+  expect(screen.getByText('FLASH20')).toBeInTheDocument();
+  // Active count should now reflect the addition (was 1, now 2).
+  expect(screen.getByRole('button', { name: /^Active/ })).toHaveTextContent('2');
 });
