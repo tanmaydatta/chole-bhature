@@ -1,5 +1,16 @@
 import type { ConditionGroup, Program, Reward } from '../lib/types';
 
+// Each program of a given type carries the SAME set of config keys that the
+// matching create flow's buildProgram() writes, so the detail page and
+// edit-prefill read identical keys for seeded and flow-created programs:
+//   promo:     code, autoApply, stackable, eligibility, discount, budget,
+//              perCustomer, startDate, endDate
+//   affiliate: codeCount, eligibility, discount, budget, perCustomer,
+//              startDate, endDate
+//   referral:  priority, referrerReward, refereeReward, appliesTo, eligibility,
+//              budget, perCustomer, startDate, endDate
+//   loyalty:   triggerEvent, reward, eligibility
+
 export const PROGRAMS: Program[] = [
   // Promo — active, enriched with eligibility + discount + limits
   {
@@ -44,6 +55,10 @@ export const PROGRAMS: Program[] = [
       ],
     } satisfies ConditionGroup,
     discount: { kind: 'fixed', value: 10 } satisfies Reward,
+    budget: 2000,
+    perCustomer: 1,
+    startDate: '2026-01-01',
+    endDate: undefined,
   },
   // Promo — DRAFT
   {
@@ -90,6 +105,8 @@ export const PROGRAMS: Program[] = [
     discount: { kind: 'fixed', value: 25 } satisfies Reward,
     budget: 20000,
     perCustomer: 1,
+    startDate: '2026-03-01',
+    endDate: undefined,
   },
   // Affiliate — DRAFT
   {
@@ -131,6 +148,10 @@ export const PROGRAMS: Program[] = [
       match: 'ALL',
       conditions: [],
     } satisfies ConditionGroup,
+    budget: undefined,
+    perCustomer: undefined,
+    startDate: undefined,
+    endDate: undefined,
   },
   // Referral — active (gold tier)
   {
@@ -151,6 +172,10 @@ export const PROGRAMS: Program[] = [
         { id: 'r2c1', variable: 'customer_tier', operator: 'eq', value: 'gold' },
       ],
     } satisfies ConditionGroup,
+    budget: undefined,
+    perCustomer: undefined,
+    startDate: undefined,
+    endDate: undefined,
   },
   // Referral — scheduled
   {
@@ -171,6 +196,8 @@ export const PROGRAMS: Program[] = [
         { id: 'r3c1', variable: 'today', operator: 'between', value: ['2026-12-01', '2026-12-31'] },
       ],
     } satisfies ConditionGroup,
+    budget: undefined,
+    perCustomer: undefined,
     startDate: '2026-12-01',
     endDate: '2026-12-31',
   },
@@ -195,6 +222,8 @@ export const PROGRAMS: Program[] = [
     } satisfies ConditionGroup,
     budget: 15000,
     perCustomer: 5,
+    startDate: undefined,
+    endDate: undefined,
   },
 
   // Loyalty — active, enriched with eligibility
@@ -207,6 +236,7 @@ export const PROGRAMS: Program[] = [
     redemptions: 2765,
     subtitle: 'on order_completed',
     triggerEvent: 'order_completed',
+    reward: { kind: 'points', value: 5 } satisfies Reward,
     eligibility: {
       match: 'ALL',
       conditions: [
@@ -224,6 +254,7 @@ export const PROGRAMS: Program[] = [
     redemptions: 0,
     subtitle: 'on signup_completed',
     triggerEvent: 'signup_completed',
+    reward: { kind: 'points', value: 100 } satisfies Reward,
     eligibility: {
       match: 'ALL',
       conditions: [

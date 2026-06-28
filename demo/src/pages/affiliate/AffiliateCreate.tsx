@@ -85,6 +85,11 @@ export default function AffiliateCreate() {
       codeCount: codeCount > 0 ? codeCount : undefined,
       subtitle,
       eligibility,
+      discount,
+      budget: budget === '' ? undefined : budget,
+      perCustomer: perCustomer === '' ? undefined : perCustomer,
+      startDate: startDate || undefined,
+      endDate: endDate || undefined,
     };
   }
 

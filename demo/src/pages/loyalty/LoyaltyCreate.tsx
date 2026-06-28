@@ -85,6 +85,7 @@ export default function LoyaltyCreate() {
       rewardSummary: rewardSummaryFor(reward),
       redemptions: 0,
       triggerEvent,
+      reward,
       subtitle: `on ${triggerEvent}`,
       eligibility: conditions,
     };

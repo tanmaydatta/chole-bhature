@@ -100,6 +100,10 @@ export default function ReferralCreate() {
       appliesTo: appliesToStr,
       subtitle,
       eligibility,
+      budget: budget === '' ? undefined : budget,
+      perCustomer: perCustomer === '' ? undefined : perCustomer,
+      startDate: startDate || undefined,
+      endDate: endDate || undefined,
     };
   }
 
