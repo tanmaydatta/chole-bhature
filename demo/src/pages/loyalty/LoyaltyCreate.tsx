@@ -4,11 +4,12 @@ import { CreateFlowShell } from '../../components/flow/CreateFlowShell';
 import { ConditionBuilder } from '../../components/builder/ConditionBuilder';
 import { RewardEditor } from '../../components/rewards/RewardEditor';
 import { useProgramStore } from '../../data/store';
+import { useEventsStore } from '../../data/eventsStore';
+import { useVariablesStore } from '../../data/variablesStore';
 import { useToast } from '../../components/common/Toast';
-import { EVENTS } from '../../data/events';
-import { VARIABLES } from '../../data/variables';
 import { TYPE_META } from '../../lib/types';
 import { rewardSummaryFor } from '../../lib/rewards';
+import { useProgramEdit } from '../../hooks/useProgramEdit';
 import type { ConditionGroup, Program, Reward, Status, Variable } from '../../lib/types';
 
 const STEPS = [
@@ -21,39 +22,51 @@ const STEPS = [
 
 const STEP_KEYS = STEPS.map(s => s.key);
 
-const USER_VARIABLES = VARIABLES.filter(v => v.origin === 'user');
-
 export default function LoyaltyCreate() {
   const navigate = useNavigate();
   const addProgram = useProgramStore(s => s.addProgram);
+  const updateProgram = useProgramStore(s => s.updateProgram);
+  const events = useEventsStore(s => s.events);
+  const variables = useVariablesStore(s => s.variables);
   const { toast } = useToast();
+  const { editMode, editing } = useProgramEdit('loyalty');
+
+  const userVariables = variables.filter(v => v.origin === 'user');
 
   const [activeStep, setActiveStep] = useState('basics');
 
   // Basics
-  const [name, setName] = useState('');
+  const [name, setName] = useState(() => (editing ? (editing.name as string) : ''));
 
-  // Trigger
-  const [triggerEvent, setTriggerEvent] = useState('order_completed');
-
-  // Conditions
-  const [conditions, setConditions] = useState<ConditionGroup>({
-    match: 'ALL',
-    conditions: [],
+  // Trigger — default to first event from store, or prefill from editing
+  const [triggerEvent, setTriggerEvent] = useState(() => {
+    if (editing && editing.triggerEvent) return editing.triggerEvent as string;
+    return events.length > 0 ? events[0].name : 'order_completed';
   });
 
+  // Conditions
+  const [conditions, setConditions] = useState<ConditionGroup>(() =>
+    editing
+      ? (editing.eligibility as ConditionGroup)
+      : { match: 'ALL', conditions: [] }
+  );
+
   // Reward
-  const [reward, setReward] = useState<Reward>({ kind: 'points', value: 5 });
+  const [reward, setReward] = useState<Reward>(() =>
+    editing ? (editing.reward as Reward) : { kind: 'points', value: 5 }
+  );
 
-  const selectedEvent = EVENTS.find(e => e.name === triggerEvent) ?? EVENTS[0];
+  const selectedEvent = events.find(e => e.name === triggerEvent) ?? events[0];
 
-  const eventPayloadVariables: Variable[] = selectedEvent.fields.map(f => ({
-    name: f.name,
-    type: f.type,
-    origin: 'dynamic' as const,
-  }));
+  const eventPayloadVariables: Variable[] = selectedEvent
+    ? selectedEvent.fields.map(f => ({
+        name: f.name,
+        type: f.type,
+        origin: 'dynamic' as const,
+      }))
+    : [];
 
-  const conditionVariables: Variable[] = [...eventPayloadVariables, ...USER_VARIABLES];
+  const conditionVariables: Variable[] = [...eventPayloadVariables, ...userVariables];
 
   function handleContinue() {
     const idx = STEP_KEYS.indexOf(activeStep);
@@ -76,14 +89,14 @@ export default function LoyaltyCreate() {
   }
 
   function buildProgram(status: Status): Program {
-    const id = `loyalty-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const id = editing ? editing.id : `loyalty-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     return {
       id,
       name: name || 'Untitled loyalty',
       type: 'loyalty',
       status,
       rewardSummary: rewardSummaryFor(reward),
-      redemptions: 0,
+      redemptions: editing ? editing.redemptions : 0,
       triggerEvent,
       reward,
       subtitle: `on ${triggerEvent}`,
@@ -92,15 +105,27 @@ export default function LoyaltyCreate() {
   }
 
   function handleSaveDraft() {
-    addProgram(buildProgram('draft'));
+    const draft = buildProgram('draft');
+    if (editMode && editing) {
+      updateProgram(editing.id, draft);
+    } else {
+      addProgram(draft);
+    }
     toast('Draft saved');
     navigate('/loyalty');
   }
 
   function handleCreate() {
-    addProgram(buildProgram('active'));
-    toast('Loyalty created');
-    navigate('/loyalty');
+    const program = buildProgram('active');
+    if (editMode && editing) {
+      updateProgram(editing.id, program);
+      toast('Loyalty updated');
+      navigate(`/loyalty/${editing.id}`);
+    } else {
+      addProgram(program);
+      toast('Loyalty created');
+      navigate('/loyalty');
+    }
   }
 
   const isReview = activeStep === 'review';
@@ -123,7 +148,7 @@ export default function LoyaltyCreate() {
               style={{ background: 'var(--accent)' }}
               onClick={handleCreate}
             >
-              Create
+              {editMode ? 'Save changes' : 'Create'}
             </button>
           </div>
         ) : undefined
@@ -174,7 +199,7 @@ export default function LoyaltyCreate() {
               value={triggerEvent}
               onChange={e => setTriggerEvent(e.target.value)}
             >
-              {EVENTS.map(ev => (
+              {events.map(ev => (
                 <option key={ev.name} value={ev.name}>
                   {ev.name}
                 </option>
@@ -183,23 +208,25 @@ export default function LoyaltyCreate() {
           </div>
 
           {/* Payload fields from the selected event */}
-          <div className="flex flex-col gap-[8px]">
-            <div className="text-[12px] font-[600] text-[var(--muted)] uppercase tracking-wide">
-              Event payload fields
+          {selectedEvent && (
+            <div className="flex flex-col gap-[8px]">
+              <div className="text-[12px] font-[600] text-[var(--muted)] uppercase tracking-wide">
+                Event payload fields
+              </div>
+              <div className="flex flex-wrap gap-[6px]">
+                {selectedEvent.fields.map(f => (
+                  <span
+                    key={f.name}
+                    className="inline-flex items-center gap-[5px] px-[10px] py-[4px] rounded-full text-[12px] font-[600]"
+                    style={{ background: 'var(--dyn-bg)', color: 'var(--dyn)' }}
+                  >
+                    <span>{f.name}</span>
+                    <span style={{ color: 'var(--muted)', fontWeight: 400 }}>{f.type}</span>
+                  </span>
+                ))}
+              </div>
             </div>
-            <div className="flex flex-wrap gap-[6px]">
-              {selectedEvent.fields.map(f => (
-                <span
-                  key={f.name}
-                  className="inline-flex items-center gap-[5px] px-[10px] py-[4px] rounded-full text-[12px] font-[600]"
-                  style={{ background: 'var(--dyn-bg)', color: 'var(--dyn)' }}
-                >
-                  <span>{f.name}</span>
-                  <span style={{ color: 'var(--muted)', fontWeight: 400 }}>{f.type}</span>
-                </span>
-              ))}
-            </div>
-          </div>
+          )}
 
           {/* User attributes — always available */}
           <div className="flex flex-col gap-[8px]">
@@ -207,7 +234,7 @@ export default function LoyaltyCreate() {
               Always available · user attributes
             </div>
             <div className="flex flex-wrap gap-[6px]">
-              {USER_VARIABLES.map(v => (
+              {userVariables.map(v => (
                 <span
                   key={v.name}
                   className="inline-flex items-center gap-[5px] px-[10px] py-[4px] rounded-full text-[12px] font-[600]"

@@ -20,8 +20,11 @@ export default function App() {
       <Route path="/promo/new" element={<PromoCreate />} />
       <Route path="/promo/:id/edit" element={<PromoCreate />} />
       <Route path="/affiliates/new" element={<AffiliateCreate />} />
+      <Route path="/affiliates/:id/edit" element={<AffiliateCreate />} />
       <Route path="/referrals/new" element={<ReferralCreate />} />
+      <Route path="/referrals/:id/edit" element={<ReferralCreate />} />
       <Route path="/loyalty/new" element={<LoyaltyCreate />} />
+      <Route path="/loyalty/:id/edit" element={<LoyaltyCreate />} />
       <Route element={<AppShell />}>
         <Route index element={<Overview />} />
         <Route path="/promo" element={<PromoList />} />

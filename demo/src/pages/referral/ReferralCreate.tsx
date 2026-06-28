@@ -4,10 +4,11 @@ import { CreateFlowShell } from '../../components/flow/CreateFlowShell';
 import { ConditionBuilder } from '../../components/builder/ConditionBuilder';
 import { DualRewardEditor } from '../../components/rewards/DualRewardEditor';
 import { useProgramStore } from '../../data/store';
+import { useVariablesStore } from '../../data/variablesStore';
 import { useToast } from '../../components/common/Toast';
-import { VARIABLES } from '../../data/variables';
 import { TYPE_META } from '../../lib/types';
 import { rewardSummaryFor } from '../../lib/rewards';
+import { useProgramEdit } from '../../hooks/useProgramEdit';
 import type { ConditionGroup, Program, Reward, Status } from '../../lib/types';
 
 const STEPS = [
@@ -23,30 +24,42 @@ const STEP_KEYS = STEPS.map(s => s.key);
 export default function ReferralCreate() {
   const navigate = useNavigate();
   const addProgram = useProgramStore(s => s.addProgram);
+  const updateProgram = useProgramStore(s => s.updateProgram);
   const programs = useProgramStore(s => s.programs);
+  const variables = useVariablesStore(s => s.variables);
   const { toast } = useToast();
+  const { editMode, editing } = useProgramEdit('referral');
 
   // Step state
   const [activeStep, setActiveStep] = useState('basics');
 
   // Basics
-  const [name, setName] = useState('');
+  const [name, setName] = useState(() => (editing ? (editing.name as string) : ''));
 
   // Eligibility
-  const [eligibility, setEligibility] = useState<ConditionGroup>({
-    match: 'ALL',
-    conditions: [],
-  });
+  const [eligibility, setEligibility] = useState<ConditionGroup>(() =>
+    editing
+      ? (editing.eligibility as ConditionGroup)
+      : { match: 'ALL', conditions: [] }
+  );
 
   // Rewards
-  const [referrerReward, setReferrerReward] = useState<Reward>({ kind: 'credit', value: 10 });
-  const [refereeReward, setRefereeReward] = useState<Reward>({ kind: 'fixed', value: 10 });
+  const [referrerReward, setReferrerReward] = useState<Reward>(() =>
+    editing ? (editing.referrerReward as Reward) : { kind: 'credit', value: 10 }
+  );
+  const [refereeReward, setRefereeReward] = useState<Reward>(() =>
+    editing ? (editing.refereeReward as Reward) : { kind: 'fixed', value: 10 }
+  );
 
   // Limits & schedule
-  const [budget, setBudget] = useState<number | ''>('');
-  const [perCustomer, setPerCustomer] = useState<number | ''>('');
-  const [startDate, setStartDate] = useState('');
-  const [endDate, setEndDate] = useState('');
+  const [budget, setBudget] = useState<number | ''>(() =>
+    editing && editing.budget !== undefined ? (editing.budget as number) : ''
+  );
+  const [perCustomer, setPerCustomer] = useState<number | ''>(() =>
+    editing && editing.perCustomer !== undefined ? (editing.perCustomer as number) : ''
+  );
+  const [startDate, setStartDate] = useState(() => (editing ? ((editing.startDate as string | undefined) ?? '') : ''));
+  const [endDate, setEndDate] = useState(() => (editing ? ((editing.endDate as string | undefined) ?? '') : ''));
 
   function handleContinue() {
     const idx = STEP_KEYS.indexOf(activeStep);
@@ -69,15 +82,23 @@ export default function ReferralCreate() {
   }
 
   function buildProgram(status: Status): Program {
-    const id = `ref-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    let id: string;
+    let priority: number;
 
-    // Compute next priority (max existing referral priority + 1)
-    const referralPrograms = programs.filter(p => p.type === 'referral');
-    const maxPriority = referralPrograms.reduce((max, p) => {
-      const pri = typeof p.priority === 'number' ? p.priority : 0;
-      return Math.max(max, pri);
-    }, 0);
-    const priority = maxPriority + 1;
+    if (editMode && editing) {
+      // Preserve existing id and priority
+      id = editing.id;
+      priority = typeof editing.priority === 'number' ? editing.priority : 1;
+    } else {
+      id = `ref-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      // Compute next priority (max existing referral priority + 1)
+      const referralPrograms = programs.filter(p => p.type === 'referral');
+      const maxPriority = referralPrograms.reduce((max, p) => {
+        const pri = typeof p.priority === 'number' ? p.priority : 0;
+        return Math.max(max, pri);
+      }, 0);
+      priority = maxPriority + 1;
+    }
 
     const referrerSummary = rewardSummaryFor(referrerReward);
     const refereeSummary = rewardSummaryFor(refereeReward);
@@ -93,7 +114,7 @@ export default function ReferralCreate() {
       type: 'referral',
       status,
       rewardSummary,
-      redemptions: 0,
+      redemptions: editing ? editing.redemptions : 0,
       priority,
       referrerReward,
       refereeReward,
@@ -108,15 +129,27 @@ export default function ReferralCreate() {
   }
 
   function handleSaveDraft() {
-    addProgram(buildProgram('draft'));
+    const draft = buildProgram('draft');
+    if (editMode && editing) {
+      updateProgram(editing.id, draft);
+    } else {
+      addProgram(draft);
+    }
     toast('Draft saved');
     navigate('/referrals');
   }
 
   function handleCreate() {
-    addProgram(buildProgram('active'));
-    toast('Referral created');
-    navigate('/referrals');
+    const program = buildProgram('active');
+    if (editMode && editing) {
+      updateProgram(editing.id, program);
+      toast('Referral updated');
+      navigate(`/referrals/${editing.id}`);
+    } else {
+      addProgram(program);
+      toast('Referral created');
+      navigate('/referrals');
+    }
   }
 
   const isReview = activeStep === 'review';
@@ -139,7 +172,7 @@ export default function ReferralCreate() {
               style={{ background: 'var(--accent)' }}
               onClick={handleCreate}
             >
-              Create
+              {editMode ? 'Save changes' : 'Create'}
             </button>
           </div>
         ) : undefined
@@ -169,7 +202,7 @@ export default function ReferralCreate() {
           <h2 className="text-[16px] font-[700] mb-[4px]">Eligibility</h2>
           <ConditionBuilder
             value={eligibility}
-            variables={VARIABLES}
+            variables={variables}
             onChange={setEligibility}
           />
         </div>
