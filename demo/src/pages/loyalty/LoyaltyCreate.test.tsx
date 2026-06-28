@@ -43,6 +43,31 @@ test('selecting review_submitted swaps payload chips to show rating, product_id,
   expect(screen.queryByText('order_value')).not.toBeInTheDocument();
 });
 
+test('ConditionBuilder variable set swaps with the selected event', () => {
+  renderLoyaltyCreate();
+  fireEvent.click(screen.getByText('Continue →')); // Basics → Trigger
+
+  // Switch the trigger event to review_submitted
+  const select = screen.getByRole('combobox');
+  fireEvent.change(select, { target: { value: 'review_submitted' } });
+
+  fireEvent.click(screen.getByText('Continue →')); // Trigger → Conditions
+
+  // Open the variable picker
+  fireEvent.click(screen.getByText(/Add condition/i));
+
+  // review_submitted payload fields are now selectable variables
+  expect(screen.getByText('rating')).toBeInTheDocument();
+  expect(screen.getByText('product_id')).toBeInTheDocument();
+  expect(screen.getByText('has_photo')).toBeInTheDocument();
+
+  // order_completed-only payload field must NOT be selectable
+  expect(screen.queryByText('order_value')).not.toBeInTheDocument();
+
+  // User attributes remain available regardless of the selected event
+  expect(screen.getByText('customer_tier')).toBeInTheDocument();
+});
+
 test('no-stacking banner is present on the trigger step', () => {
   renderLoyaltyCreate();
   fireEvent.click(screen.getByText('Continue →')); // → Trigger
