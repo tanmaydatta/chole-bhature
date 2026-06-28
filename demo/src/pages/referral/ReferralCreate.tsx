@@ -4,6 +4,7 @@ import { CreateFlowShell } from '../../components/flow/CreateFlowShell';
 import { ConditionBuilder } from '../../components/builder/ConditionBuilder';
 import { DualRewardEditor } from '../../components/rewards/DualRewardEditor';
 import { useProgramStore } from '../../data/store';
+import { useToast } from '../../components/common/Toast';
 import { VARIABLES } from '../../data/variables';
 import { TYPE_META } from '../../lib/types';
 import { rewardSummaryFor } from '../../lib/rewards';
@@ -23,6 +24,7 @@ export default function ReferralCreate() {
   const navigate = useNavigate();
   const addProgram = useProgramStore(s => s.addProgram);
   const programs = useProgramStore(s => s.programs);
+  const { toast } = useToast();
 
   // Step state
   const [activeStep, setActiveStep] = useState('basics');
@@ -103,11 +105,13 @@ export default function ReferralCreate() {
 
   function handleSaveDraft() {
     addProgram(buildProgram('draft'));
+    toast('Draft saved');
     navigate('/referrals');
   }
 
   function handleCreate() {
     addProgram(buildProgram('active'));
+    toast('Referral created');
     navigate('/referrals');
   }
 

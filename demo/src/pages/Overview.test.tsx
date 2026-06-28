@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/react';
+import { render, screen, within, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import Overview from './Overview';
 
@@ -46,4 +46,20 @@ test('renders the "＋ New program" button', () => {
 test('renders "All programs" page header', () => {
   renderWithRouter(<Overview />);
   expect(screen.getByText('All programs')).toBeInTheDocument();
+});
+
+test('"＋ New program" opens a type chooser with all four program types', () => {
+  renderWithRouter(<Overview />);
+  const newBtn = screen.getByRole('button', { name: /New program/i });
+
+  // Chooser should not be visible initially
+  expect(screen.queryByRole('menuitem', { name: /Promo/i })).not.toBeInTheDocument();
+
+  fireEvent.click(newBtn);
+
+  // All four type options must appear
+  expect(screen.getByRole('menuitem', { name: 'Promo' })).toBeInTheDocument();
+  expect(screen.getByRole('menuitem', { name: 'Affiliate' })).toBeInTheDocument();
+  expect(screen.getByRole('menuitem', { name: 'Referral' })).toBeInTheDocument();
+  expect(screen.getByRole('menuitem', { name: 'Loyalty' })).toBeInTheDocument();
 });

@@ -1,17 +1,20 @@
 import { render, screen, fireEvent } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import PromoCreate from './PromoCreate';
+import { ToastProvider } from '../../components/common/Toast';
 import { useProgramStore } from '../../data/store';
 import { PROGRAMS } from '../../data/programs';
 
 function renderPromoCreate() {
   return render(
-    <MemoryRouter initialEntries={['/promo/new']}>
-      <Routes>
-        <Route path="/promo/new" element={<PromoCreate />} />
-        <Route path="/promo" element={<div data-testid="promo-list-page">Promo List</div>} />
-      </Routes>
-    </MemoryRouter>
+    <ToastProvider>
+      <MemoryRouter initialEntries={['/promo/new']}>
+        <Routes>
+          <Route path="/promo/new" element={<PromoCreate />} />
+          <Route path="/promo" element={<div data-testid="promo-list-page">Promo List</div>} />
+        </Routes>
+      </MemoryRouter>
+    </ToastProvider>
   );
 }
 
@@ -129,4 +132,28 @@ test('Save draft adds a draft promo and navigates to /promo', () => {
   expect(draft.name).toBe('DRAFTPROMO');
 
   expect(screen.getByTestId('promo-list-page')).toBeInTheDocument();
+});
+
+test('clicking Create shows a "Promo created" toast', () => {
+  renderPromoCreate();
+
+  // Navigate through all steps to reach Review
+  fireEvent.click(screen.getByText('Continue →')); // Basics → Eligibility
+  fireEvent.click(screen.getByText('Continue →')); // Eligibility → Discount
+  fireEvent.click(screen.getByText('Continue →')); // Discount → Limits
+  fireEvent.click(screen.getByText('Continue →')); // Limits → Review
+
+  const createBtn = screen.getByRole('button', { name: /create/i });
+  fireEvent.click(createBtn);
+
+  // Toast text must appear in the DOM
+  expect(screen.getByText('Promo created')).toBeInTheDocument();
+});
+
+test('clicking Save draft shows a "Draft saved" toast', () => {
+  renderPromoCreate();
+
+  fireEvent.click(screen.getByText('Save draft'));
+
+  expect(screen.getByText('Draft saved')).toBeInTheDocument();
 });

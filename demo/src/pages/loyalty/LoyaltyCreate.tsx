@@ -4,6 +4,7 @@ import { CreateFlowShell } from '../../components/flow/CreateFlowShell';
 import { ConditionBuilder } from '../../components/builder/ConditionBuilder';
 import { RewardEditor } from '../../components/rewards/RewardEditor';
 import { useProgramStore } from '../../data/store';
+import { useToast } from '../../components/common/Toast';
 import { EVENTS } from '../../data/events';
 import { VARIABLES } from '../../data/variables';
 import { TYPE_META } from '../../lib/types';
@@ -25,6 +26,7 @@ const USER_VARIABLES = VARIABLES.filter(v => v.origin === 'user');
 export default function LoyaltyCreate() {
   const navigate = useNavigate();
   const addProgram = useProgramStore(s => s.addProgram);
+  const { toast } = useToast();
 
   const [activeStep, setActiveStep] = useState('basics');
 
@@ -90,11 +92,13 @@ export default function LoyaltyCreate() {
 
   function handleSaveDraft() {
     addProgram(buildProgram('draft'));
+    toast('Draft saved');
     navigate('/loyalty');
   }
 
   function handleCreate() {
     addProgram(buildProgram('active'));
+    toast('Loyalty created');
     navigate('/loyalty');
   }
 

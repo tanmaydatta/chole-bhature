@@ -4,6 +4,7 @@ import { vi, describe, it, expect, beforeEach } from 'vitest';
 import { MemoryRouter } from 'react-router-dom';
 import { CodeGenerator } from './CodeGenerator';
 import AffiliateCreate from '../../pages/affiliate/AffiliateCreate';
+import { ToastProvider } from '../../components/common/Toast';
 
 // Mock only downloadCSV, keep generateCodes/toCSV/previewExample real
 vi.mock('../../lib/codes', async () => {
@@ -116,9 +117,11 @@ describe('CodeGenerator', () => {
 describe('AffiliateCreate smoke test', () => {
   it('renders the steps rail including "Generate codes"', () => {
     render(
-      <MemoryRouter>
-        <AffiliateCreate />
-      </MemoryRouter>
+      <ToastProvider>
+        <MemoryRouter>
+          <AffiliateCreate />
+        </MemoryRouter>
+      </ToastProvider>
     );
     // Steps rail renders all step labels
     expect(screen.getByText('Generate codes')).toBeInTheDocument();

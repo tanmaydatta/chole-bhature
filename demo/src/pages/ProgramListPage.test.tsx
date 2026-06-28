@@ -64,6 +64,15 @@ test('Active filter carries the selected styling by default', () => {
   expect(pausedBtn.className).not.toContain('bg-[var(--panel)]');
 });
 
+test('empty state is shown when the filter yields zero programs', () => {
+  // Use a type with no programs — 'loyalty' has no Scheduled entries in seed
+  // Switch to Scheduled filter which has 0 promo programs
+  renderPage();
+  fireEvent.click(screen.getByRole('button', { name: /^Scheduled/ }));
+  expect(screen.getByTestId('empty-state')).toBeInTheDocument();
+  expect(screen.getByText(/No scheduled programs yet/i)).toBeInTheDocument();
+});
+
 test('list reacts to addProgram: a new active promo appears without remount', () => {
   renderPage();
   expect(screen.queryByText('FLASH20')).not.toBeInTheDocument();

@@ -211,6 +211,19 @@ export default function ReferralList() {
         </div>
       )}
 
+      {/* Empty state — shown when the filter yields no rows at all */}
+      {ranked.length === 0 && notRanked.length === 0 && (
+        <div
+          className="flex flex-col items-center justify-center gap-[10px] py-[56px] text-center"
+          data-testid="empty-state"
+        >
+          <span style={{ fontSize: '32px', opacity: 0.3 }}>○</span>
+          <p className="text-[14px] text-[var(--muted)] font-medium">
+            No {selected.toLowerCase()} programs yet.
+          </p>
+        </div>
+      )}
+
       {/* Not-ranked divider and section — paused/ended/draft within the current filter */}
       {notRanked.length > 0 && (
         <div className="flex flex-col gap-0">

@@ -1,3 +1,5 @@
+import { useState, useRef, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useProgramStore } from '../data/store';
 import { StatCard } from '../components/common/StatCard';
 import { DataTable } from '../components/common/DataTable';
@@ -5,8 +7,30 @@ import { TypePill } from '../components/common/TypePill';
 import { StatusBadge } from '../components/common/StatusBadge';
 import { PageHeader } from '../components/common/PageHeader';
 
+const TYPE_CHOICES = [
+  { label: 'Promo', route: '/promo/new' },
+  { label: 'Affiliate', route: '/affiliates/new' },
+  { label: 'Referral', route: '/referrals/new' },
+  { label: 'Loyalty', route: '/loyalty/new' },
+] as const;
+
 export default function Overview() {
+  const navigate = useNavigate();
+  const [chooserOpen, setChooserOpen] = useState(false);
+  const chooserRef = useRef<HTMLDivElement>(null);
   const programs = useProgramStore(state => state.programs);
+
+  // Close chooser on outside click
+  useEffect(() => {
+    if (!chooserOpen) return;
+    function handleClickOutside(e: MouseEvent) {
+      if (chooserRef.current && !chooserRef.current.contains(e.target as Node)) {
+        setChooserOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [chooserOpen]);
 
   const rows = programs.map(p => ({
     name: (
@@ -59,12 +83,61 @@ export default function Overview() {
         <PageHeader
           title="All programs"
           action={
-            <button
-              className="inline-flex items-center gap-[6px] text-[13px] font-semibold px-[14px] py-[7px] rounded-[8px] bg-[var(--accent)] text-white border-none cursor-pointer"
-              type="button"
-            >
-              ＋ New program
-            </button>
+            <div ref={chooserRef} style={{ position: 'relative', display: 'inline-block' }}>
+              <button
+                className="inline-flex items-center gap-[6px] text-[13px] font-semibold px-[14px] py-[7px] rounded-[8px] bg-[var(--accent)] text-white border-none cursor-pointer"
+                type="button"
+                aria-haspopup="true"
+                aria-expanded={chooserOpen}
+                onClick={() => setChooserOpen(prev => !prev)}
+              >
+                ＋ New program
+              </button>
+              {chooserOpen && (
+                <div
+                  role="menu"
+                  aria-label="Choose program type"
+                  style={{
+                    position: 'absolute',
+                    top: 'calc(100% + 6px)',
+                    right: 0,
+                    background: 'var(--panel, #fff)',
+                    border: '1px solid var(--border, #e2e8f0)',
+                    borderRadius: '10px',
+                    boxShadow: '0 4px 16px rgba(0,0,0,0.12)',
+                    padding: '6px',
+                    minWidth: '160px',
+                    zIndex: 100,
+                  }}
+                >
+                  {TYPE_CHOICES.map(({ label, route }) => (
+                    <button
+                      key={label}
+                      role="menuitem"
+                      type="button"
+                      onClick={() => { setChooserOpen(false); navigate(route); }}
+                      style={{
+                        display: 'block',
+                        width: '100%',
+                        textAlign: 'left',
+                        padding: '8px 12px',
+                        border: 'none',
+                        background: 'transparent',
+                        borderRadius: '7px',
+                        cursor: 'pointer',
+                        fontSize: '13px',
+                        fontWeight: 600,
+                        color: 'var(--ink, #1e293b)',
+                      }}
+                      onMouseEnter={e => (e.currentTarget.style.background = 'var(--hover, #f1f5f9)')}
+                      onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
           }
         />
         <DataTable columns={columns} rows={rows} />

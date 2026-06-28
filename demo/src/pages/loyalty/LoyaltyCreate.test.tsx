@@ -1,17 +1,20 @@
 import { render, screen, fireEvent } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import LoyaltyCreate from './LoyaltyCreate';
+import { ToastProvider } from '../../components/common/Toast';
 import { useProgramStore } from '../../data/store';
 import { PROGRAMS } from '../../data/programs';
 
 function renderLoyaltyCreate() {
   return render(
-    <MemoryRouter initialEntries={['/loyalty/new']}>
-      <Routes>
-        <Route path="/loyalty/new" element={<LoyaltyCreate />} />
-        <Route path="/loyalty" element={<div data-testid="loyalty-list-page">Loyalty List</div>} />
-      </Routes>
-    </MemoryRouter>
+    <ToastProvider>
+      <MemoryRouter initialEntries={['/loyalty/new']}>
+        <Routes>
+          <Route path="/loyalty/new" element={<LoyaltyCreate />} />
+          <Route path="/loyalty" element={<div data-testid="loyalty-list-page">Loyalty List</div>} />
+        </Routes>
+      </MemoryRouter>
+    </ToastProvider>
   );
 }
 

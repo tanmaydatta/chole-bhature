@@ -5,6 +5,7 @@ import { ConditionBuilder } from '../../components/builder/ConditionBuilder';
 import { RewardEditor } from '../../components/rewards/RewardEditor';
 import { CodeGenerator } from '../../components/codes/CodeGenerator';
 import { useProgramStore } from '../../data/store';
+import { useToast } from '../../components/common/Toast';
 import { VARIABLES } from '../../data/variables';
 import { TYPE_META } from '../../lib/types';
 import { rewardSummaryFor } from '../../lib/rewards';
@@ -24,6 +25,7 @@ const STEP_KEYS = STEPS.map(s => s.key);
 export default function AffiliateCreate() {
   const navigate = useNavigate();
   const addProgram = useProgramStore(s => s.addProgram);
+  const { toast } = useToast();
 
   // Step state
   const [activeStep, setActiveStep] = useState('basics');
@@ -88,11 +90,13 @@ export default function AffiliateCreate() {
 
   function handleSaveDraft() {
     addProgram(buildProgram('draft'));
+    toast('Draft saved');
     navigate('/affiliates');
   }
 
   function handleCreate() {
     addProgram(buildProgram('active'));
+    toast('Affiliate created');
     navigate('/affiliates');
   }
 
