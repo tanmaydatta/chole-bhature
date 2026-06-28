@@ -15,7 +15,7 @@ vi.mock('../../lib/codes', async () => {
   };
 });
 
-import { downloadCSV, toCSV } from '../../lib/codes';
+import { downloadCSV } from '../../lib/codes';
 
 describe('CodeGenerator', () => {
   beforeEach(() => {
@@ -44,7 +44,7 @@ describe('CodeGenerator', () => {
     expect(screen.getByText(/\+\s*17 more/i)).toBeInTheDocument();
   });
 
-  it('calls downloadCSV with a CSV containing 25 data rows after clicking Download CSV', async () => {
+  it('calls downloadCSV with a codes-only CSV containing 25 data rows after clicking Download CSV', async () => {
     const user = userEvent.setup();
     render(<CodeGenerator />);
 
@@ -66,19 +66,19 @@ describe('CodeGenerator', () => {
     // downloadCSV should have been called
     expect(downloadCSV).toHaveBeenCalledTimes(1);
 
-    // Check the CSV content has 25 data rows (header + 25 rows)
+    // Check the CSV content: codes-only (header "code" + 25 code lines)
     const [filename, csv] = (downloadCSV as ReturnType<typeof vi.fn>).mock.calls[0];
     expect(filename).toBe('acme-affiliate-codes.csv');
     const lines = (csv as string).trim().split('\n');
     // 1 header + 25 data rows = 26 lines
     expect(lines).toHaveLength(26);
-    expect(lines[0]).toBe('code,status,uses_left');
-    // Default "Single use" → every data row carries uses_left = 1
+    expect(lines[0]).toBe('code');
+    // Each data row is just a code string (no commas)
     const dataRows = lines.slice(1);
-    expect(dataRows.every(r => /,unused,1$/.test(r))).toBe(true);
+    expect(dataRows.every(r => r.length > 0 && !r.includes(','))).toBe(true);
   });
 
-  it('downloads a CSV with uses_left = 5 after selecting "Up to 5 uses"', async () => {
+  it('downloads a codes-only CSV after selecting "Up to 5 uses"', async () => {
     const user = userEvent.setup();
     render(<CodeGenerator />);
 
@@ -94,17 +94,11 @@ describe('CodeGenerator', () => {
     await user.click(screen.getByRole('button', { name: /download csv/i }));
 
     const [, csv] = (downloadCSV as ReturnType<typeof vi.fn>).mock.calls[0];
-    const dataRows = (csv as string).trim().split('\n').slice(1);
+    const lines = (csv as string).trim().split('\n');
+    expect(lines[0]).toBe('code');
+    const dataRows = lines.slice(1);
     expect(dataRows).toHaveLength(25);
-    expect(dataRows.every(r => /,unused,5$/.test(r))).toBe(true);
-    // At least one concrete data row matches the expected mapping
-    expect(dataRows[0]).toMatch(/,unused,5$/);
-  });
-
-  it('toCSV maps the uses-per-code option to the correct uses_left column', () => {
-    expect(toCSV(['ACME-1'], 1)).toMatch(/,unused,1$/);
-    expect(toCSV(['ACME-1'], 5)).toMatch(/,unused,5$/);
-    expect(toCSV(['ACME-1'], '∞')).toMatch(/,unused,∞$/);
+    expect(dataRows.every(r => r.length > 0 && !r.includes(','))).toBe(true);
   });
 
   it('Download CSV button is disabled before generating', async () => {

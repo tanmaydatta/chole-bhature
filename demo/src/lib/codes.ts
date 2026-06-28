@@ -21,10 +21,30 @@ export function previewExample(prefix: string, length: number): string {
   return prefix + suffix;
 }
 
-export function toCSV(codes: string[], usesLeft: number | '∞'): string {
-  const header = 'code,status,uses_left';
-  const rows = codes.map(code => `${code},unused,${usesLeft}`);
-  return [header, ...rows].join('\n');
+export type CodeStatus = 'unused' | 'redeemed' | 'expired';
+export interface CodeRow { code: string; status: CodeStatus; usesUsed: number; usesTotal: number | 'unlimited'; }
+
+const STATUSES: CodeStatus[] = ['unused', 'redeemed', 'expired'];
+
+function randInt(maxInclusive: number): number { return Math.floor(Math.random() * (maxInclusive + 1)); }
+
+function usesUsedFor(status: CodeStatus, usesTotal: number | 'unlimited'): number {
+  if (status === 'unused') return 0;
+  const cap = usesTotal === 'unlimited' ? 20 : usesTotal;
+  if (status === 'redeemed') return cap <= 1 ? 1 : 1 + randInt(cap - 1); // 1..cap
+  return randInt(cap); // expired: 0..cap
+}
+
+export function buildCodeRows(opts: { prefix: string; length: number; count: number; usesPerCode: number | 'unlimited'; }): CodeRow[] {
+  const codes = generateCodes({ prefix: opts.prefix, length: opts.length, count: opts.count });
+  return codes.map((code) => {
+    const status = STATUSES[Math.floor(Math.random() * STATUSES.length)];
+    return { code, status, usesTotal: opts.usesPerCode, usesUsed: usesUsedFor(status, opts.usesPerCode) };
+  });
+}
+
+export function toCSV(codes: string[]): string {
+  return 'code\n' + codes.join('\n') + '\n';
 }
 
 export function downloadCSV(filename: string, csv: string): void {

@@ -40,7 +40,7 @@ export function CodeGenerator({ onGenerated }: CodeGeneratorProps) {
 
   function handleDownload() {
     if (!generatedCodes.length) return;
-    const csv = toCSV(generatedCodes, usesLeft(uses));
+    const csv = toCSV(generatedCodes);
     downloadCSV('acme-affiliate-codes.csv', csv);
   }
 
