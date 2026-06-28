@@ -1,0 +1,19 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+build/
+
+# Brainstorm companion (mockups persist locally, not tracked)
+.superpowers/
+
+# Env / local
+.env
+.env.local
+*.local
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
