@@ -1,6 +1,12 @@
 import { render, screen, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import Events from './Events';
+import { useEventsStore } from '../../data/eventsStore';
+import { EVENTS } from '../../data/events';
+
+beforeEach(() => {
+  useEventsStore.setState({ events: EVENTS.map(e => ({ ...e })) });
+});
 
 function renderEvents() {
   return render(

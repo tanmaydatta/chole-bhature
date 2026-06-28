@@ -1,10 +1,11 @@
 import { useState } from 'react';
-import { EVENTS } from '../../data/events';
+import { useEventsStore } from '../../data/eventsStore';
 import { PageHeader } from '../../components/common/PageHeader';
 
 export default function Events() {
+  const events = useEventsStore(s => s.events);
   const [selectedIdx, setSelectedIdx] = useState(0);
-  const event = EVENTS[selectedIdx];
+  const event = events[selectedIdx];
 
   const sampleEntries = Object.entries(event.sample);
 
@@ -24,7 +25,7 @@ export default function Events() {
       <div className="flex gap-5 items-start">
         {/* Left: event list */}
         <div className="w-[260px] flex-shrink-0 flex flex-col gap-2">
-          {EVENTS.map((ev, i) => (
+          {events.map((ev, i) => (
             <div
               key={ev.name}
               onClick={() => setSelectedIdx(i)}
