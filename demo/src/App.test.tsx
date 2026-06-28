@@ -10,5 +10,5 @@ test('renders app placeholder', () => {
       </MemoryRouter>
     </ThemeProvider>
   );
-  expect(screen.getAllByText(/Incentives/i).length).toBeGreaterThan(0);
+  expect(screen.getAllByText(/Incentives/i)).toHaveLength(2);
 });
