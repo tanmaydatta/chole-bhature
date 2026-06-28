@@ -6,6 +6,7 @@ import PromoCreate from './pages/promo/PromoCreate';
 import AffiliateList from './pages/affiliate/AffiliateList';
 import AffiliateCreate from './pages/affiliate/AffiliateCreate';
 import LoyaltyList from './pages/loyalty/LoyaltyList';
+import LoyaltyCreate from './pages/loyalty/LoyaltyCreate';
 import ReferralList from './pages/referral/ReferralList';
 import ReferralCreate from './pages/referral/ReferralCreate';
 
@@ -19,6 +20,7 @@ export default function App() {
       <Route path="/promo/new" element={<PromoCreate />} />
       <Route path="/affiliates/new" element={<AffiliateCreate />} />
       <Route path="/referrals/new" element={<ReferralCreate />} />
+      <Route path="/loyalty/new" element={<LoyaltyCreate />} />
       <Route element={<AppShell />}>
         <Route index element={<Overview />} />
         <Route path="/promo" element={<PromoList />} />
