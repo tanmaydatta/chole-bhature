@@ -17,7 +17,7 @@ npm run build      # tsc -b && vite build (production bundle)
 ## The four program types
 
 - **Promo Codes** — single shared codes (e.g. `SUMMER15`) with optional auto-apply and stacking rules.
-- **Affiliates** — bulk-generated unique codes exported as a CSV; each code is independently trackable.
+- **Affiliates** — bulk-generated unique codes exported as a codes-only CSV (one `code` per line); each code is independently trackable.
 - **Referrals** — dual rewards (referrer + referee), priority-ranked so the highest-priority eligible program wins; drag-to-reorder supported.
 - **Loyalty** — event-triggered reward programs (e.g. points back on `order_completed`); no stacking within the same event.
 
@@ -42,6 +42,7 @@ demo/src/
     Overview.tsx             # cross-program stat summary
     Analytics.tsx            # shallow chart placeholders
     _ProgramListPage.tsx     # shared list-page shell
+    ProgramDetail.tsx        # shared detail page (all program types; affiliate: Codes panel)
     promo/                   # PromoList, PromoCreate
     affiliate/               # AffiliateList, AffiliateCreate
     referral/                # ReferralList, ReferralCreate
@@ -84,7 +85,8 @@ Mock data lives in `demo/src/data/` (programs, variables, events). The Zustand s
 |---|---|
 | Condition builder — add/remove rules, pick variable + operator | Any create flow → Conditions step |
 | Error message interpolation — type `{{basket_value - minimum\|money}}` | Conditions → message field |
-| Affiliate CSV download — generate unique codes and download `.csv` | Affiliate → Create → Codes step |
+| Affiliate CSV download — generate unique codes and download a codes-only `.csv` | Affiliate → Create → Codes step |
+| Affiliate Codes panel — view per-code status/usage and download the full CSV | Affiliate detail page |
 | Referral drag-to-rank — drag rows to reprioritise active referral programs | Referral list page |
 | Loyalty event swap — change trigger event, payload fields update instantly | Loyalty → Create → Trigger step |
 | Light / dark toggle — persists across reloads via `localStorage` | Top bar (moon / sun button) |
@@ -98,6 +100,13 @@ Mock data lives in `demo/src/data/` (programs, variables, events). The Zustand s
 **Events** — clicking an event row opens a detail pane on the right with in-place editing (name, description, payload fields). **＋ New event** creates a blank event and enters edit mode immediately.
 
 As with all demo data, new entries and edits are held in-memory and reset on page reload.
+
+**Affiliate Codes panel** — the detail page for any affiliate program with a code count set shows a **Codes** section. It includes:
+- A status summary line: unused / redeemed / expired counts.
+- A preview table of up to the first 50 codes with columns `Code | Status | Uses`. The Uses column shows `used/total` for multi-use codes, `used/∞` for unlimited-use codes, and `—` for single-use codes.
+- A **Download CSV** button that downloads the full code list as a codes-only CSV (a `code` header row followed by one code per line, no status or usage columns).
+
+Status and usage values are generated client-side for illustration purposes and are not persisted.
 
 ## Non-goals (explicit)
 
