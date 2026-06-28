@@ -10,6 +10,7 @@ import LoyaltyCreate from './pages/loyalty/LoyaltyCreate';
 import ReferralList from './pages/referral/ReferralList';
 import ReferralCreate from './pages/referral/ReferralCreate';
 import Variables from './pages/setup/Variables';
+import Events from './pages/setup/Events';
 
 const Placeholder = ({ name }: { name: string }) => (
   <div className="text-[var(--muted)] text-sm">{name} page — coming soon</div>
@@ -29,7 +30,7 @@ export default function App() {
         <Route path="/referrals" element={<ReferralList />} />
         <Route path="/loyalty" element={<LoyaltyList />} />
         <Route path="/variables" element={<Variables />} />
-        <Route path="/events" element={<Placeholder name="Events" />} />
+        <Route path="/events" element={<Events />} />
         <Route path="/analytics" element={<Placeholder name="Analytics" />} />
       </Route>
     </Routes>
