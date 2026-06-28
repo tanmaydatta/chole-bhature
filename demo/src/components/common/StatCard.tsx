@@ -2,16 +2,18 @@ interface StatCardProps {
   label: string;
   value: string;
   delta?: string;
+  deltaTone?: 'positive' | 'muted';
   bar?: number;
 }
 
-export function StatCard({ label, value, delta, bar }: StatCardProps) {
+export function StatCard({ label, value, delta, deltaTone = 'positive', bar }: StatCardProps) {
+  const deltaColor = deltaTone === 'muted' ? 'var(--muted)' : 'var(--green)';
   return (
     <div className="bg-[var(--panel)] border border-[var(--border)] rounded-[12px] px-[16px] py-[15px] shadow-[var(--shadow)]">
       <div className="text-[var(--muted)] text-[12px] font-medium">{label}</div>
       <div className="text-[24px] font-bold mt-[7px] tracking-[-0.02em]">{value}</div>
       {delta !== undefined && (
-        <div className="text-[12px] mt-[5px] text-[var(--green)] font-semibold">{delta}</div>
+        <div className="text-[12px] mt-[5px] font-semibold" style={{ color: deltaColor }}>{delta}</div>
       )}
       {bar !== undefined && (
         <div className="h-[6px] rounded-full bg-[var(--hover)] mt-[9px] overflow-hidden">
