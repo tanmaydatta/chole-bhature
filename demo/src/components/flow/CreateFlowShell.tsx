@@ -20,6 +20,8 @@ interface CreateFlowShellProps {
   onStep: (key: string) => void;
   onCancel: () => void;
   onSaveDraft: () => void;
+  onContinue?: () => void;
+  onBack?: () => void;
   children: ReactNode;
   footer?: ReactNode;
 }
@@ -31,6 +33,8 @@ export function CreateFlowShell({
   onStep,
   onCancel,
   onSaveDraft,
+  onContinue,
+  onBack,
   children,
   footer,
 }: CreateFlowShellProps) {
@@ -41,7 +45,7 @@ export function CreateFlowShell({
         <div className="flex items-center gap-[12px]">
           <button
             className="w-[30px] h-[30px] rounded-[8px] border border-[var(--border)] bg-[var(--panel)] flex items-center justify-center cursor-pointer"
-            onClick={onCancel}
+            onClick={() => (onBack ?? onCancel)()}
             aria-label="Go back"
           >
             ←
@@ -75,6 +79,7 @@ export function CreateFlowShell({
           <button
             className="border-none px-[15px] py-[8px] rounded-[8px] font-[600] text-[13px] cursor-pointer text-white"
             style={{ background: 'var(--accent)' }}
+            onClick={() => onContinue?.()}
           >
             Continue →
           </button>

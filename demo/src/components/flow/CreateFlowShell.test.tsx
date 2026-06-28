@@ -91,6 +91,64 @@ test('Cancel and Save draft buttons call handlers', () => {
   expect(onSaveDraft).toHaveBeenCalledTimes(1);
 });
 
+test('clicking Continue fires onContinue', () => {
+  const onContinue = vi.fn();
+  render(
+    <CreateFlowShell
+      typeMeta={TYPE_META_REFERRAL}
+      steps={STEPS}
+      activeStep="basics"
+      onStep={() => {}}
+      onCancel={() => {}}
+      onSaveDraft={() => {}}
+      onContinue={onContinue}
+    >
+      <div>Form content</div>
+    </CreateFlowShell>
+  );
+  fireEvent.click(screen.getByText('Continue →'));
+  expect(onContinue).toHaveBeenCalledTimes(1);
+});
+
+test('clicking back arrow fires onBack when provided', () => {
+  const onBack = vi.fn();
+  const onCancel = vi.fn();
+  render(
+    <CreateFlowShell
+      typeMeta={TYPE_META_REFERRAL}
+      steps={STEPS}
+      activeStep="basics"
+      onStep={() => {}}
+      onCancel={onCancel}
+      onSaveDraft={() => {}}
+      onBack={onBack}
+    >
+      <div>Form content</div>
+    </CreateFlowShell>
+  );
+  fireEvent.click(screen.getByLabelText('Go back'));
+  expect(onBack).toHaveBeenCalledTimes(1);
+  expect(onCancel).not.toHaveBeenCalled();
+});
+
+test('back arrow falls back to onCancel when onBack is omitted', () => {
+  const onCancel = vi.fn();
+  render(
+    <CreateFlowShell
+      typeMeta={TYPE_META_REFERRAL}
+      steps={STEPS}
+      activeStep="basics"
+      onStep={() => {}}
+      onCancel={onCancel}
+      onSaveDraft={() => {}}
+    >
+      <div>Form content</div>
+    </CreateFlowShell>
+  );
+  fireEvent.click(screen.getByLabelText('Go back'));
+  expect(onCancel).toHaveBeenCalledTimes(1);
+});
+
 // RewardEditor tests
 test('RewardEditor renders kind select with all options', () => {
   const onChange = vi.fn();

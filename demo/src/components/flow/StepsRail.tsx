@@ -22,8 +22,6 @@ export function StepsRail({ steps, activeStep, onStep, accentColor, accentBg }: 
 
         const stepStyle = isActive
           ? { color: accentColor, background: accentBg }
-          : isDone
-          ? {}
           : {};
 
         const numberStyle = isActive
