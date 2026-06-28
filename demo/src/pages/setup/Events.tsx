@@ -6,12 +6,7 @@ export default function Events() {
   const [selectedIdx, setSelectedIdx] = useState(0);
   const event = EVENTS[selectedIdx];
 
-  const sampleLines = Object.entries(event.sample).map(([key, val]) => {
-    const isString = val.startsWith('"');
-    const cls = isString ? 'color:#86efac' : 'color:#fca5a5';
-    return `  <span style="color:#7dd3fc">"${key}"</span>: <span style="${cls}">${val}</span>`;
-  });
-  const jsonBlock = `{\n${sampleLines.join(',\n')}\n}`;
+  const sampleEntries = Object.entries(event.sample);
 
   return (
     <div>
@@ -149,8 +144,18 @@ export default function Events() {
             className="bg-[var(--code,#0b1020)] text-[var(--codeink,#d7e0ff)] rounded-[10px] px-[15px] py-[13px] text-[12.5px] leading-[1.55] overflow-auto m-0 font-mono"
           >
             <span className="text-[var(--faint)]">{`POST /v1/events/${event.name}`}</span>
-            {'\n'}
-            <span dangerouslySetInnerHTML={{ __html: jsonBlock }} />
+            {'\n{\n'}
+            {sampleEntries.map(([key, val], i) => (
+              <span key={key}>
+                {'  '}
+                <span style={{ color: '#7dd3fc' }}>&quot;{key}&quot;</span>
+                {': '}
+                <span style={{ color: val.startsWith('"') ? '#86efac' : '#fca5a5' }}>{val}</span>
+                {i < sampleEntries.length - 1 ? ',' : ''}
+                {'\n'}
+              </span>
+            ))}
+            {'}'}
           </pre>
         </div>
       </div>
