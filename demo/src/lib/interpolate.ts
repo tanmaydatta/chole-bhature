@@ -1,13 +1,13 @@
 import { money } from './format';
 
-const UNICODE_MINUS = '−';
 const TOKEN_RE = /\{\{([^}]+)\}\}/g;
+const SUBTRACTION_RE = /^\s*([\w.]+)\s*-\s*([\w.]+)\s*$/;
 
-function resolveOperand(operand: string, ctx: Record<string, number | string>): number {
+function resolveOperand(operand: string, ctx: Record<string, number | string>): number | null {
   const trimmed = operand.trim();
   if (/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(trimmed)) {
     const val = ctx[trimmed];
-    if (val === undefined) return 0;
+    if (val === undefined) return null;
     return Number(val);
   }
   return Number(trimmed);
@@ -17,19 +17,19 @@ export function renderMessage(template: string, ctx: Record<string, number | str
   return template.replace(TOKEN_RE, (_match, inner: string) => {
     try {
       const parts = inner.split('|');
-      const expr = parts[0];
+      const rawExpr = parts[0];
       const filter = parts[1]?.trim() ?? '';
+
+      // Normalize Unicode minus (U+2212) to ASCII hyphen
+      const expr = rawExpr.replace(/−/g, '-');
 
       let value: number | string;
 
-      const hasUnicodeMinus = expr.includes(UNICODE_MINUS);
-      const hasHyphen = /(?<![0-9])-(?![0-9])/.test(expr) || (expr.indexOf('-') > 0);
-
-      if (hasUnicodeMinus || hasHyphen) {
-        const sep = hasUnicodeMinus ? UNICODE_MINUS : '-';
-        const sepIdx = expr.indexOf(sep);
-        const left = resolveOperand(expr.slice(0, sepIdx), ctx);
-        const right = resolveOperand(expr.slice(sepIdx + 1), ctx);
+      const subMatch = SUBTRACTION_RE.exec(expr);
+      if (subMatch) {
+        const left = resolveOperand(subMatch[1], ctx);
+        const right = resolveOperand(subMatch[2], ctx);
+        if (left === null || right === null) return '';
         value = left - right;
       } else {
         const trimmed = expr.trim();

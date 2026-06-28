@@ -9,3 +9,9 @@ test('plain variable substitution', () => {
 test('leaves text without tokens untouched', () => {
   expect(renderMessage('No tokens here', {})).toBe('No tokens here');
 });
+test('handles ASCII hyphen subtraction too', () => {
+  expect(renderMessage('Add {{ 50 - basket_value | money }} more', { basket_value: 38 })).toBe('Add $12 more');
+});
+test('subtraction with an unknown operand renders empty', () => {
+  expect(renderMessage('{{ unknown_var - 5 | money }}', {})).toBe('');
+});
