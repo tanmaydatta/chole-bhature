@@ -34,7 +34,7 @@ test('clicking "All" filter then shows WELCOME10 too', () => {
   expect(screen.getByText('WELCOME10')).toBeInTheDocument();
 });
 
-test('filter counts reflect seed: promo Active=1, Paused=1, All=2', () => {
+test('filter counts reflect seed: promo Active=1, Paused=1, Draft=1, All=3', () => {
   renderPage();
   // Active filter button should show count 1
   const activeBtn = screen.getByRole('button', { name: /^Active/ });
@@ -44,9 +44,9 @@ test('filter counts reflect seed: promo Active=1, Paused=1, All=2', () => {
   const pausedBtn = screen.getByRole('button', { name: /^Paused/ });
   expect(pausedBtn).toHaveTextContent('1');
 
-  // All filter button should show count 2
+  // All filter button should show count 3 (active + paused + draft)
   const allBtn = screen.getByRole('button', { name: /^All/ });
-  expect(allBtn).toHaveTextContent('2');
+  expect(allBtn).toHaveTextContent('3');
 });
 
 test('renders page title and new button', () => {
