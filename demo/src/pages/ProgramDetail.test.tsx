@@ -1,5 +1,6 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
+import { vi, type Mock } from 'vitest';
 import ProgramDetail from './ProgramDetail';
 import { useProgramStore } from '../data/store';
 import { useVariablesStore } from '../data/variablesStore';
@@ -7,6 +8,16 @@ import { useEventsStore } from '../data/eventsStore';
 import { PROGRAMS } from '../data/programs';
 import { VARIABLES } from '../data/variables';
 import { EVENTS } from '../data/events';
+
+vi.mock('../lib/codes', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../lib/codes')>();
+  return {
+    ...actual,
+    downloadCSV: vi.fn(),
+  };
+});
+
+import { downloadCSV } from '../lib/codes';
 
 function renderAt(path: string, routePattern: string) {
   return render(
@@ -93,4 +104,61 @@ test('affiliate detail shows uses-per-code if present', () => {
   renderAt('/affiliates/aff-test-upc', '/affiliates/:id');
   expect(screen.getByText(/uses per code/i)).toBeInTheDocument();
   expect(screen.getByText('3')).toBeInTheDocument();
+});
+
+// Task 3: Codes panel tests
+test('affiliate detail shows a Codes panel with a status summary and preview rows', () => {
+  useProgramStore.setState({
+    programs: [
+      ...PROGRAMS.map(p => ({ ...p })),
+      {
+        id: 'aff-codes-60',
+        name: 'Multi Use Partner',
+        type: 'affiliate' as const,
+        status: 'active' as const,
+        rewardSummary: '15% off',
+        redemptions: 0,
+        codeCount: 60,
+        usesPerCode: 5,
+      },
+    ],
+  });
+  renderAt('/affiliates/aff-codes-60', '/affiliates/:id');
+  expect(screen.getByText('Codes')).toBeInTheDocument();
+  // status summary paragraph contains "unused"
+  expect(screen.getByText(/unused · \d+ redeemed/i)).toBeInTheDocument();
+  expect(screen.getByText(/\+\s*10 more/i)).toBeInTheDocument();
+});
+
+test('affiliate detail Download CSV downloads codes-only', () => {
+  vi.mocked(downloadCSV).mockClear();
+  useProgramStore.setState({
+    programs: [
+      ...PROGRAMS.map(p => ({ ...p })),
+      {
+        id: 'aff-codes-60',
+        name: 'Multi Use Partner',
+        type: 'affiliate' as const,
+        status: 'active' as const,
+        rewardSummary: '15% off',
+        redemptions: 0,
+        codeCount: 60,
+        usesPerCode: 5,
+      },
+    ],
+  });
+  renderAt('/affiliates/aff-codes-60', '/affiliates/:id');
+  fireEvent.click(screen.getByRole('button', { name: /download csv/i }));
+  const csv = (downloadCSV as Mock).mock.calls[0][1] as string;
+  expect(csv.split('\n')[0]).toBe('code');
+  expect(csv).not.toMatch(/status|uses/i);
+});
+
+test('affiliate detail single-use codes show — in Uses column', () => {
+  // aff-1 has usesPerCode: 1 (single-use)
+  renderAt('/affiliates/aff-1', '/affiliates/:id');
+  // Uses column header should be present
+  expect(screen.getByText('Uses')).toBeInTheDocument();
+  // Single-use codes should show — (em-dash)
+  expect(screen.getAllByText('—').length).toBeGreaterThan(0);
 });
