@@ -3,6 +3,7 @@ import type { Origin, Variable } from '../../lib/types';
 import { useVariablesStore } from '../../data/variablesStore';
 import { PageHeader } from '../../components/common/PageHeader';
 import { SegmentedFilter } from '../../components/common/SegmentedFilter';
+import { VariablePanel } from '../../components/setup/VariablePanel';
 
 type FilterOption = 'All' | 'User attributes' | 'Dynamic' | 'System';
 
@@ -54,9 +55,25 @@ function typeLabel(v: Variable): string {
   return v.type;
 }
 
+type PanelMode = 'view' | 'edit' | 'create';
+
 export default function Variables() {
   const variables = useVariablesStore(s => s.variables);
   const [filter, setFilter] = useState<FilterOption>('All');
+  const [panelVariable, setPanelVariable] = useState<Variable | null>(null);
+  const [panelMode, setPanelMode] = useState<PanelMode>('view');
+  const [panelOpen, setPanelOpen] = useState(false);
+
+  function openPanel(variable: Variable | null, mode: PanelMode) {
+    setPanelVariable(variable);
+    setPanelMode(mode);
+    setPanelOpen(true);
+  }
+
+  function closePanel() {
+    setPanelOpen(false);
+    setPanelVariable(null);
+  }
 
   const userCount = variables.filter((v) => v.origin === 'user').length;
   const dynCount = variables.filter((v) => v.origin === 'dynamic').length;
@@ -81,7 +98,10 @@ export default function Variables() {
         <PageHeader
           title="Variables"
           action={
-            <button className="border-none px-[14px] py-[8px] rounded-[8px] font-semibold text-[13px] cursor-pointer bg-[var(--accent)] text-white">
+            <button
+              className="border-none px-[14px] py-[8px] rounded-[8px] font-semibold text-[13px] cursor-pointer bg-[var(--accent)] text-white"
+              onClick={() => openPanel(null, 'create')}
+            >
               ＋ New variable
             </button>
           }
@@ -140,7 +160,16 @@ export default function Variables() {
                   {rows.map((v) => (
                     <tr
                       key={v.name}
-                      className="border-b border-[var(--border)] last:border-b-0 hover:bg-[var(--hover)]"
+                      className="border-b border-[var(--border)] last:border-b-0 hover:bg-[var(--hover)] cursor-pointer"
+                      onClick={() => openPanel(v, v.readOnly ? 'view' : 'edit')}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          openPanel(v, v.readOnly ? 'view' : 'edit');
+                        }
+                      }}
+                      tabIndex={0}
+                      role="button"
+                      aria-label={`Open ${v.name}`}
                     >
                       <td className="px-[16px] py-[12px] align-middle">
                         <div className="flex items-center gap-[7px] font-[650]">
@@ -196,6 +225,14 @@ export default function Variables() {
         System variables are read-only (we maintain them) but usable in any condition — that&apos;s how budgets, caps,
         per-customer limits and date windows work.
       </p>
+
+      {panelOpen && (
+        <VariablePanel
+          variable={panelVariable}
+          mode={panelMode}
+          onClose={closePanel}
+        />
+      )}
     </div>
   );
 }
