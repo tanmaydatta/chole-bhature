@@ -1,6 +1,7 @@
 import { Link, useParams } from 'react-router-dom';
 import { useProgramStore } from '../data/store';
 import { useVariablesStore } from '../data/variablesStore';
+import { useEventsStore } from '../data/eventsStore';
 import { TypePill } from '../components/common/TypePill';
 import { StatusBadge } from '../components/common/StatusBadge';
 import { PageHeader } from '../components/common/PageHeader';
@@ -33,6 +34,7 @@ export default function ProgramDetail() {
   const { id } = useParams<{ id: string }>();
   const programs = useProgramStore(s => s.programs);
   const variables = useVariablesStore(s => s.variables);
+  const events = useEventsStore(s => s.events);
 
   const program: Program | undefined = programs.find(p => p.id === id);
 
@@ -103,6 +105,9 @@ export default function ProgramDetail() {
             {program.type === 'affiliate' && program.codeCount != null && (
               <Row label="Code count">{String(program.codeCount)}</Row>
             )}
+            {program.type === 'affiliate' && program.usesPerCode != null && (
+              <Row label="Uses per code">{String(program.usesPerCode)}</Row>
+            )}
             {program.type === 'referral' && (
               <>
                 {program.priority != null && (
@@ -142,20 +147,48 @@ export default function ProgramDetail() {
             </tbody>
           </table>
         ) : program.type === 'loyalty' ? (
-          <table className="text-[13px] w-full border-collapse">
-            <tbody>
-              {program.triggerEvent != null && (
-                <Row label="Trigger event">
-                  <span className="font-mono">{String(program.triggerEvent)}</span>
+          <>
+            <table className="text-[13px] w-full border-collapse">
+              <tbody>
+                {program.triggerEvent != null && (
+                  <Row label="Trigger event">
+                    <span className="font-mono">{String(program.triggerEvent)}</span>
+                  </Row>
+                )}
+                {program.reward != null && (
+                  <Row label="Reward">
+                    {rewardSummaryFor(program.reward as Reward)}
+                  </Row>
+                )}
+                <Row label="Stacking">
+                  <span className="text-[var(--muted)] italic">No stacking (fixed rule)</span>
                 </Row>
-              )}
-              {program.reward != null && (
-                <Row label="Reward">
-                  {rewardSummaryFor(program.reward as Reward)}
-                </Row>
-              )}
-            </tbody>
-          </table>
+              </tbody>
+            </table>
+            {program.triggerEvent != null && (() => {
+              const ev = events.find(e => e.name === String(program.triggerEvent));
+              if (!ev || ev.fields.length === 0) return null;
+              return (
+                <div className="flex flex-col gap-[8px]">
+                  <div className="text-[12px] font-[600] text-[var(--muted)] uppercase tracking-wide">
+                    Event payload fields
+                  </div>
+                  <div className="flex flex-wrap gap-[6px]">
+                    {ev.fields.map(f => (
+                      <span
+                        key={f.name}
+                        className="inline-flex items-center gap-[5px] px-[10px] py-[4px] rounded-full text-[12px] font-[600]"
+                        style={{ background: 'var(--dyn-bg)', color: 'var(--dyn)' }}
+                      >
+                        <span>{f.name}</span>
+                        <span className="font-normal text-[var(--muted)]">{f.type}</span>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
+          </>
         ) : (
           <table className="text-[13px] w-full border-collapse">
             <tbody>

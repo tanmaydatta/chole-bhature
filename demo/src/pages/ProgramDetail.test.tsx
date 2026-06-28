@@ -3,8 +3,10 @@ import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import ProgramDetail from './ProgramDetail';
 import { useProgramStore } from '../data/store';
 import { useVariablesStore } from '../data/variablesStore';
+import { useEventsStore } from '../data/eventsStore';
 import { PROGRAMS } from '../data/programs';
 import { VARIABLES } from '../data/variables';
+import { EVENTS } from '../data/events';
 
 function renderAt(path: string, routePattern: string) {
   return render(
@@ -20,6 +22,7 @@ function renderAt(path: string, routePattern: string) {
 beforeEach(() => {
   useProgramStore.setState({ programs: PROGRAMS.map(p => ({ ...p })) });
   useVariablesStore.setState({ variables: VARIABLES.map(v => ({ ...v })) });
+  useEventsStore.setState({ events: EVENTS.map(e => ({ ...e })) });
 });
 
 test('shows Edit link for a draft promo program', () => {
@@ -48,4 +51,46 @@ test('unknown id shows "Program not found" with a link home', () => {
   renderAt('/promo/does-not-exist', '/promo/:id');
   expect(screen.getByText(/program not found/i)).toBeInTheDocument();
   expect(screen.getByRole('link', { name: /home/i })).toBeInTheDocument();
+});
+
+// Fix 1: Loyalty — trigger event payload fields + no-stacking note
+test('loyalty detail shows trigger event payload field names', () => {
+  // loy-1 uses triggerEvent 'order_completed' which has fields: order_id, order_value, currency, …
+  renderAt('/loyalty/loy-1', '/loyalty/:id');
+  expect(screen.getByText('order_id')).toBeInTheDocument();
+  expect(screen.getByText('order_value')).toBeInTheDocument();
+});
+
+test('loyalty detail shows "No stacking (fixed rule)" note', () => {
+  renderAt('/loyalty/loy-1', '/loyalty/:id');
+  expect(screen.getByText(/no stacking \(fixed rule\)/i)).toBeInTheDocument();
+});
+
+// Fix 1: Affiliate — code-batch info (codeCount)
+test('affiliate detail shows code count', () => {
+  // aff-1 has codeCount: 500
+  renderAt('/affiliates/aff-1', '/affiliates/:id');
+  expect(screen.getByText('500')).toBeInTheDocument();
+});
+
+test('affiliate detail shows uses-per-code if present', () => {
+  // Seed an affiliate program with usesPerCode to verify the row renders
+  useProgramStore.setState({
+    programs: [
+      ...PROGRAMS.map(p => ({ ...p })),
+      {
+        id: 'aff-test-upc',
+        name: 'UPC Test Affiliate',
+        type: 'affiliate' as const,
+        status: 'draft' as const,
+        rewardSummary: '10% off',
+        redemptions: 0,
+        codeCount: 100,
+        usesPerCode: 3,
+      },
+    ],
+  });
+  renderAt('/affiliates/aff-test-upc', '/affiliates/:id');
+  expect(screen.getByText(/uses per code/i)).toBeInTheDocument();
+  expect(screen.getByText('3')).toBeInTheDocument();
 });
