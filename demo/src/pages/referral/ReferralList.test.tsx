@@ -16,7 +16,7 @@ function renderPage() {
   );
 }
 
-test('Active/Scheduled referral programs appear in the ranked section', () => {
+test('default (All) view shows Active/Scheduled referral programs in the ranked section', () => {
   renderPage();
   // ref-1: Give $10, Get $10 — active
   expect(screen.getByText('Give $10, Get $10')).toBeInTheDocument();
@@ -26,7 +26,7 @@ test('Active/Scheduled referral programs appear in the ranked section', () => {
   expect(screen.getByText('Holiday Referral')).toBeInTheDocument();
 });
 
-test('paused/ended referral programs appear under the "Not ranked" divider', () => {
+test('paused/ended referral programs appear under the "Not ranked" divider (All view)', () => {
   // Add a paused referral program
   act(() => {
     useProgramStore.getState().addProgram({
@@ -45,14 +45,14 @@ test('paused/ended referral programs appear under the "Not ranked" divider', () 
 
   renderPage();
 
-  // The divider text should be present
+  // The divider text should be present (default is All)
   expect(screen.getByText(/Not ranked/)).toBeInTheDocument();
 
   // The paused program should appear
   expect(screen.getByText('Paused Referral')).toBeInTheDocument();
 });
 
-test('active/scheduled programs appear in ranked section; divider is also visible when paused programs exist', () => {
+test('default (All) view shows both ranked and not-ranked sections', () => {
   act(() => {
     useProgramStore.getState().addProgram({
       id: 'ref-paused-2',
@@ -78,28 +78,117 @@ test('active/scheduled programs appear in ranked section; divider is also visibl
   expect(screen.getByText('Paused Referral 2')).toBeInTheDocument();
 });
 
-test('changing a priority number input reorders priorities through the store', () => {
+test('status filter narrows the view: clicking Active hides scheduled and paused programs', () => {
+  act(() => {
+    useProgramStore.getState().addProgram({
+      id: 'ref-paused-3',
+      name: 'Paused Referral 3',
+      type: 'referral',
+      status: 'paused',
+      rewardSummary: '$5 / $5',
+      redemptions: 0,
+      referrerReward: '$5 credit',
+      refereeReward: '$5 off',
+      appliesTo: 'all customers',
+    });
+  });
+
   renderPage();
 
-  // The seed data has ref-2 priority=1, ref-3 priority=2, ref-1 priority=3
+  // Default All view: scheduled + paused both visible
+  expect(screen.getByText('Holiday Referral')).toBeInTheDocument();
+  expect(screen.getByText('Paused Referral 3')).toBeInTheDocument();
+
+  // Click "Active" — only active programs should remain
+  fireEvent.click(screen.getByRole('button', { name: /^Active/ }));
+
+  // Active programs still visible
+  expect(screen.getByText('Give $10, Get $10')).toBeInTheDocument();
+  expect(screen.getByText('VIP Referral')).toBeInTheDocument();
+  // Scheduled program now hidden
+  expect(screen.queryByText('Holiday Referral')).not.toBeInTheDocument();
+  // Paused program now hidden (and divider gone since no not-ranked rows)
+  expect(screen.queryByText('Paused Referral 3')).not.toBeInTheDocument();
+  expect(screen.queryByText(/Not ranked/)).not.toBeInTheDocument();
+});
+
+test('status filter Paused shows only paused programs under the divider', () => {
+  act(() => {
+    useProgramStore.getState().addProgram({
+      id: 'ref-paused-4',
+      name: 'Paused Referral 4',
+      type: 'referral',
+      status: 'paused',
+      rewardSummary: '$5 / $5',
+      redemptions: 0,
+      referrerReward: '$5 credit',
+      refereeReward: '$5 off',
+      appliesTo: 'all customers',
+    });
+  });
+
+  renderPage();
+  fireEvent.click(screen.getByRole('button', { name: /^Paused/ }));
+
+  // Paused program visible under the divider
+  expect(screen.getByText('Paused Referral 4')).toBeInTheDocument();
+  expect(screen.getByText(/Not ranked/)).toBeInTheDocument();
+  // Active/scheduled programs hidden
+  expect(screen.queryByText('Give $10, Get $10')).not.toBeInTheDocument();
+  expect(screen.queryByText('VIP Referral')).not.toBeInTheDocument();
+  expect(screen.queryByText('Holiday Referral')).not.toBeInTheDocument();
+});
+
+test('a draft referral appears in the not-ranked section (Drafts filter)', () => {
+  act(() => {
+    useProgramStore.getState().addProgram({
+      id: 'ref-draft',
+      name: 'Draft Referral',
+      type: 'referral',
+      status: 'draft',
+      rewardSummary: '$5 / $5',
+      redemptions: 0,
+      referrerReward: '$5 credit',
+      refereeReward: '$5 off',
+      appliesTo: 'all customers',
+    });
+  });
+
+  renderPage();
+
+  // Default All view: draft visible under not-ranked divider
+  expect(screen.getByText('Draft Referral')).toBeInTheDocument();
+  expect(screen.getByText(/Not ranked/)).toBeInTheDocument();
+
+  // Drafts filter: only the draft shows
+  fireEvent.click(screen.getByRole('button', { name: /^Drafts/ }));
+  expect(screen.getByText('Draft Referral')).toBeInTheDocument();
+  expect(screen.queryByText('Give $10, Get $10')).not.toBeInTheDocument();
+});
+
+test('changing a priority number input reorders priorities through the store (by id)', () => {
+  renderPage();
+
+  // Seed ranked order (priority asc): ref-2(1) VIP, ref-3(2) Holiday, ref-1(3) Give $10
   const inputs = screen.getAllByRole('spinbutton');
-  expect(inputs.length).toBeGreaterThan(0);
+  expect(inputs.length).toBe(3);
 
-  // Get initial state priorities
-  const before = useProgramStore.getState().programs.filter(p => p.type === 'referral' && (p.status === 'active' || p.status === 'scheduled'));
-  expect(before.length).toBe(3);
+  // Verify seed priorities by id
+  const getById = (id: string) =>
+    useProgramStore.getState().programs.find(p => p.id === id);
+  expect(getById('ref-2')?.priority).toBe(1);
+  expect(getById('ref-3')?.priority).toBe(2);
+  expect(getById('ref-1')?.priority).toBe(3);
 
-  // Change the first priority input to position 3 (move it to last)
-  const firstInput = inputs[0];
-  fireEvent.change(firstInput, { target: { value: '3' } });
+  // The first input corresponds to the priority-1 program (ref-2).
+  // Change it to '3' — ref-2 should move to position 3, others shift up.
+  fireEvent.change(inputs[0], { target: { value: '3' } });
 
-  // After the change, priorities should have been recomputed in the store
-  const after = useProgramStore.getState().programs.filter(p => p.type === 'referral' && (p.status === 'active' || p.status === 'scheduled'));
-  // All ranked referrals should still have priority values
-  expect(after.every(p => typeof p.priority === 'number')).toBe(true);
-  // Priorities should form a sequence 1, 2, 3
-  const priorities = after.map(p => p.priority as number).sort((a, b) => a - b);
-  expect(priorities).toEqual([1, 2, 3]);
+  // Assert the specific reordering by id:
+  // ref-2 moved to priority 3; ref-3 -> 1; ref-1 -> 2
+  expect(getById('ref-2')?.priority).toBe(3);
+  expect(getById('ref-3')?.priority).toBe(1);
+  expect(getById('ref-1')?.priority).toBe(2);
 });
 
 test('renders Referrer and Referee column headers', () => {

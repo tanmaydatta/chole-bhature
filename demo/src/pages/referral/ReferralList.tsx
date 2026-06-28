@@ -1,5 +1,6 @@
 import { useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
+import type { Status } from '../../lib/types';
 import { useProgramStore } from '../../data/store';
 import { PageHeader } from '../../components/common/PageHeader';
 import { SegmentedFilter } from '../../components/common/SegmentedFilter';
@@ -8,6 +9,15 @@ import { StatusBadge } from '../../components/common/StatusBadge';
 type FilterLabel = 'Active' | 'Scheduled' | 'Paused' | 'Ended' | 'Drafts' | 'All';
 
 const FILTER_LABELS: FilterLabel[] = ['Active', 'Scheduled', 'Paused', 'Ended', 'Drafts', 'All'];
+
+// Label → Status mapping for narrowing the view (All has no single status).
+const STATUS_FOR: Record<Exclude<FilterLabel, 'All'>, Status> = {
+  Active: 'active',
+  Scheduled: 'scheduled',
+  Paused: 'paused',
+  Ended: 'ended',
+  Drafts: 'draft',
+};
 
 function rewardDisplay(r: unknown): string {
   if (r === null || r === undefined) return '—';
@@ -27,12 +37,14 @@ function rewardDisplay(r: unknown): string {
 
 export default function ReferralList() {
   const navigate = useNavigate();
-  const [selected, setSelected] = useState<FilterLabel>('Active');
+  // Default to 'All' so the full ranked + not-ranked story shows up front.
+  const [selected, setSelected] = useState<FilterLabel>('All');
   const programs = useProgramStore(state => state.programs);
   const setReferralPriority = useProgramStore(state => state.setReferralPriority);
 
   const all = programs.filter(p => p.type === 'referral');
 
+  // Counts always derived from ALL referral programs.
   const counts: Record<FilterLabel, number> = {
     Active: all.filter(p => p.status === 'active').length,
     Scheduled: all.filter(p => p.status === 'scheduled').length,
@@ -42,13 +54,23 @@ export default function ReferralList() {
     All: all.length,
   };
 
-  // Ranked: active + scheduled, sorted by priority ascending
-  const ranked = all
-    .filter(p => p.status === 'active' || p.status === 'scheduled')
-    .sort((a, b) => ((a.priority as number) ?? 999) - ((b.priority as number) ?? 999));
+  // Apply the selected filter to narrow the visible set.
+  const filtered =
+    selected === 'All' ? all : all.filter(p => p.status === STATUS_FOR[selected]);
 
-  // Not ranked: paused + ended (always shown below the divider)
-  const notRanked = all.filter(p => p.status === 'paused' || p.status === 'ended');
+  // Ranked: active + scheduled (from the filtered set), sorted by priority ascending.
+  const ranked = filtered
+    .filter(p => p.status === 'active' || p.status === 'scheduled')
+    .sort(
+      (a, b) =>
+        (typeof a.priority === 'number' ? a.priority : 999) -
+        (typeof b.priority === 'number' ? b.priority : 999)
+    );
+
+  // Not ranked: paused + ended + draft (from the filtered set), shown below the divider.
+  const notRanked = filtered.filter(
+    p => p.status === 'paused' || p.status === 'ended' || p.status === 'draft'
+  );
 
   const options = FILTER_LABELS.map(label => ({
     label,
@@ -111,7 +133,7 @@ export default function ReferralList() {
         onChange={label => setSelected(label as FilterLabel)}
       />
 
-      {/* Ranked section — always shown (active + scheduled) */}
+      {/* Ranked section — active + scheduled within the current filter */}
       {ranked.length > 0 && (
         <div className="flex flex-col gap-0">
           {/* Table header */}
@@ -128,7 +150,7 @@ export default function ReferralList() {
           </div>
 
           {ranked.map((p) => {
-            const priority = (p.priority as number) ?? 999;
+            const priority = typeof p.priority === 'number' ? p.priority : 999;
             const appliesToStr = typeof p.appliesTo === 'string' ? p.appliesTo : '';
 
             return (
@@ -189,7 +211,7 @@ export default function ReferralList() {
         </div>
       )}
 
-      {/* Not-ranked divider and section — always shown when paused/ended exist */}
+      {/* Not-ranked divider and section — paused/ended/draft within the current filter */}
       {notRanked.length > 0 && (
         <div className="flex flex-col gap-0">
           <div className="flex items-center gap-[10px] my-[8px]">
