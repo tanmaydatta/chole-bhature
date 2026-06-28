@@ -113,9 +113,6 @@ export default function ProgramDetail() {
                 )}
               </>
             )}
-            {program.type === 'loyalty' && program.triggerEvent != null && (
-              <Row label="Trigger event"><span className="font-mono">{String(program.triggerEvent)}</span></Row>
-            )}
           </tbody>
         </table>
       </SectionCard>
@@ -173,7 +170,7 @@ export default function ProgramDetail() {
       </SectionCard>
 
       {/* Limits & schedule */}
-      <SectionCard title="Limits &amp; schedule">
+      <SectionCard title="Limits & schedule">
         <table className="text-[13px] w-full border-collapse">
           <tbody>
             <Row label="Budget">

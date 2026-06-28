@@ -25,7 +25,9 @@ beforeEach(() => {
 test('shows Edit link for a draft promo program', () => {
   // promo-draft-1 is a draft
   renderAt('/promo/promo-draft-1', '/promo/:id');
-  expect(screen.getByRole('link', { name: /edit/i })).toBeInTheDocument();
+  const editLink = screen.getByRole('link', { name: /edit/i });
+  expect(editLink).toBeInTheDocument();
+  expect(editLink).toHaveAttribute('href', '/promo/promo-draft-1/edit');
   expect(screen.queryByText(/only drafts can be edited/i)).not.toBeInTheDocument();
 });
 
