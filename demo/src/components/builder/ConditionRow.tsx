@@ -77,7 +77,9 @@ function ValueControl({
 }
 
 export function ConditionRow({ condition, variable, onChange, onRemove }: ConditionRowProps) {
-  const [showMsg, setShowMsg] = useState(false);
+  const [showMsg, setShowMsg] = useState(() =>
+    Boolean(condition.message && condition.message.trim() !== '')
+  );
 
   const operators = OPERATORS_BY_TYPE[variable.type];
   const chipClass = ORIGIN_CHIP_CLASS[variable.origin];

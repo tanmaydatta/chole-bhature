@@ -10,9 +10,10 @@ interface ConditionBuilderProps {
   onChange: (next: ConditionGroup) => void;
 }
 
-let _idCounter = 0;
 function newId(): string {
-  return `cond-${Date.now()}-${++_idCounter}`;
+  return typeof crypto !== 'undefined' && crypto.randomUUID
+    ? `cond-${crypto.randomUUID()}`
+    : `cond-${Math.random().toString(36).slice(2)}`;
 }
 
 function makeCondition(variable: Variable): Condition {

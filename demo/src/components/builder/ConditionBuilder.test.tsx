@@ -104,3 +104,27 @@ test('switching ALL to ANY fires onChange with new match', () => {
     expect.objectContaining({ match: 'ANY' })
   );
 });
+
+// Test 5: a condition that already has a non-empty message renders the editor open
+test('condition with an existing custom message shows the editor open with that text', () => {
+  const group: ConditionGroup = {
+    match: 'ALL',
+    conditions: [
+      {
+        id: 'c1',
+        variable: 'basket_value',
+        operator: 'gte',
+        value: '50',
+        message: 'Spend a bit more to qualify!',
+      },
+    ],
+  };
+  render(
+    <ConditionBuilder value={group} variables={SAMPLE_VARIABLES} onChange={vi.fn()} />
+  );
+
+  // The MessageEditor should be open without the user clicking "Customize"
+  const msgInput = screen.getByRole('textbox', { name: /message/i });
+  expect(msgInput).toBeInTheDocument();
+  expect(msgInput).toHaveValue('Spend a bit more to qualify!');
+});
