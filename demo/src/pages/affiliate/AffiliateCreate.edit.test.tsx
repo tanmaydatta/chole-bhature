@@ -58,3 +58,43 @@ test('edit mode: clicking "Save changes" calls updateProgram and navigates to /a
 
   expect(screen.getByTestId('affiliate-detail-page')).toBeInTheDocument();
 });
+
+test('edit mode: saving preserves usesPerCode from the draft', () => {
+  renderAffiliateEdit(DRAFT_AFF.id);
+
+  fireEvent.click(screen.getByText('Continue →')); // → Eligibility
+  fireEvent.click(screen.getByText('Continue →')); // → Discount
+  fireEvent.click(screen.getByText('Continue →')); // → Generate codes
+  fireEvent.click(screen.getByText('Continue →')); // → Limits
+  fireEvent.click(screen.getByText('Continue →')); // → Review
+
+  fireEvent.click(screen.getByRole('button', { name: /save changes/i }));
+
+  const updated = useProgramStore.getState().programs.find(p => p.id === DRAFT_AFF.id);
+  expect(updated?.usesPerCode).toBe(DRAFT_AFF.usesPerCode);
+});
+
+test('fresh create: saved program carries default usesPerCode of 1', () => {
+  render(
+    <ToastProvider>
+      <MemoryRouter initialEntries={['/affiliates/new']}>
+        <Routes>
+          <Route path="/affiliates/new" element={<AffiliateCreate />} />
+          <Route path="/affiliates" element={<div data-testid="affiliate-list-page">Affiliate List</div>} />
+        </Routes>
+      </MemoryRouter>
+    </ToastProvider>
+  );
+
+  fireEvent.click(screen.getByText('Continue →')); // → Eligibility
+  fireEvent.click(screen.getByText('Continue →')); // → Discount
+  fireEvent.click(screen.getByText('Continue →')); // → Generate codes
+  fireEvent.click(screen.getByText('Continue →')); // → Limits
+  fireEvent.click(screen.getByText('Continue →')); // → Review
+
+  fireEvent.click(screen.getByRole('button', { name: /^create$/i }));
+
+  const programs = useProgramStore.getState().programs;
+  const newest = programs.find(p => p.type === 'affiliate' && p.id !== 'aff-1' && p.id !== 'aff-draft-1');
+  expect(newest?.usesPerCode).toBe(1);
+});

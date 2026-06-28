@@ -5,7 +5,7 @@ import type { ConditionGroup, Program, Reward } from '../lib/types';
 // edit-prefill read identical keys for seeded and flow-created programs:
 //   promo:     code, autoApply, stackable, eligibility, discount, budget,
 //              perCustomer, startDate, endDate
-//   affiliate: codeCount, eligibility, discount, budget, perCustomer,
+//   affiliate: codeCount, usesPerCode, eligibility, discount, budget, perCustomer,
 //              startDate, endDate
 //   referral:  priority, referrerReward, refereeReward, appliesTo, eligibility,
 //              budget, perCustomer, startDate, endDate
@@ -96,6 +96,7 @@ export const PROGRAMS: Program[] = [
     redemptions: 318,
     subtitle: '500 unique codes',
     codeCount: 500,
+    usesPerCode: 1,
     eligibility: {
       match: 'ALL',
       conditions: [
@@ -118,6 +119,7 @@ export const PROGRAMS: Program[] = [
     redemptions: 0,
     subtitle: '250 unique codes',
     codeCount: 250,
+    usesPerCode: 5,
     eligibility: {
       match: 'ANY',
       conditions: [

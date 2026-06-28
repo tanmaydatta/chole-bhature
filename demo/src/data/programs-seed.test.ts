@@ -42,3 +42,10 @@ test('all programs of a type share the same config-key set (parity with create f
     expect(keySets.size).toBe(1);
   }
 });
+
+test('affiliate programs carry usesPerCode (single + multi-use seeds)', () => {
+  const active = PROGRAMS.find(p => p.type === 'affiliate' && p.status === 'active')!;
+  expect(active.usesPerCode).toBe(1);
+  const draft = PROGRAMS.find(p => p.type === 'affiliate' && p.status === 'draft')!;
+  expect(draft.usesPerCode).toBe(5);
+});

@@ -53,6 +53,9 @@ export default function AffiliateCreate() {
   const [codeCount, setCodeCount] = useState(() =>
     editing && editing.codeCount !== undefined ? (editing.codeCount as number) : 0
   );
+  const [usesPerCode, setUsesPerCode] = useState<number | 'unlimited'>(() =>
+    editing ? ((editing.usesPerCode as number | 'unlimited') ?? 1) : 1
+  );
 
   // Limits & schedule
   const [budget, setBudget] = useState<number | ''>(() =>
@@ -99,6 +102,7 @@ export default function AffiliateCreate() {
       subtitle,
       eligibility,
       discount,
+      usesPerCode,
       budget: budget === '' ? undefined : budget,
       perCustomer: perCustomer === '' ? undefined : perCustomer,
       startDate: startDate || undefined,
@@ -196,6 +200,8 @@ export default function AffiliateCreate() {
       {activeStep === 'generate-codes' && (
         <CodeGenerator
           onGenerated={codes => setCodeCount(codes.length)}
+          initialUses={usesPerCode}
+          onUsesChange={setUsesPerCode}
         />
       )}
 

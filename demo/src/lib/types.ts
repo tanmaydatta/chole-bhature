@@ -13,6 +13,7 @@ export interface Program {
   id: string; name: string; type: ProgramType; status: Status;
   rewardSummary: string; redemptions: number;
   subtitle?: string;
+  usesPerCode?: number | 'unlimited';
   [k: string]: unknown;
 }
 export const TYPE_META: Record<ProgramType, { label: string; color: string; bg: string; icon: string }> = {

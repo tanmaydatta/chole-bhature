@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { generateCodes, previewExample, toCSV, downloadCSV } from '../../lib/codes';
 
 type UsesOption = 'single' | 'up-to-5' | 'unlimited';
@@ -15,19 +15,41 @@ function usesLeft(option: UsesOption): number | '∞' {
   return '∞';
 }
 
-interface CodeGeneratorProps {
-  onGenerated?: (codes: string[]) => void;
+function usesOptionToValue(option: UsesOption): number | 'unlimited' {
+  if (option === 'single') return 1;
+  if (option === 'up-to-5') return 5;
+  return 'unlimited';
 }
 
-export function CodeGenerator({ onGenerated }: CodeGeneratorProps) {
+function valueToUsesOption(value: number | 'unlimited'): UsesOption {
+  if (value === 'unlimited') return 'unlimited';
+  if (value === 5) return 'up-to-5';
+  return 'single';
+}
+
+interface CodeGeneratorProps {
+  onGenerated?: (codes: string[]) => void;
+  initialUses?: number | 'unlimited';
+  onUsesChange?: (usesPerCode: number | 'unlimited') => void;
+}
+
+export function CodeGenerator({ onGenerated, initialUses, onUsesChange }: CodeGeneratorProps) {
   const [count, setCount] = useState<number>(500);
-  const [uses, setUses] = useState<UsesOption>('single');
+  const [uses, setUses] = useState<UsesOption>(() =>
+    initialUses !== undefined ? valueToUsesOption(initialUses) : 'single'
+  );
   const [prefix, setPrefix] = useState('ACME-');
   const [length, setLength] = useState<number>(5);
   const [generatedCodes, setGeneratedCodes] = useState<string[]>([]);
   const [hasGenerated, setHasGenerated] = useState(false);
 
   const example = previewExample(prefix, length);
+
+  // Notify parent of the current value once on mount, and whenever it changes.
+  useEffect(() => {
+    onUsesChange?.(usesOptionToValue(uses));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [uses]);
 
   function handleGenerate() {
     const safeCount = Math.max(1, Math.min(5000, count || 1));
@@ -88,7 +110,10 @@ export function CodeGenerator({ onGenerated }: CodeGeneratorProps) {
             id="uses-per-code"
             className="border border-[var(--border)] bg-[var(--bg)] rounded-[8px] px-[11px] py-[8px] text-[14px] text-[var(--ink)] w-[140px]"
             value={uses}
-            onChange={e => setUses(e.target.value as UsesOption)}
+            onChange={e => {
+              const next = e.target.value as UsesOption;
+              setUses(next);
+            }}
           >
             <option value="single">{USES_LABELS['single']}</option>
             <option value="up-to-5">{USES_LABELS['up-to-5']}</option>
