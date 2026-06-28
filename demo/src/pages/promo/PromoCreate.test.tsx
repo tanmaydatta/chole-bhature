@@ -99,8 +99,34 @@ test('reaching Review and clicking Create adds a promo and navigates to /promo',
   const createBtn = screen.getByRole('button', { name: /create/i });
   fireEvent.click(createBtn);
 
-  const finalCount = useProgramStore.getState().byType('promo').length;
-  expect(finalCount).toBe(initialCount + 1);
+  const promos = useProgramStore.getState().byType('promo');
+  expect(promos.length).toBe(initialCount + 1);
+
+  // The newly created promo is active
+  const created = promos[promos.length - 1];
+  expect(created.status).toBe('active');
+  expect(created.name).toBe('TESTCODE');
+
+  expect(screen.getByTestId('promo-list-page')).toBeInTheDocument();
+});
+
+test('Save draft adds a draft promo and navigates to /promo', () => {
+  renderPromoCreate();
+
+  const initialCount = useProgramStore.getState().byType('promo').length;
+
+  // Fill name on the Basics step, then Save draft from this step
+  const nameInput = screen.getByLabelText(/promo name/i);
+  fireEvent.change(nameInput, { target: { value: 'DRAFTPROMO' } });
+
+  fireEvent.click(screen.getByText('Save draft'));
+
+  const promos = useProgramStore.getState().byType('promo');
+  expect(promos.length).toBe(initialCount + 1);
+
+  const draft = promos[promos.length - 1];
+  expect(draft.status).toBe('draft');
+  expect(draft.name).toBe('DRAFTPROMO');
 
   expect(screen.getByTestId('promo-list-page')).toBeInTheDocument();
 });

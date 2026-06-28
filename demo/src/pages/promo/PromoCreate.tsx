@@ -6,7 +6,7 @@ import { RewardEditor } from '../../components/rewards/RewardEditor';
 import { useProgramStore } from '../../data/store';
 import { VARIABLES } from '../../data/variables';
 import { TYPE_META } from '../../lib/types';
-import type { ConditionGroup, Reward } from '../../lib/types';
+import type { ConditionGroup, Program, Reward, Status } from '../../lib/types';
 
 const STEPS = [
   { key: 'basics', label: 'Basics' },
@@ -75,12 +75,7 @@ export default function PromoCreate() {
     navigate('/promo');
   }
 
-  function handleSaveDraft() {
-    // Draft saving deferred; navigate back for now
-    navigate('/promo');
-  }
-
-  function handleCreate() {
+  function buildProgram(status: Status): Program {
     const id = `promo-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     const condCount = eligibility.conditions.length;
     const subtitle =
@@ -90,11 +85,11 @@ export default function PromoCreate() {
           ? `Budget $${budget}`
           : undefined;
 
-    addProgram({
+    return {
       id,
       name: name || code || 'Untitled promo',
       type: 'promo',
-      status: 'active',
+      status,
       rewardSummary: rewardSummaryFor(discount),
       redemptions: 0,
       code: code || undefined,
@@ -102,7 +97,16 @@ export default function PromoCreate() {
       stackable,
       subtitle,
       eligibility,
-    });
+    };
+  }
+
+  function handleSaveDraft() {
+    addProgram(buildProgram('draft'));
+    navigate('/promo');
+  }
+
+  function handleCreate() {
+    addProgram(buildProgram('active'));
     navigate('/promo');
   }
 
