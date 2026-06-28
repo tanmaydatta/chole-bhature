@@ -1,6 +1,12 @@
 import { render, screen, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import Variables from './Variables';
+import { useVariablesStore } from '../../data/variablesStore';
+import { VARIABLES } from '../../data/variables';
+
+beforeEach(() => {
+  useVariablesStore.setState({ variables: VARIABLES.map(v => ({ ...v })) });
+});
 
 function renderVariables() {
   return render(

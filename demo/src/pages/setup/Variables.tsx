@@ -1,6 +1,6 @@
 import { useState, Fragment } from 'react';
 import type { Origin, Variable } from '../../lib/types';
-import { VARIABLES } from '../../data/variables';
+import { useVariablesStore } from '../../data/variablesStore';
 import { PageHeader } from '../../components/common/PageHeader';
 import { SegmentedFilter } from '../../components/common/SegmentedFilter';
 
@@ -55,14 +55,15 @@ function typeLabel(v: Variable): string {
 }
 
 export default function Variables() {
+  const variables = useVariablesStore(s => s.variables);
   const [filter, setFilter] = useState<FilterOption>('All');
 
-  const userCount = VARIABLES.filter((v) => v.origin === 'user').length;
-  const dynCount = VARIABLES.filter((v) => v.origin === 'dynamic').length;
-  const sysCount = VARIABLES.filter((v) => v.origin === 'system').length;
+  const userCount = variables.filter((v) => v.origin === 'user').length;
+  const dynCount = variables.filter((v) => v.origin === 'dynamic').length;
+  const sysCount = variables.filter((v) => v.origin === 'system').length;
 
   const filterOptions = [
-    { label: 'All', count: VARIABLES.length },
+    { label: 'All', count: variables.length },
     { label: 'User attributes', count: userCount },
     { label: 'Dynamic', count: dynCount },
     { label: 'System', count: sysCount },
@@ -124,7 +125,7 @@ export default function Variables() {
           <tbody>
             {visibleOrigins.map((origin) => {
               const meta = ORIGIN_META[origin];
-              const rows = VARIABLES.filter((v) => v.origin === origin);
+              const rows = variables.filter((v) => v.origin === origin);
               if (rows.length === 0) return null;
               return (
                 <Fragment key={origin}>
