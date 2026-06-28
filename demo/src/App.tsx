@@ -12,6 +12,7 @@ import ReferralCreate from './pages/referral/ReferralCreate';
 import Variables from './pages/setup/Variables';
 import Events from './pages/setup/Events';
 import Analytics from './pages/Analytics';
+import ProgramDetail from './pages/ProgramDetail';
 
 export default function App() {
   return (
@@ -23,9 +24,13 @@ export default function App() {
       <Route element={<AppShell />}>
         <Route index element={<Overview />} />
         <Route path="/promo" element={<PromoList />} />
+        <Route path="/promo/:id" element={<ProgramDetail />} />
         <Route path="/affiliates" element={<AffiliateList />} />
+        <Route path="/affiliates/:id" element={<ProgramDetail />} />
         <Route path="/referrals" element={<ReferralList />} />
+        <Route path="/referrals/:id" element={<ProgramDetail />} />
         <Route path="/loyalty" element={<LoyaltyList />} />
+        <Route path="/loyalty/:id" element={<ProgramDetail />} />
         <Route path="/variables" element={<Variables />} />
         <Route path="/events" element={<Events />} />
         <Route path="/analytics" element={<Analytics />} />
