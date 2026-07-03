@@ -44,7 +44,30 @@ An **API-first incentives engine on Cloudflare (Workers + D1 + Durable Objects)*
 
 **Multi-tenancy:** single D1 with `merchant_id` scoping for MVP (per-merchant D1 sharding deferred — accepted "D1 now, migrate later"). DO instances are namespaced per entity (e.g. `program:{merchantId}:{programId}`, `wallet:{merchantId}:{customerId}`).
 
-**Repo direction (for the plan to detail):** evolve toward `apps/api` (Workers), `apps/dashboard` (the current `demo/` frontend), `packages/engine` (the pure logic lifted from `demo/src/lib`, shared by API + dashboard). Exact layout is an implementation-plan decision.
+### 3.1 Tech stack (pinned)
+
+TypeScript (strict) everywhere, one **pnpm-workspaces monorepo**:
+
+```
+apps/api              Workers API (Hono) + Durable Object classes
+apps/dashboard        the current demo/ frontend, ported to the real API
+apps/reference-store  sample storefront (E2E proof / future sales demo)
+packages/engine       pure logic lifted from demo/src/lib (conditions,
+                      interpolate, rewards, codes, types) + zod schemas —
+                      shared by API and dashboard
+```
+
+| Layer | Choice | Notes |
+|---|---|---|
+| API framework | **Hono** on Workers + **zod** validation | Standard Workers router; middleware for API-key auth + rate limiting |
+| Database | **D1 + Drizzle ORM** (drizzle-kit migrations via wrangler) | Cloudflare's highlighted ORM pairing for D1; type-safe schema. D1 has no interactive transactions — use `batch()` for multi-statement atomicity; one Drizzle instance per request |
+| Hot state | **Durable Objects** (native SQLite storage API) | Plain DO classes in `apps/api` |
+| Cache / async / jobs | **KV / Queues / Cron** native bindings | No extra infra |
+| Dashboard | **React 19 + Vite + Tailwind + Zustand + React Router** | The existing demo stack, carried over |
+| Dashboard auth | **better-auth** (email+password, sessions), native D1 adapter | First-class D1 support; avoids hand-rolled crypto. API keys separate, hashed in D1 |
+| Billing | **Stripe** official SDK (fetch HTTP client) | Works on Workers |
+| Testing | **Vitest** + `@cloudflare/vitest-pool-workers` (API/DO/D1 tests run inside workerd with isolated per-test storage, `runInDurableObject`, DO-eviction helpers) + RTL for the dashboard | The official Workers testing integration — used for the DO cap/idempotency concurrency tests |
+| Tooling / deploy | **Wrangler** (dev, migrations, deploy); dev → staging → prod environments; GitHub Actions / Workers Builds CI | |
 
 ## 4. Public API surface
 
@@ -87,7 +110,7 @@ Reuse and server-port the demo's tested logic (`lib/conditions`, `lib/interpolat
 ## 8. Dashboard
 
 Port the existing demo SPA to the real backend/API (it already contains the flows, condition builder, affiliate codes panel, referral priority, detail/edit, theming). Add:
-- **Merchant auth** for the dashboard — simple email+password (or a hosted auth free tier) with sessions; **single-seat** for MVP. Distinct from API keys.
+- **Merchant auth** for the dashboard — **better-auth** (email+password, sessions; native D1 adapter); **single-seat** for MVP. Distinct from API keys.
 - **API-key management** screen (create/reveal/rotate publishable + secret keys).
 - Real-data **analytics-lite** (redemptions, incentive spend, wallet issued) from `program_stats`.
 - Everything reads/writes the real API instead of the in-memory mock store.
@@ -130,4 +153,4 @@ A **minimal sample storefront** (small React/HTML cart) that calls `evaluate` �
 6. `npm run build` + full test suite green; reliability pass complete.
 
 ## 15. Open questions
-None blocking. (Dashboard auth mechanism — email+password vs hosted — and exact repo layout are implementation-plan decisions; flat billing plan tiers can be finalized during build.)
+None blocking. (Tech stack, repo layout, and dashboard auth are pinned in §3.1 — verified against current Cloudflare guidance 2026-07-03; flat billing plan tiers can be finalized during build.)
