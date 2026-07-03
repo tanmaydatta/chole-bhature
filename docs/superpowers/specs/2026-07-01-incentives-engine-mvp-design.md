@@ -69,6 +69,16 @@ packages/engine       pure logic lifted from demo/src/lib (conditions,
 | Testing | **Vitest** + `@cloudflare/vitest-pool-workers` (API/DO/D1 tests run inside workerd with isolated per-test storage, `runInDurableObject`, DO-eviction helpers) + RTL for the dashboard | The official Workers testing integration — used for the DO cap/idempotency concurrency tests |
 | Tooling / deploy | **Wrangler** (dev, migrations, deploy); dev → staging → prod environments; GitHub Actions / Workers Builds CI | |
 
+### 3.2 High-contention & flash sales
+
+Reference scenario: *"50% off for the first 500 orders"* with ~50k concurrent shoppers.
+
+- **Reads never touch the counter.** `evaluate` is stateless — it reads program config + an availability flag from KV / per-isolate cache, and scales horizontally on Workers. The `ProgramCountersDO` is only ever hit by `redemptions`.
+- **The DO is the single arbiter.** All redemptions for a program serialize through its single-threaded DO: decrement #500 succeeds, #501 is atomically rejected. Overselling is structurally impossible.
+- **Fail-fast exhausted gate (MVP).** When the counter hits zero, the DO publishes an `exhausted` flag to KV, and each Worker isolate caches it after its first rejection; subsequent redeems short-circuit at the Worker layer without touching the DO. The gate only *rejects* early — it never accepts — so the DO remains authoritative. A single DO sustains roughly ~1k simple ops/sec; the gate keeps stampede overflow at the edge as cheap O(1) rejections.
+- **The UX race + integration rule.** `evaluate` is a read; a shopper can be shown the discount and lose it while typing card details. `redemptions` is the authoritative moment: merchants MUST call it **before capturing payment** — on rejection, checkout re-prices ("offer just sold out") instead of charging a discounted amount with no budget behind it. The reference integration demonstrates this ordering.
+- **Post-MVP scale-up paths (named, deferred):** *reserve-then-commit* — `evaluate` places a TTL hold (DO decrement + alarm-based expiry back into the pool), `redemptions` confirms it (ticketing-style, for flash-sale merchants); *sharded counters* — split very large caps across N shard DOs routed by customer hash, for sustained thousands of *accepted* writes/sec.
+
 ## 4. Public API surface
 
 Auth: **API keys** per merchant — a **publishable key** (client-side, `evaluate` + wallet-read only) and a **secret key** (server-side: `redemptions`, `events`, customer writes). All over HTTPS; per-key rate limiting.
