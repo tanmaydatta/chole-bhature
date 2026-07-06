@@ -96,3 +96,17 @@ Total ≈ 29 dev-days; one engineer → strictly sequential, ~5–6 weeks wall-c
 4. A capped promo correctly rejects once exhausted (atomic conditional update), and checkout re-prices.
 5. The API rejects any request lacking a valid token.
 6. `pnpm -r build` + tests green; deployed to a shareable URL.
+
+## 11. Acceptance in plain language (for non-technical sign-off)
+
+This restates the technical checklist in §10 as things you can watch happen in a live demo — no jargon. If you can see each of these in front of the client, Phase 0 is done and ready to approve.
+
+- [ ] **1. You create an offer.** In the dashboard (a normal web page), you create a promo — e.g. *"SUMMER15 — 15% off orders over $50"* — then edit it and delete a test one. Your changes are saved on a real server, so they are still there after a refresh.
+- [ ] **2. A shopper sees your public offers.** On the demo storefront, a customer sees the list of current offers you chose to make public. Offers meant to be secret (code-only) do **not** appear in that list.
+- [ ] **3. A shopper uses a code and sees the discount.** At checkout the customer enters the code, and the right discount and message appear (e.g. *"You saved $9"* or *"Add $12 more to qualify"*).
+- [ ] **4. The discount is applied once, for real.** When the order is placed, the discount is committed and recorded a single time — even if the browser stutters and retries, it is never double-counted.
+- [ ] **5. A limited offer runs out safely.** If you cap an offer (e.g. *"first 100 orders"*), once it is used up the next shopper is told it is no longer available and the price returns to normal — the system never gives away more than the limit.
+- [ ] **6. Only you can manage it.** Access is locked with a key tied to your account. Someone on the internet without that key cannot read or change your offers.
+- [ ] **7. It is on a real, shareable link.** Everything above runs at a real web address you can open live in front of the client — not just on a developer's laptop.
+
+**Not included yet (coming in Phase 1):** signing in with a username/password, billing/payments, the affiliate / referral / loyalty offer types, and hardening for very high traffic. Phase 0 deliberately keeps these out so the one promo flow can be shown quickly — but nothing here is throwaway: Phase 1 builds directly on it.
