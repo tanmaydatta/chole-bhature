@@ -1,4 +1,5 @@
 # FE-6 · Reference storefront
+> **Phase 0 (M0):** Phase 0 (**P0-8**) delivers the storefront offers list + checkout code entry + promo redeem. Remaining Phase 1 scope: wallet-balance display, event firing, and the full multi-type loop.
 
 > ⚠️ Detailed from the spec — refresh from the outputs of its dependencies before starting (see "Depends on").
 

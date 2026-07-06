@@ -1,4 +1,5 @@
 # BE-3 · packages/engine port
+> **Phase 0 (M0):** **Completed in Phase 0** by **P0-3** (`packages/engine` port). No remaining Phase 1 work.
 
 ## Context
 Spec §6 (condition & rewards engine) — "reuse and server-port the demo's tested logic." The spec's "builds on" note names the exact source files: `demo/src/lib/{conditions,interpolate,rewards,codes,types}.ts`. Depends on INFRA-1's `packages/engine` stub.

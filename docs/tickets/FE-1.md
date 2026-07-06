@@ -1,4 +1,5 @@
 # FE-1 · Dashboard port: API client + auth screens
+> **Phase 0 (M0):** Phase 0 (**P0-7**) delivers the `api-client` (static-token auth). Remaining Phase 1 scope: better-auth session login/signup + the auth guard/redirect.
 
 ## Context
 Spec §8 — port the existing demo SPA to the real backend. First FE ticket; everything else in the dashboard builds on it. Depends on BE-4 (dashboard auth).

@@ -1,4 +1,5 @@
 # BE-1 · D1 schema + Drizzle + migrations
+> **Phase 0 (M0):** Phase 0 (**P0-2**) delivers the `programs` + `redemptions` tables, seed merchant, and `batch()` helper. Remaining Phase 1 scope: the other 7 tables (`api_keys`, `variables`, `event_defs`, `codes`, `customers`, `wallet_transactions`, `program_stats`) + type-specific config.
 
 ## Context
 Spec §5 data model. This is the relational foundation every subsequent M1/M2 ticket reads or writes. Depends on INFRA-2's D1 binding.
