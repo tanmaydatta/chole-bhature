@@ -70,6 +70,16 @@ export class ExhaustedError extends ApiFailure {
   }
 }
 
+export class SchemaConflictError extends ApiFailure {
+  override readonly name = 'SchemaConflictError';
+  readonly code = 'SCHEMA_CONFLICT';
+  readonly status = 409;
+
+  constructor(message: string) {
+    super(message);
+  }
+}
+
 interface MappedFailure {
   status: ContentfulStatusCode;
   error: ApiError['error'];

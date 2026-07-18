@@ -33,8 +33,22 @@ export interface SchemaVersionRecord extends SchemaVersionCreate {}
 export interface SchemaRepository {
   createDefinition(input: VariableDefinitionCreate): Promise<VariableDefinitionRecord>;
   listDefinitions(merchantId: string, schemaVersion: number): Promise<VariableDefinitionRecord[]>;
+  getDefinition(merchantId: string, id: string): Promise<VariableDefinitionRecord | null>;
+  updateDefinition(
+    merchantId: string,
+    id: string,
+    definition: VariableDefinition,
+  ): Promise<VariableDefinitionRecord | null>;
+  deleteDefinition(merchantId: string, id: string): Promise<boolean>;
   createVersion(input: SchemaVersionCreate): Promise<SchemaVersionRecord>;
   getVersion(merchantId: string, version: number): Promise<SchemaVersionRecord | null>;
+  getLatestVersion(merchantId: string, state: SchemaState): Promise<SchemaVersionRecord | null>;
+  publishDraft(
+    merchantId: string,
+    version: number,
+    definitions: VariableDefinition[],
+    publishedAt: string,
+  ): Promise<SchemaVersionRecord>;
 }
 
 export interface CustomerRecord {
@@ -78,6 +92,7 @@ export interface ProgramRecord {
 export interface ProgramRepository {
   create(input: ProgramCreate): Promise<ProgramRecord>;
   get(merchantId: string, externalRef: string): Promise<ProgramRecord | null>;
+  listReferencedVariableKeys(merchantId: string): Promise<Set<string>>;
 }
 
 export interface EvaluationDecisionRecord {

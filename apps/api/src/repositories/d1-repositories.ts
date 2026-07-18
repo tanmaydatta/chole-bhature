@@ -6,7 +6,7 @@ import {
   RedemptionResponseSchema,
   VariableDefinitionSchema,
 } from '@incentives/contracts';
-import { and, eq } from 'drizzle-orm';
+import { and, desc, eq, inArray } from 'drizzle-orm';
 import { z } from 'zod';
 
 import { createDatabase } from '../db/client.js';
@@ -303,8 +303,46 @@ export function createRepositories(env: Env): Repositories {
         const rows = await db.select().from(variableDefinitions).where(and(
           eq(variableDefinitions.merchantId, merchantId),
           eq(variableDefinitions.schemaVersion, schemaVersion),
-        )).all();
+        )).orderBy(variableDefinitions.key).all();
         return rows.map(definitionFromRow);
+      },
+
+      async getDefinition(merchantId, id) {
+        const row = await db.select().from(variableDefinitions).where(and(
+          eq(variableDefinitions.merchantId, merchantId),
+          eq(variableDefinitions.id, id),
+        )).get();
+        return row === undefined ? null : definitionFromRow(row);
+      },
+
+      async updateDefinition(merchantId, id, definition) {
+        const parsed = VariableDefinitionSchema.parse(definition);
+        const row = await db.update(variableDefinitions).set({
+          key: parsed.key,
+          label: parsed.label,
+          source: parsed.source,
+          type: parsed.type,
+          required: parsed.required,
+          enumValuesJson: parsed.enumValues === undefined
+            ? null
+            : JSON.stringify(parsed.enumValues),
+          description: parsed.description ?? null,
+          defaultErrorMessage: parsed.defaultErrorMessage ?? null,
+        }).where(and(
+          eq(variableDefinitions.merchantId, merchantId),
+          eq(variableDefinitions.id, id),
+          eq(variableDefinitions.state, 'draft'),
+        )).returning().get();
+        return row === undefined ? null : definitionFromRow(row);
+      },
+
+      async deleteDefinition(merchantId, id) {
+        const row = await db.delete(variableDefinitions).where(and(
+          eq(variableDefinitions.merchantId, merchantId),
+          eq(variableDefinitions.id, id),
+          eq(variableDefinitions.state, 'draft'),
+        )).returning({ id: variableDefinitions.id }).get();
+        return row !== undefined;
       },
 
       async createVersion(input) {
@@ -325,6 +363,41 @@ export function createRepositories(env: Env): Repositories {
           eq(schemaVersions.version, version),
         )).get();
         return row === undefined ? null : schemaVersionFromRow(row);
+      },
+
+      async getLatestVersion(merchantId, state) {
+        const row = await db.select().from(schemaVersions).where(and(
+          eq(schemaVersions.merchantId, merchantId),
+          eq(schemaVersions.state, state),
+        )).orderBy(desc(schemaVersions.version)).get();
+        return row === undefined ? null : schemaVersionFromRow(row);
+      },
+
+      async publishDraft(merchantId, version, definitions, publishedAt) {
+        const parsed = parseSchemaVersionCreate({
+          merchantId,
+          version,
+          state: 'published',
+          publishedAt,
+          definitions,
+        });
+        await db.batch([
+          db.update(schemaVersions).set({
+            state: 'published',
+            publishedAt: parsed.publishedAt,
+            definitionsJson: JSON.stringify(parsed.definitions),
+          }).where(and(
+            eq(schemaVersions.merchantId, parsed.merchantId),
+            eq(schemaVersions.version, parsed.version),
+            eq(schemaVersions.state, 'draft'),
+          )),
+          db.update(variableDefinitions).set({ state: 'published' }).where(and(
+            eq(variableDefinitions.merchantId, parsed.merchantId),
+            eq(variableDefinitions.schemaVersion, parsed.version),
+            eq(variableDefinitions.state, 'draft'),
+          )),
+        ]);
+        return parsed;
       },
     },
 
@@ -399,6 +472,22 @@ export function createRepositories(env: Env): Repositories {
           eq(programs.externalRef, externalRef),
         )).get();
         return row === undefined ? null : programFromRow(row);
+      },
+
+      async listReferencedVariableKeys(merchantId) {
+        const rows = await db.select().from(programs).where(and(
+          eq(programs.merchantId, merchantId),
+          inArray(programs.status, ['draft', 'active']),
+        )).all();
+        const keys = new Set<string>();
+        for (const row of rows) {
+          const program = programFromRow(row).program;
+          for (const condition of program.eligibility.conditions) keys.add(condition.variable);
+          for (const group of program.eligibility.groups ?? []) {
+            for (const condition of group.conditions) keys.add(condition.variable);
+          }
+        }
+        return keys;
       },
     },
 
