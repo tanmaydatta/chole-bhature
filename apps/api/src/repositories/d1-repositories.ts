@@ -311,6 +311,27 @@ export function createRepositories(env: Env): Repositories {
     return row === undefined ? null : definitionFromRow(row);
   }
 
+  function mutationSnapshotTarget(
+    existing: VariableDefinitionRecord,
+    expectedDefinitions: VariableDefinition[],
+  ): { definitions: VariableDefinition[]; targetIndex: number } {
+    const definitions = DefinitionsSchema.parse(expectedDefinitions);
+    const targetIndexes = definitions.flatMap((definition, index) => (
+      definition.key === existing.definition.key ? [index] : []
+    ));
+    if (targetIndexes.length !== 1) throw new SchemaRevisionConflictError();
+    const targetIndex = targetIndexes[0]!;
+    const target = definitions[targetIndex]!;
+    if (
+      target.source !== existing.definition.source
+      || target.type !== existing.definition.type
+      || definitionsJson([target]) !== definitionsJson([existing.definition])
+    ) {
+      throw new SchemaRevisionConflictError();
+    }
+    return { definitions, targetIndex };
+  }
+
   function conditionalDefinitionInsert(
     input: VariableDefinitionRecord,
     expectedJson: string,
@@ -464,7 +485,6 @@ export function createRepositories(env: Env): Repositories {
         schemaVersion,
         definition,
         expectedDefinitions,
-        nextDefinitions,
       ) {
         const parsed = VariableDefinitionSchema.parse(definition);
         const existing = await getSchemaDefinition(merchantId, id);
@@ -475,13 +495,17 @@ export function createRepositories(env: Env): Repositories {
         ) {
           throw new SchemaRevisionConflictError();
         }
+        const { definitions, targetIndex } = mutationSnapshotTarget(existing, expectedDefinitions);
+        const nextDefinitions = definitions.map((candidate, index) => (
+          index === targetIndex ? parsed : candidate
+        ));
         const existingDefinition = existing.definition;
         const derivedReferenceKey = (
           parsed.key !== existingDefinition.key
           || parsed.source !== existingDefinition.source
           || parsed.type !== existingDefinition.type
         ) ? existingDefinition.key : null;
-        const expectedJson = definitionsJson(expectedDefinitions);
+        const expectedJson = definitionsJson(definitions);
         const nextJson = definitionsJson(nextDefinitions);
         try {
           const [versionResult, definitionResult] = await env.DB.batch([
@@ -573,7 +597,6 @@ export function createRepositories(env: Env): Repositories {
         id,
         schemaVersion,
         expectedDefinitions,
-        nextDefinitions,
       ) {
         const existing = await getSchemaDefinition(merchantId, id);
         if (
@@ -583,8 +606,10 @@ export function createRepositories(env: Env): Repositories {
         ) {
           throw new SchemaRevisionConflictError();
         }
+        const { definitions, targetIndex } = mutationSnapshotTarget(existing, expectedDefinitions);
+        const nextDefinitions = definitions.filter((_candidate, index) => index !== targetIndex);
         const existingDefinition = existing.definition;
-        const expectedJson = definitionsJson(expectedDefinitions);
+        const expectedJson = definitionsJson(definitions);
         const nextJson = definitionsJson(nextDefinitions);
         const [versionResult, definitionResult] = await env.DB.batch([
           env.DB.prepare(`

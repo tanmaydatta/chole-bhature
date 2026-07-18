@@ -15,7 +15,6 @@ type UpdateArguments = [
   schemaVersion: number,
   definition: VariableDefinition,
   expectedDefinitions: VariableDefinition[],
-  nextDefinitions: VariableDefinition[],
 ];
 
 type DeleteArguments = [
@@ -23,20 +22,19 @@ type DeleteArguments = [
   id: string,
   schemaVersion: number,
   expectedDefinitions: VariableDefinition[],
-  nextDefinitions: VariableDefinition[],
 ];
 
-type UpdateHasNoCallerControlledGuard = Expect<Equal<
+type UpdateHasNoCallerControlledNextSnapshot = Expect<Equal<
   Parameters<SchemaRepository['updateDraftDefinition']>,
   UpdateArguments
 >>;
 
-type DeleteHasNoCallerControlledGuard = Expect<Equal<
+type DeleteHasNoCallerControlledNextSnapshot = Expect<Equal<
   Parameters<SchemaRepository['deleteDraftDefinition']>,
   DeleteArguments
 >>;
 
 export type SchemaRepositoryMutationContract = [
-  UpdateHasNoCallerControlledGuard,
-  DeleteHasNoCallerControlledGuard,
+  UpdateHasNoCallerControlledNextSnapshot,
+  DeleteHasNoCallerControlledNextSnapshot,
 ];

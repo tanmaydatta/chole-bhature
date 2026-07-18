@@ -43,14 +43,12 @@ export interface SchemaRepository {
     schemaVersion: number,
     definition: VariableDefinition,
     expectedDefinitions: VariableDefinition[],
-    nextDefinitions: VariableDefinition[],
   ): Promise<VariableDefinitionRecord>;
   deleteDraftDefinition(
     merchantId: string,
     id: string,
     schemaVersion: number,
     expectedDefinitions: VariableDefinition[],
-    nextDefinitions: VariableDefinition[],
   ): Promise<void>;
   getVersion(merchantId: string, version: number): Promise<SchemaVersionRecord | null>;
   getLatestVersion(merchantId: string, state: SchemaState): Promise<SchemaVersionRecord | null>;

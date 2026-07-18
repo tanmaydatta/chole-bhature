@@ -253,16 +253,12 @@ export function createSchemaService(repositories: Repositories) {
       if (records.some(record => record.id !== target.id && record.definition.key === definition.key)) {
         throw new SchemaConflictError(`Definition already exists: ${definition.key}`);
       }
-      const nextDefinitions = expectedDefinitions.map(candidate => (
-        candidate.key === target.definition.key ? definition : candidate
-      ));
       const updated = await repositories.schemas.updateDraftDefinition(
         merchantId,
         target.id,
         draft.version,
         definition,
         expectedDefinitions,
-        canonicalDefinitions(nextDefinitions),
       );
       return view(merchantId, updated, references);
     },
@@ -291,7 +287,6 @@ export function createSchemaService(repositories: Repositories) {
         target.id,
         draft.version,
         expectedDefinitions,
-        expectedDefinitions.filter(candidate => candidate.key !== target.definition.key),
       );
     },
 

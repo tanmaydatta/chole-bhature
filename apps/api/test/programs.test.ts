@@ -481,7 +481,6 @@ describe('Promo program API', () => {
   test('a schema delete winning after program validation rejects the stale create', async () => {
     const { repositories, draft, tier } = await draftFixture();
     const expectedDefinitions = draft.definitions;
-    const nextDefinitions = expectedDefinitions.filter(({ key }) => key !== tier.definition.key);
     const staleCreate = {
       merchantId: SEEDED_MERCHANT_ID,
       program: promo('stale-create'),
@@ -493,7 +492,6 @@ describe('Promo program API', () => {
       tier.id,
       draft.version,
       expectedDefinitions,
-      nextDefinitions,
     );
 
     await expect(repositories.programs.create(staleCreate)).rejects.toMatchObject({
@@ -506,9 +504,6 @@ describe('Promo program API', () => {
     const { repositories, draft, tier } = await draftFixture();
     const { enumValues: _enumValues, ...tierFields } = tier.definition;
     const changed: VariableDefinition = { ...tierFields, type: 'string' };
-    const nextDefinitions = draft.definitions.map(definition => (
-      definition.key === tier.definition.key ? changed : definition
-    ));
     const create = {
       merchantId: SEEDED_MERCHANT_ID,
       program: promo('create-wins'),
@@ -522,7 +517,6 @@ describe('Promo program API', () => {
       draft.version,
       changed,
       draft.definitions,
-      nextDefinitions,
     )).rejects.toMatchObject({ name: 'SchemaRevisionConflictError' });
 
     await expect(repositories.schemas.getDefinition(SEEDED_MERCHANT_ID, tier.id))
@@ -558,7 +552,6 @@ describe('Promo program API', () => {
       tier.id,
       draft.version,
       draft.definitions,
-      draft.definitions.filter(({ key }) => key !== tier.definition.key),
     );
 
     await expect(repositories.programs.updateDraft(staleUpdate)).rejects.toMatchObject({
@@ -595,7 +588,6 @@ describe('Promo program API', () => {
       tier.id,
       draft.version,
       draft.definitions,
-      draft.definitions.filter(({ key }) => key !== tier.definition.key),
     )).rejects.toMatchObject({ name: 'SchemaRevisionConflictError' });
 
     await expect(repositories.schemas.getDefinition(SEEDED_MERCHANT_ID, tier.id))

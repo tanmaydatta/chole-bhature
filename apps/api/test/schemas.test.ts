@@ -608,11 +608,116 @@ async function referencedDefinitionFixture(status: 'draft' | 'active') {
 describe('atomic schema repository', () => {
   beforeEach(resetSchemaData);
 
-  test('schema mutation APIs expose no caller-controlled reference guard', () => {
+  test('schema mutation APIs expose no caller-controlled next snapshot or reference guard', () => {
     const repositories = createRepositories({ DB: env.DB });
-    expect(repositories.schemas.updateDraftDefinition).toHaveLength(6);
-    expect(repositories.schemas.deleteDraftDefinition).toHaveLength(5);
+    expect(repositories.schemas.updateDraftDefinition).toHaveLength(5);
+    expect(repositories.schemas.deleteDraftDefinition).toHaveLength(4);
   });
+
+  test.each([
+    ['an identity-changing snapshot', (changed: VariableDefinition) => [{
+      ...changed,
+      key: 'customer.segment',
+    }]],
+    ['a target-removing snapshot', () => []],
+  ] as const)(
+    'metadata-only update ignores %s injected through an unsafe cast',
+    async (_label, forgedSnapshot) => {
+      const { repositories, created, draft } = await referencedDefinitionFixture('active');
+      const changed = { ...created.definition, label: 'Membership tier' };
+      const updateWithInjectedSnapshot = repositories.schemas.updateDraftDefinition as unknown as (
+        ...args: [
+          merchantId: string,
+          id: string,
+          schemaVersion: number,
+          definition: VariableDefinition,
+          expectedDefinitions: VariableDefinition[],
+          injectedNextDefinitions: VariableDefinition[],
+        ]
+      ) => ReturnType<SchemaRepository['updateDraftDefinition']>;
+
+      await expect(updateWithInjectedSnapshot(
+        SEEDED_MERCHANT_ID,
+        created.id,
+        draft.version,
+        changed,
+        draft.definitions,
+        forgedSnapshot(changed),
+      )).resolves.toMatchObject({ definition: changed });
+
+      const stored = await repositories.schemas.getVersion(SEEDED_MERCHANT_ID, draft.version);
+      const rows = await repositories.schemas.listDefinitions(SEEDED_MERCHANT_ID, draft.version);
+      expect(stored?.definitions).toEqual([changed]);
+      expect(rows.map(row => row.definition)).toEqual(stored?.definitions);
+    },
+  );
+
+  test('delete ignores a forged snapshot that removes a different definition', async () => {
+    const repositories = createRepositories({ DB: env.DB });
+    const service = createSchemaService(repositories);
+    const channel = await service.create(SEEDED_MERCHANT_ID, channelDefinition);
+    const note = await service.create(SEEDED_MERCHANT_ID, {
+      key: 'context.note',
+      label: 'Note',
+      source: 'context',
+      type: 'string',
+      required: false,
+    });
+    const draft = await repositories.schemas.getLatestVersion(SEEDED_MERCHANT_ID, 'draft');
+    const deleteWithInjectedSnapshot = repositories.schemas.deleteDraftDefinition as unknown as (
+      ...args: [
+        merchantId: string,
+        id: string,
+        schemaVersion: number,
+        expectedDefinitions: VariableDefinition[],
+        injectedNextDefinitions: VariableDefinition[],
+      ]
+    ) => ReturnType<SchemaRepository['deleteDraftDefinition']>;
+
+    await deleteWithInjectedSnapshot(
+      SEEDED_MERCHANT_ID,
+      channel.id,
+      draft!.version,
+      draft!.definitions,
+      [channel.definition],
+    );
+
+    const stored = await repositories.schemas.getVersion(SEEDED_MERCHANT_ID, draft!.version);
+    const rows = await repositories.schemas.listDefinitions(SEEDED_MERCHANT_ID, draft!.version);
+    expect(stored?.definitions).toEqual([note.definition]);
+    expect(rows.map(row => row.definition)).toEqual(stored?.definitions);
+  });
+
+  test.each([
+    ['a stale target', [{ ...channelDefinition, label: 'Stale label' }]],
+    ['a missing target', []],
+    ['a duplicate target', [channelDefinition, channelDefinition]],
+    ['an identity-inconsistent target', [{
+      ...channelDefinition,
+      type: 'string',
+      enumValues: undefined,
+    }]],
+  ] as const)(
+    'rejects %s in expectedDefinitions without changing row or snapshot',
+    async (_label, suppliedExpectedDefinitions) => {
+      const repositories = createRepositories({ DB: env.DB });
+      const service = createSchemaService(repositories);
+      const created = await service.create(SEEDED_MERCHANT_ID, channelDefinition);
+      const draft = await repositories.schemas.getLatestVersion(SEEDED_MERCHANT_ID, 'draft');
+      const before = await rawDraftState(draft!.version);
+
+      const error = await repositories.schemas.updateDraftDefinition(
+        SEEDED_MERCHANT_ID,
+        created.id,
+        draft!.version,
+        { ...created.definition, label: 'Updated channel' },
+        suppliedExpectedDefinitions as VariableDefinition[],
+      ).then(() => null, failure => failure);
+
+      expect(await rawDraftState(draft!.version)).toEqual(before);
+      expect(error).toMatchObject({ name: 'SchemaRevisionConflictError' });
+    },
+  );
 
   test.each([
     ['null', null],
@@ -690,7 +795,6 @@ describe('atomic schema repository', () => {
       draft.version,
       changed,
       draft.definitions,
-      [changed],
     )).resolves.toMatchObject({ definition: changed });
     expect(await rawDraftState(draft.version)).toMatchObject({
       version: { definitions_json: JSON.stringify([changed]) },
@@ -716,7 +820,6 @@ describe('atomic schema repository', () => {
       draft!.version,
       changed,
       draft!.definitions,
-      [changed],
     )).resolves.toMatchObject({ definition: changed });
     expect(await rawDraftState(draft!.version)).toMatchObject({
       version: { definitions_json: JSON.stringify([changed]) },
@@ -800,7 +903,6 @@ describe('atomic schema repository', () => {
         draft.version,
         updated,
         draft.definitions,
-        [updated],
       ),
       repositories.schemas.publishDraft(
         SEEDED_MERCHANT_ID,
@@ -831,7 +933,6 @@ describe('atomic schema repository', () => {
         draftChannel!.id,
         draft.version,
         draft.definitions,
-        [],
       ),
       repositories.schemas.publishDraft(
         SEEDED_MERCHANT_ID,
@@ -889,7 +990,6 @@ describe('atomic schema repository', () => {
       created.id,
       draft!.version,
       draft!.definitions,
-      [],
     );
 
     await expect(repositories.schemas.getVersion(
@@ -914,7 +1014,6 @@ describe('atomic schema repository', () => {
       'missing-definition',
       draft!.version,
       draft!.definitions,
-      [],
     )).rejects.toMatchObject({ name: 'SchemaRevisionConflictError' });
 
     expect(await rawDraftState(draft!.version)).toEqual(before);
@@ -932,7 +1031,6 @@ describe('atomic schema repository', () => {
       created.id,
       draft!.version,
       [],
-      [],
     )).rejects.toMatchObject({ name: 'SchemaRevisionConflictError' });
 
     expect(await rawDraftState(draft!.version)).toEqual(before);
@@ -949,14 +1047,12 @@ describe('atomic schema repository', () => {
         created.id,
         draft!.version,
         draft!.definitions,
-        [],
       ),
       repositories.schemas.deleteDraftDefinition(
         SEEDED_MERCHANT_ID,
         created.id,
         draft!.version,
         draft!.definitions,
-        [],
       ),
     ]);
 
