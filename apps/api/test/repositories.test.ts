@@ -147,6 +147,16 @@ async function seedDecision(merchantId: string, evaluationId?: string): Promise<
   return id;
 }
 
+async function seedCommittedRedemption() {
+  await seedMerchant('merchant-a');
+  const repositories = createRepositories({ DB: env.DB });
+  const evaluationId = await seedDecision('merchant-a');
+  await repositories.redemptions.create(redemption('merchant-a', evaluationId, {
+    externalOrderRef: 'counted-order',
+  }));
+  return { evaluationId, repositories };
+}
+
 describe('D1 repositories', () => {
   beforeEach(async () => {
     await env.DB.batch([
@@ -367,6 +377,149 @@ describe('D1 repositories', () => {
       'shared',
       'welcome-10',
     )).resolves.toBe(0);
+
+    const otherProgramResult = {
+      ...redemptionResult(
+        `${evaluationId}-counted-order`,
+        evaluationId,
+        { externalOrderRef: 'counted-order' },
+      ),
+      programRef: 'other-program',
+    };
+    const otherProgramDecision = {
+      ...incentiveDecision,
+      programRef: 'other-program',
+    };
+    await env.DB.batch([
+      env.DB.prepare(`
+        UPDATE redemptions SET result_json = ?1
+        WHERE merchant_id = 'merchant-a' AND evaluation_id = ?2
+      `).bind(JSON.stringify(otherProgramResult), evaluationId),
+      env.DB.prepare(`
+        UPDATE evaluation_decisions SET decisions_json = ?1
+        WHERE merchant_id = 'merchant-a' AND id = ?2
+      `).bind(JSON.stringify([otherProgramDecision]), evaluationId),
+    ]);
+    await expect(counter.countCommittedForCustomerProgram(
+      'merchant-a',
+      'shared',
+      'welcome-10',
+    )).resolves.toBe(0);
+    await expect(counter.countCommittedForCustomerProgram(
+      'merchant-a',
+      'shared',
+      'other-program',
+    )).resolves.toBe(1);
+  });
+
+  test('rejects a committed result whose canonical fields do not match its row', async () => {
+    const { evaluationId, repositories } = await seedCommittedRedemption();
+    const mismatched = redemptionResult(
+      `${evaluationId}-counted-order`,
+      'different-evaluation',
+      { externalOrderRef: 'counted-order' },
+    );
+    await env.DB.prepare(`
+      UPDATE redemptions SET result_json = ?1
+      WHERE merchant_id = 'merchant-a' AND evaluation_id = ?2
+    `).bind(JSON.stringify(mismatched), evaluationId).run();
+
+    await expect(repositories.redemptions.countCommittedForCustomerProgram(
+      'merchant-a',
+      'shared',
+      'welcome-10',
+    )).rejects.toThrow(/redemption.*match|evaluation/i);
+  });
+
+  test('rejects committed candidates with a non-canonical result schema', async () => {
+    const { evaluationId, repositories } = await seedCommittedRedemption();
+    await env.DB.prepare(`
+      UPDATE redemptions SET result_json = '{"programRef":"welcome-10"}'
+      WHERE merchant_id = 'merchant-a' AND evaluation_id = ?1
+    `).bind(evaluationId).run();
+
+    await expect(repositories.redemptions.countCommittedForCustomerProgram(
+      'merchant-a',
+      'shared',
+      'welcome-10',
+    )).rejects.toThrow();
+  });
+
+  test('rejects a committed result whose effects differ from its qualified decision', async () => {
+    const { evaluationId, repositories } = await seedCommittedRedemption();
+    const mismatched = {
+      ...redemptionResult(
+        `${evaluationId}-counted-order`,
+        evaluationId,
+        { externalOrderRef: 'counted-order' },
+      ),
+      effects: [{
+        type: 'order_discount',
+        calculation: 'fixed',
+        amount: { currency: 'GBP', minorUnits: 999 },
+      }],
+    };
+    await env.DB.prepare(`
+      UPDATE redemptions SET result_json = ?1
+      WHERE merchant_id = 'merchant-a' AND evaluation_id = ?2
+    `).bind(JSON.stringify(mismatched), evaluationId).run();
+
+    await expect(repositories.redemptions.countCommittedForCustomerProgram(
+      'merchant-a',
+      'shared',
+      'welcome-10',
+    )).rejects.toThrow(/qualified decision|effects/i);
+  });
+
+  test('rejects a redemption when its snapshot has no matching qualified decision', async () => {
+    const { evaluationId, repositories } = await seedCommittedRedemption();
+    await env.DB.prepare(`
+      UPDATE evaluation_decisions SET decisions_json = '[]'
+      WHERE merchant_id = 'merchant-a' AND id = ?1
+    `).bind(evaluationId).run();
+
+    await expect(repositories.redemptions.countCommittedForCustomerProgram(
+      'merchant-a',
+      'shared',
+      'welcome-10',
+    )).rejects.toThrow(/qualified decision|snapshot/i);
+  });
+
+  test('rejects committed candidates with a non-canonical decision schema', async () => {
+    const { evaluationId, repositories } = await seedCommittedRedemption();
+    await env.DB.prepare(`
+      UPDATE evaluation_decisions SET decisions_json = '[{"programRef":"welcome-10"}]'
+      WHERE merchant_id = 'merchant-a' AND id = ?1
+    `).bind(evaluationId).run();
+
+    await expect(repositories.redemptions.countCommittedForCustomerProgram(
+      'merchant-a',
+      'shared',
+      'welcome-10',
+    )).rejects.toThrow();
+  });
+
+  test('validates other-program candidates before excluding them from the requested count', async () => {
+    const { evaluationId, repositories } = await seedCommittedRedemption();
+    const malformedOtherProgram = {
+      ...redemptionResult(
+        `${evaluationId}-counted-order`,
+        evaluationId,
+        { externalOrderRef: 'counted-order' },
+      ),
+      programRef: 'different-program',
+      effects: [],
+    };
+    await env.DB.prepare(`
+      UPDATE redemptions SET result_json = ?1
+      WHERE merchant_id = 'merchant-a' AND evaluation_id = ?2
+    `).bind(JSON.stringify(malformedOtherProgram), evaluationId).run();
+
+    await expect(repositories.redemptions.countCommittedForCustomerProgram(
+      'merchant-a',
+      'shared',
+      'welcome-10',
+    )).rejects.toThrow(/qualified decision|snapshot/i);
   });
 
   test('repository writes reject JSON outside canonical contracts', async () => {

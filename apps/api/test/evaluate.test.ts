@@ -13,6 +13,8 @@ import { createApp } from '../src/app.js';
 import { SEEDED_MERCHANT_ID } from '../src/auth/static-token.js';
 import { createRepositories } from '../src/repositories/d1-repositories.js';
 import {
+  formatMinorUnits,
+  projectedDiscountMinorUnits,
   signDecisionSnapshot,
   verifyDecisionIntegrity,
 } from '../src/services/evaluation-service.js';
@@ -233,6 +235,43 @@ async function hmac(value: unknown): Promise<string> {
 
 describe('POST /v1/evaluate', () => {
   beforeEach(resetEvaluationData);
+
+  test.each([
+    ['GBP', 'GBP 90,071,992,547,409.91'],
+    ['JPY', 'JPY 9,007,199,254,740,991'],
+    ['KWD', 'KWD 9,007,199,254,740.991'],
+  ])('formats max-safe %s minor units without floating-point loss', (
+    currency,
+    message,
+  ) => {
+    expect(formatMinorUnits(currency, Number.MAX_SAFE_INTEGER)).toBe(message);
+  });
+
+  test('projects max-safe line totals with BigInt and caps the aggregate at cart subtotal', () => {
+    const maximum = Number.MAX_SAFE_INTEGER;
+    expect(projectedDiscountMinorUnits([
+      {
+        type: 'line_item_discount',
+        productRef: 'maximum-product',
+        calculation: 'fixed',
+        amount: { currency: 'GBP', minorUnits: maximum },
+      },
+      {
+        type: 'line_item_discount',
+        productRef: 'maximum-product',
+        calculation: 'percent',
+        basisPoints: 10_000,
+      },
+    ], {
+      currency: 'GBP',
+      subtotal: maximum,
+      items: [{
+        productRef: 'maximum-product',
+        quantity: maximum,
+        unitPrice: maximum,
+      }],
+    })).toBe(maximum);
+  });
 
   test.each(['publishable-test', 'secret-test'])(
     'accepts a %s credential',
@@ -506,6 +545,57 @@ describe('POST /v1/evaluate', () => {
     });
   });
 
+  test('returns retryable 503 when a committed result mismatches its decision snapshot', async () => {
+    await seedCustomer();
+    const program = promo('corrupt-customer-count', { perCustomerCap: 2 });
+    await seedProgram(program);
+    const first = await evaluate();
+    await commitDecision(first.evaluationId, program.id, [program.reward], 'corrupt-count');
+    const corruptedResult = {
+      redemptionId: 'redemption-corrupt-count',
+      evaluationId: first.evaluationId,
+      programRef: program.id,
+      externalOrderRef: 'order-corrupt-count',
+      status: 'committed',
+      effects: [{
+        type: 'order_discount',
+        calculation: 'fixed',
+        amount: { currency: 'GBP', minorUnits: 999 },
+      }],
+    };
+    await env.DB.prepare(`
+      UPDATE redemptions SET result_json = ?1
+      WHERE merchant_id = ?2 AND evaluation_id = ?3
+    `).bind(JSON.stringify(corruptedResult), SEEDED_MERCHANT_ID, first.evaluationId).run();
+
+    const error = await expectError(
+      await evaluateRaw(baseRequest),
+      503,
+      'EVALUATION_UNAVAILABLE',
+    );
+    expect(error.error.retryable).toBe(true);
+  });
+
+  test('fails an anonymous per-customer-capped program closed before qualification', async () => {
+    await seedProgram(promo('customer-required', {
+      eligibility: { match: 'ALL', conditions: [] },
+      perCustomerCap: 1,
+    }));
+
+    const result = await evaluate({
+      cart: baseRequest.cart,
+      context: baseRequest.context,
+    });
+    expect(result.decisions[0]).toEqual(expect.objectContaining({
+      programRef: 'customer-required',
+      outcome: 'not_qualified',
+      effects: [],
+      reasonCodes: ['CUSTOMER_REQUIRED'],
+      commitRequired: false,
+      eligible: false,
+    }));
+  });
+
   test.each([
     [
       'fixed order',
@@ -570,6 +660,34 @@ describe('POST /v1/evaluate', () => {
     });
   });
 
+  test('evaluates max-safe unit price and quantity without an intermediate overflow 503', async () => {
+    const maximum = Number.MAX_SAFE_INTEGER;
+    await seedCustomer();
+    await seedProgram(promo('max-safe-projection', {
+      reward: {
+        type: 'line_item_discount',
+        productRef: 'maximum-product',
+        calculation: 'percent',
+        basisPoints: 10_000,
+      },
+      budget: { currency: 'GBP', minorUnits: maximum },
+    }));
+
+    const result = await evaluate({
+      ...baseRequest,
+      cart: {
+        currency: 'GBP',
+        subtotal: maximum,
+        items: [{
+          productRef: 'maximum-product',
+          quantity: maximum,
+          unitPrice: maximum,
+        }],
+      },
+    });
+    expect(result.decisions[0]?.outcome).toBe('qualified');
+  });
+
   test.each([
     {
       type: 'order_discount',
@@ -604,6 +722,66 @@ describe('POST /v1/evaluate', () => {
     },
   );
 
+  test('checks percent-reward budget currency before qualification', async () => {
+    await seedCustomer('customer-1', { tier: 'silver' });
+    await seedProgram(promo('percent-budget-currency', {
+      reward: {
+        type: 'order_discount',
+        calculation: 'percent',
+        basisPoints: 1_000,
+      },
+      budget: { currency: 'GBP', minorUnits: 10_000 },
+    }));
+
+    const result = await evaluate({
+      ...baseRequest,
+      cart: { ...baseRequest.cart, currency: 'USD' },
+    });
+    expect(result.decisions[0]).toEqual(expect.objectContaining({
+      outcome: 'unavailable',
+      effects: [],
+      reasonCodes: ['CURRENCY_MISMATCH'],
+      commitRequired: false,
+      eligible: false,
+    }));
+  });
+
+  test('does not let a matching budget mask a fixed reward currency mismatch', async () => {
+    await seedCustomer();
+    await seedProgram(promo('masked-reward-currency', {
+      reward: {
+        type: 'order_discount',
+        calculation: 'fixed',
+        amount: { currency: 'USD', minorUnits: 1_000 },
+      },
+      budget: { currency: 'GBP', minorUnits: 10_000 },
+    }));
+
+    const result = await evaluate();
+    expect(result.decisions[0]).toEqual(expect.objectContaining({
+      outcome: 'unavailable',
+      effects: [],
+      reasonCodes: ['CURRENCY_MISMATCH'],
+      commitRequired: false,
+      eligible: false,
+    }));
+  });
+
+  test('keeps free shipping without a monetary budget at zero projected cost', async () => {
+    await seedCustomer();
+    await seedProgram(promo('free-shipping', {
+      reward: { type: 'free_shipping' },
+      budget: undefined,
+    }));
+
+    const result = await evaluate();
+    expect(result.decisions[0]).toEqual(expect.objectContaining({
+      outcome: 'qualified',
+      effects: [{ type: 'free_shipping' }],
+      message: 'You received free shipping.',
+    }));
+  });
+
   test.each([
     ['JPY', 1_000, 'You received JPY 1,000 off.'],
     ['KWD', 1_234, 'You received KWD 1.234 off.'],
@@ -625,6 +803,24 @@ describe('POST /v1/evaluate', () => {
       cart: { ...baseRequest.cart, currency },
     });
     expect(result.decisions[0]?.message).toBe(message);
+  });
+
+  test('returns an exact max-safe fixed-money message through the evaluation route', async () => {
+    await seedCustomer();
+    await seedProgram(promo('maximum-message', {
+      reward: {
+        type: 'order_discount',
+        calculation: 'fixed',
+        amount: { currency: 'GBP', minorUnits: Number.MAX_SAFE_INTEGER },
+      },
+    }));
+
+    const result = await evaluate({
+      ...baseRequest,
+      cart: { ...baseRequest.cart, subtotal: Number.MAX_SAFE_INTEGER },
+    });
+    expect(result.decisions[0]?.message)
+      .toBe('You received GBP 90,071,992,547,409.91 off.');
   });
 
   test.each([

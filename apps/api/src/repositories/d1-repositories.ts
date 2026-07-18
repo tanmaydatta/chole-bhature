@@ -7,7 +7,7 @@ import {
   VariableDefinitionSchema,
   type VariableDefinition,
 } from '@incentives/contracts';
-import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray } from 'drizzle-orm';
 import { z } from 'zod';
 
 import { createDatabase } from '../db/client.js';
@@ -1031,8 +1031,30 @@ export function createRepositories(env: Env): Repositories {
       },
 
       async countCommittedForCustomerProgram(merchantId, customerRef, programRef) {
-        const row = await db.select({
-          count: sql<number>`count(*)`,
+        const parsedMerchantId = z.string().min(1).parse(merchantId);
+        const parsedCustomerRef = z.string().min(1).parse(customerRef);
+        const parsedProgramRef = z.string().min(1).parse(programRef);
+        const candidates = await db.select({
+          redemptionId: redemptions.id,
+          redemptionMerchantId: redemptions.merchantId,
+          externalOrderRef: redemptions.externalOrderRef,
+          idempotencyKey: redemptions.idempotencyKey,
+          redemptionEvaluationId: redemptions.evaluationId,
+          resultJson: redemptions.resultJson,
+          discountMinorUnits: redemptions.discountMinorUnits,
+          currency: redemptions.currency,
+          redemptionCreatedAt: redemptions.createdAt,
+          decisionId: evaluationDecisions.id,
+          decisionMerchantId: evaluationDecisions.merchantId,
+          decisionCustomerRef: evaluationDecisions.customerRef,
+          customerVersion: evaluationDecisions.customerVersion,
+          schemaVersion: evaluationDecisions.schemaVersion,
+          requestJson: evaluationDecisions.requestJson,
+          factsJson: evaluationDecisions.factsJson,
+          decisionsJson: evaluationDecisions.decisionsJson,
+          integrityHash: evaluationDecisions.integrityHash,
+          expiresAt: evaluationDecisions.expiresAt,
+          decisionCreatedAt: evaluationDecisions.createdAt,
         }).from(redemptions).innerJoin(
           evaluationDecisions,
           and(
@@ -1040,13 +1062,51 @@ export function createRepositories(env: Env): Repositories {
             eq(redemptions.evaluationId, evaluationDecisions.id),
           ),
         ).where(and(
-          eq(redemptions.merchantId, z.string().min(1).parse(merchantId)),
-          eq(evaluationDecisions.customerRef, z.string().min(1).parse(customerRef)),
-          sql`json_extract(${redemptions.resultJson}, '$.programRef') = ${
-            z.string().min(1).parse(programRef)
-          }`,
-        )).get();
-        return z.number().int().nonnegative().parse(row?.count ?? 0);
+          eq(redemptions.merchantId, parsedMerchantId),
+          eq(evaluationDecisions.customerRef, parsedCustomerRef),
+        )).all();
+
+        let count = 0;
+        for (const candidate of candidates) {
+          const redemption = redemptionFromRow({
+            id: candidate.redemptionId,
+            merchantId: candidate.redemptionMerchantId,
+            externalOrderRef: candidate.externalOrderRef,
+            idempotencyKey: candidate.idempotencyKey,
+            evaluationId: candidate.redemptionEvaluationId,
+            resultJson: candidate.resultJson,
+            discountMinorUnits: candidate.discountMinorUnits,
+            currency: candidate.currency,
+            createdAt: candidate.redemptionCreatedAt,
+          });
+          const snapshot = decisionFromRow({
+            id: candidate.decisionId,
+            merchantId: candidate.decisionMerchantId,
+            customerRef: candidate.decisionCustomerRef,
+            customerVersion: candidate.customerVersion,
+            schemaVersion: candidate.schemaVersion,
+            requestJson: candidate.requestJson,
+            factsJson: candidate.factsJson,
+            decisionsJson: candidate.decisionsJson,
+            integrityHash: candidate.integrityHash,
+            expiresAt: candidate.expiresAt,
+            createdAt: candidate.decisionCreatedAt,
+          });
+          const matchingDecision = snapshot.decisions.find(decision => (
+            decision.outcome === 'qualified'
+            && decision.commitRequired
+            && decision.programRef === redemption.result.programRef
+            && canonicalJson(decision.effects) === canonicalJson(redemption.result.effects)
+          ));
+          if (
+            redemption.evaluationId !== snapshot.evaluationId
+            || matchingDecision === undefined
+          ) {
+            throw new Error('Redemption does not match a qualified decision snapshot');
+          }
+          if (redemption.result.programRef === parsedProgramRef) count += 1;
+        }
+        return count;
       },
     },
   };

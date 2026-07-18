@@ -221,6 +221,24 @@ describe('Promo program API', () => {
     ))?.program).toEqual(replacement);
   });
 
+  test('rejects adding a monetary budget to a free-shipping program on update', async () => {
+    const created = await createProgram(promo('shipping-budget-update'));
+    const replacement: PromoProgram = {
+      ...created,
+      reward: { type: 'free_shipping' },
+    };
+
+    await expectError(
+      await programRequest('PATCH', '/shipping-budget-update', 'secret-test', replacement),
+      400,
+      'CONTEXT_VALIDATION_FAILED',
+    );
+    expect((await createRepositories({ DB: env.DB }).programs.get(
+      SEEDED_MERCHANT_ID,
+      'shipping-budget-update',
+    ))?.program).toEqual(created);
+  });
+
   test.each(['.', '..'])('rejects the unaddressable external reference %s', async (externalRef) => {
     await expectError(
       await programRequest('POST', '', 'secret-test', promo(externalRef)),
@@ -259,6 +277,7 @@ describe('Promo program API', () => {
     ['excess percent reward', { reward: { type: 'order_discount', calculation: 'percent', basisPoints: 10_001 } }],
     ['lowercase currency', { reward: { type: 'order_discount', calculation: 'fixed', amount: { currency: 'gbp', minorUnits: 100 } } }],
     ['reward and budget currency mismatch', { budget: { currency: 'USD', minorUnits: 10_000 } }],
+    ['free shipping with monetary budget', { reward: { type: 'free_shipping' } }],
     ['zero usage cap', { usageCap: 0 }],
     ['negative customer cap', { perCustomerCap: -1 }],
     ['customer cap above total cap', { usageCap: 2, perCustomerCap: 3 }],

@@ -87,6 +87,9 @@ function validateRewardAndCaps(program: PromoProgram): void {
   if ('amount' in program.reward && program.reward.amount.minorUnits <= 0) {
     throw new ContextValidationError('Fixed discount rewards must be positive');
   }
+  if (program.reward.type === 'free_shipping' && program.budget !== undefined) {
+    throw new ContextValidationError('Free-shipping rewards cannot have a monetary budget');
+  }
   if (
     'amount' in program.reward
     && program.budget !== undefined

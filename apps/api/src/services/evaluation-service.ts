@@ -187,18 +187,26 @@ function formatPercent(basisPoints: number): string {
   return String(basisPoints / 100);
 }
 
-function formatMinorUnits(currency: string, minorUnits: number): string {
+export function formatMinorUnits(currency: string, minorUnits: number): string {
   const currencyOptions = new Intl.NumberFormat('en-US', {
     style: 'currency',
     currency,
   }).resolvedOptions();
   const fractionDigits = currencyOptions.maximumFractionDigits ?? 2;
-  const amount = minorUnits / (10 ** fractionDigits);
-  return `${currency} ${new Intl.NumberFormat('en-US', {
-    minimumFractionDigits: fractionDigits,
-    maximumFractionDigits: fractionDigits,
+  const signedAmount = BigInt(minorUnits);
+  const negative = signedAmount < 0n;
+  const absoluteAmount = negative ? -signedAmount : signedAmount;
+  const divisor = 10n ** BigInt(fractionDigits);
+  const integerPart = absoluteAmount / divisor;
+  const fractionPart = absoluteAmount % divisor;
+  const formattedInteger = new Intl.NumberFormat('en-US', {
+    maximumFractionDigits: 0,
     useGrouping: true,
-  }).format(amount)}`;
+  }).format(integerPart);
+  const formattedFraction = fractionDigits === 0
+    ? ''
+    : `.${fractionPart.toString().padStart(fractionDigits, '0')}`;
+  return `${currency} ${negative ? '-' : ''}${formattedInteger}${formattedFraction}`;
 }
 
 function qualifiedMessage(effects: readonly Effect[]): string {
@@ -266,8 +274,12 @@ function safeMinorUnits(value: bigint): number {
   return Number(value);
 }
 
-function percentOf(value: number, basisPoints: number): bigint {
-  return (BigInt(value) * BigInt(basisPoints)) / 10_000n;
+function percentOf(value: bigint, basisPoints: number): bigint {
+  return (value * BigInt(basisPoints)) / 10_000n;
+}
+
+function minimum(left: bigint, right: bigint): bigint {
+  return left < right ? left : right;
 }
 
 export function projectedDiscountMinorUnits(
@@ -275,30 +287,30 @@ export function projectedDiscountMinorUnits(
   cart: Cart,
 ): number {
   let projected = 0n;
+  const subtotal = BigInt(cart.subtotal);
   for (const effect of effects) {
     if (effect.type === 'free_shipping') continue;
     if (effect.type === 'order_discount') {
       projected += effect.calculation === 'fixed'
-        ? BigInt(Math.min(effect.amount.minorUnits, cart.subtotal))
-        : percentOf(cart.subtotal, effect.basisPoints);
+        ? minimum(BigInt(effect.amount.minorUnits), subtotal)
+        : percentOf(subtotal, effect.basisPoints);
       continue;
     }
     if (effect.type === 'line_item_discount') {
       for (const item of cart.items) {
         if (item.productRef !== effect.productRef) continue;
-        projected += effect.calculation === 'fixed'
-          ? BigInt(Math.min(effect.amount.minorUnits, item.unitPrice)) * BigInt(item.quantity)
-          : (
-            BigInt(item.unitPrice)
-            * BigInt(item.quantity)
-            * BigInt(effect.basisPoints)
-          ) / 10_000n;
+        const quantity = BigInt(item.quantity);
+        const extendedLineValue = BigInt(item.unitPrice) * quantity;
+        const lineDiscount = effect.calculation === 'fixed'
+          ? BigInt(effect.amount.minorUnits) * quantity
+          : percentOf(extendedLineValue, effect.basisPoints);
+        projected += minimum(lineDiscount, extendedLineValue);
       }
       continue;
     }
     throw new TypeError(`Unsupported projected discount effect: ${effect.type}`);
   }
-  return safeMinorUnits(projected);
+  return safeMinorUnits(minimum(projected, subtotal));
 }
 
 type PromoDecision = Awaited<ReturnType<typeof PromoModule.evaluate>>[number];
@@ -343,8 +355,25 @@ function exhaustedDecision(
   };
 }
 
-function fixedRewardCurrency(program: PromoProgram): string | undefined {
-  return 'amount' in program.reward ? program.reward.amount.currency : undefined;
+function customerRequiredDecision(program: PromoProgram): PromoDecision {
+  return {
+    ...baseProgramDecision(program),
+    outcome: 'not_qualified',
+    effects: [],
+    reasonCodes: ['CUSTOMER_REQUIRED'],
+    commitRequired: false,
+    eligible: false,
+  };
+}
+
+function hasCurrencyMismatch(program: PromoProgram, cartCurrency: string): boolean {
+  return (
+    program.budget !== undefined
+    && program.budget.currency !== cartCurrency
+  ) || (
+    'amount' in program.reward
+    && program.reward.amount.currency !== cartCurrency
+  );
 }
 
 function ttlSeconds(env: Env): number {
@@ -436,9 +465,10 @@ export function createEvaluationService(repositories: Repositories, env: Env) {
             ...liveFacts,
             system,
           });
-          const evaluated = fixedRewardCurrency(record.program) !== undefined
-            && fixedRewardCurrency(record.program) !== request.cart.currency
+          const evaluated = hasCurrencyMismatch(record.program, request.cart.currency)
             ? [currencyMismatchDecision(record.program)]
+            : customer === null && record.program.perCustomerCap !== undefined
+              ? [customerRequiredDecision(record.program)]
             : await PromoModule.evaluate({
               merchantId,
               evaluationId,
