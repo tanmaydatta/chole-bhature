@@ -494,7 +494,6 @@ describe('Promo program API', () => {
       draft.version,
       expectedDefinitions,
       nextDefinitions,
-      tier.definition.key,
     );
 
     await expect(repositories.programs.create(staleCreate)).rejects.toMatchObject({
@@ -524,7 +523,6 @@ describe('Promo program API', () => {
       changed,
       draft.definitions,
       nextDefinitions,
-      tier.definition.key,
     )).rejects.toMatchObject({ name: 'SchemaRevisionConflictError' });
 
     await expect(repositories.schemas.getDefinition(SEEDED_MERCHANT_ID, tier.id))
@@ -561,7 +559,6 @@ describe('Promo program API', () => {
       draft.version,
       draft.definitions,
       draft.definitions.filter(({ key }) => key !== tier.definition.key),
-      tier.definition.key,
     );
 
     await expect(repositories.programs.updateDraft(staleUpdate)).rejects.toMatchObject({
@@ -599,7 +596,6 @@ describe('Promo program API', () => {
       draft.version,
       draft.definitions,
       draft.definitions.filter(({ key }) => key !== tier.definition.key),
-      tier.definition.key,
     )).rejects.toMatchObject({ name: 'SchemaRevisionConflictError' });
 
     await expect(repositories.schemas.getDefinition(SEEDED_MERCHANT_ID, tier.id))

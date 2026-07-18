@@ -465,31 +465,76 @@ export function createRepositories(env: Env): Repositories {
         definition,
         expectedDefinitions,
         nextDefinitions,
-        protectedVariableKey,
       ) {
         const parsed = VariableDefinitionSchema.parse(definition);
+        const existing = await getSchemaDefinition(merchantId, id);
+        if (
+          existing === null
+          || existing.schemaVersion !== schemaVersion
+          || existing.state !== 'draft'
+        ) {
+          throw new SchemaRevisionConflictError();
+        }
+        const existingDefinition = existing.definition;
+        const derivedReferenceKey = (
+          parsed.key !== existingDefinition.key
+          || parsed.source !== existingDefinition.source
+          || parsed.type !== existingDefinition.type
+        ) ? existingDefinition.key : null;
         const expectedJson = definitionsJson(expectedDefinitions);
         const nextJson = definitionsJson(nextDefinitions);
         try {
-          const [definitionResult, versionResult] = await env.DB.batch([
+          const [versionResult, definitionResult] = await env.DB.batch([
+            env.DB.prepare(`
+              UPDATE schema_versions SET definitions_json = ?1
+              WHERE merchant_id = ?2 AND version = ?3
+                AND state = 'draft' AND definitions_json = ?4
+                AND EXISTS (
+                  SELECT 1 FROM variable_definitions
+                  WHERE merchant_id = ?2 AND schema_version = ?3
+                    AND id = ?5 AND state = 'draft'
+                    AND key = ?6 AND source = ?7 AND type = ?8
+                )
+                AND (?9 IS NULL OR NOT EXISTS (
+                  SELECT 1
+                  FROM programs AS referenced_program,
+                    json_tree(referenced_program.config_json, '$.eligibility') AS condition_node
+                  WHERE referenced_program.merchant_id = ?2
+                    AND referenced_program.status IN ('draft', 'active')
+                    AND condition_node.key = 'variable'
+                    AND condition_node.value = ?9
+                ))
+            `).bind(
+              nextJson,
+              merchantId,
+              schemaVersion,
+              expectedJson,
+              id,
+              existingDefinition.key,
+              existingDefinition.source,
+              existingDefinition.type,
+              derivedReferenceKey,
+            ),
             env.DB.prepare(`
               UPDATE variable_definitions SET
                 key = ?1, label = ?2, source = ?3, type = ?4, required = ?5,
                 enum_values_json = ?6, description = ?7, default_error_message = ?8
               WHERE merchant_id = ?9 AND id = ?10 AND schema_version = ?11
-                AND state = 'draft' AND EXISTS (
+                AND state = 'draft'
+                AND key = ?12 AND source = ?13 AND type = ?14
+                AND EXISTS (
                   SELECT 1 FROM schema_versions
                   WHERE merchant_id = ?9 AND version = ?11
-                    AND state = 'draft' AND definitions_json = ?12
+                    AND state = 'draft' AND definitions_json = ?15
                 )
-                AND (?13 IS NULL OR NOT EXISTS (
+                AND (?16 IS NULL OR NOT EXISTS (
                   SELECT 1
                   FROM programs AS referenced_program,
                     json_tree(referenced_program.config_json, '$.eligibility') AS condition_node
                   WHERE referenced_program.merchant_id = ?9
                     AND referenced_program.status IN ('draft', 'active')
                     AND condition_node.key = 'variable'
-                    AND condition_node.value = ?13
+                    AND condition_node.value = ?16
                 ))
             `).bind(
               parsed.key,
@@ -503,34 +548,11 @@ export function createRepositories(env: Env): Repositories {
               merchantId,
               id,
               schemaVersion,
-              expectedJson,
-              protectedVariableKey,
-            ),
-            env.DB.prepare(`
-              UPDATE schema_versions SET definitions_json = ?1
-              WHERE merchant_id = ?2 AND version = ?3
-                AND state = 'draft' AND definitions_json = ?4
-                AND EXISTS (
-                  SELECT 1 FROM variable_definitions
-                  WHERE merchant_id = ?2 AND schema_version = ?3
-                    AND id = ?5 AND state = 'draft'
-                )
-                AND (?6 IS NULL OR NOT EXISTS (
-                  SELECT 1
-                  FROM programs AS referenced_program,
-                    json_tree(referenced_program.config_json, '$.eligibility') AS condition_node
-                  WHERE referenced_program.merchant_id = ?2
-                    AND referenced_program.status IN ('draft', 'active')
-                    AND condition_node.key = 'variable'
-                    AND condition_node.value = ?6
-                ))
-            `).bind(
+              existingDefinition.key,
+              existingDefinition.source,
+              existingDefinition.type,
               nextJson,
-              merchantId,
-              schemaVersion,
-              expectedJson,
-              id,
-              protectedVariableKey,
+              derivedReferenceKey,
             ),
           ]);
           if (definitionResult?.meta.changes !== 1 || versionResult?.meta.changes !== 1) {
@@ -552,8 +574,16 @@ export function createRepositories(env: Env): Repositories {
         schemaVersion,
         expectedDefinitions,
         nextDefinitions,
-        protectedVariableKey,
       ) {
+        const existing = await getSchemaDefinition(merchantId, id);
+        if (
+          existing === null
+          || existing.schemaVersion !== schemaVersion
+          || existing.state !== 'draft'
+        ) {
+          throw new SchemaRevisionConflictError();
+        }
+        const existingDefinition = existing.definition;
         const expectedJson = definitionsJson(expectedDefinitions);
         const nextJson = definitionsJson(nextDefinitions);
         const [versionResult, definitionResult] = await env.DB.batch([
@@ -565,6 +595,7 @@ export function createRepositories(env: Env): Repositories {
                 SELECT 1 FROM variable_definitions
                 WHERE merchant_id = ?2 AND schema_version = ?3
                   AND id = ?5 AND state = 'draft'
+                  AND key = ?6 AND source = ?7 AND type = ?8
               )
               AND NOT EXISTS (
                 SELECT 1
@@ -581,17 +612,38 @@ export function createRepositories(env: Env): Repositories {
             schemaVersion,
             expectedJson,
             id,
-            protectedVariableKey,
+            existingDefinition.key,
+            existingDefinition.source,
+            existingDefinition.type,
           ),
           env.DB.prepare(`
             DELETE FROM variable_definitions
             WHERE merchant_id = ?1 AND id = ?2 AND schema_version = ?3
-              AND state = 'draft' AND EXISTS (
+              AND state = 'draft'
+              AND key = ?4 AND source = ?5 AND type = ?6
+              AND EXISTS (
                 SELECT 1 FROM schema_versions
                 WHERE merchant_id = ?1 AND version = ?3
-                  AND state = 'draft' AND definitions_json = ?4
+                  AND state = 'draft' AND definitions_json = ?7
               )
-          `).bind(merchantId, id, schemaVersion, nextJson),
+              AND NOT EXISTS (
+                SELECT 1
+                FROM programs AS referenced_program,
+                  json_tree(referenced_program.config_json, '$.eligibility') AS condition_node
+                WHERE referenced_program.merchant_id = ?1
+                  AND referenced_program.status IN ('draft', 'active')
+                  AND condition_node.key = 'variable'
+                  AND condition_node.value = ?4
+              )
+          `).bind(
+            merchantId,
+            id,
+            schemaVersion,
+            existingDefinition.key,
+            existingDefinition.source,
+            existingDefinition.type,
+            nextJson,
+          ),
         ]);
         if (definitionResult?.meta.changes !== 1 || versionResult?.meta.changes !== 1) {
           throw new SchemaRevisionConflictError();

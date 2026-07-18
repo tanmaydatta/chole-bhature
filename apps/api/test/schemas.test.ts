@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, test } from 'vitest';
 
 import { SEEDED_MERCHANT_ID } from '../src/auth/static-token.js';
 import { createRepositories } from '../src/repositories/d1-repositories.js';
-import type { SchemaVersionRecord } from '../src/repositories/types.js';
+import type { SchemaRepository, SchemaVersionRecord } from '../src/repositories/types.js';
 import { createSchemaService } from '../src/services/schema-service.js';
 
 type DefinitionView = {
@@ -345,6 +345,34 @@ describe('schema registry API', () => {
     },
   );
 
+  test('allows metadata-only updates to a referenced definition', async () => {
+    const created = await createDefinition({
+      key: 'customer.tier',
+      label: 'Customer tier',
+      source: 'customer',
+      type: 'string',
+      required: false,
+    });
+    await createRepositories({ DB: env.DB }).programs.create({
+      merchantId: SEEDED_MERCHANT_ID,
+      program: programReferencing('metadata-update', 'active', created.definition.key),
+      schema: await latestWorkingSchema(SEEDED_MERCHANT_ID),
+    });
+
+    const response = await schemaRequest(
+      'PATCH',
+      `/v1/schema/definitions/${created.id}`,
+      'secret-test',
+      { ...created.definition, label: 'Membership tier' },
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      definition: { ...created.definition, label: 'Membership tier' },
+      referenced: true,
+    });
+  });
+
   test('secret credentials gate definition CRUD and publication while published reads accept either key', async () => {
     await expectError(await schemaRequest(
       'POST',
@@ -558,8 +586,143 @@ function programReferencing(
   };
 }
 
+async function referencedDefinitionFixture(status: 'draft' | 'active') {
+  const repositories = createRepositories({ DB: env.DB });
+  const service = createSchemaService(repositories);
+  const created = await service.create(SEEDED_MERCHANT_ID, {
+    key: 'customer.tier',
+    label: 'Customer tier',
+    source: 'customer',
+    type: 'string',
+    required: false,
+  });
+  const draft = await repositories.schemas.getLatestVersion(SEEDED_MERCHANT_ID, 'draft');
+  await repositories.programs.create({
+    merchantId: SEEDED_MERCHANT_ID,
+    program: programReferencing(`repository-${status}-reference`, status, created.definition.key),
+    schema: draft,
+  });
+  return { repositories, created, draft: draft! };
+}
+
 describe('atomic schema repository', () => {
   beforeEach(resetSchemaData);
+
+  test('schema mutation APIs expose no caller-controlled reference guard', () => {
+    const repositories = createRepositories({ DB: env.DB });
+    expect(repositories.schemas.updateDraftDefinition).toHaveLength(6);
+    expect(repositories.schemas.deleteDraftDefinition).toHaveLength(5);
+  });
+
+  test.each([
+    ['null', null],
+    ['an unrelated key', 'context.unrelated'],
+  ] as const)(
+    'referenced identity update cannot be bypassed with %s as an injected guard',
+    async (_label, injectedGuard) => {
+      const { repositories, created, draft } = await referencedDefinitionFixture('draft');
+      const changed = { ...created.definition, key: 'customer.segment' };
+      const nextDefinitions = draft.definitions.map(definition => (
+        definition.key === created.definition.key ? changed : definition
+      ));
+      const before = await rawDraftState(draft.version);
+      const updateWithInjectedGuard = repositories.schemas.updateDraftDefinition as unknown as (
+        ...args: [
+          merchantId: string,
+          id: string,
+          schemaVersion: number,
+          definition: VariableDefinition,
+          expectedDefinitions: VariableDefinition[],
+          nextDefinitions: VariableDefinition[],
+          injectedGuard: string | null,
+        ]
+      ) => ReturnType<SchemaRepository['updateDraftDefinition']>;
+
+      const error = await updateWithInjectedGuard(
+        SEEDED_MERCHANT_ID,
+        created.id,
+        draft.version,
+        changed,
+        draft.definitions,
+        nextDefinitions,
+        injectedGuard,
+      ).then(() => null, failure => failure);
+
+      expect(await rawDraftState(draft.version)).toEqual(before);
+      expect(error).toMatchObject({ name: 'SchemaRevisionConflictError' });
+    },
+  );
+
+  test('referenced delete cannot be bypassed with an unrelated injected guard', async () => {
+    const { repositories, created, draft } = await referencedDefinitionFixture('active');
+    const before = await rawDraftState(draft.version);
+    const deleteWithInjectedGuard = repositories.schemas.deleteDraftDefinition as unknown as (
+      ...args: [
+        merchantId: string,
+        id: string,
+        schemaVersion: number,
+        expectedDefinitions: VariableDefinition[],
+        nextDefinitions: VariableDefinition[],
+        injectedGuard: string,
+      ]
+    ) => ReturnType<SchemaRepository['deleteDraftDefinition']>;
+
+    const error = await deleteWithInjectedGuard(
+      SEEDED_MERCHANT_ID,
+      created.id,
+      draft.version,
+      draft.definitions,
+      [],
+      'context.unrelated',
+    ).then(() => null, failure => failure);
+
+    expect(await rawDraftState(draft.version)).toEqual(before);
+    expect(error).toMatchObject({ name: 'SchemaRevisionConflictError' });
+  });
+
+  test('referenced metadata-only update succeeds without a reference-guard argument', async () => {
+    const { repositories, created, draft } = await referencedDefinitionFixture('active');
+    const changed = { ...created.definition, label: 'Membership tier' };
+
+    await expect(repositories.schemas.updateDraftDefinition(
+      SEEDED_MERCHANT_ID,
+      created.id,
+      draft.version,
+      changed,
+      draft.definitions,
+      [changed],
+    )).resolves.toMatchObject({ definition: changed });
+    expect(await rawDraftState(draft.version)).toMatchObject({
+      version: { definitions_json: JSON.stringify([changed]) },
+      rows: [expect.objectContaining({
+        key: created.definition.key,
+        label: changed.label,
+        source: created.definition.source,
+        type: created.definition.type,
+      })],
+    });
+  });
+
+  test('unreferenced identity update succeeds without a reference-guard argument', async () => {
+    const repositories = createRepositories({ DB: env.DB });
+    const service = createSchemaService(repositories);
+    const created = await service.create(SEEDED_MERCHANT_ID, channelDefinition);
+    const draft = await repositories.schemas.getLatestVersion(SEEDED_MERCHANT_ID, 'draft');
+    const changed = { ...created.definition, key: 'context.sales_channel' };
+
+    await expect(repositories.schemas.updateDraftDefinition(
+      SEEDED_MERCHANT_ID,
+      created.id,
+      draft!.version,
+      changed,
+      draft!.definitions,
+      [changed],
+    )).resolves.toMatchObject({ definition: changed });
+    expect(await rawDraftState(draft!.version)).toMatchObject({
+      version: { definitions_json: JSON.stringify([changed]) },
+      rows: [expect.objectContaining({ key: changed.key })],
+    });
+  });
 
   test('simultaneous next-draft creation returns one complete cloned draft', async () => {
     const repositories = createRepositories({ DB: env.DB });
@@ -638,7 +801,6 @@ describe('atomic schema repository', () => {
         updated,
         draft.definitions,
         [updated],
-        null,
       ),
       repositories.schemas.publishDraft(
         SEEDED_MERCHANT_ID,
@@ -670,7 +832,6 @@ describe('atomic schema repository', () => {
         draft.version,
         draft.definitions,
         [],
-        channelDefinition.key,
       ),
       repositories.schemas.publishDraft(
         SEEDED_MERCHANT_ID,
@@ -729,7 +890,6 @@ describe('atomic schema repository', () => {
       draft!.version,
       draft!.definitions,
       [],
-      channelDefinition.key,
     );
 
     await expect(repositories.schemas.getVersion(
@@ -755,7 +915,6 @@ describe('atomic schema repository', () => {
       draft!.version,
       draft!.definitions,
       [],
-      channelDefinition.key,
     )).rejects.toMatchObject({ name: 'SchemaRevisionConflictError' });
 
     expect(await rawDraftState(draft!.version)).toEqual(before);
@@ -774,7 +933,6 @@ describe('atomic schema repository', () => {
       draft!.version,
       [],
       [],
-      channelDefinition.key,
     )).rejects.toMatchObject({ name: 'SchemaRevisionConflictError' });
 
     expect(await rawDraftState(draft!.version)).toEqual(before);
@@ -792,7 +950,6 @@ describe('atomic schema repository', () => {
         draft!.version,
         draft!.definitions,
         [],
-        channelDefinition.key,
       ),
       repositories.schemas.deleteDraftDefinition(
         SEEDED_MERCHANT_ID,
@@ -800,7 +957,6 @@ describe('atomic schema repository', () => {
         draft!.version,
         draft!.definitions,
         [],
-        channelDefinition.key,
       ),
     ]);
 
