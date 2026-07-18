@@ -38,6 +38,14 @@ import {
 const AttributesSchema = z.record(z.string(), z.unknown());
 const DefinitionsSchema = z.array(VariableDefinitionSchema);
 const DecisionsSchema = z.array(IncentiveDecisionSchema);
+const FactsSchema = z.object({
+  scalar: AttributesSchema,
+  lineItems: z.array(AttributesSchema),
+  programs: z.array(z.object({
+    programRef: z.string().min(1),
+    system: AttributesSchema,
+  }).strict()),
+}).strict();
 const DateTimeSchema = z.iso.datetime({ offset: true });
 const SchemaStateSchema = z.enum(['draft', 'published']);
 const PositiveIntegerSchema = z.number().int().positive();
@@ -208,13 +216,19 @@ function parseDecision(input: EvaluationDecisionRecord): EvaluationDecisionRecor
     throw new Error('Customer ref and customer version must be recorded together');
   }
 
+  const request = EvaluationRequestSchema.parse(input.request);
+  if (customerRef !== request.customerRef) {
+    throw new Error('Customer ref must match the evaluation request snapshot');
+  }
+
   return {
     evaluationId: z.string().min(1).parse(input.evaluationId),
     merchantId: z.string().min(1).parse(input.merchantId),
     ...optional('customerRef', customerRef),
     ...optional('customerVersion', customerVersion),
     schemaVersion: PositiveIntegerSchema.parse(input.schemaVersion),
-    request: EvaluationRequestSchema.parse(input.request),
+    request,
+    facts: FactsSchema.parse(input.facts),
     decisions: DecisionsSchema.parse(input.decisions),
     integrityHash: z.string().min(1).parse(input.integrityHash),
     expiresAt: DateTimeSchema.parse(input.expiresAt),
@@ -230,6 +244,7 @@ function decisionFromRow(row: typeof evaluationDecisions.$inferSelect): Evaluati
     ...optional('customerVersion', row.customerVersion),
     schemaVersion: row.schemaVersion,
     request: parseJson(row.requestJson, EvaluationRequestSchema),
+    facts: parseJson(row.factsJson, FactsSchema),
     decisions: parseJson(row.decisionsJson, DecisionsSchema),
     integrityHash: row.integrityHash,
     expiresAt: row.expiresAt,
@@ -956,6 +971,7 @@ export function createRepositories(env: Env): Repositories {
           customerVersion: parsed.customerVersion ?? null,
           schemaVersion: parsed.schemaVersion,
           requestJson: JSON.stringify(parsed.request),
+          factsJson: JSON.stringify(parsed.facts),
           decisionsJson: JSON.stringify(parsed.decisions),
           integrityHash: parsed.integrityHash,
           expiresAt: parsed.expiresAt,

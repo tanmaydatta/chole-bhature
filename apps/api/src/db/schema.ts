@@ -89,6 +89,7 @@ export const evaluationDecisions = sqliteTable('evaluation_decisions', {
   customerVersion: integer('customer_version'),
   schemaVersion: integer('schema_version').notNull(),
   requestJson: text('request_json').notNull(),
+  factsJson: text('facts_json').notNull(),
   decisionsJson: text('decisions_json').notNull(),
   integrityHash: text('integrity_hash').notNull(),
   expiresAt: text('expires_at').notNull(),

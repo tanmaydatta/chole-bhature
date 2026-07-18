@@ -124,10 +124,20 @@ export interface EvaluationDecisionRecord {
   customerVersion?: number;
   schemaVersion: number;
   request: EvaluationRequest;
+  facts: EvaluationFactsSnapshot;
   decisions: IncentiveDecision[];
   integrityHash: string;
   expiresAt: string;
   createdAt: string;
+}
+
+export interface EvaluationFactsSnapshot {
+  scalar: Record<string, unknown>;
+  lineItems: Array<Record<string, unknown>>;
+  programs: Array<{
+    programRef: string;
+    system: Record<string, unknown>;
+  }>;
 }
 
 export interface DecisionRepository {

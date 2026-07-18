@@ -76,6 +76,7 @@ CREATE TABLE evaluation_decisions (
   customer_version INTEGER,
   schema_version INTEGER NOT NULL,
   request_json TEXT NOT NULL,
+  facts_json TEXT NOT NULL,
   decisions_json TEXT NOT NULL,
   integrity_hash TEXT NOT NULL,
   expires_at TEXT NOT NULL,

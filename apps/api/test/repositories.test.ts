@@ -78,6 +78,11 @@ function decision(
     customerVersion: 1,
     schemaVersion: 1,
     request,
+    facts: {
+      scalar: { 'customer.tier': 'gold', 'cart.subtotal': 5_000 },
+      lineItems: [],
+      programs: [],
+    },
     decisions: [incentiveDecision],
     integrityHash: `${merchantId}-integrity`,
     expiresAt,
@@ -251,6 +256,37 @@ describe('D1 repositories', () => {
       decisions: [incentiveDecision],
     });
     expect(await repositories.decisions.get('merchant-b', 'merchant-a-evaluation')).toBeNull();
+  });
+
+  test('decision persistence includes the evaluated facts migration column', async () => {
+    const columns = await env.DB.prepare(
+      "SELECT name FROM pragma_table_info('evaluation_decisions') ORDER BY cid",
+    ).all<{ name: string }>();
+    expect(columns.results.map(column => column.name)).toEqual([
+      'id',
+      'merchant_id',
+      'customer_ref',
+      'customer_version',
+      'schema_version',
+      'request_json',
+      'facts_json',
+      'decisions_json',
+      'integrity_hash',
+      'expires_at',
+      'created_at',
+    ]);
+  });
+
+  test('decision writes reject outer customer identity that differs from the request snapshot', async () => {
+    await seedMerchant('merchant-a');
+    await seedPublishedSchema('merchant-a');
+    const repositories = createRepositories({ DB: env.DB });
+    await repositories.customers.create('merchant-a', customer('shared', { tier: 'gold' }));
+
+    await expect(repositories.decisions.create({
+      ...decision('merchant-a'),
+      request: { ...request, customerRef: 'different-customer' },
+    })).rejects.toThrow(/customer.*request/i);
   });
 
   test('repository writes reject JSON outside canonical contracts', async () => {

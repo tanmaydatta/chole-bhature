@@ -100,11 +100,20 @@ interface MappedFailure {
 }
 
 function fieldErrors(error: z.ZodError): ApiFieldError[] {
-  return error.issues.map((issue) => ({
-    path: issue.path.length === 0 ? '$' : issue.path.map(String).join('.'),
-    code: issue.code,
-    message: issue.message,
-  }));
+  return error.issues.flatMap((issue): ApiFieldError[] => {
+    if (issue.code === 'unrecognized_keys') {
+      return issue.keys.map(key => ({
+        path: [...issue.path, key].map(String).join('.'),
+        code: issue.code,
+        message: `Unrecognized key: ${key}`,
+      }));
+    }
+    return [{
+      path: issue.path.length === 0 ? '$' : issue.path.map(String).join('.'),
+      code: issue.code,
+      message: issue.message,
+    }];
+  });
 }
 
 function mapFailure(error: unknown, correlationId: string): MappedFailure {
