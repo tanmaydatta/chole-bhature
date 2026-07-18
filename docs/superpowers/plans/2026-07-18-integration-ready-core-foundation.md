@@ -381,7 +381,7 @@ test('loads stored customer, live context, line item, and system facts without o
   const facts = assembleFacts({
     customer: { tier: 'gold' },
     context: { channel: 'web' },
-    cart: { delivery_country: 'GB' },
+    cart: { currency: 'GBP', subtotal: 5000, attributes: { delivery_country: 'GB' } },
     lineItems: [{ productRef: 'p1', attributes: { category: 'shoes' } }],
     system: { budget_remaining: 5000 },
   });
@@ -413,7 +413,7 @@ Expected: FAIL because the evaluator/fact/stacking functions are missing.
 
 - [ ] **Step 3: Implement facts and predicates**
 
-`assembleFacts()` returns `{ scalar: Record<string, unknown>; lineItems: Array<Record<string, unknown>> }` and namespaces every supplied key. It throws on attempts to place `customer.*` values in live context.
+`assembleFacts()` returns `{ scalar: Record<string, unknown>; lineItems: Array<Record<string, unknown>> }` and namespaces every supplied key. Its cart input separates canonical `currency` and `subtotal` from `attributes`; cart attributes cannot use reserved canonical names. It throws on attempts to place `customer.*` values in any live source.
 
 Implement operators with these semantics:
 
@@ -423,11 +423,13 @@ Implement operators with these semantics:
 - `between`: inclusive two-value numeric/date range;
 - `is`: boolean equality.
 
-`evaluateConditionGroup()` supports ALL/ANY and one nested level, returns `{ passed, firstFailure? }`, and preserves declaration order for failure messaging. Missing optional facts fail only the condition using them with reason `ATTRIBUTE_MISSING`; schema validation handles missing required facts before the engine.
+Reject operator/type combinations outside the published `OPERATORS_BY_TYPE` map with `INVALID_CONDITION`. Enum operands must belong to the definition's `enumValues`; invalid configured operands must not be treated as an ordinary failed customer condition. Date controls expose `eq`, `neq`, `gt`, `gte`, `lt`, `lte`, and `between`, matching evaluator support.
 
-Port `renderMessage`, money formatting, operator labels, and the fallback order condition → variable default → program fallback → system default. Keep all functions pure.
+`evaluateConditionGroup()` supports ALL/ANY and one nested level, returns `{ passed, firstFailure? }`, and preserves declaration order for failure messaging. Within each `ALL` group, all line-item conditions must match the same item; `ANY` line-item conditions remain existential, and nested groups apply their own correlation independently. Missing optional facts fail only the condition using them with reason `ATTRIBUTE_MISSING`; schema validation handles missing required facts before the engine.
 
-Implement `resolveDecisionConflicts()` with stable sorting by descending priority then program ref. Mark losing non-stackable decisions `conflict` with reason `STACKING_CONFLICT`; do not discard them from the response.
+Port `renderMessage`, money formatting, operator labels, and the fallback order condition → variable default → program fallback → system default. Both legacy unnamespaced operands and canonical dotted fact keys must interpolate. Keep all functions pure.
+
+Implement `resolveDecisionConflicts()` with stable sorting by descending priority then program ref using a locale-independent code-unit comparison. Mark losing non-stackable decisions `conflict` with reason `STACKING_CONFLICT`; do not discard them from the response.
 
 - [ ] **Step 4: Remove dashboard duplicates through re-exports**
 
