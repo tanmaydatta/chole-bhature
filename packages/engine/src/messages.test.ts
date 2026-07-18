@@ -67,6 +67,11 @@ describe('message interpolation', () => {
     expect(renderMessage('Hi {{ customer_tier }}', { customer_tier: 'gold' })).toBe('Hi gold');
   });
 
+  test('substitutes a canonical dotted fact key', () => {
+    expect(renderMessage('Subtotal {{ cart.subtotal }}', { 'cart.subtotal': 38 }))
+      .toBe('Subtotal 38');
+  });
+
   test('leaves text without tokens untouched', () => {
     expect(renderMessage('No tokens here', {})).toBe('No tokens here');
   });
@@ -74,6 +79,12 @@ describe('message interpolation', () => {
   test('handles ASCII hyphen subtraction', () => {
     expect(renderMessage('Add {{ 50 - basket_value | money }} more', { basket_value: 38 }))
       .toBe('Add $12 more');
+  });
+
+  test('subtracts a canonical dotted fact key', () => {
+    expect(renderMessage('Add {{ 50 - cart.subtotal | money }} more', {
+      'cart.subtotal': 38,
+    })).toBe('Add $12 more');
   });
 
   test('renders an unknown subtraction operand as empty', () => {

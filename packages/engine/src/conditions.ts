@@ -5,11 +5,16 @@ import type {
 } from '@incentives/contracts';
 
 import type { FactSet } from './facts.js';
+import { OPERATORS_BY_TYPE } from './messages.js';
 
 export interface ConditionFailure {
   conditionId: string;
   variable: string;
-  reasonCode: 'ATTRIBUTE_MISSING' | 'CONDITION_NOT_MET' | 'VARIABLE_NOT_DEFINED';
+  reasonCode:
+    | 'ATTRIBUTE_MISSING'
+    | 'CONDITION_NOT_MET'
+    | 'INVALID_CONDITION'
+    | 'VARIABLE_NOT_DEFINED';
 }
 
 export type ConditionEvaluation =
@@ -114,12 +119,37 @@ function failureFor(
 ): ConditionEvaluation {
   return {
     passed: false,
-    failure: {
-      conditionId: condition.id,
-      variable: condition.variable,
-      reasonCode,
-    },
+    failure: conditionFailureFor(condition, reasonCode),
   };
+}
+
+function conditionFailureFor(
+  condition: Condition,
+  reasonCode: ConditionFailure['reasonCode'],
+): ConditionFailure {
+  return {
+    conditionId: condition.id,
+    variable: condition.variable,
+    reasonCode,
+  };
+}
+
+function isConditionConfigurationValid(
+  condition: Condition,
+  definition: VariableDefinition,
+): boolean {
+  if (!OPERATORS_BY_TYPE[definition.type].includes(condition.operator)) return false;
+  if (definition.type !== 'enum') return true;
+
+  const operands = condition.operator === 'in'
+    ? condition.value
+    : [condition.value];
+  if (!Array.isArray(operands)) return false;
+
+  const enumValues = definition.enumValues ?? [];
+  return operands.every((operand) => (
+    typeof operand === 'string' && enumValues.includes(operand)
+  ));
 }
 
 export function evaluateCondition(
@@ -129,6 +159,9 @@ export function evaluateCondition(
 ): ConditionEvaluation {
   const definition = definitions.find(({ key }) => key === condition.variable);
   if (!definition) return failureFor(condition, 'VARIABLE_NOT_DEFINED');
+  if (!isConditionConfigurationValid(condition, definition)) {
+    return failureFor(condition, 'INVALID_CONDITION');
+  }
 
   const values = definition.source === 'line_item'
     ? facts.lineItems
@@ -158,6 +191,41 @@ function evaluateGroup(
   definitions: readonly VariableDefinition[],
   facts: FactSet,
 ): ConditionGroupEvaluation {
+  if (group.match === 'ALL') {
+    let candidateLineItemIndexes = facts.lineItems.map((_item, index) => index);
+
+    for (const condition of group.conditions) {
+      const result = evaluateCondition(condition, definitions, facts);
+      if (!result.passed) return { passed: false, firstFailure: result.failure };
+
+      const definition = definitions.find(({ key }) => key === condition.variable);
+      if (definition?.source !== 'line_item') continue;
+
+      candidateLineItemIndexes = candidateLineItemIndexes.filter((index) => {
+        const lineItem = facts.lineItems[index];
+        if (!lineItem) return false;
+        return evaluateCondition(condition, definitions, {
+          scalar: facts.scalar,
+          lineItems: [lineItem],
+        }).passed;
+      });
+
+      if (candidateLineItemIndexes.length === 0) {
+        return {
+          passed: false,
+          firstFailure: conditionFailureFor(condition, 'CONDITION_NOT_MET'),
+        };
+      }
+    }
+
+    for (const nested of group.groups ?? []) {
+      const result = evaluateGroup(nested, definitions, facts);
+      if (!result.passed) return result;
+    }
+
+    return { passed: true };
+  }
+
   const results: ConditionGroupEvaluation[] = [
     ...group.conditions.map((condition): ConditionGroupEvaluation => {
       const result = evaluateCondition(condition, definitions, facts);
@@ -167,11 +235,6 @@ function evaluateGroup(
     }),
     ...(group.groups ?? []).map((nested) => evaluateGroup(nested, definitions, facts)),
   ];
-
-  if (group.match === 'ALL') {
-    const firstFailed = results.find((result) => !result.passed);
-    return firstFailed ?? { passed: true };
-  }
 
   if (results.some((result) => result.passed)) return { passed: true };
   const firstFailure = results.find((result) => !result.passed)?.firstFailure;

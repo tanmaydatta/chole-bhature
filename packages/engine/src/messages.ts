@@ -12,7 +12,7 @@ export const OPERATORS_BY_TYPE: Record<VariableType, ConditionOperator[]> = {
   string: ['eq', 'neq', 'in'],
   boolean: ['is'],
   enum: ['eq', 'neq', 'in'],
-  date: ['between', 'lt', 'gt'],
+  date: ['eq', 'neq', 'gt', 'gte', 'lt', 'lte', 'between'],
 };
 
 const OPERATOR_LABELS: Record<ConditionOperator, string> = {
@@ -55,13 +55,14 @@ export function money(value: number): string {
 
 const TOKEN_RE = /\{\{([^}]+)\}\}/g;
 const SUBTRACTION_RE = /^\s*([\w.]+)\s*-\s*([\w.]+)\s*$/;
+const VARIABLE_RE = /^[a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*)*$/;
 
 function resolveOperand(
   operand: string,
   context: Record<string, number | string>,
 ): number | null {
   const trimmed = operand.trim();
-  if (/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(trimmed)) {
+  if (VARIABLE_RE.test(trimmed)) {
     const value = context[trimmed];
     return value === undefined ? null : Number(value);
   }
@@ -88,7 +89,7 @@ export function renderMessage(
         value = left - right;
       } else {
         const trimmed = expression.trim();
-        if (/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(trimmed)) {
+        if (VARIABLE_RE.test(trimmed)) {
           value = context[trimmed] ?? '';
         } else {
           value = Number(trimmed);

@@ -10,8 +10,11 @@ function byPriorityThenProgramRef(
   left: ConflictCandidate,
   right: ConflictCandidate,
 ): number {
-  return right.priority - left.priority
-    || left.programRef.localeCompare(right.programRef);
+  const priorityOrder = right.priority - left.priority;
+  if (priorityOrder !== 0) return priorityOrder;
+  if (left.programRef < right.programRef) return -1;
+  if (left.programRef > right.programRef) return 1;
+  return 0;
 }
 
 export function resolveDecisionConflicts(

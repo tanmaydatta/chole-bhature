@@ -6,10 +6,16 @@ export interface LineItemFactInput {
   attributes?: Record<string, unknown>;
 }
 
+export interface CartFactInput {
+  currency: string;
+  subtotal: number;
+  attributes?: Record<string, unknown>;
+}
+
 export interface AssembleFactsInput {
   customer?: Record<string, unknown>;
   context?: Record<string, unknown>;
-  cart?: Record<string, unknown>;
+  cart?: CartFactInput;
   lineItems?: readonly LineItemFactInput[];
   system?: Record<string, unknown>;
 }
@@ -25,6 +31,8 @@ const LINE_ITEM_CANONICAL_KEYS = new Set([
   'quantity',
   'unit_price',
 ]);
+
+const CART_CANONICAL_KEYS = new Set(['currency', 'subtotal', 'items']);
 
 function assertNoCustomerNamespace(
   values: Record<string, unknown>,
@@ -75,20 +83,38 @@ function assembleLineItemFacts(item: LineItemFactInput): Record<string, unknown>
   return facts;
 }
 
+function assembleCartFacts(cart: CartFactInput | undefined): Record<string, unknown> {
+  if (!cart) return {};
+
+  const rawCart = cart as CartFactInput & Record<string, unknown>;
+  assertNoCustomerNamespace(rawCart, 'cart');
+  const attributes = cart.attributes ?? {};
+  assertNoCustomerNamespace(attributes, 'cart');
+  for (const key of Object.keys(attributes)) {
+    if (CART_CANONICAL_KEYS.has(key)) {
+      throw new Error(`Cart attribute ${key} cannot override a canonical fact`);
+    }
+  }
+
+  return {
+    'cart.currency': cart.currency,
+    'cart.subtotal': cart.subtotal,
+    ...namespace('cart', attributes),
+  };
+}
+
 export function assembleFacts(input: AssembleFactsInput): FactSet {
   const customer = input.customer ?? {};
   const context = input.context ?? {};
-  const cart = input.cart ?? {};
   const system = input.system ?? {};
 
   assertNoCustomerNamespace(context, 'context');
-  assertNoCustomerNamespace(cart, 'cart');
 
   return {
     scalar: {
       ...namespace('customer', customer),
       ...namespace('context', context),
-      ...namespace('cart', cart),
+      ...assembleCartFacts(input.cart),
       ...namespace('system', system),
     },
     lineItems: (input.lineItems ?? []).map(assembleLineItemFacts),

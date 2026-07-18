@@ -56,6 +56,24 @@ describe('resolveDecisionConflicts', () => {
     ]);
   });
 
+  test('orders opaque program references by locale-independent code units', () => {
+    const accented: ConflictCandidate = {
+      ...lowerPriority,
+      programRef: 'program-é',
+      priority: 5,
+      stackable: true,
+    };
+    const ascii: ConflictCandidate = {
+      ...accented,
+      programRef: 'program-z',
+    };
+
+    expect(resolveDecisionConflicts([accented, ascii])).toEqual([
+      ascii,
+      accented,
+    ]);
+  });
+
   test('retains decisions that were not qualified', () => {
     const notQualified: ConflictCandidate = {
       ...lowerPriority,
