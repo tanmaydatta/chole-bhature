@@ -332,7 +332,7 @@ export const EffectSchema = z.union([
 
 Define decision/response fields exactly as the design: evaluation id, optional customer ref/version, schema version, ISO expiry, program ref/type, outcome, effects, reason codes, optional message, `commitRequired`, and derived optional `eligible`. Reject an `eligible` value that contradicts the authoritative outcome.
 
-Define `ApiErrorSchema` with `{ error: { code, message, correlationId, retryable, fields? } }`. Define `PromoProgramSchema` with common id/name/status/dates plus promo code/auto-apply, `ConditionGroup`, reward, budget/cap, and stacking fields. Reuse the existing demo operator names to avoid migration translation.
+Define `ApiErrorSchema` with `{ error: { code, message, correlationId, retryable, fields? } }`. Define `PromoProgramSchema` with common id/name/status/dates plus promo code/auto-apply, `ConditionGroup`, reward, budget/cap, and stacking fields. Manual promos (`autoApply: false`) structurally require `code`, while auto-applied promos may omit it, so generated OpenAPI describes the same invariant enforced at runtime. Condition ids must be globally unique across the top-level and nested groups so first-failure messages are unambiguous. Reuse the existing demo operator names to avoid migration translation.
 
 Implement `buildPublishedEvaluationJsonSchema()` around the strict canonical evaluation request: context definitions map to top-level `context`, cart definitions to `cart.attributes`, and line-item definitions to every `cart.items[].attributes`. Reject duplicate definition keys before generation. Implement `buildOpenApiDocument()` with registered component schemas—including structural fixed/percent effect variants—and the future-stable `/v1/evaluate` and `/v1/redemptions` request/response components; HTTP route wiring remains Plan 2.
 
@@ -515,11 +515,11 @@ export interface IncentiveModule<TConfig> {
 }
 ```
 
-`runModuleConformanceSuite()` validates that decision program types match the module, effects pass canonical schemas, outputs are deterministic for identical inputs, reason codes are stable non-empty uppercase snake case, and modules do not mutate request/facts/config fixtures.
+`runModuleConformanceSuite()` validates that decision program types match the module, effects pass canonical schemas, conflict metadata includes integer `priority` and boolean `stackable`, outputs are deterministic for identical inputs, reason codes are stable non-empty uppercase snake case, and modules do not mutate request/facts/config fixtures.
 
 `ModuleDecision` extends the canonical decision with `priority`, `stackable`, and optional `stackingGroup`, making it directly consumable by the central conflict resolver. Every emitted optional `eligible` value must agree with the authoritative outcome.
 
-Implement `PromoModule.evaluate()` using engine predicates/messages. It emits `invalid_code`, `unavailable`, `not_qualified`, or `qualified`; scheduled, draft, paused, and ended programs are unavailable, and active programs are also unavailable outside their configured date window. It does not mutate counters or perform persistence. Caps are represented as system facts for read-time messaging and remain authoritative at Plan 2 redemption.
+Implement `PromoModule.evaluate()` using engine predicates/messages. It emits `invalid_code`, `unavailable`, `not_qualified`, or `qualified`; scheduled, draft, paused, and ended programs are unavailable, and active programs are also unavailable outside their configured date window. Defensively treat any unparsed manual configuration without a code as `invalid_code`. It does not mutate counters or perform persistence. Caps are represented as system facts for read-time messaging and remain authoritative at Plan 2 redemption.
 
 - [ ] **Step 4: Verify the module seam**
 
