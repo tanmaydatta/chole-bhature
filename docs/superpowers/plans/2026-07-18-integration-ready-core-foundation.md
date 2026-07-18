@@ -396,8 +396,10 @@ test('returns the first failing condition in declaration order', () => {
 });
 
 test('resolves non-stacking qualified decisions deterministically', () => {
-  expect(resolveDecisionConflicts([lowerPriority, higherPriority]))
-    .toEqual([expect.objectContaining({ programRef: higherPriority.programRef, outcome: 'qualified' })]);
+  expect(resolveDecisionConflicts([lowerPriority, higherPriority])).toEqual([
+    expect.objectContaining({ programRef: higherPriority.programRef, outcome: 'qualified' }),
+    expect.objectContaining({ programRef: lowerPriority.programRef, outcome: 'conflict', reasonCodes: ['STACKING_CONFLICT'] }),
+  ]);
 });
 ```
 
@@ -425,7 +427,7 @@ Implement operators with these semantics:
 
 Port `renderMessage`, money formatting, operator labels, and the fallback order condition → variable default → program fallback → system default. Keep all functions pure.
 
-Implement `resolveDecisionConflicts()` with stable sorting by priority then program ref. Mark losing non-stackable decisions `conflict` with reason `STACKING_CONFLICT`; do not discard them from the response.
+Implement `resolveDecisionConflicts()` with stable sorting by descending priority then program ref. Mark losing non-stackable decisions `conflict` with reason `STACKING_CONFLICT`; do not discard them from the response.
 
 - [ ] **Step 4: Remove dashboard duplicates through re-exports**
 
