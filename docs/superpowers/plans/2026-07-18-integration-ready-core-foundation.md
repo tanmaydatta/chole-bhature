@@ -591,7 +591,7 @@ Define all seven capability booleans exactly as the spec. A connector that canno
 
 - canonical money is integer/currency-safe;
 - external refs are preserved as opaque strings;
-- customer attributes are returned only by `normalizeCustomer`, never embedded into a cart evaluation request; fixtures include a unique customer-only sentinel value that the runner verifies is present in normalized customer attributes and absent from cart/item attribute trees;
+- customer attributes are returned only by `normalizeCustomer`, never embedded into a cart evaluation request; when `customerAttributes` is supported, fixtures include a unique customer-only sentinel value that the runner verifies is present in normalized customer attributes and absent from cart/item attribute trees. Profiles without that capability may use empty attributes and an empty sentinel list;
 - `mapDecision` rejects/returns unsupported for effects absent from declared capabilities;
 - source verification distinguishes invalid from valid fixture requests;
 - the fixture propagates its order/idempotency reference unchanged;
