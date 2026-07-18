@@ -317,9 +317,11 @@ Define a strict canonical request with `customerRef?`, `code?`, `cart.currency`,
 export const DecisionOutcomeSchema = z.enum([
   'qualified', 'not_qualified', 'unavailable', 'invalid_code', 'exhausted', 'conflict',
 ]);
-export const EffectSchema = z.discriminatedUnion('type', [
-  z.object({ type: z.literal('order_discount'), calculation: z.enum(['fixed', 'percent']), amount: MoneySchema.optional(), basisPoints: z.number().int().min(1).max(10_000).optional() }).strict(),
-  z.object({ type: z.literal('line_item_discount'), productRef: z.string().min(1), calculation: z.enum(['fixed', 'percent']), amount: MoneySchema.optional(), basisPoints: z.number().int().min(1).max(10_000).optional() }).strict(),
+export const EffectSchema = z.union([
+  z.object({ type: z.literal('order_discount'), calculation: z.literal('fixed'), amount: MoneySchema }).strict(),
+  z.object({ type: z.literal('order_discount'), calculation: z.literal('percent'), basisPoints: z.number().int().min(1).max(10_000) }).strict(),
+  z.object({ type: z.literal('line_item_discount'), productRef: z.string().min(1), calculation: z.literal('fixed'), amount: MoneySchema }).strict(),
+  z.object({ type: z.literal('line_item_discount'), productRef: z.string().min(1), calculation: z.literal('percent'), basisPoints: z.number().int().min(1).max(10_000) }).strict(),
   z.object({ type: z.literal('free_shipping') }).strict(),
   z.object({ type: z.literal('wallet_debit'), amount: MoneySchema }).strict(),
   z.object({ type: z.literal('wallet_credit'), amount: MoneySchema }).strict(),
@@ -328,11 +330,11 @@ export const EffectSchema = z.discriminatedUnion('type', [
 ]);
 ```
 
-Define decision/response fields exactly as the design: evaluation id, optional customer ref/version, schema version, ISO expiry, program ref/type, outcome, effects, reason codes, optional message, `commitRequired`, and derived optional `eligible`.
+Define decision/response fields exactly as the design: evaluation id, optional customer ref/version, schema version, ISO expiry, program ref/type, outcome, effects, reason codes, optional message, `commitRequired`, and derived optional `eligible`. Reject an `eligible` value that contradicts the authoritative outcome.
 
 Define `ApiErrorSchema` with `{ error: { code, message, correlationId, retryable, fields? } }`. Define `PromoProgramSchema` with common id/name/status/dates plus promo code/auto-apply, `ConditionGroup`, reward, budget/cap, and stacking fields. Reuse the existing demo operator names to avoid migration translation.
 
-Implement `buildPublishedEvaluationJsonSchema()` by mapping definitions into strict Zod objects per source and calling Zod's JSON Schema conversion. Implement `buildOpenApiDocument()` with registered component schemas and the future-stable `/v1/evaluate` and `/v1/redemptions` request/response components; HTTP route wiring remains Plan 2.
+Implement `buildPublishedEvaluationJsonSchema()` around the strict canonical evaluation request: context definitions map to top-level `context`, cart definitions to `cart.attributes`, and line-item definitions to every `cart.items[].attributes`. Reject duplicate definition keys before generation. Implement `buildOpenApiDocument()` with registered component schemas—including structural fixed/percent effect variants—and the future-stable `/v1/evaluate` and `/v1/redemptions` request/response components; HTTP route wiring remains Plan 2.
 
 - [ ] **Step 4: Verify contracts and generated documents**
 
@@ -494,7 +496,7 @@ test('fake module satisfies the shared conformance suite', async () => {
 });
 ```
 
-Also test invalid code, scheduled/paused/ended availability, first-failure message, percent rounding in minor units, and absent optional customer data.
+Also test invalid code, scheduled/paused/ended availability, first-failure message, canonical percent reward emission in integer basis points, and absent optional customer data. Monetary rounding is deferred to effect application because the canonical percent effect intentionally carries `basisPoints` rather than a precomputed amount.
 
 - [ ] **Step 2: Confirm tests fail**
 
@@ -515,7 +517,9 @@ export interface IncentiveModule<TConfig> {
 
 `runModuleConformanceSuite()` validates that decision program types match the module, effects pass canonical schemas, outputs are deterministic for identical inputs, reason codes are stable non-empty uppercase snake case, and modules do not mutate request/facts/config fixtures.
 
-Implement `PromoModule.evaluate()` using engine predicates/messages. It emits `invalid_code`, `unavailable`, `not_qualified`, or `qualified`; it does not mutate counters or perform persistence. Caps are represented as system facts for read-time messaging and remain authoritative at Plan 2 redemption.
+`ModuleDecision` extends the canonical decision with `priority`, `stackable`, and optional `stackingGroup`, making it directly consumable by the central conflict resolver. Every emitted optional `eligible` value must agree with the authoritative outcome.
+
+Implement `PromoModule.evaluate()` using engine predicates/messages. It emits `invalid_code`, `unavailable`, `not_qualified`, or `qualified`; scheduled, draft, paused, and ended programs are unavailable, and active programs are also unavailable outside their configured date window. It does not mutate counters or perform persistence. Caps are represented as system facts for read-time messaging and remain authoritative at Plan 2 redemption.
 
 - [ ] **Step 4: Verify the module seam**
 
