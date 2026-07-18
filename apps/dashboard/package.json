@@ -1,5 +1,5 @@
 {
-  "name": "demo",
+  "name": "@incentives/dashboard",
   "private": true,
   "version": "0.0.0",
   "type": "module",
