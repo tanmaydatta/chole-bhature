@@ -135,6 +135,13 @@ importers:
         version: 4.1.10(@types/node@24.13.3)(jsdom@29.1.1)(vite@8.1.5(@types/node@24.13.3)(jiti@1.21.7)(yaml@2.9.0))
 
   packages/module-kit:
+    dependencies:
+      '@incentives/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@incentives/engine':
+        specifier: workspace:*
+        version: link:../engine
     devDependencies:
       oxlint:
         specifier: ^1.69.0
@@ -147,6 +154,16 @@ importers:
         version: 4.1.10(@types/node@24.13.3)(jsdom@29.1.1)(vite@8.1.5(@types/node@24.13.3)(jiti@1.21.7)(yaml@2.9.0))
 
   packages/modules/promo:
+    dependencies:
+      '@incentives/contracts':
+        specifier: workspace:*
+        version: link:../../contracts
+      '@incentives/engine':
+        specifier: workspace:*
+        version: link:../../engine
+      '@incentives/module-kit':
+        specifier: workspace:*
+        version: link:../../module-kit
     devDependencies:
       oxlint:
         specifier: ^1.69.0

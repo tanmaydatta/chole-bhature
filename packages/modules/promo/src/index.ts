@@ -1,1 +1,1 @@
-export {};
+export * from './promo-module.js';

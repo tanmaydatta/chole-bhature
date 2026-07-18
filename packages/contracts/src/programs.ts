@@ -78,6 +78,13 @@ export const PromoProgramSchema = z.object({
   priority: z.number().int(),
   stackingGroup: z.string().min(1).optional(),
 }).strict().superRefine((program, context) => {
+  if (!program.autoApply && program.code === undefined) {
+    context.addIssue({
+      code: 'custom',
+      path: ['code'],
+      message: 'code is required unless the promo auto-applies',
+    });
+  }
   if (program.startDate && program.endDate && program.startDate > program.endDate) {
     context.addIssue({
       code: 'custom',

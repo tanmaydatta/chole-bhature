@@ -152,6 +152,20 @@ describe('canonical contracts', () => {
     expect(result.success).toBe(true);
   });
 
+  test('requires a code for promos that do not auto-apply', () => {
+    expect(PromoProgramSchema.safeParse({
+      id: 'missing-code',
+      type: 'promo',
+      name: 'Missing code',
+      status: 'active',
+      autoApply: false,
+      eligibility: { match: 'ALL', conditions: [] },
+      reward: { type: 'free_shipping' },
+      stackable: false,
+      priority: 10,
+    }).success).toBe(false);
+  });
+
   test('emits the strict canonical evaluation envelope with nested extensions', () => {
     const schema = buildPublishedEvaluationJsonSchema([
       {
