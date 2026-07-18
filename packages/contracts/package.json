@@ -7,12 +7,16 @@
   "types": "./dist/index.d.ts",
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "vitest run --passWithNoTests",
+    "test": "vitest run",
     "lint": "oxlint src"
   },
   "devDependencies": {
+    "oxlint": "^1.69.0",
     "typescript": "~6.0.2",
-    "vitest": "^4.1.9",
-    "oxlint": "^1.69.0"
+    "vitest": "^4.1.9"
+  },
+  "dependencies": {
+    "@asteasolutions/zod-to-openapi": "^9.0.0",
+    "zod": "^4.4.3"
   }
 }
