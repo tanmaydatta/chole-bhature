@@ -1,5 +1,5 @@
-import _ProgramListPage from '../_ProgramListPage';
+import ProgramListPage from '../_ProgramListPage';
 
 export default function LoyaltyList() {
-  return <_ProgramListPage type="loyalty" title="Loyalty" newLabel="New loyalty" />;
+  return <ProgramListPage type="loyalty" title="Loyalty" newLabel="New loyalty" />;
 }

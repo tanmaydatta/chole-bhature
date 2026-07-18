@@ -35,7 +35,7 @@ const FILTER_TO_STATUS: Record<FilterLabel, Status | null> = {
 
 const FILTER_LABELS: FilterLabel[] = ['Active', 'Scheduled', 'Paused', 'Ended', 'Drafts', 'All'];
 
-export default function _ProgramListPage({ type, title, newLabel }: ProgramListPageProps) {
+export default function ProgramListPage({ type, title, newLabel }: ProgramListPageProps) {
   const navigate = useNavigate();
   const [selected, setSelected] = useState<FilterLabel>('Active');
   // Subscribe to programs (the data) so the list re-renders when it changes

@@ -1,6 +1,6 @@
 import { render, screen, fireEvent, act } from '@testing-library/react';
 import { MemoryRouter, Routes, Route, useLocation } from 'react-router-dom';
-import _ProgramListPage from './_ProgramListPage';
+import ProgramListPage from './_ProgramListPage';
 import { useProgramStore } from '../data/store';
 import { PROGRAMS } from '../data/programs';
 
@@ -18,7 +18,7 @@ function LocationProbe({ onLocation }: { onLocation: (path: string) => void }) {
 function renderPage() {
   return render(
     <MemoryRouter>
-      <_ProgramListPage type="promo" title="Promo Codes" newLabel="New promo" />
+      <ProgramListPage type="promo" title="Promo Codes" newLabel="New promo" />
     </MemoryRouter>
   );
 }
@@ -29,7 +29,7 @@ function renderPageWithLocationCapture() {
   render(
     <MemoryRouter initialEntries={['/promo']}>
       <Routes>
-        <Route path="/promo" element={<_ProgramListPage type="promo" title="Promo Codes" newLabel="New promo" />} />
+        <Route path="/promo" element={<ProgramListPage type="promo" title="Promo Codes" newLabel="New promo" />} />
         <Route path="*" element={<LocationProbe onLocation={setPath} />} />
       </Routes>
     </MemoryRouter>
