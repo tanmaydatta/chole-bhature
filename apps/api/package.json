@@ -7,12 +7,23 @@
   "types": "./dist/index.d.ts",
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "vitest run --passWithNoTests",
+    "pretest": "pnpm --filter @incentives/contracts --filter @incentives/engine --filter @incentives/module-kit --filter @incentives/promo build",
+    "test": "vitest run",
     "lint": "oxlint src"
   },
   "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.18.6",
+    "@cloudflare/workers-types": "^5.20260717.1",
+    "drizzle-kit": "^0.31.10",
+    "oxlint": "^1.69.0",
     "typescript": "~6.0.2",
-    "vitest": "^4.1.9",
-    "oxlint": "^1.69.0"
+    "vitest": "^4.1.10",
+    "wrangler": "^4.112.0"
+  },
+  "dependencies": {
+    "@incentives/contracts": "workspace:*",
+    "drizzle-orm": "^0.45.2",
+    "hono": "^4.12.30",
+    "zod": "^4.4.3"
   }
 }

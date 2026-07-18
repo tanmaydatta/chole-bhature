@@ -1,0 +1,351 @@
+import type {
+  CustomerSnapshot,
+  EvaluationRequest,
+  IncentiveDecision,
+  PromoProgram,
+  RedemptionResponse,
+  VariableDefinition,
+} from '@incentives/contracts';
+import { env } from 'cloudflare:workers';
+import { beforeEach, describe, expect, test } from 'vitest';
+
+import { createRepositories } from '../src/repositories/d1-repositories.js';
+import type {
+  EvaluationDecisionRecord,
+  RedemptionCreate,
+} from '../src/repositories/types.js';
+
+const createdAt = '2026-07-18T12:00:00.000Z';
+const expiresAt = '2026-07-18T12:05:00.000Z';
+
+const definition: VariableDefinition = {
+  key: 'customer.tier',
+  label: 'Customer tier',
+  source: 'customer',
+  type: 'enum',
+  required: false,
+  enumValues: ['gold', 'silver'],
+};
+
+const request: EvaluationRequest = {
+  customerRef: 'shared',
+  cart: { currency: 'GBP', subtotal: 5_000, items: [] },
+};
+
+const incentiveDecision: IncentiveDecision = {
+  programRef: 'welcome-10',
+  programType: 'promo',
+  outcome: 'qualified',
+  effects: [{
+    type: 'order_discount',
+    calculation: 'fixed',
+    amount: { currency: 'GBP', minorUnits: 500 },
+  }],
+  reasonCodes: ['QUALIFIED'],
+  commitRequired: true,
+};
+
+const program: PromoProgram = {
+  id: 'welcome-10',
+  type: 'promo',
+  name: 'Welcome discount',
+  status: 'active',
+  eligibility: { match: 'ALL', conditions: [] },
+  reward: {
+    type: 'order_discount',
+    calculation: 'fixed',
+    amount: { currency: 'GBP', minorUnits: 500 },
+  },
+  budget: { currency: 'GBP', minorUnits: 10_000 },
+  usageCap: 20,
+  stackable: false,
+  priority: 10,
+  autoApply: true,
+};
+
+function customer(externalRef: string, attributes: Record<string, unknown>): CustomerSnapshot {
+  return { externalRef, attributes };
+}
+
+function decision(
+  merchantId: string,
+  evaluationId = `${merchantId}-evaluation`,
+): EvaluationDecisionRecord {
+  return {
+    evaluationId,
+    merchantId,
+    customerRef: 'shared',
+    customerVersion: 1,
+    schemaVersion: 1,
+    request,
+    decisions: [incentiveDecision],
+    integrityHash: `${merchantId}-integrity`,
+    expiresAt,
+    createdAt,
+  };
+}
+
+function redemptionResult(
+  redemptionId: string,
+  evaluationId: string,
+  identifiers: { externalOrderRef?: string; idempotencyKey?: string },
+): RedemptionResponse {
+  return {
+    redemptionId,
+    evaluationId,
+    programRef: 'welcome-10',
+    status: 'committed',
+    effects: incentiveDecision.effects,
+    ...identifiers,
+  } as RedemptionResponse;
+}
+
+function redemption(
+  merchantId: string,
+  evaluationId: string,
+  identifiers: { externalOrderRef?: string; idempotencyKey?: string },
+): RedemptionCreate {
+  const redemptionId = `${evaluationId}-${identifiers.externalOrderRef ?? identifiers.idempotencyKey}`;
+  return {
+    redemptionId,
+    merchantId,
+    evaluationId,
+    ...identifiers,
+    result: redemptionResult(redemptionId, evaluationId, identifiers),
+    discountMinorUnits: 500,
+    currency: 'GBP',
+    createdAt,
+  };
+}
+
+async function seedMerchant(merchantId: string): Promise<void> {
+  await env.DB.prepare(
+    'INSERT INTO merchants (id, name, created_at) VALUES (?1, ?2, ?3)',
+  ).bind(merchantId, merchantId, createdAt).run();
+}
+
+async function seedDecision(merchantId: string, evaluationId?: string): Promise<string> {
+  const repositories = createRepositories({ DB: env.DB });
+  const id = evaluationId ?? `${merchantId}-evaluation`;
+
+  await repositories.schemas.createVersion({
+    merchantId,
+    version: 1,
+    state: 'published',
+    publishedAt: createdAt,
+    definitions: [definition],
+  });
+  await repositories.customers.create(merchantId, customer('shared', { tier: 'gold' }));
+  await repositories.decisions.create(decision(merchantId, id));
+  return id;
+}
+
+describe('D1 repositories', () => {
+  beforeEach(async () => {
+    await env.DB.batch([
+      env.DB.prepare('DELETE FROM redemptions'),
+      env.DB.prepare('DELETE FROM evaluation_decisions'),
+      env.DB.prepare('DELETE FROM programs'),
+      env.DB.prepare('DELETE FROM customers'),
+      env.DB.prepare('DELETE FROM schema_versions'),
+      env.DB.prepare('DELETE FROM variable_definitions'),
+      env.DB.prepare('DELETE FROM merchants'),
+    ]);
+  });
+
+  test('schema definitions and versions round-trip within merchant scope', async () => {
+    await seedMerchant('merchant-a');
+    await seedMerchant('merchant-b');
+    const repositories = createRepositories({ DB: env.DB });
+
+    await repositories.schemas.createDefinition({
+      id: 'definition-a',
+      merchantId: 'merchant-a',
+      schemaVersion: 1,
+      state: 'draft',
+      definition,
+      createdAt,
+    });
+    await repositories.schemas.createVersion({
+      merchantId: 'merchant-a',
+      version: 1,
+      state: 'published',
+      publishedAt: createdAt,
+      definitions: [definition],
+    });
+
+    expect(await repositories.schemas.listDefinitions('merchant-a', 1)).toMatchObject([
+      { id: 'definition-a', definition },
+    ]);
+    expect(await repositories.schemas.listDefinitions('merchant-b', 1)).toEqual([]);
+    expect(await repositories.schemas.getVersion('merchant-a', 1)).toMatchObject({
+      merchantId: 'merchant-a',
+      version: 1,
+      definitions: [definition],
+    });
+    expect(await repositories.schemas.getVersion('merchant-b', 1)).toBeNull();
+  });
+
+  test('customer refs are isolated by merchant', async () => {
+    await seedMerchant('merchant-a');
+    await seedMerchant('merchant-b');
+    const repositories = createRepositories({ DB: env.DB });
+
+    await repositories.customers.create('merchant-a', customer('shared', { tier: 'gold' }));
+    await repositories.customers.create('merchant-b', customer('shared', { tier: 'silver' }));
+
+    expect((await repositories.customers.get('merchant-a', 'shared'))?.attributes.tier).toBe('gold');
+    expect((await repositories.customers.get('merchant-b', 'shared'))?.attributes.tier).toBe('silver');
+  });
+
+  test('customer updates require the current optimistic version', async () => {
+    await seedMerchant('merchant-a');
+    const repositories = createRepositories({ DB: env.DB });
+
+    const first = await repositories.customers.upsert({
+      merchantId: 'merchant-a',
+      externalRef: 'versioned',
+      attributes: { tier: 'gold' },
+      updatedAt: createdAt,
+    });
+    const second = await repositories.customers.upsert({
+      merchantId: 'merchant-a',
+      externalRef: 'versioned',
+      attributes: { tier: 'silver' },
+      expectedVersion: first.version,
+      updatedAt: '2026-07-18T12:01:00.000Z',
+    });
+
+    expect(first.version).toBe(1);
+    expect(second.version).toBe(2);
+    await expect(repositories.customers.upsert({
+      merchantId: 'merchant-a',
+      externalRef: 'versioned',
+      attributes: { tier: 'gold' },
+      expectedVersion: first.version,
+      updatedAt: '2026-07-18T12:02:00.000Z',
+    })).rejects.toMatchObject({ name: 'OptimisticVersionConflictError' });
+  });
+
+  test('programs and decisions round-trip without crossing merchant scope', async () => {
+    await seedMerchant('merchant-a');
+    await seedMerchant('merchant-b');
+    const repositories = createRepositories({ DB: env.DB });
+
+    await repositories.programs.create({ merchantId: 'merchant-a', program, createdAt });
+    await repositories.schemas.createVersion({
+      merchantId: 'merchant-a',
+      version: 1,
+      state: 'published',
+      publishedAt: createdAt,
+      definitions: [definition],
+    });
+    await repositories.customers.create('merchant-a', customer('shared', { tier: 'gold' }));
+    await repositories.decisions.create(decision('merchant-a'));
+
+    expect(await repositories.programs.get('merchant-a', 'welcome-10')).toMatchObject({
+      merchantId: 'merchant-a',
+      program,
+      usageCount: 0,
+    });
+    expect(await repositories.programs.get('merchant-b', 'welcome-10')).toBeNull();
+    expect(await repositories.decisions.get('merchant-a', 'merchant-a-evaluation')).toMatchObject({
+      merchantId: 'merchant-a',
+      request,
+      decisions: [incentiveDecision],
+    });
+    expect(await repositories.decisions.get('merchant-b', 'merchant-a-evaluation')).toBeNull();
+  });
+
+  test('repository writes reject JSON outside canonical contracts', async () => {
+    await seedMerchant('merchant-a');
+    const repositories = createRepositories({ DB: env.DB });
+
+    await expect(repositories.programs.create({
+      merchantId: 'merchant-a',
+      program: { ...program, type: 'unknown' } as unknown as PromoProgram,
+      createdAt,
+    })).rejects.toThrow();
+  });
+
+  test.each([
+    ['external order ref only', { externalOrderRef: 'order-1' }],
+    ['idempotency key only', { idempotencyKey: 'key-1' }],
+    ['both identifiers', { externalOrderRef: 'order-1', idempotencyKey: 'key-1' }],
+  ])('redemptions support %s', async (_name, identifiers) => {
+    await seedMerchant('merchant-a');
+    const repositories = createRepositories({ DB: env.DB });
+    const evaluationId = await seedDecision('merchant-a');
+    const input = redemption('merchant-a', evaluationId, identifiers);
+
+    await repositories.redemptions.create(input);
+
+    if (identifiers.externalOrderRef) {
+      expect(await repositories.redemptions.getByExternalOrderRef(
+        'merchant-a',
+        identifiers.externalOrderRef,
+      )).toMatchObject(input);
+    }
+    if (identifiers.idempotencyKey) {
+      expect(await repositories.redemptions.getByIdempotencyKey(
+        'merchant-a',
+        identifiers.idempotencyKey,
+      )).toMatchObject(input);
+    }
+  });
+
+  test('redemptions reject missing identifiers', async () => {
+    await seedMerchant('merchant-a');
+    const repositories = createRepositories({ DB: env.DB });
+    const evaluationId = await seedDecision('merchant-a');
+
+    await expect(repositories.redemptions.create({
+      ...redemption('merchant-a', evaluationId, { externalOrderRef: 'temporary' }),
+      externalOrderRef: undefined,
+      idempotencyKey: undefined,
+    } as unknown as RedemptionCreate)).rejects.toThrow(/identifier/i);
+  });
+
+  test.each([
+    ['external order refs', { externalOrderRef: 'duplicate-order' }],
+    ['idempotency keys', { idempotencyKey: 'duplicate-key' }],
+  ])('redemptions enforce merchant-scoped unique %s', async (_name, identifiers) => {
+    await seedMerchant('merchant-a');
+    await seedMerchant('merchant-b');
+    const repositories = createRepositories({ DB: env.DB });
+    const evaluationA = await seedDecision('merchant-a');
+    const evaluationB = await seedDecision('merchant-b');
+
+    await repositories.redemptions.create(redemption('merchant-a', evaluationA, identifiers));
+    const duplicate = redemption('merchant-a', evaluationA, identifiers);
+    await expect(repositories.redemptions.create({
+      ...duplicate,
+      redemptionId: 'second-redemption',
+      result: { ...duplicate.result, redemptionId: 'second-redemption' },
+    })).rejects.toThrow();
+    await expect(repositories.redemptions.create(
+      redemption('merchant-b', evaluationB, identifiers),
+    )).resolves.toBeUndefined();
+  });
+
+  test('redemption lookups cannot cross merchant scope', async () => {
+    await seedMerchant('merchant-a');
+    await seedMerchant('merchant-b');
+    const repositories = createRepositories({ DB: env.DB });
+    const evaluationId = await seedDecision('merchant-a');
+
+    await repositories.redemptions.create(redemption('merchant-a', evaluationId, {
+      externalOrderRef: 'isolated-order',
+      idempotencyKey: 'isolated-key',
+    }));
+
+    expect(await repositories.redemptions.getByExternalOrderRef(
+      'merchant-b',
+      'isolated-order',
+    )).toBeNull();
+    expect(await repositories.redemptions.getByIdempotencyKey(
+      'merchant-b',
+      'isolated-key',
+    )).toBeNull();
+  });
+});
