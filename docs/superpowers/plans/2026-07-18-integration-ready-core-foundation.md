@@ -610,7 +610,7 @@ Expected: fake connector passes and deliberately misdeclared capability fixtures
 - [ ] **Step 5: Commit connector-kit**
 
 ```bash
-git add packages/connector-kit pnpm-lock.yaml
+git add packages/contracts packages/connector-kit pnpm-lock.yaml
 git commit -m "feat: add commerce connector conformance kit"
 ```
 
