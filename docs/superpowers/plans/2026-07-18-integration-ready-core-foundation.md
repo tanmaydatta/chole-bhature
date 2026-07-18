@@ -619,6 +619,10 @@ git commit -m "feat: add commerce connector conformance kit"
 **Files:**
 - Create: `docs/integration/core-contracts.md`
 - Create: `docs/integration/connector-conformance.md`
+- Create: `packages/contracts/test-fixtures/documentation-examples.ts`
+- Create: `packages/contracts/src/documentation-examples.test.ts`
+- Create: `packages/connector-kit/test-fixtures/documentation-example.ts`
+- Create: `packages/connector-kit/src/documentation-example.test.ts`
 - Modify: `CLAUDE.md` only if the user explicitly confirms the untracked file should be adopted; otherwise leave it untouched.
 - Modify: Notion copies of these approved implementation docs in the same unit of work.
 
@@ -628,7 +632,7 @@ git commit -m "feat: add commerce connector conformance kit"
 
 - [ ] **Step 1: Write docs that compile against public examples**
 
-Document one complete canonical customer/cart/decision example, the source/type rules, effect/outcome enums, module dependency rule, connector capabilities, and exact commands to run conformance. Store code examples as imported fixtures in package tests so documentation examples cannot drift silently.
+Document one complete canonical customer/cart/decision example, the source/type rules, effect/outcome enums, module dependency rule, connector capabilities, and exact commands to run conformance. Store the exact example values/connectors in package `test-fixtures/` and import them from package tests that parse/run them through public exports; copy those named fixtures into the matching Markdown code blocks so review can compare one authoritative example source.
 
 - [ ] **Step 2: Run the final foundation gate**
 
@@ -651,7 +655,7 @@ Use `ntn pages create/edit` under the existing Specs/Plans hierarchy, then `ntn 
 - [ ] **Step 4: Commit foundation docs**
 
 ```bash
-git add docs/integration
+git add docs/integration packages/contracts/test-fixtures packages/contracts/src/documentation-examples.test.ts packages/connector-kit/test-fixtures packages/connector-kit/src/documentation-example.test.ts
 git commit -m "docs: publish integration core contracts"
 ```
 
