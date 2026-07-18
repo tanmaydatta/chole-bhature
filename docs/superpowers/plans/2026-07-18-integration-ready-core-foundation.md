@@ -587,17 +587,17 @@ Expected: FAIL because connector types/conformance do not exist.
 
 Define `CustomerSnapshot` as an opaque `externalRef` plus attributes. Reuse the canonical strict `CartSchema` as `CartSnapshot`. Define strict `OrderSnapshot` with opaque `externalRef`, unchanged `idempotencyKey`, uppercase currency, integer non-negative total minor units, optional customer ref, and canonical line items. Keep these platform-neutral schemas in `@incentives/contracts`.
 
-Define all seven capability booleans exactly as the spec. A connector that cannot represent an effect must throw `UnsupportedConnectorCapabilityError`; the conformance suite detects a connector that silently maps an unsupported effect. Initially order discounts/free shipping require automatic-discount or discount-code capability, line-item discounts require line-item-adjustment capability, and wallet debit requires wallet-redemption capability. Future-only wallet credit, points, and attribution remain unsupported until the capability model is deliberately extended. The conformance runner must verify:
+Define all seven capability booleans exactly as the spec. A connector that cannot represent an effect must throw `UnsupportedConnectorCapabilityError`; the conformance suite detects a connector that silently maps an unsupported effect. Initially order discounts/free shipping require automatic-discount or discount-code capability, line-item discounts require line-item-adjustment capability, and wallet debit requires wallet-redemption capability. Future-only wallet credit, points, and attribution remain unsupported until the capability model is deliberately extended. Probe both fixed and percent discount variants plus mixed supported/unsupported decisions so conformance cannot certify partial mapping implementations. The conformance runner must verify:
 
 - canonical money is integer/currency-safe;
 - external refs are preserved as opaque strings;
-- customer attributes are returned only by `normalizeCustomer`, never embedded into a cart evaluation request;
+- customer attributes are returned only by `normalizeCustomer`, never embedded into a cart evaluation request; fixtures include a unique customer-only sentinel value that the runner verifies is present in normalized customer attributes and absent from cart/item attribute trees;
 - `mapDecision` rejects/returns unsupported for effects absent from declared capabilities;
 - source verification distinguishes invalid from valid fixture requests;
 - the fixture propagates its order/idempotency reference unchanged;
 - the documented sequence is evaluate → map/apply → commit before payment capture.
 
-The connector interface remains the approved normalization/mapping/verification boundary; it does not gain speculative payment or persistence methods. `ConnectorFixture` supplies fake `evaluate`, `apply`, `commit`, and `capturePayment` hooks plus a trace. The conformance runner orchestrates those hooks in the documented order and verifies the trace, proving the integration recipe without performing real platform writes.
+The connector interface remains the approved normalization/mapping/verification boundary; it does not gain speculative payment or persistence methods. `ConnectorFixture` supplies fake `evaluate`, `apply`, `commit`, and `capturePayment` hooks plus a trace. The conformance runner—not connector implementations or hooks—records the canonical operation markers while orchestrating and then verifies the trace. This proves the integration recipe without requiring production connectors to know about test instrumentation or performing real platform writes.
 
 Return `{ passed: true }` or throw a typed `ConnectorConformanceError` containing stable failure codes.
 
