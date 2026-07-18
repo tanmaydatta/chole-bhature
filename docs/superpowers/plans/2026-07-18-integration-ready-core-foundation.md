@@ -537,6 +537,9 @@ git commit -m "feat: add incentive module contract and promo module"
 ### Task 5: Add connector capabilities and conformance testing
 
 **Files:**
+- Create: `packages/contracts/src/commerce.ts`
+- Modify: `packages/contracts/src/index.ts`
+- Test: `packages/contracts/src/contracts.test.ts`
 - Create: `packages/connector-kit/src/connector.ts`
 - Create: `packages/connector-kit/src/conformance.ts`
 - Modify: `packages/connector-kit/src/index.ts`
@@ -545,7 +548,7 @@ git commit -m "feat: add incentive module contract and promo module"
 
 **Interfaces:**
 - Consumes: canonical customer/cart/order/evaluation decision contracts.
-- Produces: `ConnectorCapabilities`, `CommerceConnector<TCustomer, TCart, TOrder, TDecision>`, `VerificationResult`, `ConnectorFixture`, and `runConnectorConformanceSuite()`.
+- Produces: strict `CustomerSnapshotSchema` and `OrderSnapshotSchema`, `ConnectorCapabilities`, `CommerceConnector<TCustomer, TCart, TOrder, TDecision>`, `VerificationResult`, `UnsupportedConnectorCapabilityError`, `ConnectorFixture`, and `runConnectorConformanceSuite()`.
 
 - [ ] **Step 1: Write a failing fake-connector conformance test**
 
@@ -582,7 +585,9 @@ Expected: FAIL because connector types/conformance do not exist.
 
 - [ ] **Step 3: Implement capability and connector contracts**
 
-Define all seven booleans exactly as the spec. The conformance runner must verify:
+Define `CustomerSnapshot` as an opaque `externalRef` plus attributes. Reuse the canonical strict `CartSchema` as `CartSnapshot`. Define strict `OrderSnapshot` with opaque `externalRef`, unchanged `idempotencyKey`, uppercase currency, integer non-negative total minor units, optional customer ref, and canonical line items. Keep these platform-neutral schemas in `@incentives/contracts`.
+
+Define all seven capability booleans exactly as the spec. A connector that cannot represent an effect must throw `UnsupportedConnectorCapabilityError`; the conformance suite detects a connector that silently maps an unsupported effect. Initially order discounts/free shipping require automatic-discount or discount-code capability, line-item discounts require line-item-adjustment capability, and wallet debit requires wallet-redemption capability. Future-only wallet credit, points, and attribution remain unsupported until the capability model is deliberately extended. The conformance runner must verify:
 
 - canonical money is integer/currency-safe;
 - external refs are preserved as opaque strings;
@@ -591,6 +596,8 @@ Define all seven booleans exactly as the spec. The conformance runner must verif
 - source verification distinguishes invalid from valid fixture requests;
 - the fixture propagates its order/idempotency reference unchanged;
 - the documented sequence is evaluate → map/apply → commit before payment capture.
+
+The connector interface remains the approved normalization/mapping/verification boundary; it does not gain speculative payment or persistence methods. `ConnectorFixture` supplies fake `evaluate`, `apply`, `commit`, and `capturePayment` hooks plus a trace. The conformance runner orchestrates those hooks in the documented order and verifies the trace, proving the integration recipe without performing real platform writes.
 
 Return `{ passed: true }` or throw a typed `ConnectorConformanceError` containing stable failure codes.
 
