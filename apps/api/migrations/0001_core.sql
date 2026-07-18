@@ -6,6 +6,9 @@ CREATE TABLE merchants (
   created_at TEXT NOT NULL
 );
 
+INSERT INTO merchants (id, name, created_at)
+VALUES ('phase-0-merchant', 'Phase 0 Merchant', '2026-07-18T00:00:00.000Z');
+
 CREATE TABLE variable_definitions (
   id TEXT PRIMARY KEY NOT NULL,
   merchant_id TEXT NOT NULL,
