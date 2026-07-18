@@ -289,6 +289,86 @@ describe('D1 repositories', () => {
     })).rejects.toThrow(/customer.*request/i);
   });
 
+  test('decision facts reject every value that cannot round-trip through strict JSON', async () => {
+    await seedMerchant('merchant-a');
+    await seedPublishedSchema('merchant-a');
+    const repositories = createRepositories({ DB: env.DB });
+    await repositories.customers.create('merchant-a', customer('shared', { tier: 'gold' }));
+    const sparse: unknown[] = [null];
+    delete sparse[0];
+    const cyclic: Record<string, unknown> = {};
+    cyclic.self = cyclic;
+    const symbolKeyed: Record<PropertyKey, unknown> = { safe: true };
+    symbolKeyed[Symbol('hidden')] = 'not-json';
+    const nonEnumerable: Record<string, unknown> = { safe: true };
+    Object.defineProperty(nonEnumerable, 'hidden', { value: 'not-json' });
+    const accessor: Record<string, unknown> = {};
+    Object.defineProperty(accessor, 'value', {
+      enumerable: true,
+      get: () => 'not-json',
+    });
+    const unsafeValues: unknown[] = [
+      undefined,
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+      1n,
+      () => 'not-json',
+      Symbol('not-json'),
+      new Date(),
+      [undefined],
+      sparse,
+      cyclic,
+    ];
+
+    const unsafeFacts = [
+      ...unsafeValues.map(value => ({ unsafe: value })),
+      symbolKeyed,
+      nonEnumerable,
+      accessor,
+    ];
+
+    const results = await Promise.allSettled(unsafeFacts.map((scalar, index) => (
+      repositories.decisions.create({
+        ...decision('merchant-a', `unsafe-${index}`),
+        facts: {
+          scalar,
+          lineItems: [],
+          programs: [],
+        },
+      })
+    )));
+    expect(results.every(result => result.status === 'rejected')).toBe(true);
+    expect(await env.DB.prepare('SELECT COUNT(*) AS count FROM evaluation_decisions')
+      .first<{ count: number }>()).toEqual({ count: 0 });
+  });
+
+  test('counts committed customer/program uses through tenant-scoped decision snapshots', async () => {
+    await seedMerchant('merchant-a');
+    await seedMerchant('merchant-b');
+    const repositories = createRepositories({ DB: env.DB });
+    const evaluationId = await seedDecision('merchant-a');
+    await repositories.redemptions.create(redemption('merchant-a', evaluationId, {
+      externalOrderRef: 'counted-order',
+    }));
+    const counter = repositories.redemptions;
+
+    await expect(counter.countCommittedForCustomerProgram(
+      'merchant-a',
+      'shared',
+      'welcome-10',
+    )).resolves.toBe(1);
+    await expect(counter.countCommittedForCustomerProgram(
+      'merchant-a',
+      'other-customer',
+      'welcome-10',
+    )).resolves.toBe(0);
+    await expect(counter.countCommittedForCustomerProgram(
+      'merchant-b',
+      'shared',
+      'welcome-10',
+    )).resolves.toBe(0);
+  });
+
   test('repository writes reject JSON outside canonical contracts', async () => {
     await seedMerchant('merchant-a');
     const repositories = createRepositories({ DB: env.DB });

@@ -7,7 +7,7 @@ import {
   VariableDefinitionSchema,
   type VariableDefinition,
 } from '@incentives/contracts';
-import { and, asc, desc, eq, inArray } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
 
 import { createDatabase } from '../db/client.js';
@@ -20,6 +20,7 @@ import {
   variableDefinitions,
 } from '../db/schema.js';
 import type { Env } from '../env.js';
+import { canonicalJson } from '../json.js';
 import {
   OptimisticVersionConflictError,
   ProgramConflictError,
@@ -205,6 +206,10 @@ function programFromRow(row: typeof programs.$inferSelect): ProgramRecord {
 }
 
 function parseDecision(input: EvaluationDecisionRecord): EvaluationDecisionRecord {
+  canonicalJson(input.request);
+  canonicalJson(input.facts);
+  canonicalJson(input.decisions);
+
   const customerRef = input.customerRef === undefined
     ? undefined
     : z.string().min(1).parse(input.customerRef);
@@ -220,6 +225,11 @@ function parseDecision(input: EvaluationDecisionRecord): EvaluationDecisionRecor
   if (customerRef !== request.customerRef) {
     throw new Error('Customer ref must match the evaluation request snapshot');
   }
+  const facts = FactsSchema.parse(input.facts);
+  const decisions = DecisionsSchema.parse(input.decisions);
+  canonicalJson(request);
+  canonicalJson(facts);
+  canonicalJson(decisions);
 
   return {
     evaluationId: z.string().min(1).parse(input.evaluationId),
@@ -228,8 +238,8 @@ function parseDecision(input: EvaluationDecisionRecord): EvaluationDecisionRecor
     ...optional('customerVersion', customerVersion),
     schemaVersion: PositiveIntegerSchema.parse(input.schemaVersion),
     request,
-    facts: FactsSchema.parse(input.facts),
-    decisions: DecisionsSchema.parse(input.decisions),
+    facts,
+    decisions,
     integrityHash: z.string().min(1).parse(input.integrityHash),
     expiresAt: DateTimeSchema.parse(input.expiresAt),
     createdAt: DateTimeSchema.parse(input.createdAt),
@@ -970,9 +980,9 @@ export function createRepositories(env: Env): Repositories {
           customerRef: parsed.customerRef ?? null,
           customerVersion: parsed.customerVersion ?? null,
           schemaVersion: parsed.schemaVersion,
-          requestJson: JSON.stringify(parsed.request),
-          factsJson: JSON.stringify(parsed.facts),
-          decisionsJson: JSON.stringify(parsed.decisions),
+          requestJson: canonicalJson(parsed.request),
+          factsJson: canonicalJson(parsed.facts),
+          decisionsJson: canonicalJson(parsed.decisions),
           integrityHash: parsed.integrityHash,
           expiresAt: parsed.expiresAt,
           createdAt: parsed.createdAt,
@@ -1018,6 +1028,25 @@ export function createRepositories(env: Env): Repositories {
           eq(redemptions.idempotencyKey, idempotencyKey),
         )).get();
         return row === undefined ? null : redemptionFromRow(row);
+      },
+
+      async countCommittedForCustomerProgram(merchantId, customerRef, programRef) {
+        const row = await db.select({
+          count: sql<number>`count(*)`,
+        }).from(redemptions).innerJoin(
+          evaluationDecisions,
+          and(
+            eq(redemptions.merchantId, evaluationDecisions.merchantId),
+            eq(redemptions.evaluationId, evaluationDecisions.id),
+          ),
+        ).where(and(
+          eq(redemptions.merchantId, z.string().min(1).parse(merchantId)),
+          eq(evaluationDecisions.customerRef, z.string().min(1).parse(customerRef)),
+          sql`json_extract(${redemptions.resultJson}, '$.programRef') = ${
+            z.string().min(1).parse(programRef)
+          }`,
+        )).get();
+        return z.number().int().nonnegative().parse(row?.count ?? 0);
       },
     },
   };

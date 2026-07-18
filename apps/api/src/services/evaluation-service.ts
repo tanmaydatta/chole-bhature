@@ -1,12 +1,12 @@
 import {
-  CartLineItemSchema,
-  CartSchema,
   EvaluationRequestSchema,
   EvaluationResponseSchema,
+  type Cart,
   type Effect,
   type EvaluationRequest,
   type EvaluationResponse,
   type IncentiveDecision,
+  type PromoProgram,
   type VariableDefinition,
 } from '@incentives/contracts';
 import { assembleFacts, resolveDecisionConflicts } from '@incentives/engine';
@@ -15,6 +15,7 @@ import { z } from 'zod';
 
 import type { Env } from '../env.js';
 import { NotFoundError } from '../errors.js';
+import { canonicalJson } from '../json.js';
 import type {
   EvaluationDecisionRecord,
   EvaluationFactsSnapshot,
@@ -66,32 +67,30 @@ function validatePublishedRequest(
   const context = extensionSchema(definitions, 'context');
   const cart = extensionSchema(definitions, 'cart');
   const lineItem = extensionSchema(definitions, 'line_item');
-  const lineItemSchema = CartLineItemSchema.extend({
-    attributes: lineItem.required ? lineItem.schema : lineItem.schema.optional(),
-  });
-  const cartSchema = CartSchema.extend({
-    attributes: cart.required ? cart.schema : cart.schema.optional(),
-    items: z.array(lineItemSchema),
-  });
-  if (context.required && request.context === undefined) {
-    z.object({ context: context.schema }).parse({ context: {} });
+
+  function validateExtension(
+    extension: ReturnType<typeof extensionSchema>,
+    input: Record<string, unknown> | undefined,
+    prefix: PropertyKey[],
+  ): void {
+    if (input === undefined && !extension.required) return;
+    try {
+      extension.schema.parse(input ?? {});
+    } catch (error) {
+      if (!(error instanceof z.ZodError)) throw error;
+      for (const issue of error.issues) {
+        (issue as { path: PropertyKey[] }).path = [...prefix, ...issue.path];
+      }
+      throw error;
+    }
   }
-  return EvaluationRequestSchema.extend({
-    context: context.required ? context.schema : context.schema.optional(),
-    cart: cartSchema,
-  }).parse(request);
-}
 
-function canonicalJson(value: unknown): string {
-  if (value === null || typeof value !== 'object') return JSON.stringify(value);
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
-
-  const record = value as Record<string, unknown>;
-  const properties = Object.keys(record)
-    .filter(key => record[key] !== undefined)
-    .sort()
-    .map(key => `${JSON.stringify(key)}:${canonicalJson(record[key])}`);
-  return `{${properties.join(',')}}`;
+  validateExtension(context, request.context, ['context']);
+  validateExtension(cart, request.cart.attributes, ['cart']);
+  request.cart.items.forEach((item, index) => {
+    validateExtension(lineItem, item.attributes, [`line_item[${index}]`]);
+  });
+  return request;
 }
 
 function bytesToHex(bytes: ArrayBuffer): string {
@@ -185,8 +184,21 @@ export async function verifyDecisionIntegrity(
 }
 
 function formatPercent(basisPoints: number): string {
-  const percent = basisPoints / 100;
-  return Number.isInteger(percent) ? String(percent) : String(percent);
+  return String(basisPoints / 100);
+}
+
+function formatMinorUnits(currency: string, minorUnits: number): string {
+  const currencyOptions = new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency,
+  }).resolvedOptions();
+  const fractionDigits = currencyOptions.maximumFractionDigits ?? 2;
+  const amount = minorUnits / (10 ** fractionDigits);
+  return `${currency} ${new Intl.NumberFormat('en-US', {
+    minimumFractionDigits: fractionDigits,
+    maximumFractionDigits: fractionDigits,
+    useGrouping: true,
+  }).format(amount)}`;
 }
 
 function qualifiedMessage(effects: readonly Effect[]): string {
@@ -197,7 +209,10 @@ function qualifiedMessage(effects: readonly Effect[]): string {
     (effect.type === 'order_discount' || effect.type === 'line_item_discount')
     && effect.calculation === 'fixed'
   ) {
-    return `You received ${effect.amount.currency} ${(effect.amount.minorUnits / 100).toFixed(2)} off.`;
+    return `You received ${formatMinorUnits(
+      effect.amount.currency,
+      effect.amount.minorUnits,
+    )} off.`;
   }
   if (
     (effect.type === 'order_discount' || effect.type === 'line_item_discount')
@@ -227,7 +242,12 @@ function stableDecision(decision: ReturnType<typeof resolveDecisionConflicts>[nu
     case 'invalid_code':
       return { ...canonical, message: 'This promotion code is invalid.' };
     case 'unavailable':
-      return { ...canonical, message: 'This promotion is unavailable.' };
+      return {
+        ...canonical,
+        message: canonical.reasonCodes.includes('CURRENCY_MISMATCH')
+          ? 'This promotion is unavailable for this currency.'
+          : 'This promotion is unavailable.',
+      };
     case 'conflict':
       return {
         ...canonical,
@@ -237,6 +257,94 @@ function stableDecision(decision: ReturnType<typeof resolveDecisionConflicts>[nu
     case 'exhausted':
       return { ...canonical, message: 'This promotion has been exhausted.' };
   }
+}
+
+function safeMinorUnits(value: bigint): number {
+  if (value < 0n || value > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw new RangeError('Projected discount exceeds the supported minor-unit range');
+  }
+  return Number(value);
+}
+
+function percentOf(value: number, basisPoints: number): bigint {
+  return (BigInt(value) * BigInt(basisPoints)) / 10_000n;
+}
+
+export function projectedDiscountMinorUnits(
+  effects: readonly Effect[],
+  cart: Cart,
+): number {
+  let projected = 0n;
+  for (const effect of effects) {
+    if (effect.type === 'free_shipping') continue;
+    if (effect.type === 'order_discount') {
+      projected += effect.calculation === 'fixed'
+        ? BigInt(Math.min(effect.amount.minorUnits, cart.subtotal))
+        : percentOf(cart.subtotal, effect.basisPoints);
+      continue;
+    }
+    if (effect.type === 'line_item_discount') {
+      for (const item of cart.items) {
+        if (item.productRef !== effect.productRef) continue;
+        projected += effect.calculation === 'fixed'
+          ? BigInt(Math.min(effect.amount.minorUnits, item.unitPrice)) * BigInt(item.quantity)
+          : (
+            BigInt(item.unitPrice)
+            * BigInt(item.quantity)
+            * BigInt(effect.basisPoints)
+          ) / 10_000n;
+      }
+      continue;
+    }
+    throw new TypeError(`Unsupported projected discount effect: ${effect.type}`);
+  }
+  return safeMinorUnits(projected);
+}
+
+type PromoDecision = Awaited<ReturnType<typeof PromoModule.evaluate>>[number];
+
+function baseProgramDecision(program: PromoProgram): Pick<
+  PromoDecision,
+  'programRef' | 'programType' | 'priority' | 'stackable' | 'stackingGroup'
+> {
+  return {
+    programRef: program.id,
+    programType: 'promo',
+    priority: program.priority,
+    stackable: program.stackable,
+    ...(program.stackingGroup === undefined
+      ? {}
+      : { stackingGroup: program.stackingGroup }),
+  };
+}
+
+function currencyMismatchDecision(program: PromoProgram): PromoDecision {
+  return {
+    ...baseProgramDecision(program),
+    outcome: 'unavailable',
+    effects: [],
+    reasonCodes: ['CURRENCY_MISMATCH'],
+    commitRequired: false,
+    eligible: false,
+  };
+}
+
+function exhaustedDecision(
+  decision: PromoDecision,
+  reasonCodes: string[],
+): PromoDecision {
+  return {
+    ...decision,
+    outcome: 'exhausted',
+    effects: [],
+    reasonCodes,
+    commitRequired: false,
+    eligible: false,
+  };
+}
+
+function fixedRewardCurrency(program: PromoProgram): string | undefined {
+  return 'amount' in program.reward ? program.reward.amount.currency : undefined;
 }
 
 function ttlSeconds(env: Env): number {
@@ -306,10 +414,19 @@ export function createEvaluationService(repositories: Repositories, env: Env) {
         const moduleDecisions = [];
 
         for (const record of programs) {
+          const customerUsesCount = customer === null
+            ? 0
+            : await repositories.redemptions.countCommittedForCustomerProgram(
+              merchantId,
+              customer.externalRef,
+              record.externalRef,
+            );
           const system = {
-            budget_remaining: record.budgetRemaining,
+            ...(record.budgetRemaining === undefined
+              ? {}
+              : { budget_remaining: record.budgetRemaining }),
             redemptions_total: record.usageCount,
-            customer_uses_count: 0,
+            customer_uses_count: customerUsesCount,
             today: now.toISOString().slice(0, 10),
           };
           facts.programs.push({ programRef: record.externalRef, system });
@@ -319,14 +436,41 @@ export function createEvaluationService(repositories: Repositories, env: Env) {
             ...liveFacts,
             system,
           });
-          moduleDecisions.push(...await PromoModule.evaluate({
-            merchantId,
-            evaluationId,
-            now,
-            request,
-            facts: programFacts,
-            definitions,
-          }, record.program));
+          const evaluated = fixedRewardCurrency(record.program) !== undefined
+            && fixedRewardCurrency(record.program) !== request.cart.currency
+            ? [currencyMismatchDecision(record.program)]
+            : await PromoModule.evaluate({
+              merchantId,
+              evaluationId,
+              now,
+              request,
+              facts: programFacts,
+              definitions,
+            }, record.program);
+          for (const decision of evaluated) {
+            if (decision.outcome !== 'qualified') {
+              moduleDecisions.push(decision);
+              continue;
+            }
+            const projectedCost = projectedDiscountMinorUnits(decision.effects, request.cart);
+            const exhaustionReasons = [
+              ...(record.program.usageCap !== undefined
+                && record.usageCount >= record.program.usageCap
+                ? ['USAGE_CAP_EXHAUSTED']
+                : []),
+              ...(record.program.perCustomerCap !== undefined
+                && customerUsesCount >= record.program.perCustomerCap
+                ? ['PER_CUSTOMER_CAP_EXHAUSTED']
+                : []),
+              ...(record.budgetRemaining !== undefined
+                && record.budgetRemaining < projectedCost
+                ? ['BUDGET_EXHAUSTED']
+                : []),
+            ];
+            moduleDecisions.push(exhaustionReasons.length === 0
+              ? decision
+              : exhaustedDecision(decision, exhaustionReasons));
+          }
         }
 
         const decisions = resolveDecisionConflicts(moduleDecisions).map(stableDecision);

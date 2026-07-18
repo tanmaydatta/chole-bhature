@@ -167,6 +167,11 @@ export interface RedemptionRepository {
     merchantId: string,
     idempotencyKey: string,
   ): Promise<RedemptionCreate | null>;
+  countCommittedForCustomerProgram(
+    merchantId: string,
+    customerRef: string,
+    programRef: string,
+  ): Promise<number>;
 }
 
 export interface Repositories {
