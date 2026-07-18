@@ -1,4 +1,5 @@
 # FE-2 · Programs CRUD wired to real API
+> **Phase 0 (M0):** Phase 0 (**P0-7**) delivers promo CRUD on the real API. Remaining Phase 1 scope: the other 3 program types (affiliate/referral/loyalty) wired to the API.
 
 ## Context
 Spec §8 — reuse the demo's flows and condition builder, wire them to the real backend. Depends on FE-1 (client/auth) and BE-6 (programs API).

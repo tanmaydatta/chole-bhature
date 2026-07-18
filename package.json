@@ -1,0 +1,11 @@
+{
+  "name": "incentives-platform",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "pnpm -r build",
+    "test": "pnpm -r test",
+    "lint": "pnpm -r lint",
+    "verify:clean-tests": "bash scripts/verify-clean-test-gate.sh"
+  }
+}

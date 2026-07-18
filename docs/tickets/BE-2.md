@@ -1,4 +1,5 @@
 # BE-2 · Hono skeleton + API-key auth + rate limiting
+> **Phase 0 (M0):** Phase 0 (**P0-4**) delivers the Hono skeleton + a static-token gate (publishable/secret) + single-tenant merchant resolver. Remaining Phase 1 scope: hashed/rotatable D1-backed API keys + per-key rate limiting.
 
 ## Context
 Spec §3.1 (Hono + zod) and §4 (publishable vs secret API keys, per-key rate limiting). Depends on INFRA-1 (workspace) and BE-1 (`api_keys` table).

@@ -1,4 +1,5 @@
 # BE-6 · Program/variables/events CRUD APIs + KV cache
+> **Phase 0 (M0):** Phase 0 (**P0-5**) delivers promo CRUD + `GET /v1/promos`. Remaining Phase 1 scope: variables + events CRUD, the other 3 program types, and the KV compiled-config cache + invalidation.
 
 ## Context
 Spec §7 (four program types), §5 (`programs`/`variables`/`event_defs` tables), and §6 ("compiled to an evaluable form cached in KV"). Depends on BE-2 (Hono/auth) and BE-3 (engine types/schemas).

@@ -1,4 +1,5 @@
 # INFRA-1 · Monorepo scaffold
+> **Phase 0 (M0):** Delivered in Phase 0 by **P0-1** (monorepo scaffold + `demo/` → `apps/dashboard` + package stubs). Effectively complete; Phase 1 only verifies/extends the shared tsconfig + lint/format config.
 
 ## Context
 Foundation ticket, no upstream dependencies. Spec §3.1 pins the target repo layout (pnpm workspaces: `apps/api`, `apps/dashboard`, `apps/reference-store`, `packages/engine`). Binding decision: **evolve this repo** (`chole-bhature`) — do not create a new repo.

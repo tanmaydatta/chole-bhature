@@ -1,4 +1,5 @@
 # INFRA-2 · Cloudflare environments
+> **Phase 0 (M0):** Phase 0 (**P0-1**) stands up one Workers env + D1 + `wrangler deploy`. Remaining Phase 1 scope: the dev/staging/prod env matrix and the DO/KV/Queues/Cron bindings.
 
 ## Context
 Spec §3 architecture table (Workers/D1/DO/KV/Queues) plus the binding decision that staging and prod Cloudflare environments are strictly separated. Depends on INFRA-1's app skeletons.
