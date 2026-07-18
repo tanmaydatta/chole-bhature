@@ -9,6 +9,7 @@ import {
   NotFoundError,
 } from './errors.js';
 import { createRepositories } from './repositories/d1-repositories.js';
+import { createCustomerRoutes } from './routes/customers.js';
 import { createSchemaRoutes } from './routes/schemas.js';
 
 const correlationId: MiddlewareHandler<AppEnvironment> = async (context, next) => {
@@ -50,6 +51,7 @@ export function createApp(): Hono<AppEnvironment> {
   app.get('/v1/health', (context) => context.json({ status: 'ok' }));
   app.get('/v1/test-publishable', requirePublishable, contextSummary);
   app.get('/v1/test-secret', requireSecret, contextSummary);
+  app.route('/v1/customers', createCustomerRoutes());
   app.route('/v1/schema', createSchemaRoutes());
 
   return app;
