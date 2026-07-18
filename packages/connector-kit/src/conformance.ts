@@ -23,6 +23,7 @@ export type ConnectorConformanceCode =
   | 'INVALID_ORDER_SNAPSHOT'
   | 'INVALID_CANONICAL_MONEY'
   | 'CUSTOMER_DATA_IN_CART'
+  | 'INVALID_CUSTOMER_SENTINEL'
   | 'CUSTOMER_ATTRIBUTES_MUTATED'
   | 'EXTERNAL_REF_MUTATED'
   | 'IDEMPOTENCY_KEY_MUTATED'
@@ -55,6 +56,7 @@ export interface ConnectorFixture<TCustomer, TCart, TOrder, TDecision> {
   orderInput: TOrder;
   expectedCustomerRef: string;
   expectedCustomerAttributes: Readonly<Record<string, unknown>>;
+  customerOnlyAttributeSentinels: readonly unknown[];
   expectedOrderRef: string;
   expectedOrderCustomerRef?: string;
   expectedIdempotencyKey: string;
@@ -118,21 +120,9 @@ function readCapabilities(value: unknown): ConnectorCapabilities {
   return value as ConnectorCapabilities;
 }
 
-function containsCustomerData(value: unknown, seen = new WeakSet<object>()): boolean {
-  if (value === null || typeof value !== 'object') return false;
-  if (seen.has(value)) return false;
-  seen.add(value);
-
-  if (Array.isArray(value)) {
-    return value.some(entry => containsCustomerData(entry, seen));
-  }
-
-  return Object.entries(value).some(([key, entry]) => (
-    key === 'customer'
-    || key === 'customerRef'
-    || key === 'customerAttributes'
-    || containsCustomerData(entry, seen)
-  ));
+function containsTopLevelCustomerData(value: unknown): boolean {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
+  return ['customer', 'customerRef', 'customerAttributes'].some(key => key in value);
 }
 
 function lineReferencesMatch(
@@ -187,6 +177,57 @@ function valuesEqual(
     ));
 }
 
+function treeContainsValue(
+  tree: unknown,
+  target: unknown,
+  seen = new WeakSet<object>(),
+): boolean {
+  if (valuesEqual(tree, target)) return true;
+  if (tree === null || typeof tree !== 'object' || seen.has(tree)) return false;
+  seen.add(tree);
+  return Object.values(tree).some(value => treeContainsValue(value, target, seen));
+}
+
+function assertCustomerSentinels(
+  sentinels: readonly unknown[],
+  expectedAttributes: Readonly<Record<string, unknown>>,
+  normalizedAttributes: Readonly<Record<string, unknown>>,
+): void {
+  if (
+    sentinels.length === 0
+    || sentinels.some((sentinel, index) => (
+      !treeContainsValue(expectedAttributes, sentinel)
+      || sentinels.some((other, otherIndex) => (
+        otherIndex < index && valuesEqual(other, sentinel)
+      ))
+    ))
+  ) {
+    throw failure(
+      'INVALID_CUSTOMER_SENTINEL',
+      'Fixture customer-only sentinels must be unique and present in expected customer attributes',
+    );
+  }
+
+  if (sentinels.some(sentinel => !treeContainsValue(normalizedAttributes, sentinel))) {
+    throw failure(
+      'CUSTOMER_ATTRIBUTES_MUTATED',
+      'Customer-only sentinel was dropped or mutated during normalization',
+    );
+  }
+}
+
+function cartContainsSentinel(
+  cart: { attributes?: Readonly<Record<string, unknown>> | undefined; items: readonly {
+    attributes?: Readonly<Record<string, unknown>> | undefined;
+  }[] },
+  sentinels: readonly unknown[],
+): boolean {
+  return sentinels.some(sentinel => (
+    treeContainsValue(cart.attributes, sentinel)
+    || cart.items.some(item => treeContainsValue(item.attributes, sentinel))
+  ));
+}
+
 function isMoneyIssue(path: readonly PropertyKey[]): boolean {
   return path.some(segment => (
     segment === 'currency'
@@ -196,12 +237,12 @@ function isMoneyIssue(path: readonly PropertyKey[]): boolean {
   ));
 }
 
-function decisionFor(effect: Effect): IncentiveDecision {
+function decisionFor(effects: readonly Effect[]): IncentiveDecision {
   return IncentiveDecisionSchema.parse({
     programRef: 'connector-conformance',
     programType: 'promo',
     outcome: 'qualified',
-    effects: [effect],
+    effects,
     reasonCodes: [],
     commitRequired: true,
     eligible: true,
@@ -214,12 +255,23 @@ const CONFORMANCE_EFFECTS: readonly Effect[] = [
     calculation: 'fixed',
     amount: { currency: 'GBP', minorUnits: 100 },
   },
+  {
+    type: 'order_discount',
+    calculation: 'percent',
+    basisPoints: 1_000,
+  },
   { type: 'free_shipping' },
   {
     type: 'line_item_discount',
     productRef: 'connector-conformance-product',
     calculation: 'fixed',
     amount: { currency: 'GBP', minorUnits: 100 },
+  },
+  {
+    type: 'line_item_discount',
+    productRef: 'connector-conformance-product',
+    calculation: 'percent',
+    basisPoints: 1_000,
   },
   {
     type: 'wallet_debit',
@@ -256,32 +308,47 @@ function assertCapabilityMapping<TCustomer, TCart, TOrder, TDecision>(
   connector: CommerceConnector<TCustomer, TCart, TOrder, TDecision>,
   capabilities: ConnectorCapabilities,
 ): void {
-  for (const effect of CONFORMANCE_EFFECTS) {
-    const supported = supportsEffect(capabilities, effect);
+  const probes = CONFORMANCE_EFFECTS.map(effect => ({
+    effects: [effect] as readonly Effect[],
+    unsupportedEffect: supportsEffect(capabilities, effect) ? undefined : effect.type,
+  }));
+  const supportedEffect = CONFORMANCE_EFFECTS.find(effect => supportsEffect(capabilities, effect));
+  if (supportedEffect !== undefined) {
+    for (const unsupportedEffect of CONFORMANCE_EFFECTS.filter(
+      effect => !supportsEffect(capabilities, effect),
+    )) {
+      probes.push({
+        effects: [supportedEffect, unsupportedEffect],
+        unsupportedEffect: unsupportedEffect.type,
+      });
+    }
+  }
+
+  for (const probe of probes) {
     try {
-      connector.mapDecision(decisionFor(effect));
-      if (!supported) {
+      connector.mapDecision(decisionFor(probe.effects));
+      if (probe.unsupportedEffect !== undefined) {
         throw failure(
           'UNSUPPORTED_EFFECT_ACCEPTED',
-          `Connector silently accepted unsupported effect: ${effect.type}`,
+          `Connector silently accepted unsupported effect: ${probe.unsupportedEffect}`,
         );
       }
     } catch (error) {
       if (error instanceof ConnectorConformanceError) throw error;
-      if (supported) {
+      if (probe.unsupportedEffect === undefined) {
         throw failure(
           'SUPPORTED_EFFECT_REJECTED',
-          `Connector rejected declared supported effect: ${effect.type}`,
+          `Connector rejected a declared supported decision containing ${probe.effects[0]?.type}`,
           error,
         );
       }
       if (
         !(error instanceof UnsupportedConnectorCapabilityError)
-        || error.effectType !== effect.type
+        || error.effectType !== probe.unsupportedEffect
       ) {
         throw failure(
           'UNSUPPORTED_EFFECT_ERROR_INVALID',
-          `Unsupported effect ${effect.type} must throw its typed capability error`,
+          `Unsupported effect ${probe.unsupportedEffect} must throw its typed capability error`,
           error,
         );
       }
@@ -343,13 +410,17 @@ export async function runConnectorConformanceSuite<
   if (customer.data.externalRef !== fixture.expectedCustomerRef) {
     throw failure('EXTERNAL_REF_MUTATED', 'Customer external reference was mutated');
   }
-  if (
-    capabilities.customerAttributes
-    && !valuesEqual(customer.data.attributes, fixture.expectedCustomerAttributes)
-  ) {
-    throw failure(
-      'CUSTOMER_ATTRIBUTES_MUTATED',
-      'Customer attributes were dropped or mutated during normalization',
+  if (capabilities.customerAttributes) {
+    if (!valuesEqual(customer.data.attributes, fixture.expectedCustomerAttributes)) {
+      throw failure(
+        'CUSTOMER_ATTRIBUTES_MUTATED',
+        'Customer attributes were dropped or mutated during normalization',
+      );
+    }
+    assertCustomerSentinels(
+      fixture.customerOnlyAttributeSentinels,
+      fixture.expectedCustomerAttributes,
+      customer.data.attributes,
     );
   }
 
@@ -359,7 +430,7 @@ export async function runConnectorConformanceSuite<
   } catch (error) {
     throw failure('INVALID_CART_SNAPSHOT', 'Cart normalization failed', error);
   }
-  if (containsCustomerData(cartValue)) {
+  if (containsTopLevelCustomerData(cartValue)) {
     throw failure('CUSTOMER_DATA_IN_CART', 'Persistent customer data must not appear in a cart');
   }
   const cart = CartSnapshotSchema.safeParse(cartValue);
@@ -369,6 +440,12 @@ export async function runConnectorConformanceSuite<
       invalidMoney ? 'INVALID_CANONICAL_MONEY' : 'INVALID_CART_SNAPSHOT',
       'Cart normalization did not return a strict canonical snapshot',
       cart.error,
+    );
+  }
+  if (cartContainsSentinel(cart.data, fixture.customerOnlyAttributeSentinels)) {
+    throw failure(
+      'CUSTOMER_DATA_IN_CART',
+      'Customer-only attribute sentinel must not appear in cart or line-item attributes',
     );
   }
   if (!lineReferencesMatch(cart.data.items, fixture.expectedCartLineRefs)) {
@@ -407,6 +484,7 @@ export async function runConnectorConformanceSuite<
   await assertSourceVerification(connector, fixture.validRequest, fixture.invalidRequest);
 
   fixture.trace.length = 0;
+  fixture.trace.push('evaluate');
   let decisionValue: unknown;
   try {
     decisionValue = await fixture.evaluate();
@@ -423,22 +501,26 @@ export async function runConnectorConformanceSuite<
   }
 
   let mappedDecision: TDecision;
+  fixture.trace.push('map');
   try {
     mappedDecision = connector.mapDecision(decision.data);
   } catch (error) {
     throw failure('DECISION_MAPPING_FAILED', 'Connector could not map the evaluated decision', error);
   }
 
+  fixture.trace.push('apply');
   try {
     await fixture.apply(mappedDecision);
   } catch (error) {
     throw failure('APPLICATION_FAILED', 'Fixture could not apply the mapped decision', error);
   }
+  fixture.trace.push('commit');
   try {
     await fixture.commit(order.data);
   } catch (error) {
     throw failure('COMMIT_FAILED', 'Fixture could not commit the decision', error);
   }
+  fixture.trace.push('capture');
   try {
     await fixture.capturePayment();
   } catch (error) {
