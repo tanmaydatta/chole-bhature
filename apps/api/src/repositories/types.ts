@@ -89,6 +89,13 @@ export interface ProgramCreate {
   createdAt?: string;
 }
 
+export interface ProgramUpdate {
+  merchantId: string;
+  externalRef: string;
+  program: PromoProgram;
+  updatedAt?: string;
+}
+
 export interface ProgramRecord {
   id: string;
   merchantId: string;
@@ -103,6 +110,8 @@ export interface ProgramRecord {
 export interface ProgramRepository {
   create(input: ProgramCreate): Promise<ProgramRecord>;
   get(merchantId: string, externalRef: string): Promise<ProgramRecord | null>;
+  list(merchantId: string): Promise<ProgramRecord[]>;
+  updateDraft(input: ProgramUpdate): Promise<ProgramRecord>;
   listReferencedVariableKeys(merchantId: string): Promise<Set<string>>;
 }
 
@@ -169,5 +178,13 @@ export class SchemaRevisionConflictError extends Error {
 
   constructor() {
     super('The schema draft changed before the operation completed');
+  }
+}
+
+export class ProgramConflictError extends Error {
+  override readonly name = 'ProgramConflictError';
+
+  constructor(message: string) {
+    super(message);
   }
 }

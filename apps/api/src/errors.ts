@@ -10,6 +10,7 @@ import { z } from 'zod';
 import type { AppEnvironment } from './env.js';
 import {
   OptimisticVersionConflictError,
+  ProgramConflictError,
   SchemaRevisionConflictError,
 } from './repositories/types.js';
 
@@ -128,6 +129,18 @@ function mapFailure(error: unknown, correlationId: string): MappedFailure {
       status: 409,
       error: {
         code: 'VERSION_CONFLICT',
+        message: error.message,
+        correlationId,
+        retryable: false,
+      },
+    };
+  }
+
+  if (error instanceof ProgramConflictError) {
+    return {
+      status: 409,
+      error: {
+        code: 'PROGRAM_CONFLICT',
         message: error.message,
         correlationId,
         retryable: false,

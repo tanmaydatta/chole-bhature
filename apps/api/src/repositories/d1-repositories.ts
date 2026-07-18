@@ -7,7 +7,7 @@ import {
   VariableDefinitionSchema,
   type VariableDefinition,
 } from '@incentives/contracts';
-import { and, desc, eq, inArray } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray } from 'drizzle-orm';
 import { z } from 'zod';
 
 import { createDatabase } from '../db/client.js';
@@ -22,6 +22,7 @@ import {
 import type { Env } from '../env.js';
 import {
   OptimisticVersionConflictError,
+  ProgramConflictError,
   SchemaRevisionConflictError,
   type CustomerRecord,
   type CustomerUpsert,
@@ -632,21 +633,29 @@ export function createRepositories(env: Env): Repositories {
         const merchantId = z.string().min(1).parse(input.merchantId);
         const parsedProgram = PromoProgramSchema.parse(input.program);
         const createdAt = DateTimeSchema.parse(input.createdAt ?? now());
-        const row = await db.insert(programs).values({
-          id: crypto.randomUUID(),
-          merchantId,
-          externalRef: parsedProgram.id,
-          type: parsedProgram.type,
-          name: parsedProgram.name,
-          status: parsedProgram.status,
-          configJson: JSON.stringify(parsedProgram),
-          priority: parsedProgram.priority,
-          maxUses: parsedProgram.usageCap ?? null,
-          usageCount: 0,
-          budgetRemaining: parsedProgram.budget?.minorUnits ?? null,
-          createdAt,
-          updatedAt: createdAt,
-        }).returning().get();
+        let row: typeof programs.$inferSelect;
+        try {
+          row = await db.insert(programs).values({
+            id: crypto.randomUUID(),
+            merchantId,
+            externalRef: parsedProgram.id,
+            type: parsedProgram.type,
+            name: parsedProgram.name,
+            status: parsedProgram.status,
+            configJson: JSON.stringify(parsedProgram),
+            priority: parsedProgram.priority,
+            maxUses: parsedProgram.usageCap ?? null,
+            usageCount: 0,
+            budgetRemaining: parsedProgram.budget?.minorUnits ?? null,
+            createdAt,
+            updatedAt: createdAt,
+          }).returning().get();
+        } catch (error) {
+          if (isConstraintError(error)) {
+            throw new ProgramConflictError('A program with this external reference already exists');
+          }
+          throw error;
+        }
         return programFromRow(row);
       },
 
@@ -656,6 +665,42 @@ export function createRepositories(env: Env): Repositories {
           eq(programs.externalRef, externalRef),
         )).get();
         return row === undefined ? null : programFromRow(row);
+      },
+
+      async list(merchantId) {
+        const rows = await db.select().from(programs).where(
+          eq(programs.merchantId, merchantId),
+        ).orderBy(asc(programs.createdAt), asc(programs.externalRef)).all();
+        return rows.map(programFromRow);
+      },
+
+      async updateDraft(input) {
+        const merchantId = z.string().min(1).parse(input.merchantId);
+        const externalRef = z.string().min(1).parse(input.externalRef);
+        const parsedProgram = PromoProgramSchema.parse(input.program);
+        if (parsedProgram.id !== externalRef) {
+          throw new ProgramConflictError('The program external reference is immutable');
+        }
+        const updatedAt = DateTimeSchema.parse(input.updatedAt ?? now());
+        const row = await db.update(programs).set({
+          type: parsedProgram.type,
+          name: parsedProgram.name,
+          status: parsedProgram.status,
+          configJson: JSON.stringify(parsedProgram),
+          priority: parsedProgram.priority,
+          maxUses: parsedProgram.usageCap ?? null,
+          budgetRemaining: parsedProgram.budget?.minorUnits ?? null,
+          updatedAt,
+        }).where(and(
+          eq(programs.merchantId, merchantId),
+          eq(programs.externalRef, externalRef),
+          eq(programs.status, 'draft'),
+        )).returning().get();
+
+        if (row === undefined) {
+          throw new ProgramConflictError('Only draft programs can be edited');
+        }
+        return programFromRow(row);
       },
 
       async listReferencedVariableKeys(merchantId) {
