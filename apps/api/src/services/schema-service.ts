@@ -5,10 +5,11 @@ import {
 } from '@incentives/contracts';
 
 import { NotFoundError, SchemaConflictError } from '../errors.js';
-import type {
-  Repositories,
-  SchemaVersionRecord,
-  VariableDefinitionRecord,
+import {
+  SchemaRevisionConflictError,
+  type Repositories,
+  type SchemaVersionRecord,
+  type VariableDefinitionRecord,
 } from '../repositories/types.js';
 
 export interface SchemaDefinitionView {
@@ -95,33 +96,31 @@ function publishedPayload(version: SchemaVersionRecord): PublishedSchema {
   };
 }
 
+function canonicalDefinitions(definitions: readonly VariableDefinition[]): VariableDefinition[] {
+  return definitions
+    .map(definition => VariableDefinitionSchema.parse(definition))
+    .sort((left, right) => left.key.localeCompare(right.key));
+}
+
+function assertDraftSnapshot(
+  draft: SchemaVersionRecord,
+  records: readonly VariableDefinitionRecord[],
+): VariableDefinition[] {
+  const stored = canonicalDefinitions(draft.definitions);
+  const rows = canonicalDefinitions(records.map(record => record.definition));
+  if (JSON.stringify(stored) !== JSON.stringify(rows)) {
+    throw new SchemaConflictError('Draft definitions do not match the draft revision');
+  }
+  return rows;
+}
+
 export function createSchemaService(repositories: Repositories) {
   async function latestPublished(merchantId: string): Promise<SchemaVersionRecord | null> {
     return repositories.schemas.getLatestVersion(merchantId, 'published');
   }
 
   async function ensureDraft(merchantId: string): Promise<SchemaVersionRecord> {
-    const existing = await repositories.schemas.getLatestVersion(merchantId, 'draft');
-    if (existing !== null) return existing;
-
-    const published = await latestPublished(merchantId);
-    const version = (published?.version ?? 0) + 1;
-    const draft = await repositories.schemas.createVersion({
-      merchantId,
-      version,
-      state: 'draft',
-      definitions: published?.definitions ?? [],
-    });
-    for (const definition of published?.definitions ?? []) {
-      await repositories.schemas.createDefinition({
-        id: crypto.randomUUID(),
-        merchantId,
-        schemaVersion: version,
-        state: 'draft',
-        definition,
-      });
-    }
-    return draft;
+    return repositories.schemas.createNextDraft(merchantId);
   }
 
   function assertMerchantDefinition(definition: VariableDefinition): void {
@@ -202,16 +201,17 @@ export function createSchemaService(repositories: Repositories) {
       await assertRequiredCompatibility(merchantId, definition);
       const draft = await ensureDraft(merchantId);
       const records = await repositories.schemas.listDefinitions(merchantId, draft.version);
+      const expectedDefinitions = assertDraftSnapshot(draft, records);
       if (records.some(record => record.definition.key === definition.key)) {
         throw new SchemaConflictError(`Definition already exists: ${definition.key}`);
       }
-      const record = await repositories.schemas.createDefinition({
+      const record = await repositories.schemas.createDraftDefinition({
         id: crypto.randomUUID(),
         merchantId,
         schemaVersion: draft.version,
         state: 'draft',
         definition,
-      });
+      }, expectedDefinitions, canonicalDefinitions([...expectedDefinitions, definition]));
       return view(merchantId, record);
     },
 
@@ -243,15 +243,27 @@ export function createSchemaService(repositories: Repositories) {
 
       const draft = await ensureDraft(merchantId);
       const records = await repositories.schemas.listDefinitions(merchantId, draft.version);
+      const expectedDefinitions = assertDraftSnapshot(draft, records);
       const target = original.state === 'draft'
         ? original
         : records.find(record => record.definition.key === original.definition.key);
-      if (target === undefined) throw new Error('Draft clone is missing');
+      if (target === undefined) {
+        throw new SchemaConflictError('Definition is not present in the current draft');
+      }
       if (records.some(record => record.id !== target.id && record.definition.key === definition.key)) {
         throw new SchemaConflictError(`Definition already exists: ${definition.key}`);
       }
-      const updated = await repositories.schemas.updateDefinition(merchantId, target.id, definition);
-      if (updated === null) throw new NotFoundError('Definition not found', 'SCHEMA_DEFINITION_NOT_FOUND');
+      const nextDefinitions = expectedDefinitions.map(candidate => (
+        candidate.key === target.definition.key ? definition : candidate
+      ));
+      const updated = await repositories.schemas.updateDraftDefinition(
+        merchantId,
+        target.id,
+        draft.version,
+        definition,
+        expectedDefinitions,
+        canonicalDefinitions(nextDefinitions),
+      );
       return view(merchantId, updated, references);
     },
 
@@ -267,19 +279,30 @@ export function createSchemaService(repositories: Repositories) {
       }
       const draft = await ensureDraft(merchantId);
       const records = await repositories.schemas.listDefinitions(merchantId, draft.version);
+      const expectedDefinitions = assertDraftSnapshot(draft, records);
       const target = original.state === 'draft'
         ? original
         : records.find(record => record.definition.key === original.definition.key);
-      if (target === undefined || !await repositories.schemas.deleteDefinition(merchantId, target.id)) {
-        throw new NotFoundError('Definition not found', 'SCHEMA_DEFINITION_NOT_FOUND');
+      if (target === undefined) {
+        throw new SchemaConflictError('Definition is not present in the current draft');
       }
+      await repositories.schemas.deleteDraftDefinition(
+        merchantId,
+        target.id,
+        draft.version,
+        expectedDefinitions,
+        expectedDefinitions.filter(candidate => candidate.key !== target.definition.key),
+      );
     },
 
     async publish(merchantId: string): Promise<PublishedSchema> {
       const draft = await repositories.schemas.getLatestVersion(merchantId, 'draft');
-      if (draft === null) throw new SchemaConflictError('There is no draft schema to publish');
+      if (draft === null) {
+        if (await latestPublished(merchantId) !== null) throw new SchemaRevisionConflictError();
+        throw new SchemaConflictError('There is no draft schema to publish');
+      }
       const records = await repositories.schemas.listDefinitions(merchantId, draft.version);
-      const definitions = records.map(record => VariableDefinitionSchema.parse(record.definition));
+      const definitions = assertDraftSnapshot(draft, records);
       for (const definition of definitions) {
         assertMerchantDefinition(definition);
         await assertRequiredCompatibility(merchantId, definition);

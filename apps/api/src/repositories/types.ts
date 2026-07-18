@@ -31,15 +31,29 @@ export interface SchemaVersionCreate {
 export interface SchemaVersionRecord extends SchemaVersionCreate {}
 
 export interface SchemaRepository {
-  createDefinition(input: VariableDefinitionCreate): Promise<VariableDefinitionRecord>;
   listDefinitions(merchantId: string, schemaVersion: number): Promise<VariableDefinitionRecord[]>;
   getDefinition(merchantId: string, id: string): Promise<VariableDefinitionRecord | null>;
-  updateDefinition(
+  createNextDraft(merchantId: string): Promise<SchemaVersionRecord>;
+  createDraftDefinition(
+    input: VariableDefinitionCreate,
+    expectedDefinitions: VariableDefinition[],
+    nextDefinitions: VariableDefinition[],
+  ): Promise<VariableDefinitionRecord>;
+  updateDraftDefinition(
     merchantId: string,
     id: string,
+    schemaVersion: number,
     definition: VariableDefinition,
-  ): Promise<VariableDefinitionRecord | null>;
-  deleteDefinition(merchantId: string, id: string): Promise<boolean>;
+    expectedDefinitions: VariableDefinition[],
+    nextDefinitions: VariableDefinition[],
+  ): Promise<VariableDefinitionRecord>;
+  deleteDraftDefinition(
+    merchantId: string,
+    id: string,
+    schemaVersion: number,
+    expectedDefinitions: VariableDefinition[],
+    nextDefinitions: VariableDefinition[],
+  ): Promise<void>;
   createVersion(input: SchemaVersionCreate): Promise<SchemaVersionRecord>;
   getVersion(merchantId: string, version: number): Promise<SchemaVersionRecord | null>;
   getLatestVersion(merchantId: string, state: SchemaState): Promise<SchemaVersionRecord | null>;
@@ -150,5 +164,13 @@ export class OptimisticVersionConflictError extends Error {
 
   constructor() {
     super('The customer version no longer matches');
+  }
+}
+
+export class SchemaRevisionConflictError extends Error {
+  override readonly name = 'SchemaRevisionConflictError';
+
+  constructor() {
+    super('The schema draft changed before the operation completed');
   }
 }

@@ -158,21 +158,16 @@ describe('D1 repositories', () => {
     await seedMerchant('merchant-b');
     const repositories = createRepositories({ DB: env.DB });
 
-    await repositories.schemas.createDefinition({
+    const draft = await repositories.schemas.createNextDraft('merchant-a');
+    await repositories.schemas.createDraftDefinition({
       id: 'definition-a',
       merchantId: 'merchant-a',
-      schemaVersion: 1,
+      schemaVersion: draft.version,
       state: 'draft',
       definition,
       createdAt,
-    });
-    await repositories.schemas.createVersion({
-      merchantId: 'merchant-a',
-      version: 1,
-      state: 'published',
-      publishedAt: createdAt,
-      definitions: [definition],
-    });
+    }, [], [definition]);
+    await repositories.schemas.publishDraft('merchant-a', draft.version, [definition], createdAt);
 
     expect(await repositories.schemas.listDefinitions('merchant-a', 1)).toMatchObject([
       { id: 'definition-a', definition },

@@ -1,8 +1,18 @@
 import { Hono } from 'hono';
+import type { Context } from 'hono';
 
 import { requirePublishable, requireSecret } from '../auth/static-token.js';
 import type { AppEnvironment } from '../env.js';
+import { ContextValidationError } from '../errors.js';
 import { createSchemaService } from '../services/schema-service.js';
+
+async function requestJson(context: Context<AppEnvironment>): Promise<unknown> {
+  try {
+    return await context.req.json<unknown>();
+  } catch {
+    throw new ContextValidationError('The request body must be valid JSON');
+  }
+}
 
 export function createSchemaRoutes(): Hono<AppEnvironment> {
   const routes = new Hono<AppEnvironment>();
@@ -15,7 +25,7 @@ export function createSchemaRoutes(): Hono<AppEnvironment> {
   routes.post('/definitions', requireSecret, async (context) => {
     const service = createSchemaService(context.get('repositories'));
     return context.json(
-      await service.create(context.get('merchantId'), await context.req.json<unknown>()),
+      await service.create(context.get('merchantId'), await requestJson(context)),
       201,
     );
   });
@@ -25,7 +35,7 @@ export function createSchemaRoutes(): Hono<AppEnvironment> {
     return context.json(await service.update(
       context.get('merchantId'),
       context.req.param('id'),
-      await context.req.json<unknown>(),
+      await requestJson(context),
     ));
   });
 

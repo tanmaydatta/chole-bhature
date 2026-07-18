@@ -8,7 +8,10 @@ import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import { z } from 'zod';
 
 import type { AppEnvironment } from './env.js';
-import { OptimisticVersionConflictError } from './repositories/types.js';
+import {
+  OptimisticVersionConflictError,
+  SchemaRevisionConflictError,
+} from './repositories/types.js';
 
 export const CORRELATION_ID_HEADER = 'x-correlation-id';
 
@@ -80,6 +83,16 @@ export class SchemaConflictError extends ApiFailure {
   }
 }
 
+export class ContextValidationError extends ApiFailure {
+  override readonly name = 'ContextValidationError';
+  readonly code = 'CONTEXT_VALIDATION_FAILED';
+  readonly status = 400;
+
+  constructor(message: string) {
+    super(message);
+  }
+}
+
 interface MappedFailure {
   status: ContentfulStatusCode;
   error: ApiError['error'];
@@ -107,7 +120,10 @@ function mapFailure(error: unknown, correlationId: string): MappedFailure {
     };
   }
 
-  if (error instanceof OptimisticVersionConflictError) {
+  if (
+    error instanceof OptimisticVersionConflictError
+    || error instanceof SchemaRevisionConflictError
+  ) {
     return {
       status: 409,
       error: {

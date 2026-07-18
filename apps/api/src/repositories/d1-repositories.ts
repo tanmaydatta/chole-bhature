@@ -5,6 +5,7 @@ import {
   PromoProgramSchema,
   RedemptionResponseSchema,
   VariableDefinitionSchema,
+  type VariableDefinition,
 } from '@incentives/contracts';
 import { and, desc, eq, inArray } from 'drizzle-orm';
 import { z } from 'zod';
@@ -21,6 +22,7 @@ import {
 import type { Env } from '../env.js';
 import {
   OptimisticVersionConflictError,
+  SchemaRevisionConflictError,
   type CustomerRecord,
   type CustomerUpsert,
   type EvaluationDecisionRecord,
@@ -40,6 +42,18 @@ const DateTimeSchema = z.iso.datetime({ offset: true });
 const SchemaStateSchema = z.enum(['draft', 'published']);
 const PositiveIntegerSchema = z.number().int().positive();
 const CurrencySchema = z.string().regex(/^[A-Z]{3}$/);
+
+function normalizedDefinitions(definitions: readonly VariableDefinition[]): VariableDefinition[] {
+  return DefinitionsSchema.parse(definitions).sort((left, right) => left.key.localeCompare(right.key));
+}
+
+function definitionsJson(definitions: readonly VariableDefinition[]): string {
+  return JSON.stringify(normalizedDefinitions(definitions));
+}
+
+function isConstraintError(error: unknown): boolean {
+  return error instanceof Error && /constraint|unique/i.test(error.message);
+}
 
 function now(): string {
   return new Date().toISOString();
@@ -101,7 +115,7 @@ function parseSchemaVersionCreate(input: SchemaVersionCreate): SchemaVersionReco
     version: PositiveIntegerSchema.parse(input.version),
     state: SchemaStateSchema.parse(input.state),
     ...optional('publishedAt', publishedAt),
-    definitions: DefinitionsSchema.parse(input.definitions),
+    definitions: normalizedDefinitions(input.definitions),
   };
 }
 
@@ -248,6 +262,60 @@ function redemptionFromRow(row: typeof redemptions.$inferSelect): RedemptionCrea
 export function createRepositories(env: Env): Repositories {
   const db = createDatabase(env);
 
+  async function getLatestSchemaVersion(
+    merchantId: string,
+    state: 'draft' | 'published',
+  ): Promise<SchemaVersionRecord | null> {
+    const row = await db.select().from(schemaVersions).where(and(
+      eq(schemaVersions.merchantId, merchantId),
+      eq(schemaVersions.state, state),
+    )).orderBy(desc(schemaVersions.version)).get();
+    return row === undefined ? null : schemaVersionFromRow(row);
+  }
+
+  async function getSchemaDefinition(
+    merchantId: string,
+    id: string,
+  ): Promise<VariableDefinitionRecord | null> {
+    const row = await db.select().from(variableDefinitions).where(and(
+      eq(variableDefinitions.merchantId, merchantId),
+      eq(variableDefinitions.id, id),
+    )).get();
+    return row === undefined ? null : definitionFromRow(row);
+  }
+
+  function conditionalDefinitionInsert(
+    input: VariableDefinitionRecord,
+    expectedJson: string,
+  ): D1PreparedStatement {
+    return env.DB.prepare(`
+      INSERT INTO variable_definitions (
+        id, merchant_id, schema_version, key, label, source, type, required,
+        enum_values_json, description, default_error_message, state, created_at
+      )
+      SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 'draft', ?12
+      WHERE EXISTS (
+        SELECT 1 FROM schema_versions
+        WHERE merchant_id = ?2 AND version = ?3
+          AND state = 'draft' AND definitions_json = ?13
+      )
+    `).bind(
+      input.id,
+      input.merchantId,
+      input.schemaVersion,
+      input.definition.key,
+      input.definition.label,
+      input.definition.source,
+      input.definition.type,
+      input.definition.required,
+      input.definition.enumValues === undefined ? null : JSON.stringify(input.definition.enumValues),
+      input.definition.description ?? null,
+      input.definition.defaultErrorMessage ?? null,
+      input.createdAt,
+      expectedJson,
+    );
+  }
+
   async function getCustomer(
     merchantId: string,
     externalRef: string,
@@ -277,28 +345,6 @@ export function createRepositories(env: Env): Repositories {
 
   return {
     schemas: {
-      async createDefinition(input) {
-        const parsed = parseDefinitionCreate(input);
-        await db.insert(variableDefinitions).values({
-          id: parsed.id,
-          merchantId: parsed.merchantId,
-          schemaVersion: parsed.schemaVersion,
-          key: parsed.definition.key,
-          label: parsed.definition.label,
-          source: parsed.definition.source,
-          type: parsed.definition.type,
-          required: parsed.definition.required,
-          enumValuesJson: parsed.definition.enumValues === undefined
-            ? null
-            : JSON.stringify(parsed.definition.enumValues),
-          description: parsed.definition.description ?? null,
-          defaultErrorMessage: parsed.definition.defaultErrorMessage ?? null,
-          state: parsed.state,
-          createdAt: parsed.createdAt,
-        }).run();
-        return parsed;
-      },
-
       async listDefinitions(merchantId, schemaVersion) {
         const rows = await db.select().from(variableDefinitions).where(and(
           eq(variableDefinitions.merchantId, merchantId),
@@ -308,45 +354,179 @@ export function createRepositories(env: Env): Repositories {
       },
 
       async getDefinition(merchantId, id) {
-        const row = await db.select().from(variableDefinitions).where(and(
-          eq(variableDefinitions.merchantId, merchantId),
-          eq(variableDefinitions.id, id),
-        )).get();
-        return row === undefined ? null : definitionFromRow(row);
+        return getSchemaDefinition(merchantId, id);
       },
 
-      async updateDefinition(merchantId, id, definition) {
+      async createNextDraft(merchantId) {
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+          const existing = await getLatestSchemaVersion(merchantId, 'draft');
+          if (existing !== null) return existing;
+
+          const published = await getLatestSchemaVersion(merchantId, 'published');
+          const version = (published?.version ?? 0) + 1;
+          const definitions = normalizedDefinitions(published?.definitions ?? []);
+          const createdAt = now();
+          const statements = [
+            env.DB.prepare(`
+              INSERT INTO schema_versions (
+                merchant_id, version, state, published_at, definitions_json
+              ) VALUES (?1, ?2, 'draft', NULL, ?3)
+            `).bind(merchantId, version, definitionsJson(definitions)),
+            ...definitions.map(definition => conditionalDefinitionInsert(
+              parseDefinitionCreate({
+                id: crypto.randomUUID(),
+                merchantId,
+                schemaVersion: version,
+                state: 'draft',
+                definition,
+                createdAt,
+              }),
+              definitionsJson(definitions),
+            )),
+          ];
+
+          try {
+            await env.DB.batch(statements);
+            return {
+              merchantId,
+              version,
+              state: 'draft',
+              definitions,
+            };
+          } catch (error) {
+            const winner = await getLatestSchemaVersion(merchantId, 'draft');
+            if (winner !== null) return winner;
+            if (!isConstraintError(error) || attempt === 2) throw error;
+          }
+        }
+        throw new SchemaRevisionConflictError();
+      },
+
+      async createDraftDefinition(input, expectedDefinitions, nextDefinitions) {
+        const parsed = parseDefinitionCreate({ ...input, state: 'draft' });
+        const expectedJson = definitionsJson(expectedDefinitions);
+        const nextJson = definitionsJson(nextDefinitions);
+        try {
+          const [insertResult, versionResult] = await env.DB.batch([
+            conditionalDefinitionInsert(parsed, expectedJson),
+            env.DB.prepare(`
+              UPDATE schema_versions SET definitions_json = ?1
+              WHERE merchant_id = ?2 AND version = ?3
+                AND state = 'draft' AND definitions_json = ?4
+                AND EXISTS (
+                  SELECT 1 FROM variable_definitions
+                  WHERE merchant_id = ?2 AND schema_version = ?3
+                    AND id = ?5 AND state = 'draft'
+                )
+            `).bind(nextJson, parsed.merchantId, parsed.schemaVersion, expectedJson, parsed.id),
+          ]);
+          if (insertResult?.meta.changes !== 1 || versionResult?.meta.changes !== 1) {
+            throw new SchemaRevisionConflictError();
+          }
+          return parsed;
+        } catch (error) {
+          if (error instanceof SchemaRevisionConflictError) throw error;
+          if (isConstraintError(error)) throw new SchemaRevisionConflictError();
+          throw error;
+        }
+      },
+
+      async updateDraftDefinition(
+        merchantId,
+        id,
+        schemaVersion,
+        definition,
+        expectedDefinitions,
+        nextDefinitions,
+      ) {
         const parsed = VariableDefinitionSchema.parse(definition);
-        const row = await db.update(variableDefinitions).set({
-          key: parsed.key,
-          label: parsed.label,
-          source: parsed.source,
-          type: parsed.type,
-          required: parsed.required,
-          enumValuesJson: parsed.enumValues === undefined
-            ? null
-            : JSON.stringify(parsed.enumValues),
-          description: parsed.description ?? null,
-          defaultErrorMessage: parsed.defaultErrorMessage ?? null,
-        }).where(and(
-          eq(variableDefinitions.merchantId, merchantId),
-          eq(variableDefinitions.id, id),
-          eq(variableDefinitions.state, 'draft'),
-        )).returning().get();
-        return row === undefined ? null : definitionFromRow(row);
+        const expectedJson = definitionsJson(expectedDefinitions);
+        const nextJson = definitionsJson(nextDefinitions);
+        try {
+          const [definitionResult, versionResult] = await env.DB.batch([
+            env.DB.prepare(`
+              UPDATE variable_definitions SET
+                key = ?1, label = ?2, source = ?3, type = ?4, required = ?5,
+                enum_values_json = ?6, description = ?7, default_error_message = ?8
+              WHERE merchant_id = ?9 AND id = ?10 AND schema_version = ?11
+                AND state = 'draft' AND EXISTS (
+                  SELECT 1 FROM schema_versions
+                  WHERE merchant_id = ?9 AND version = ?11
+                    AND state = 'draft' AND definitions_json = ?12
+                )
+            `).bind(
+              parsed.key,
+              parsed.label,
+              parsed.source,
+              parsed.type,
+              parsed.required,
+              parsed.enumValues === undefined ? null : JSON.stringify(parsed.enumValues),
+              parsed.description ?? null,
+              parsed.defaultErrorMessage ?? null,
+              merchantId,
+              id,
+              schemaVersion,
+              expectedJson,
+            ),
+            env.DB.prepare(`
+              UPDATE schema_versions SET definitions_json = ?1
+              WHERE merchant_id = ?2 AND version = ?3
+                AND state = 'draft' AND definitions_json = ?4
+                AND EXISTS (
+                  SELECT 1 FROM variable_definitions
+                  WHERE merchant_id = ?2 AND schema_version = ?3
+                    AND id = ?5 AND state = 'draft'
+                )
+            `).bind(nextJson, merchantId, schemaVersion, expectedJson, id),
+          ]);
+          if (definitionResult?.meta.changes !== 1 || versionResult?.meta.changes !== 1) {
+            throw new SchemaRevisionConflictError();
+          }
+        } catch (error) {
+          if (error instanceof SchemaRevisionConflictError) throw error;
+          if (isConstraintError(error)) throw new SchemaRevisionConflictError();
+          throw error;
+        }
+        const updated = await getSchemaDefinition(merchantId, id);
+        if (updated === null) throw new SchemaRevisionConflictError();
+        return updated;
       },
 
-      async deleteDefinition(merchantId, id) {
-        const row = await db.delete(variableDefinitions).where(and(
-          eq(variableDefinitions.merchantId, merchantId),
-          eq(variableDefinitions.id, id),
-          eq(variableDefinitions.state, 'draft'),
-        )).returning({ id: variableDefinitions.id }).get();
-        return row !== undefined;
+      async deleteDraftDefinition(
+        merchantId,
+        id,
+        schemaVersion,
+        expectedDefinitions,
+        nextDefinitions,
+      ) {
+        const expectedJson = definitionsJson(expectedDefinitions);
+        const nextJson = definitionsJson(nextDefinitions);
+        const [definitionResult, versionResult] = await env.DB.batch([
+          env.DB.prepare(`
+            DELETE FROM variable_definitions
+            WHERE merchant_id = ?1 AND id = ?2 AND schema_version = ?3
+              AND state = 'draft' AND EXISTS (
+                SELECT 1 FROM schema_versions
+                WHERE merchant_id = ?1 AND version = ?3
+                  AND state = 'draft' AND definitions_json = ?4
+              )
+          `).bind(merchantId, id, schemaVersion, expectedJson),
+          env.DB.prepare(`
+            UPDATE schema_versions SET definitions_json = ?1
+            WHERE merchant_id = ?2 AND version = ?3
+              AND state = 'draft' AND definitions_json = ?4
+          `).bind(nextJson, merchantId, schemaVersion, expectedJson),
+        ]);
+        if (definitionResult?.meta.changes !== 1 || versionResult?.meta.changes !== 1) {
+          throw new SchemaRevisionConflictError();
+        }
       },
 
       async createVersion(input) {
         const parsed = parseSchemaVersionCreate(input);
+        if (parsed.state !== 'published' || parsed.publishedAt === undefined) {
+          throw new Error('Draft versions must be created atomically with createNextDraft');
+        }
         await db.insert(schemaVersions).values({
           merchantId: parsed.merchantId,
           version: parsed.version,
@@ -366,37 +546,52 @@ export function createRepositories(env: Env): Repositories {
       },
 
       async getLatestVersion(merchantId, state) {
-        const row = await db.select().from(schemaVersions).where(and(
-          eq(schemaVersions.merchantId, merchantId),
-          eq(schemaVersions.state, state),
-        )).orderBy(desc(schemaVersions.version)).get();
-        return row === undefined ? null : schemaVersionFromRow(row);
+        return getLatestSchemaVersion(merchantId, state);
       },
 
-      async publishDraft(merchantId, version, definitions, publishedAt) {
+      async publishDraft(merchantId, version, expectedDefinitions, publishedAt) {
         const parsed = parseSchemaVersionCreate({
           merchantId,
           version,
           state: 'published',
           publishedAt,
-          definitions,
+          definitions: expectedDefinitions,
         });
-        await db.batch([
-          db.update(schemaVersions).set({
-            state: 'published',
-            publishedAt: parsed.publishedAt,
-            definitionsJson: JSON.stringify(parsed.definitions),
-          }).where(and(
-            eq(schemaVersions.merchantId, parsed.merchantId),
-            eq(schemaVersions.version, parsed.version),
-            eq(schemaVersions.state, 'draft'),
-          )),
-          db.update(variableDefinitions).set({ state: 'published' }).where(and(
-            eq(variableDefinitions.merchantId, parsed.merchantId),
-            eq(variableDefinitions.schemaVersion, parsed.version),
-            eq(variableDefinitions.state, 'draft'),
-          )),
+        const expectedJson = definitionsJson(parsed.definitions);
+        const [versionResult, definitionsResult] = await env.DB.batch([
+          env.DB.prepare(`
+            UPDATE schema_versions
+            SET state = 'published', published_at = ?1
+            WHERE merchant_id = ?2 AND version = ?3
+              AND state = 'draft' AND definitions_json = ?4
+              AND (
+                SELECT COUNT(*) FROM variable_definitions
+                WHERE merchant_id = ?2 AND schema_version = ?3 AND state = 'draft'
+              ) = ?5
+          `).bind(
+            parsed.publishedAt,
+            parsed.merchantId,
+            parsed.version,
+            expectedJson,
+            parsed.definitions.length,
+          ),
+          env.DB.prepare(`
+            UPDATE variable_definitions SET state = 'published'
+            WHERE merchant_id = ?1 AND schema_version = ?2 AND state = 'draft'
+              AND EXISTS (
+                SELECT 1 FROM schema_versions
+                WHERE merchant_id = ?1 AND version = ?2
+                  AND state = 'published' AND published_at = ?3
+                  AND definitions_json = ?4
+              )
+          `).bind(parsed.merchantId, parsed.version, parsed.publishedAt, expectedJson),
         ]);
+        if (
+          versionResult?.meta.changes !== 1
+          || definitionsResult?.meta.changes !== parsed.definitions.length
+        ) {
+          throw new SchemaRevisionConflictError();
+        }
         return parsed;
       },
     },
