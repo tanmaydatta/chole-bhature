@@ -124,17 +124,19 @@ async function seedMerchant(merchantId: string): Promise<void> {
   ).bind(merchantId, merchantId, createdAt).run();
 }
 
+async function seedPublishedSchema(merchantId: string): Promise<void> {
+  await env.DB.prepare(`
+    INSERT INTO schema_versions (
+      merchant_id, version, state, published_at, definitions_json
+    ) VALUES (?1, 1, 'published', ?2, ?3)
+  `).bind(merchantId, createdAt, JSON.stringify([definition])).run();
+}
+
 async function seedDecision(merchantId: string, evaluationId?: string): Promise<string> {
   const repositories = createRepositories({ DB: env.DB });
   const id = evaluationId ?? `${merchantId}-evaluation`;
 
-  await repositories.schemas.createVersion({
-    merchantId,
-    version: 1,
-    state: 'published',
-    publishedAt: createdAt,
-    definitions: [definition],
-  });
+  await seedPublishedSchema(merchantId);
   await repositories.customers.create(merchantId, customer('shared', { tier: 'gold' }));
   await repositories.decisions.create(decision(merchantId, id));
   return id;
@@ -228,13 +230,7 @@ describe('D1 repositories', () => {
     const repositories = createRepositories({ DB: env.DB });
 
     await repositories.programs.create({ merchantId: 'merchant-a', program, createdAt });
-    await repositories.schemas.createVersion({
-      merchantId: 'merchant-a',
-      version: 1,
-      state: 'published',
-      publishedAt: createdAt,
-      definitions: [definition],
-    });
+    await seedPublishedSchema('merchant-a');
     await repositories.customers.create('merchant-a', customer('shared', { tier: 'gold' }));
     await repositories.decisions.create(decision('merchant-a'));
 

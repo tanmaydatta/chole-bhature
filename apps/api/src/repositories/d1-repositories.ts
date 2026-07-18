@@ -29,7 +29,6 @@ import {
   type ProgramRecord,
   type RedemptionCreate,
   type Repositories,
-  type SchemaVersionCreate,
   type SchemaVersionRecord,
   type VariableDefinitionCreate,
   type VariableDefinitionRecord,
@@ -105,7 +104,7 @@ function definitionFromRow(row: typeof variableDefinitions.$inferSelect): Variab
   };
 }
 
-function parseSchemaVersionCreate(input: SchemaVersionCreate): SchemaVersionRecord {
+function parseSchemaVersion(input: SchemaVersionRecord): SchemaVersionRecord {
   const publishedAt = input.publishedAt === undefined
     ? undefined
     : DateTimeSchema.parse(input.publishedAt);
@@ -501,7 +500,17 @@ export function createRepositories(env: Env): Repositories {
       ) {
         const expectedJson = definitionsJson(expectedDefinitions);
         const nextJson = definitionsJson(nextDefinitions);
-        const [definitionResult, versionResult] = await env.DB.batch([
+        const [versionResult, definitionResult] = await env.DB.batch([
+          env.DB.prepare(`
+            UPDATE schema_versions SET definitions_json = ?1
+            WHERE merchant_id = ?2 AND version = ?3
+              AND state = 'draft' AND definitions_json = ?4
+              AND EXISTS (
+                SELECT 1 FROM variable_definitions
+                WHERE merchant_id = ?2 AND schema_version = ?3
+                  AND id = ?5 AND state = 'draft'
+              )
+          `).bind(nextJson, merchantId, schemaVersion, expectedJson, id),
           env.DB.prepare(`
             DELETE FROM variable_definitions
             WHERE merchant_id = ?1 AND id = ?2 AND schema_version = ?3
@@ -510,31 +519,11 @@ export function createRepositories(env: Env): Repositories {
                 WHERE merchant_id = ?1 AND version = ?3
                   AND state = 'draft' AND definitions_json = ?4
               )
-          `).bind(merchantId, id, schemaVersion, expectedJson),
-          env.DB.prepare(`
-            UPDATE schema_versions SET definitions_json = ?1
-            WHERE merchant_id = ?2 AND version = ?3
-              AND state = 'draft' AND definitions_json = ?4
-          `).bind(nextJson, merchantId, schemaVersion, expectedJson),
+          `).bind(merchantId, id, schemaVersion, nextJson),
         ]);
         if (definitionResult?.meta.changes !== 1 || versionResult?.meta.changes !== 1) {
           throw new SchemaRevisionConflictError();
         }
-      },
-
-      async createVersion(input) {
-        const parsed = parseSchemaVersionCreate(input);
-        if (parsed.state !== 'published' || parsed.publishedAt === undefined) {
-          throw new Error('Draft versions must be created atomically with createNextDraft');
-        }
-        await db.insert(schemaVersions).values({
-          merchantId: parsed.merchantId,
-          version: parsed.version,
-          state: parsed.state,
-          publishedAt: parsed.publishedAt ?? null,
-          definitionsJson: JSON.stringify(parsed.definitions),
-        }).run();
-        return parsed;
       },
 
       async getVersion(merchantId, version) {
@@ -550,7 +539,7 @@ export function createRepositories(env: Env): Repositories {
       },
 
       async publishDraft(merchantId, version, expectedDefinitions, publishedAt) {
-        const parsed = parseSchemaVersionCreate({
+        const parsed = parseSchemaVersion({
           merchantId,
           version,
           state: 'published',

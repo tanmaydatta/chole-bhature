@@ -20,15 +20,13 @@ export interface VariableDefinitionCreate {
 
 export interface VariableDefinitionRecord extends Required<VariableDefinitionCreate> {}
 
-export interface SchemaVersionCreate {
+export interface SchemaVersionRecord {
   merchantId: string;
   version: number;
   state: SchemaState;
   publishedAt?: string;
   definitions: VariableDefinition[];
 }
-
-export interface SchemaVersionRecord extends SchemaVersionCreate {}
 
 export interface SchemaRepository {
   listDefinitions(merchantId: string, schemaVersion: number): Promise<VariableDefinitionRecord[]>;
@@ -54,7 +52,6 @@ export interface SchemaRepository {
     expectedDefinitions: VariableDefinition[],
     nextDefinitions: VariableDefinition[],
   ): Promise<void>;
-  createVersion(input: SchemaVersionCreate): Promise<SchemaVersionRecord>;
   getVersion(merchantId: string, version: number): Promise<SchemaVersionRecord | null>;
   getLatestVersion(merchantId: string, state: SchemaState): Promise<SchemaVersionRecord | null>;
   publishDraft(

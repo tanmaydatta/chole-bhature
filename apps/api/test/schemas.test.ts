@@ -64,6 +64,19 @@ async function resetSchemaData(): Promise<void> {
   ]);
 }
 
+async function seedPublishedVersion(
+  merchantId: string,
+  version: number,
+  definitions: readonly VariableDefinition[],
+  publishedAt = '2026-07-18T12:00:00.000Z',
+): Promise<void> {
+  await env.DB.prepare(`
+    INSERT INTO schema_versions (
+      merchant_id, version, state, published_at, definitions_json
+    ) VALUES (?1, ?2, 'published', ?3, ?4)
+  `).bind(merchantId, version, publishedAt, JSON.stringify(definitions)).run();
+}
+
 describe('schema registry API', () => {
   beforeEach(resetSchemaData);
 
@@ -548,13 +561,7 @@ describe('atomic schema repository', () => {
       required: false,
     } as const satisfies VariableDefinition;
     const publishedDefinitions = [channelDefinition, note];
-    await repositories.schemas.createVersion({
-      merchantId: SEEDED_MERCHANT_ID,
-      version: 1,
-      state: 'published',
-      publishedAt: '2026-07-18T12:00:00.000Z',
-      definitions: publishedDefinitions,
-    });
+    await seedPublishedVersion(SEEDED_MERCHANT_ID, 1, publishedDefinitions);
     const drafts = await Promise.all([
       repositories.schemas.createNextDraft(SEEDED_MERCHANT_ID),
       repositories.schemas.createNextDraft(SEEDED_MERCHANT_ID),
@@ -571,13 +578,7 @@ describe('atomic schema repository', () => {
 
   test('CRUD racing publication has exactly one CAS winner and a consistent snapshot', async () => {
     const repositories = createRepositories({ DB: env.DB });
-    await repositories.schemas.createVersion({
-      merchantId: SEEDED_MERCHANT_ID,
-      version: 1,
-      state: 'published',
-      publishedAt: '2026-07-18T12:00:00.000Z',
-      definitions: [channelDefinition],
-    });
+    await seedPublishedVersion(SEEDED_MERCHANT_ID, 1, [channelDefinition]);
     const draft = await repositories.schemas.createNextDraft(SEEDED_MERCHANT_ID);
     const note = {
       key: 'context.note',
@@ -612,13 +613,7 @@ describe('atomic schema repository', () => {
 
   test('update racing publication has exactly one CAS winner and a consistent snapshot', async () => {
     const repositories = createRepositories({ DB: env.DB });
-    await repositories.schemas.createVersion({
-      merchantId: SEEDED_MERCHANT_ID,
-      version: 1,
-      state: 'published',
-      publishedAt: '2026-07-18T12:00:00.000Z',
-      definitions: [channelDefinition],
-    });
+    await seedPublishedVersion(SEEDED_MERCHANT_ID, 1, [channelDefinition]);
     const draft = await repositories.schemas.createNextDraft(SEEDED_MERCHANT_ID);
     const [draftChannel] = await repositories.schemas.listDefinitions(
       SEEDED_MERCHANT_ID,
@@ -651,13 +646,7 @@ describe('atomic schema repository', () => {
 
   test('delete racing publication has exactly one CAS winner and a consistent snapshot', async () => {
     const repositories = createRepositories({ DB: env.DB });
-    await repositories.schemas.createVersion({
-      merchantId: SEEDED_MERCHANT_ID,
-      version: 1,
-      state: 'published',
-      publishedAt: '2026-07-18T12:00:00.000Z',
-      definitions: [channelDefinition],
-    });
+    await seedPublishedVersion(SEEDED_MERCHANT_ID, 1, [channelDefinition]);
     const draft = await repositories.schemas.createNextDraft(SEEDED_MERCHANT_ID);
     const [draftChannel] = await repositories.schemas.listDefinitions(
       SEEDED_MERCHANT_ID,
@@ -715,4 +704,115 @@ describe('atomic schema repository', () => {
       draft.version,
     )).resolves.toMatchObject({ publishedAt: winners[0]!.value.publishedAt });
   });
+
+  test('successful delete changes the definition row and snapshot together', async () => {
+    const repositories = createRepositories({ DB: env.DB });
+    const service = createSchemaService(repositories);
+    const created = await service.create(SEEDED_MERCHANT_ID, channelDefinition);
+    const draft = await repositories.schemas.getLatestVersion(SEEDED_MERCHANT_ID, 'draft');
+
+    await repositories.schemas.deleteDraftDefinition(
+      SEEDED_MERCHANT_ID,
+      created.id,
+      draft!.version,
+      draft!.definitions,
+      [],
+    );
+
+    await expect(repositories.schemas.getVersion(
+      SEEDED_MERCHANT_ID,
+      draft!.version,
+    )).resolves.toMatchObject({ definitions: [] });
+    await expect(repositories.schemas.listDefinitions(
+      SEEDED_MERCHANT_ID,
+      draft!.version,
+    )).resolves.toEqual([]);
+  });
+
+  test('nonexistent delete leaves rows and snapshot byte-for-byte unchanged', async () => {
+    const repositories = createRepositories({ DB: env.DB });
+    const service = createSchemaService(repositories);
+    await service.create(SEEDED_MERCHANT_ID, channelDefinition);
+    const draft = await repositories.schemas.getLatestVersion(SEEDED_MERCHANT_ID, 'draft');
+    const before = await rawDraftState(draft!.version);
+
+    await expect(repositories.schemas.deleteDraftDefinition(
+      SEEDED_MERCHANT_ID,
+      'missing-definition',
+      draft!.version,
+      draft!.definitions,
+      [],
+    )).rejects.toMatchObject({ name: 'SchemaRevisionConflictError' });
+
+    expect(await rawDraftState(draft!.version)).toEqual(before);
+  });
+
+  test('stale-snapshot delete leaves rows and snapshot byte-for-byte unchanged', async () => {
+    const repositories = createRepositories({ DB: env.DB });
+    const service = createSchemaService(repositories);
+    const created = await service.create(SEEDED_MERCHANT_ID, channelDefinition);
+    const draft = await repositories.schemas.getLatestVersion(SEEDED_MERCHANT_ID, 'draft');
+    const before = await rawDraftState(draft!.version);
+
+    await expect(repositories.schemas.deleteDraftDefinition(
+      SEEDED_MERCHANT_ID,
+      created.id,
+      draft!.version,
+      [],
+      [],
+    )).rejects.toMatchObject({ name: 'SchemaRevisionConflictError' });
+
+    expect(await rawDraftState(draft!.version)).toEqual(before);
+  });
+
+  test('racing duplicate delete has one winner and the zero-row loser changes nothing else', async () => {
+    const repositories = createRepositories({ DB: env.DB });
+    const service = createSchemaService(repositories);
+    const created = await service.create(SEEDED_MERCHANT_ID, channelDefinition);
+    const draft = await repositories.schemas.getLatestVersion(SEEDED_MERCHANT_ID, 'draft');
+    const outcomes = await Promise.allSettled([
+      repositories.schemas.deleteDraftDefinition(
+        SEEDED_MERCHANT_ID,
+        created.id,
+        draft!.version,
+        draft!.definitions,
+        [],
+      ),
+      repositories.schemas.deleteDraftDefinition(
+        SEEDED_MERCHANT_ID,
+        created.id,
+        draft!.version,
+        draft!.definitions,
+        [],
+      ),
+    ]);
+
+    expect(outcomes.filter(outcome => outcome.status === 'fulfilled')).toHaveLength(1);
+    expect(outcomes.filter(outcome => outcome.status === 'rejected')).toHaveLength(1);
+    expect(await rawDraftState(draft!.version)).toMatchObject({
+      version: { definitions_json: '[]', state: 'draft' },
+      rows: [],
+    });
+  });
+
+  test('public schema repository exposes no direct version insertion bypass', () => {
+    const repositories = createRepositories({ DB: env.DB });
+    expect('createVersion' in repositories.schemas).toBe(false);
+  });
 });
+
+async function rawDraftState(version: number) {
+  const versionRow = await env.DB.prepare(`
+    SELECT state, published_at, definitions_json
+    FROM schema_versions
+    WHERE merchant_id = ?1 AND version = ?2
+  `).bind(SEEDED_MERCHANT_ID, version).first();
+  const rows = await env.DB.prepare(`
+    SELECT id, merchant_id, schema_version, key, label, source, type, required,
+      enum_values_json, description, default_error_message, state, created_at
+    FROM variable_definitions
+    WHERE merchant_id = ?1 AND schema_version = ?2
+    ORDER BY key
+  `).bind(SEEDED_MERCHANT_ID, version).all();
+  return { version: versionRow, rows: rows.results };
+}
