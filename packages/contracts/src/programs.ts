@@ -48,38 +48,7 @@ export const PromoRewardSchema = z.union([
   OrderDiscountEffectSchema,
   LineItemDiscountEffectSchema,
   FreeShippingEffectSchema,
-]).superRefine((reward, context) => {
-  if (reward.type === 'free_shipping') return;
-
-  if (reward.calculation === 'fixed' && !reward.amount) {
-    context.addIssue({
-      code: 'custom',
-      path: ['amount'],
-      message: 'fixed discounts require amount',
-    });
-  }
-  if (reward.calculation === 'fixed' && reward.basisPoints) {
-    context.addIssue({
-      code: 'custom',
-      path: ['basisPoints'],
-      message: 'basisPoints are only valid for percent discounts',
-    });
-  }
-  if (reward.calculation === 'percent' && !reward.basisPoints) {
-    context.addIssue({
-      code: 'custom',
-      path: ['basisPoints'],
-      message: 'percent discounts require basisPoints',
-    });
-  }
-  if (reward.calculation === 'percent' && reward.amount) {
-    context.addIssue({
-      code: 'custom',
-      path: ['amount'],
-      message: 'amount is only valid for fixed discounts',
-    });
-  }
-});
+]);
 
 export const ProgramStatusSchema = z.enum([
   'draft',

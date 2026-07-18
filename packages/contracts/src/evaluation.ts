@@ -34,20 +34,41 @@ export const DecisionOutcomeSchema = z.enum([
   'conflict',
 ]);
 
-export const OrderDiscountEffectSchema = z.object({
+export const FixedOrderDiscountEffectSchema = z.object({
   type: z.literal('order_discount'),
-  calculation: z.enum(['fixed', 'percent']),
-  amount: MoneySchema.optional(),
-  basisPoints: z.number().int().min(1).max(10_000).optional(),
+  calculation: z.literal('fixed'),
+  amount: MoneySchema,
 }).strict();
 
-export const LineItemDiscountEffectSchema = z.object({
+export const PercentOrderDiscountEffectSchema = z.object({
+  type: z.literal('order_discount'),
+  calculation: z.literal('percent'),
+  basisPoints: z.number().int().min(1).max(10_000),
+}).strict();
+
+export const OrderDiscountEffectSchema = z.discriminatedUnion('calculation', [
+  FixedOrderDiscountEffectSchema,
+  PercentOrderDiscountEffectSchema,
+]);
+
+export const FixedLineItemDiscountEffectSchema = z.object({
   type: z.literal('line_item_discount'),
   productRef: z.string().min(1),
-  calculation: z.enum(['fixed', 'percent']),
-  amount: MoneySchema.optional(),
-  basisPoints: z.number().int().min(1).max(10_000).optional(),
+  calculation: z.literal('fixed'),
+  amount: MoneySchema,
 }).strict();
+
+export const PercentLineItemDiscountEffectSchema = z.object({
+  type: z.literal('line_item_discount'),
+  productRef: z.string().min(1),
+  calculation: z.literal('percent'),
+  basisPoints: z.number().int().min(1).max(10_000),
+}).strict();
+
+export const LineItemDiscountEffectSchema = z.discriminatedUnion('calculation', [
+  FixedLineItemDiscountEffectSchema,
+  PercentLineItemDiscountEffectSchema,
+]);
 
 export const FreeShippingEffectSchema = z.object({
   type: z.literal('free_shipping'),
@@ -73,7 +94,7 @@ export const AttributionEffectSchema = z.object({
   subjectRef: z.string().min(1),
 }).strict();
 
-export const EffectSchema = z.discriminatedUnion('type', [
+export const EffectSchema = z.union([
   OrderDiscountEffectSchema,
   LineItemDiscountEffectSchema,
   FreeShippingEffectSchema,
@@ -99,7 +120,18 @@ export const IncentiveDecisionSchema = z.object({
   message: z.string().min(1).optional(),
   commitRequired: z.boolean(),
   eligible: z.boolean().optional(),
-}).strict();
+}).strict().superRefine((decision, context) => {
+  if (decision.eligible === undefined) return;
+
+  const derivedEligibility = decision.outcome === 'qualified';
+  if (decision.eligible !== derivedEligibility) {
+    context.addIssue({
+      code: 'custom',
+      path: ['eligible'],
+      message: 'eligible must match the authoritative outcome',
+    });
+  }
+});
 
 export const EvaluationResponseSchema = z.object({
   evaluationId: z.string().min(1),

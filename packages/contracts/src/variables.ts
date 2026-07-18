@@ -1,4 +1,9 @@
 import { z } from './zod.js';
+import {
+  CartLineItemSchema,
+  CartSchema,
+  EvaluationRequestSchema,
+} from './evaluation.js';
 
 export const VariableSourceSchema = z.enum([
   'customer',
@@ -54,7 +59,21 @@ export type VariableSource = z.infer<typeof VariableSourceSchema>;
 export type VariableType = z.infer<typeof VariableTypeSchema>;
 export type VariableDefinition = z.infer<typeof VariableDefinitionSchema>;
 
-const extensionSources = ['context', 'cart', 'line_item'] as const;
+const PublishedVariableDefinitionsSchema = z.array(VariableDefinitionSchema).superRefine(
+  (definitions, context) => {
+    const seenKeys = new Set<string>();
+    definitions.forEach((definition, index) => {
+      if (seenKeys.has(definition.key)) {
+        context.addIssue({
+          code: 'custom',
+          path: [index, 'key'],
+          message: `duplicate variable key: ${definition.key}`,
+        });
+      }
+      seenKeys.add(definition.key);
+    });
+  },
+);
 
 function schemaForDefinition(definition: VariableDefinition): z.ZodType {
   switch (definition.type) {
@@ -74,10 +93,9 @@ function schemaForDefinition(definition: VariableDefinition): z.ZodType {
 export function buildPublishedEvaluationJsonSchema(
   definitions: readonly VariableDefinition[],
 ): Record<string, unknown> {
-  const parsedDefinitions = z.array(VariableDefinitionSchema).parse(definitions);
-  const rootShape: Record<string, z.ZodType> = {};
+  const parsedDefinitions = PublishedVariableDefinitionsSchema.parse(definitions);
 
-  for (const source of extensionSources) {
+  function extensionSchemaFor(source: 'context' | 'cart' | 'line_item') {
     const sourceShape: Record<string, z.ZodType> = {};
     let sourceIsRequired = false;
     for (const definition of parsedDefinitions) {
@@ -88,9 +106,34 @@ export function buildPublishedEvaluationJsonSchema(
       sourceShape[fieldName] = definition.required ? fieldSchema : fieldSchema.optional();
       sourceIsRequired ||= definition.required;
     }
-    const sourceSchema = z.object(sourceShape).strict();
-    rootShape[source] = sourceIsRequired ? sourceSchema : sourceSchema.optional();
+
+    return {
+      required: sourceIsRequired,
+      schema: z.object(sourceShape).strict(),
+    };
   }
 
-  return z.toJSONSchema(z.object(rootShape).strict(), { target: 'draft-2020-12' });
+  const contextExtensions = extensionSchemaFor('context');
+  const cartExtensions = extensionSchemaFor('cart');
+  const lineItemExtensions = extensionSchemaFor('line_item');
+
+  const lineItemSchema = CartLineItemSchema.extend({
+    attributes: lineItemExtensions.required
+      ? lineItemExtensions.schema
+      : lineItemExtensions.schema.optional(),
+  });
+  const cartSchema = CartSchema.extend({
+    items: z.array(lineItemSchema),
+    attributes: cartExtensions.required
+      ? cartExtensions.schema
+      : cartExtensions.schema.optional(),
+  });
+  const evaluationRequestSchema = EvaluationRequestSchema.extend({
+    cart: cartSchema,
+    context: contextExtensions.required
+      ? contextExtensions.schema
+      : contextExtensions.schema.optional(),
+  });
+
+  return z.toJSONSchema(evaluationRequestSchema, { target: 'draft-2020-12' });
 }

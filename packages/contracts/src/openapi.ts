@@ -5,6 +5,7 @@ import {
 
 import { ApiErrorSchema } from './errors.js';
 import {
+  EffectSchema,
   EvaluationRequestSchema,
   EvaluationResponseSchema,
   RedemptionRequestSchema,
@@ -25,6 +26,7 @@ export function buildOpenApiDocument(): OpenApiDocument {
 
   registry.register('Money', MoneySchema);
   registry.register('VariableDefinition', VariableDefinitionSchema);
+  registry.register('Effect', EffectSchema);
   const evaluationRequest = registry.register('EvaluationRequest', EvaluationRequestSchema);
   const evaluationResponse = registry.register('EvaluationResponse', EvaluationResponseSchema);
   const redemptionRequest = registry.register('RedemptionRequest', RedemptionRequestSchema);
