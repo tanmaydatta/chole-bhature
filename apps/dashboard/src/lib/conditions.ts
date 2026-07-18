@@ -1,32 +1,41 @@
-import type { VarType, Operator, Variable, Condition } from './types';
+import {
+  OPERATORS_BY_TYPE,
+  operatorLabel,
+  resolveFailureMessage,
+} from '@incentives/engine';
+import type { VariableDefinition, VariableSource } from '@incentives/contracts';
 
-export const OPERATORS_BY_TYPE: Record<VarType, Operator[]> = {
-  number: ['gt', 'gte', 'lt', 'lte', 'eq', 'neq', 'between'],
-  string: ['eq', 'neq', 'in'],
-  boolean: ['is'],
-  enum: ['eq', 'neq', 'in'],
-  date: ['between', 'lt', 'gt'],
-};
+import type { Condition, Variable } from './types';
 
-const OPERATOR_LABELS: Record<Operator, string> = {
-  gte: '≥',
-  lte: '≤',
-  gt: '>',
-  lt: '<',
-  eq: 'is',
-  neq: 'is not',
-  in: 'is any of',
-  between: 'between',
-  is: 'is',
-};
+export { OPERATORS_BY_TYPE, operatorLabel };
 
-export function operatorLabel(op: Operator): string {
-  return OPERATOR_LABELS[op];
+function sourceFor(variable: Variable): VariableSource {
+  return variable.origin === 'system' ? 'system' : 'context';
 }
 
-export function resolveMessage(condition: Condition, variable: Variable, programFallback?: string): string {
-  for (const candidate of [condition.message, variable.defaultMessage, programFallback]) {
-    if (candidate && candidate.trim() !== '') return candidate;
-  }
-  return "This code isn't valid for your order.";
+function toVariableDefinition(variable: Variable): VariableDefinition {
+  const source = sourceFor(variable);
+  return {
+    key: variable.name.includes('.') ? variable.name : `${source}.${variable.name}`,
+    label: variable.name,
+    source,
+    type: variable.type,
+    required: false,
+    ...(variable.enumValues === undefined ? {} : { enumValues: variable.enumValues }),
+    ...(variable.defaultMessage === undefined
+      ? {}
+      : { defaultErrorMessage: variable.defaultMessage }),
+  };
+}
+
+export function resolveMessage(
+  condition: Condition,
+  variable: Variable,
+  programFallback?: string,
+): string {
+  return resolveFailureMessage(
+    condition,
+    toVariableDefinition(variable),
+    programFallback,
+  );
 }
