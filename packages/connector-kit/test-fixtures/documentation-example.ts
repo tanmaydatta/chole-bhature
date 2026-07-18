@@ -1,5 +1,6 @@
 import type {
   IncentiveDecision,
+  Money,
   OrderSnapshot,
 } from '@incentives/contracts';
 import type {
@@ -28,10 +29,10 @@ interface ExampleOrder extends ExampleCart {
   total: number;
 }
 
-interface ExampleAdjustment {
-  effectType: 'order_discount' | 'free_shipping';
-  calculation?: 'fixed' | 'percent';
-}
+type ExampleAdjustment =
+  | { effectType: 'order_discount'; calculation: 'fixed'; amount: Money }
+  | { effectType: 'order_discount'; calculation: 'percent'; basisPoints: number }
+  | { effectType: 'free_shipping' };
 
 export const exampleConnectorCapabilities = {
   automaticDiscounts: true,
@@ -64,10 +65,20 @@ function mapDecision(decision: IncentiveDecision): ExampleAdjustment[] {
   if (unsupportedEffect !== undefined) {
     throw new UnsupportedConnectorCapabilityError(unsupportedEffect.type);
   }
-  return decision.effects.map(effect => ({
-    effectType: effect.type as ExampleAdjustment['effectType'],
-    ...('calculation' in effect ? { calculation: effect.calculation } : {}),
-  }));
+  return decision.effects.map((effect): ExampleAdjustment => {
+    if (effect.type === 'free_shipping') return { effectType: effect.type };
+    return effect.calculation === 'fixed'
+      ? {
+        effectType: effect.type,
+        calculation: effect.calculation,
+        amount: effect.amount,
+      }
+      : {
+        effectType: effect.type,
+        calculation: effect.calculation,
+        basisPoints: effect.basisPoints,
+      };
+  });
 }
 
 export const exampleConformanceValues = {
@@ -179,10 +190,26 @@ export function createDocumentationConnectorHarness(): {
       return exampleDecision;
     },
     assertMappedDecision(decision, mappedDecision) {
-      const expected = decision.effects.map(effect => ({
-        effectType: effect.type,
-        ...('calculation' in effect ? { calculation: effect.calculation } : {}),
-      }));
+      const expected = decision.effects.map((effect): ExampleAdjustment => {
+        if (effect.type === 'free_shipping') return { effectType: 'free_shipping' };
+        if (effect.type !== 'order_discount') {
+          throw new Error(`Unexpected supported effect: ${effect.type}`);
+        }
+        return effect.calculation === 'fixed'
+          ? {
+            effectType: 'order_discount',
+            calculation: 'fixed',
+            amount: {
+              currency: effect.amount.currency,
+              minorUnits: effect.amount.minorUnits,
+            },
+          }
+          : {
+            effectType: 'order_discount',
+            calculation: 'percent',
+            basisPoints: effect.basisPoints,
+          };
+      });
       if (JSON.stringify(mappedDecision) !== JSON.stringify(expected)) {
         throw new Error('Mapped decision does not exactly represent the canonical effects');
       }

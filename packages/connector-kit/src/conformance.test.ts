@@ -2,7 +2,9 @@ import { describe, expect, test } from 'vitest';
 
 import type {
   CartSnapshot,
+  Effect,
   IncentiveDecision,
+  Money,
   OrderSnapshot,
 } from '@incentives/contracts';
 
@@ -39,10 +41,26 @@ interface FakeOrder {
   variantId: string;
 }
 
-interface FakeAdjustment {
-  effectType: string;
-  calculation?: 'fixed' | 'percent';
-}
+type FakeAdjustment =
+  | { effectType: 'order_discount'; calculation: 'fixed'; amount: Money }
+  | { effectType: 'order_discount'; calculation: 'percent'; basisPoints: number }
+  | {
+    effectType: 'line_item_discount';
+    productRef: string;
+    calculation: 'fixed';
+    amount: Money;
+  }
+  | {
+    effectType: 'line_item_discount';
+    productRef: string;
+    calculation: 'percent';
+    basisPoints: number;
+  }
+  | { effectType: 'free_shipping' }
+  | { effectType: 'wallet_debit'; amount: Money }
+  | { effectType: 'wallet_credit'; amount: Money }
+  | { effectType: 'points_credit'; points: number }
+  | { effectType: 'attribution'; subjectRef: string };
 
 const qualifiedDecision: IncentiveDecision = {
   programRef: 'promo-1',
@@ -114,10 +132,95 @@ function fakeAdjustmentsFromDecision(decision: IncentiveDecision): FakeAdjustmen
 }
 
 function mapAllEffects(decision: IncentiveDecision): FakeAdjustment[] {
-  return decision.effects.map(effect => ({
-    effectType: effect.type,
-    ...('calculation' in effect ? { calculation: effect.calculation } : {}),
-  }));
+  return decision.effects.map((effect): FakeAdjustment => {
+    switch (effect.type) {
+      case 'order_discount':
+        return effect.calculation === 'fixed'
+          ? { effectType: effect.type, calculation: effect.calculation, amount: effect.amount }
+          : {
+            effectType: effect.type,
+            calculation: effect.calculation,
+            basisPoints: effect.basisPoints,
+          };
+      case 'line_item_discount':
+        return effect.calculation === 'fixed'
+          ? {
+            effectType: effect.type,
+            productRef: effect.productRef,
+            calculation: effect.calculation,
+            amount: effect.amount,
+          }
+          : {
+            effectType: effect.type,
+            productRef: effect.productRef,
+            calculation: effect.calculation,
+            basisPoints: effect.basisPoints,
+          };
+      case 'free_shipping':
+        return { effectType: effect.type };
+      case 'wallet_debit':
+      case 'wallet_credit':
+        return { effectType: effect.type, amount: effect.amount };
+      case 'points_credit':
+        return { effectType: effect.type, points: effect.points };
+      case 'attribution':
+        return { effectType: effect.type, subjectRef: effect.subjectRef };
+    }
+  });
+}
+
+function expectedFakeAdjustment(effect: Effect): FakeAdjustment {
+  switch (effect.type) {
+    case 'order_discount':
+      if (effect.calculation === 'fixed') {
+        return {
+          effectType: 'order_discount',
+          calculation: 'fixed',
+          amount: {
+            currency: effect.amount.currency,
+            minorUnits: effect.amount.minorUnits,
+          },
+        };
+      }
+      return {
+        effectType: 'order_discount',
+        calculation: 'percent',
+        basisPoints: effect.basisPoints,
+      };
+    case 'line_item_discount':
+      if (effect.calculation === 'fixed') {
+        return {
+          effectType: 'line_item_discount',
+          productRef: effect.productRef,
+          calculation: 'fixed',
+          amount: {
+            currency: effect.amount.currency,
+            minorUnits: effect.amount.minorUnits,
+          },
+        };
+      }
+      return {
+        effectType: 'line_item_discount',
+        productRef: effect.productRef,
+        calculation: 'percent',
+        basisPoints: effect.basisPoints,
+      };
+    case 'free_shipping':
+      return { effectType: 'free_shipping' };
+    case 'wallet_debit':
+    case 'wallet_credit':
+      return {
+        effectType: effect.type,
+        amount: {
+          currency: effect.amount.currency,
+          minorUnits: effect.amount.minorUnits,
+        },
+      };
+    case 'points_credit':
+      return { effectType: 'points_credit', points: effect.points };
+    case 'attribution':
+      return { effectType: 'attribution', subjectRef: effect.subjectRef };
+  }
 }
 
 function createHarness(): {
@@ -189,10 +292,7 @@ function createHarness(): {
         return qualifiedDecision;
       },
       assertMappedDecision(decision, mappedDecision) {
-        expect(mappedDecision).toEqual(decision.effects.map(effect => ({
-          effectType: effect.type,
-          ...('calculation' in effect ? { calculation: effect.calculation } : {}),
-        })));
+        expect(mappedDecision).toEqual(decision.effects.map(expectedFakeAdjustment));
       },
       async apply(_mappedDecision) {},
       async commit(order) {
@@ -536,10 +636,7 @@ describe('runConnectorConformanceSuite', () => {
     const harness = createHarness();
     const asserted: string[] = [];
     harness.fixture.assertMappedDecision = (decision, mappedDecision) => {
-      const expected = decision.effects.map(effect => ({
-        effectType: effect.type,
-        ...('calculation' in effect ? { calculation: effect.calculation } : {}),
-      }));
+      const expected = decision.effects.map(expectedFakeAdjustment);
       expect(mappedDecision).toEqual(expected);
       asserted.push(decision.effects.map(effect => (
         'calculation' in effect
@@ -566,6 +663,110 @@ describe('runConnectorConformanceSuite', () => {
       runConnectorConformanceSuite(harness.connector, harness.fixture),
       'MAPPED_DECISION_INVALID',
     );
+  });
+
+  test.each([
+    ['missing fixed amount', () => [{
+      effectType: 'order_discount',
+      calculation: 'fixed',
+    }]],
+    ['wrong fixed amount', () => [{
+      effectType: 'order_discount',
+      calculation: 'fixed',
+      amount: { currency: 'GBP', minorUnits: 999 },
+    }]],
+  ])('rejects a supported mapping with %s', async (_name, mapFixed) => {
+    const harness = createHarness();
+    harness.connector.mapDecision = decision => {
+      const fixed = decision.effects.find(effect => (
+        effect.type === 'order_discount' && effect.calculation === 'fixed'
+      ));
+      return fixed
+        ? mapFixed() as unknown as FakeAdjustment[]
+        : fakeAdjustmentsFromDecision(decision);
+    };
+
+    await expectCode(
+      runConnectorConformanceSuite(harness.connector, harness.fixture),
+      'MAPPED_DECISION_INVALID',
+    );
+  });
+
+  test.each([
+    ['missing percent basis points', () => [{
+      effectType: 'order_discount',
+      calculation: 'percent',
+    }]],
+    ['wrong percent basis points', () => [{
+      effectType: 'order_discount',
+      calculation: 'percent',
+      basisPoints: 999,
+    }]],
+  ])('rejects a supported mapping with %s', async (_name, mapPercent) => {
+    const harness = createHarness();
+    harness.connector.mapDecision = decision => {
+      const percent = decision.effects.find(effect => (
+        effect.type === 'order_discount' && effect.calculation === 'percent'
+      ));
+      return percent
+        ? mapPercent() as unknown as FakeAdjustment[]
+        : fakeAdjustmentsFromDecision(decision);
+    };
+
+    await expectCode(
+      runConnectorConformanceSuite(harness.connector, harness.fixture),
+      'MAPPED_DECISION_INVALID',
+    );
+  });
+
+  test('proves exact line-item and wallet value mappings when capabilities are enabled', async () => {
+    const harness = createHarness();
+    harness.connector.capabilities = () => ({
+      ...capabilities(),
+      lineItemAdjustments: true,
+      walletRedemption: true,
+    });
+    harness.connector.mapDecision = decision => {
+      const unsupported = decision.effects.find(effect => (
+        effect.type === 'wallet_credit'
+        || effect.type === 'points_credit'
+        || effect.type === 'attribution'
+      ));
+      if (unsupported) throw new UnsupportedConnectorCapabilityError(unsupported.type);
+      return mapAllEffects(decision);
+    };
+    harness.fixture.assertMappedDecision = (decision, mappedDecision) => {
+      for (const [index, effect] of decision.effects.entries()) {
+        const mapped = mappedDecision[index] as Record<string, unknown> | undefined;
+        if (effect.type === 'line_item_discount' && effect.calculation === 'fixed') {
+          expect(mapped).toEqual({
+            effectType: 'line_item_discount',
+            productRef: 'connector-conformance-product',
+            calculation: 'fixed',
+            amount: { currency: 'GBP', minorUnits: 100 },
+          });
+        }
+        if (effect.type === 'line_item_discount' && effect.calculation === 'percent') {
+          expect(mapped).toEqual({
+            effectType: 'line_item_discount',
+            productRef: 'connector-conformance-product',
+            calculation: 'percent',
+            basisPoints: 1_000,
+          });
+        }
+        if (effect.type === 'wallet_debit') {
+          expect(mapped).toEqual({
+            effectType: 'wallet_debit',
+            amount: { currency: 'GBP', minorUnits: 100 },
+          });
+        }
+      }
+    };
+
+    await expect(runConnectorConformanceSuite(
+      harness.connector,
+      harness.fixture,
+    )).resolves.toEqual({ passed: true });
   });
 
   test('rejects a connector that supports fixed order discounts but rejects percent variants', async () => {

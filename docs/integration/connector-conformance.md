@@ -105,16 +105,28 @@ function mapDecision(decision: IncentiveDecision): ExampleAdjustment[] {
   if (unsupportedEffect !== undefined) {
     throw new UnsupportedConnectorCapabilityError(unsupportedEffect.type);
   }
-  return decision.effects.map(effect => ({
-    effectType: effect.type as ExampleAdjustment['effectType'],
-    ...('calculation' in effect ? { calculation: effect.calculation } : {}),
-  }));
+  return decision.effects.map((effect): ExampleAdjustment => {
+    if (effect.type === 'free_shipping') return { effectType: effect.type };
+    return effect.calculation === 'fixed'
+      ? {
+        effectType: effect.type,
+        calculation: effect.calculation,
+        amount: effect.amount,
+      }
+      : {
+        effectType: effect.type,
+        calculation: effect.calculation,
+        basisPoints: effect.basisPoints,
+      };
+  });
 }
 ```
 
 Unsupported effects must throw `UnsupportedConnectorCapabilityError`, whose stable `code` is `UNSUPPORTED_CONNECTOR_CAPABILITY` and whose `effectType` identifies the exact rejected effect. Silent drops, generic errors, and accepting only the supported portion of a mixed decision all fail conformance.
 
 Capability acceptance alone is insufficient: a mapper could return an empty or lossy platform payload without throwing. Every fixture therefore implements the strongly typed `assertMappedDecision(decision, mappedDecision)` hook. The runner invokes it for each declared-supported fixed, percent, and free-shipping probe and for the final evaluated mapping. Assertion failures are wrapped as `ConnectorConformanceError` with stable code `MAPPED_DECISION_INVALID`.
+
+The shipped fixture compares every value-bearing field, not only the effect discriminator: fixed discounts preserve `amount.currency` and `amount.minorUnits`; percent discounts preserve `basisPoints`; line-item discounts additionally preserve `productRef`; and wallet mappings preserve their canonical amount. The capability-variant tests enable line-item adjustment and wallet redemption explicitly, while adversarial missing or altered monetary fields fail with `MAPPED_DECISION_INVALID`.
 
 The runner itself throws `ConnectorConformanceError` with a stable typed `code`. Codes cover invalid capabilities/snapshots/money, customer leakage or mutation, external/idempotency reference mutation, effect capability mismatches, invalid mapped decisions, source verification, invalid evaluation decisions, operation failures, and sequence violations. Consumers should branch on `code`, not message text.
 
