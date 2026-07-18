@@ -154,7 +154,7 @@ Each non-React package uses this manifest shape, replacing its name and internal
   "types": "./dist/index.d.ts",
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "vitest run",
+    "test": "vitest run --passWithNoTests",
     "lint": "oxlint src"
   },
   "devDependencies": {
@@ -179,6 +179,8 @@ Use this `tsconfig.json` in each library:
 ```
 
 Adjust `packages/modules/promo/tsconfig.json` to extend `../../../tsconfig.base.json`. Give `apps/api/src/index.ts` and each library `src/index.ts` the single temporary export `export {};`.
+
+`--passWithNoTests` is permitted only while a workspace is a testless skeleton. The task that adds a package's first real test must change that package's script back to plain `vitest run`.
 
 - [ ] **Step 4: Install from the root and verify workspace discovery**
 
@@ -221,6 +223,8 @@ git commit -m "build: establish incentives monorepo"
 - [ ] **Step 1: Add contract dependencies and write failing tests**
 
 Run `pnpm --filter @incentives/contracts add zod @asteasolutions/zod-to-openapi`.
+
+Change `@incentives/contracts`'s test script from `vitest run --passWithNoTests` to `vitest run` before adding `contracts.test.ts`.
 
 Create `contracts.test.ts` with these cases:
 
@@ -368,6 +372,8 @@ git commit -m "feat: define canonical incentives contracts"
 
 - [ ] **Step 1: Write failing evaluator/fact/stacking tests**
 
+Change `@incentives/engine`'s test script from `vitest run --passWithNoTests` to `vitest run` before adding its first test.
+
 Cover these exact behaviours:
 
 ```ts
@@ -456,6 +462,8 @@ git commit -m "feat: add pure typed evaluation engine"
 
 - [ ] **Step 1: Write failing contract and Promo tests**
 
+Change both `@incentives/module-kit` and `@incentives/promo` test scripts from `vitest run --passWithNoTests` to `vitest run` before adding their first tests.
+
 ```ts
 const context: ModuleEvaluationContext = {
   merchantId: 'merchant-1',
@@ -532,6 +540,8 @@ git commit -m "feat: add incentive module contract and promo module"
 - Produces: `ConnectorCapabilities`, `CommerceConnector<TCustomer, TCart, TOrder, TDecision>`, `VerificationResult`, `ConnectorFixture`, and `runConnectorConformanceSuite()`.
 
 - [ ] **Step 1: Write a failing fake-connector conformance test**
+
+Change `@incentives/connector-kit`'s test script from `vitest run --passWithNoTests` to `vitest run` before adding its first test.
 
 ```ts
 const fakeConnector: CommerceConnector<FakeCustomer, FakeCart, FakeOrder, FakeAdjustment[]> = {

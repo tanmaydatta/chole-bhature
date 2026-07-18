@@ -84,6 +84,8 @@ pnpm --filter @incentives/api add hono drizzle-orm zod
 pnpm --filter @incentives/api add -D drizzle-kit wrangler @cloudflare/workers-types @cloudflare/vitest-pool-workers vitest
 ```
 
+Change `@incentives/api`'s test script from `vitest run --passWithNoTests` to `vitest run` before adding the first repository test. From this task onward, a missing API test suite must fail the command.
+
 Write tests using isolated D1 storage that insert two merchants with the same external customer ref and prove reads cannot cross tenant scope. Add a unique `(merchant_id, external_order_ref)` redemption test and a customer optimistic-version update test.
 
 ```ts
