@@ -142,21 +142,44 @@ export const EvaluationResponseSchema = z.object({
   decisions: z.array(IncentiveDecisionSchema),
 }).strict();
 
-export const RedemptionRequestSchema = z.object({
+const RedemptionRequestFields = {
   evaluationId: z.string().min(1),
   programRef: z.string().min(1),
-  externalOrderRef: z.string().min(1),
-  idempotencyKey: z.string().min(1),
-}).strict();
+};
 
-export const RedemptionResponseSchema = z.object({
+export const RedemptionRequestSchema = z.union([
+  z.object({
+    ...RedemptionRequestFields,
+    externalOrderRef: z.string().min(1),
+    idempotencyKey: z.string().min(1).optional(),
+  }).strict(),
+  z.object({
+    ...RedemptionRequestFields,
+    externalOrderRef: z.string().min(1).optional(),
+    idempotencyKey: z.string().min(1),
+  }).strict(),
+]);
+
+const RedemptionResponseFields = {
   redemptionId: z.string().min(1),
   evaluationId: z.string().min(1),
   programRef: z.string().min(1),
-  externalOrderRef: z.string().min(1),
   status: z.literal('committed'),
   effects: z.array(EffectSchema),
-}).strict();
+};
+
+export const RedemptionResponseSchema = z.union([
+  z.object({
+    ...RedemptionResponseFields,
+    externalOrderRef: z.string().min(1),
+    idempotencyKey: z.string().min(1).optional(),
+  }).strict(),
+  z.object({
+    ...RedemptionResponseFields,
+    externalOrderRef: z.string().min(1).optional(),
+    idempotencyKey: z.string().min(1),
+  }).strict(),
+]);
 
 export type CartLineItem = z.infer<typeof CartLineItemSchema>;
 export type Cart = z.infer<typeof CartSchema>;

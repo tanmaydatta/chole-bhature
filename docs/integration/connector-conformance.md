@@ -107,13 +107,16 @@ function mapDecision(decision: IncentiveDecision): ExampleAdjustment[] {
   }
   return decision.effects.map(effect => ({
     effectType: effect.type as ExampleAdjustment['effectType'],
+    ...('calculation' in effect ? { calculation: effect.calculation } : {}),
   }));
 }
 ```
 
 Unsupported effects must throw `UnsupportedConnectorCapabilityError`, whose stable `code` is `UNSUPPORTED_CONNECTOR_CAPABILITY` and whose `effectType` identifies the exact rejected effect. Silent drops, generic errors, and accepting only the supported portion of a mixed decision all fail conformance.
 
-The runner itself throws `ConnectorConformanceError` with a stable typed `code`. Codes cover invalid capabilities/snapshots/money, customer leakage or mutation, external/idempotency reference mutation, effect capability mismatches, source verification, invalid evaluation decisions, operation failures, and sequence violations. Consumers should branch on `code`, not message text.
+Capability acceptance alone is insufficient: a mapper could return an empty or lossy platform payload without throwing. Every fixture therefore implements the strongly typed `assertMappedDecision(decision, mappedDecision)` hook. The runner invokes it for each declared-supported fixed, percent, and free-shipping probe and for the final evaluated mapping. Assertion failures are wrapped as `ConnectorConformanceError` with stable code `MAPPED_DECISION_INVALID`.
+
+The runner itself throws `ConnectorConformanceError` with a stable typed `code`. Codes cover invalid capabilities/snapshots/money, customer leakage or mutation, external/idempotency reference mutation, effect capability mismatches, invalid mapped decisions, source verification, invalid evaluation decisions, operation failures, and sequence violations. Consumers should branch on `code`, not message text.
 
 ## Sentinel-based conformance fixture
 
@@ -162,17 +165,18 @@ evaluate canonical request
   → capture payment
 ```
 
-`CommerceConnector` intentionally has no payment or persistence methods. The conformance `ConnectorFixture` supplies fake `evaluate`, `apply`, `commit`, and `capturePayment` hooks; the runner records and verifies `['evaluate', 'map', 'apply', 'commit', 'capture']`. A production application owns that orchestration around the connector.
+`CommerceConnector` intentionally has no payment or persistence methods. The conformance `ConnectorFixture` supplies fake `evaluate`, `assertMappedDecision`, `apply`, `commit`, and `capturePayment` hooks; the runner records and verifies `['evaluate', 'map', 'apply', 'commit', 'capture']`. Mapping assertions are validation hooks and do not add an operation marker. A production application owns that orchestration around the connector.
 
 ## Run conformance
 
 From the repository root, run the exact documentation fixture, the complete connector suite, or the full workspace gate:
 
 ```bash
-pnpm --filter @incentives/connector-kit exec vitest run src/documentation-example.test.ts
+pnpm --filter @incentives/connector-kit test -- src/documentation-example.test.ts
 pnpm --filter @incentives/connector-kit test
 pnpm install --frozen-lockfile
 pnpm -r test
+pnpm run verify:clean-tests
 pnpm -r build
 pnpm -r lint
 git diff --check

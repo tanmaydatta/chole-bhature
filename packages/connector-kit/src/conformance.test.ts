@@ -41,6 +41,7 @@ interface FakeOrder {
 
 interface FakeAdjustment {
   effectType: string;
+  calculation?: 'fixed' | 'percent';
 }
 
 const qualifiedDecision: IncentiveDecision = {
@@ -109,7 +110,14 @@ function fakeAdjustmentsFromDecision(decision: IncentiveDecision): FakeAdjustmen
   if (unsupported) {
     throw new UnsupportedConnectorCapabilityError(unsupported.type);
   }
-  return decision.effects.map(effect => ({ effectType: effect.type }));
+  return mapAllEffects(decision);
+}
+
+function mapAllEffects(decision: IncentiveDecision): FakeAdjustment[] {
+  return decision.effects.map(effect => ({
+    effectType: effect.type,
+    ...('calculation' in effect ? { calculation: effect.calculation } : {}),
+  }));
 }
 
 function createHarness(): {
@@ -179,6 +187,12 @@ function createHarness(): {
       trace,
       async evaluate() {
         return qualifiedDecision;
+      },
+      assertMappedDecision(decision, mappedDecision) {
+        expect(mappedDecision).toEqual(decision.effects.map(effect => ({
+          effectType: effect.type,
+          ...('calculation' in effect ? { calculation: effect.calculation } : {}),
+        })));
       },
       async apply(_mappedDecision) {},
       async commit(order) {
@@ -329,9 +343,7 @@ describe('runConnectorConformanceSuite', () => {
 
   test('rejects unsupported effects that are silently accepted', async () => {
     const harness = createHarness();
-    harness.connector.mapDecision = decision => (
-      decision.effects.map(effect => ({ effectType: effect.type }))
-    );
+    harness.connector.mapDecision = mapAllEffects;
 
     await expectCode(
       runConnectorConformanceSuite(harness.connector, harness.fixture),
@@ -344,7 +356,7 @@ describe('runConnectorConformanceSuite', () => {
     harness.connector.mapDecision = decision => {
       const effect = decision.effects[0];
       if (effect?.type === 'order_discount' || effect?.type === 'free_shipping') {
-        return effect ? [{ effectType: effect.type }] : [];
+        return mapAllEffects(decision);
       }
       throw new Error('not supported');
     };
@@ -502,7 +514,7 @@ describe('runConnectorConformanceSuite', () => {
       if (unsupported) {
         throw new UnsupportedConnectorCapabilityError(unsupported.type);
       }
-      return decision.effects.map(effect => ({ effectType: effect.type }));
+      return mapAllEffects(decision);
     };
 
     await runConnectorConformanceSuite(harness.connector, harness.fixture);
@@ -518,6 +530,42 @@ describe('runConnectorConformanceSuite', () => {
       'points_credit',
       'attribution',
     ]));
+  });
+
+  test('asks the fixture to prove every supported probe and final evaluated mapping', async () => {
+    const harness = createHarness();
+    const asserted: string[] = [];
+    harness.fixture.assertMappedDecision = (decision, mappedDecision) => {
+      const expected = decision.effects.map(effect => ({
+        effectType: effect.type,
+        ...('calculation' in effect ? { calculation: effect.calculation } : {}),
+      }));
+      expect(mappedDecision).toEqual(expected);
+      asserted.push(decision.effects.map(effect => (
+        'calculation' in effect
+          ? `${effect.type}:${effect.calculation}`
+          : effect.type
+      )).join(','));
+    };
+
+    await runConnectorConformanceSuite(harness.connector, harness.fixture);
+
+    expect(asserted).toEqual([
+      'order_discount:fixed',
+      'order_discount:percent',
+      'free_shipping',
+      'order_discount:fixed',
+    ]);
+  });
+
+  test('rejects a mapper that silently drops supported effects', async () => {
+    const harness = createHarness();
+    harness.connector.mapDecision = () => [];
+
+    await expectCode(
+      runConnectorConformanceSuite(harness.connector, harness.fixture),
+      'MAPPED_DECISION_INVALID',
+    );
   });
 
   test('rejects a connector that supports fixed order discounts but rejects percent variants', async () => {
@@ -559,7 +607,7 @@ describe('runConnectorConformanceSuite', () => {
       if (unsupported) {
         throw new UnsupportedConnectorCapabilityError(unsupported.type);
       }
-      return decision.effects.map(effect => ({ effectType: effect.type }));
+      return mapAllEffects(decision);
     };
 
     await expectCode(
@@ -572,7 +620,7 @@ describe('runConnectorConformanceSuite', () => {
     const harness = createHarness();
     harness.connector.mapDecision = decision => (
       decision.effects.length > 1
-        ? decision.effects.map(effect => ({ effectType: effect.type }))
+        ? mapAllEffects(decision)
         : fakeAdjustmentsFromDecision(decision)
     );
 
@@ -604,7 +652,7 @@ describe('runConnectorConformanceSuite', () => {
         decision.effects.length > 1
         && decision.effects.some(effect => effect.type === 'wallet_credit')
       ) {
-        return decision.effects.map(effect => ({ effectType: effect.type }));
+        return mapAllEffects(decision);
       }
       return fakeAdjustmentsFromDecision(decision);
     };

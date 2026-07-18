@@ -86,7 +86,9 @@ pnpm --filter @incentives/api add -D drizzle-kit wrangler @cloudflare/workers-ty
 
 Change `@incentives/api`'s test script from `vitest run --passWithNoTests` to `vitest run` before adding the first repository test. From this task onward, a missing API test suite must fail the command.
 
-Write tests using isolated D1 storage that insert two merchants with the same external customer ref and prove reads cannot cross tenant scope. Add a unique `(merchant_id, external_order_ref)` redemption test and a customer optimistic-version update test.
+Add an API `pretest` script that builds contracts, engine, module-kit, and Promo using repeated pnpm `--filter` arguments. This keeps every filtered Plan 2 test command valid from a clean checkout with no `dist/` output and avoids shell `&&`.
+
+Write tests using isolated D1 storage that insert two merchants with the same external customer ref and prove reads cannot cross tenant scope. Add redemption repository tests for external-order-only, idempotency-key-only, both identifiers, neither identifier, unique `(merchant_id, external_order_ref)`, and unique `(merchant_id, idempotency_key)` behavior, plus a customer optimistic-version update test.
 
 ```ts
 test('customer refs are isolated by merchant', async () => {
@@ -113,7 +115,7 @@ Create tables:
 - `customers(id, merchant_id, external_ref, attributes_json, version, updated_at)` with unique merchant/ref;
 - `programs(id, merchant_id, external_ref, type, name, status, config_json, priority, max_uses, usage_count, budget_remaining, created_at, updated_at)`;
 - `evaluation_decisions(id, merchant_id, customer_ref, customer_version, schema_version, request_json, decisions_json, integrity_hash, expires_at, created_at)`;
-- `redemptions(id, merchant_id, external_order_ref, idempotency_key, evaluation_id, result_json, discount_minor_units, currency, created_at)` with unique merchant/order and merchant/idempotency-key constraints.
+- `redemptions(id, merchant_id, external_order_ref NULL, idempotency_key NULL, evaluation_id, result_json, discount_minor_units, currency, created_at)` with `CHECK (external_order_ref IS NOT NULL OR idempotency_key IS NOT NULL)`, a unique merchant/non-null-order constraint, and a unique merchant/non-null-idempotency-key constraint. Either identifier may be present alone or both may be present.
 
 All foreign keys include or validate merchant ownership in repository methods. Store JSON as text validated at repository boundaries against `@incentives/contracts`.
 
@@ -398,7 +400,7 @@ git commit -m "feat: add structured promo evaluation API"
 
 - [ ] **Step 1: Write failing redemption tests**
 
-Test accepted commit, retry by external order ref, retry by idempotency key, expired/tampered/cross-merchant decision, decision currency/amount mismatch, paused program after evaluation, budget exhaustion, usage exhaustion, and concurrent last-cap attempts.
+Test accepted commit and stable response for all request variants: external order ref only, idempotency key only, and both. Reject neither at the canonical request boundary. Test retry by external order ref, retry by idempotency key, expired/tampered/cross-merchant decision, decision currency/amount mismatch, paused program after evaluation, budget exhaustion, usage exhaustion, and concurrent last-cap attempts.
 
 ```ts
 test('concurrent final-cap commits allow exactly one redemption', async () => {

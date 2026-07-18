@@ -121,6 +121,12 @@ export const canonicalDecision = {
 } as const satisfies IncentiveDecision;
 ```
 
+## Redemption idempotency identifiers
+
+`RedemptionRequest` structurally requires at least one idempotency identifier: `externalOrderRef` or `idempotencyKey`. A client may send either identifier alone or both together. Sending neither is invalid. `RedemptionResponse` follows the same rule and echoes at least one identifier, so a client can correlate a committed result using the mode it supplied.
+
+The generated OpenAPI components model these alternatives as structural variants rather than documenting an invariant that runtime validation cannot prove. Plan 2 persistence therefore stores both references as nullable, enforces a database check that at least one is present, and applies independent merchant-scoped uniqueness constraints to each non-null identifier.
+
 ## Module seam and dependency rule
 
 Clients integrate with one canonical contract; modules are an internal extension point. `IncentiveModule<TConfig>` has a required pure `evaluate(context, config)` method and optional `commit(context, decision)` and `handleEvent(event, config)` methods. A `ModuleDecision` adds integer `priority`, boolean `stackable`, and optional `stackingGroup` for central conflict resolution.
@@ -138,11 +144,14 @@ Persistence, HTTP routes, merchant/auth boundaries, customer storage, schema pub
 From the repository root:
 
 ```bash
-pnpm --filter @incentives/contracts exec vitest run src/documentation-examples.test.ts
+pnpm --filter @incentives/contracts test -- src/documentation-examples.test.ts
 pnpm --filter @incentives/contracts test
 pnpm -r test
+pnpm run verify:clean-tests
 pnpm -r build
 pnpm -r lint
 ```
+
+Consumer package test scripts build their internal workspace dependencies in `pretest`, so the focused commands work from a clean checkout where no `dist/` directories exist. `verify:clean-tests` archives committed `HEAD` into a validated temporary directory, performs a frozen install, and runs the recursive and filtered no-`dist` regression gates.
 
 The authoritative fixture is `packages/contracts/test-fixtures/documentation-examples.ts`; `packages/contracts/src/documentation-examples.test.ts` parses it exclusively through public contract exports.

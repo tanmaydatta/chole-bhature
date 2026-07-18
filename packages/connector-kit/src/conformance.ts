@@ -34,6 +34,7 @@ export type ConnectorConformanceCode =
   | 'EVALUATION_FAILED'
   | 'INVALID_DECISION'
   | 'DECISION_MAPPING_FAILED'
+  | 'MAPPED_DECISION_INVALID'
   | 'APPLICATION_FAILED'
   | 'COMMIT_FAILED'
   | 'PAYMENT_CAPTURE_FAILED'
@@ -66,6 +67,7 @@ export interface ConnectorFixture<TCustomer, TCart, TOrder, TDecision> {
   invalidRequest: Request;
   trace: string[];
   evaluate(): Promise<IncentiveDecision>;
+  assertMappedDecision(decision: IncentiveDecision, mappedDecision: TDecision): void;
   apply(mappedDecision: TDecision): Promise<void>;
   commit(order: OrderSnapshot): Promise<void>;
   capturePayment(): Promise<void>;
@@ -306,6 +308,7 @@ function supportsEffect(
 
 function assertCapabilityMapping<TCustomer, TCart, TOrder, TDecision>(
   connector: CommerceConnector<TCustomer, TCart, TOrder, TDecision>,
+  fixture: ConnectorFixture<TCustomer, TCart, TOrder, TDecision>,
   capabilities: ConnectorCapabilities,
 ): void {
   const probes = CONFORMANCE_EFFECTS.map(effect => ({
@@ -325,12 +328,22 @@ function assertCapabilityMapping<TCustomer, TCart, TOrder, TDecision>(
   }
 
   for (const probe of probes) {
+    const decision = decisionFor(probe.effects);
     try {
-      connector.mapDecision(decisionFor(probe.effects));
+      const mappedDecision = connector.mapDecision(decision);
       if (probe.unsupportedEffect !== undefined) {
         throw failure(
           'UNSUPPORTED_EFFECT_ACCEPTED',
           `Connector silently accepted unsupported effect: ${probe.unsupportedEffect}`,
+        );
+      }
+      try {
+        fixture.assertMappedDecision(decision, mappedDecision);
+      } catch (error) {
+        throw failure(
+          'MAPPED_DECISION_INVALID',
+          `Fixture rejected the mapped decision for supported effect: ${probe.effects[0]?.type}`,
+          error,
         );
       }
     } catch (error) {
@@ -480,7 +493,7 @@ export async function runConnectorConformanceSuite<
     throw failure('EXTERNAL_REF_MUTATED', 'Order product or variant reference was mutated');
   }
 
-  assertCapabilityMapping(connector, capabilities);
+  assertCapabilityMapping(connector, fixture, capabilities);
   await assertSourceVerification(connector, fixture.validRequest, fixture.invalidRequest);
 
   fixture.trace.length = 0;
@@ -506,6 +519,15 @@ export async function runConnectorConformanceSuite<
     mappedDecision = connector.mapDecision(decision.data);
   } catch (error) {
     throw failure('DECISION_MAPPING_FAILED', 'Connector could not map the evaluated decision', error);
+  }
+  try {
+    fixture.assertMappedDecision(decision.data, mappedDecision);
+  } catch (error) {
+    throw failure(
+      'MAPPED_DECISION_INVALID',
+      'Fixture rejected the final evaluated decision mapping',
+      error,
+    );
   }
 
   fixture.trace.push('apply');

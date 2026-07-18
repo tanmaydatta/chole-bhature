@@ -30,6 +30,7 @@ interface ExampleOrder extends ExampleCart {
 
 interface ExampleAdjustment {
   effectType: 'order_discount' | 'free_shipping';
+  calculation?: 'fixed' | 'percent';
 }
 
 export const exampleConnectorCapabilities = {
@@ -65,6 +66,7 @@ function mapDecision(decision: IncentiveDecision): ExampleAdjustment[] {
   }
   return decision.effects.map(effect => ({
     effectType: effect.type as ExampleAdjustment['effectType'],
+    ...('calculation' in effect ? { calculation: effect.calculation } : {}),
   }));
 }
 
@@ -175,6 +177,15 @@ export function createDocumentationConnectorHarness(): {
     trace,
     async evaluate() {
       return exampleDecision;
+    },
+    assertMappedDecision(decision, mappedDecision) {
+      const expected = decision.effects.map(effect => ({
+        effectType: effect.type,
+        ...('calculation' in effect ? { calculation: effect.calculation } : {}),
+      }));
+      if (JSON.stringify(mappedDecision) !== JSON.stringify(expected)) {
+        throw new Error('Mapped decision does not exactly represent the canonical effects');
+      }
     },
     async apply(_mappedDecision) {},
     async commit(order: OrderSnapshot) {

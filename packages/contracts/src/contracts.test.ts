@@ -9,6 +9,8 @@ import {
   MoneySchema,
   OrderSnapshotSchema,
   PromoProgramSchema,
+  RedemptionRequestSchema,
+  RedemptionResponseSchema,
   VariableDefinitionSchema,
   buildOpenApiDocument,
   buildPublishedEvaluationJsonSchema,
@@ -177,6 +179,50 @@ describe('canonical contracts', () => {
     expect(EvaluationResponseSchema.safeParse({
       ...response,
       decisions: [{ ...response.decisions[0], outcome: 'conflict', eligible: true }],
+    }).success).toBe(false);
+  });
+
+  test.each([
+    ['external order reference only', { externalOrderRef: 'order-1' }],
+    ['idempotency key only', { idempotencyKey: 'key-1' }],
+    ['both identifiers', { externalOrderRef: 'order-1', idempotencyKey: 'key-1' }],
+  ])('accepts redemption requests with %s', (_name, identifiers) => {
+    expect(RedemptionRequestSchema.safeParse({
+      evaluationId: 'evaluation-1',
+      programRef: 'promo-1',
+      ...identifiers,
+    }).success).toBe(true);
+  });
+
+  test('rejects redemption requests without an idempotency identifier', () => {
+    expect(RedemptionRequestSchema.safeParse({
+      evaluationId: 'evaluation-1',
+      programRef: 'promo-1',
+    }).success).toBe(false);
+  });
+
+  test.each([
+    ['external order reference only', { externalOrderRef: 'order-1' }],
+    ['idempotency key only', { idempotencyKey: 'key-1' }],
+    ['both identifiers', { externalOrderRef: 'order-1', idempotencyKey: 'key-1' }],
+  ])('accepts redemption responses with %s', (_name, identifiers) => {
+    expect(RedemptionResponseSchema.safeParse({
+      redemptionId: 'redemption-1',
+      evaluationId: 'evaluation-1',
+      programRef: 'promo-1',
+      status: 'committed',
+      effects: [],
+      ...identifiers,
+    }).success).toBe(true);
+  });
+
+  test('rejects redemption responses without an idempotency identifier', () => {
+    expect(RedemptionResponseSchema.safeParse({
+      redemptionId: 'redemption-1',
+      evaluationId: 'evaluation-1',
+      programRef: 'promo-1',
+      status: 'committed',
+      effects: [],
     }).success).toBe(false);
   });
 
@@ -399,6 +445,89 @@ describe('canonical contracts', () => {
     expect(effectSchema).not.toHaveProperty('anyOf.1.properties.amount');
     expect(effectSchema).not.toHaveProperty('anyOf.2.properties.basisPoints');
     expect(effectSchema).not.toHaveProperty('anyOf.3.properties.amount');
+
+    const redemptionRequestSchema = document.components?.schemas?.RedemptionRequest as {
+      anyOf?: Array<{ required?: string[] }>;
+    } | undefined;
+    expect(redemptionRequestSchema?.anyOf).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        required: expect.arrayContaining(['evaluationId', 'programRef', 'externalOrderRef']),
+      }),
+      expect.objectContaining({
+        required: expect.arrayContaining(['evaluationId', 'programRef', 'idempotencyKey']),
+      }),
+    ]));
+
+    const redemptionResponseSchema = document.components?.schemas?.RedemptionResponse as {
+      anyOf?: Array<{ required?: string[] }>;
+    } | undefined;
+    expect(redemptionResponseSchema?.anyOf).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        required: expect.arrayContaining(['redemptionId', 'externalOrderRef']),
+      }),
+      expect.objectContaining({
+        required: expect.arrayContaining(['redemptionId', 'idempotencyKey']),
+      }),
+    ]));
+
+    const matchesStructuralVariant = (
+      schema: {
+        anyOf?: Array<{
+          required?: string[];
+          properties?: Record<string, unknown>;
+          additionalProperties?: boolean;
+        }>;
+      } | undefined,
+      value: Record<string, unknown>,
+    ) => schema?.anyOf?.some(variant => (
+      (variant.required ?? []).every(key => key in value)
+      && (
+        variant.additionalProperties !== false
+        || Object.keys(value).every(key => key in (variant.properties ?? {}))
+      )
+    )) ?? false;
+
+    const requestBase = { evaluationId: 'evaluation-1', programRef: 'promo-1' };
+    expect([
+      matchesStructuralVariant(redemptionRequestSchema, {
+        ...requestBase,
+        externalOrderRef: 'order-1',
+      }),
+      matchesStructuralVariant(redemptionRequestSchema, {
+        ...requestBase,
+        idempotencyKey: 'key-1',
+      }),
+      matchesStructuralVariant(redemptionRequestSchema, {
+        ...requestBase,
+        externalOrderRef: 'order-1',
+        idempotencyKey: 'key-1',
+      }),
+      matchesStructuralVariant(redemptionRequestSchema, requestBase),
+    ]).toEqual([true, true, true, false]);
+
+    const responseBase = {
+      redemptionId: 'redemption-1',
+      evaluationId: 'evaluation-1',
+      programRef: 'promo-1',
+      status: 'committed',
+      effects: [],
+    };
+    expect([
+      matchesStructuralVariant(redemptionResponseSchema, {
+        ...responseBase,
+        externalOrderRef: 'order-1',
+      }),
+      matchesStructuralVariant(redemptionResponseSchema, {
+        ...responseBase,
+        idempotencyKey: 'key-1',
+      }),
+      matchesStructuralVariant(redemptionResponseSchema, {
+        ...responseBase,
+        externalOrderRef: 'order-1',
+        idempotencyKey: 'key-1',
+      }),
+      matchesStructuralVariant(redemptionResponseSchema, responseBase),
+    ]).toEqual([true, true, true, false]);
 
     const promoSchema = document.components?.schemas?.PromoProgram as {
       anyOf?: Array<Record<string, unknown>>;

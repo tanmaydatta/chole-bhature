@@ -8,6 +8,7 @@
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "preview": "vite preview",
+    "pretest": "pnpm --filter @incentives/contracts --filter @incentives/engine build",
     "test": "vitest run",
     "test:watch": "vitest"
   },

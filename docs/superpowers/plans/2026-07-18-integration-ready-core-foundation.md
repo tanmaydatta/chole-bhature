@@ -23,6 +23,7 @@
 - Persistent customer attributes never appear as evaluation-request overrides.
 - Core packages must not import React, Hono, Cloudflare bindings, Drizzle, or connector implementations.
 - Run `pnpm -r test`, `pnpm -r build`, and `pnpm -r lint` before every task commit.
+- Keep package `dist` exports and make direct consumer tests portable from a clean checkout: `pretest` builds internal dependencies, and `pnpm run verify:clean-tests` proves recursive plus filtered tests from an archived no-`dist` `HEAD`.
 - Update the repository and Notion plan/spec mirrors together when implementation changes an approved interface.
 
 ---
@@ -104,7 +105,8 @@ Use `git mv demo apps/dashboard`. Create the root manifest:
   "scripts": {
     "build": "pnpm -r build",
     "test": "pnpm -r test",
-    "lint": "pnpm -r lint"
+    "lint": "pnpm -r lint",
+    "verify:clean-tests": "bash scripts/verify-clean-test-gate.sh"
   }
 }
 ```
@@ -181,6 +183,8 @@ Use this `tsconfig.json` in each library:
 Adjust `packages/modules/promo/tsconfig.json` to extend `../../../tsconfig.base.json`. Give `apps/api/src/index.ts` and each library `src/index.ts` the single temporary export `export {};`.
 
 `--passWithNoTests` is permitted only while a workspace is a testless skeleton. The task that adds a package's first real test must change that package's script back to plain `vitest run`.
+
+Keep package exports pointed at `dist`. Add portable lifecycle builds when a workspace becomes a tested consumer: engine and connector-kit build contracts in `pretest`; module-kit builds contracts and engine; Promo builds contracts, engine, and module-kit; dashboard builds contracts and engine. Use repeated pnpm `--filter` arguments rather than shell `&&`. Add `scripts/verify-clean-test-gate.sh`, which archives committed `HEAD` into a validated `mktemp` directory, runs `pnpm install --frozen-lockfile`, removes only known `dist` paths inside that archive, and proves `pnpm -r test` plus every consumer's filtered test independently. `apps/api` remains the testless exception until Runtime Task 1.
 
 - [ ] **Step 4: Install from the root and verify workspace discovery**
 
@@ -331,6 +335,8 @@ export const EffectSchema = z.union([
 ```
 
 Define decision/response fields exactly as the design: evaluation id, optional customer ref/version, schema version, ISO expiry, program ref/type, outcome, effects, reason codes, optional message, `commitRequired`, and derived optional `eligible`. Reject an `eligible` value that contradicts the authoritative outcome.
+
+Define `RedemptionRequest` structurally as at least one of `externalOrderRef` or `idempotencyKey`, allowing either identifier alone or both together and rejecting neither. `RedemptionResponse` must likewise carry at least one corresponding identifier with correct optionality. Generated OpenAPI must expose the structural alternatives. Add runtime-schema and OpenAPI regressions for order-only, key-only, both, and neither.
 
 Define `ApiErrorSchema` with `{ error: { code, message, correlationId, retryable, fields? } }`. Define `PromoProgramSchema` with common id/name/status/dates plus promo code/auto-apply, `ConditionGroup`, reward, budget/cap, and stacking fields. Manual promos (`autoApply: false`) structurally require `code`, while auto-applied promos may omit it, so generated OpenAPI describes the same invariant enforced at runtime. Condition ids must be globally unique across the top-level and nested groups so first-failure messages are unambiguous. Reuse the existing demo operator names to avoid migration translation.
 
@@ -593,11 +599,12 @@ Define all seven capability booleans exactly as the spec. A connector that canno
 - external refs are preserved as opaque strings;
 - customer attributes are returned only by `normalizeCustomer`, never embedded into a cart evaluation request; when `customerAttributes` is supported, fixtures include a unique customer-only sentinel value that the runner verifies is present in normalized customer attributes and absent from cart/item attribute trees. Profiles without that capability may use empty attributes and an empty sentinel list;
 - `mapDecision` rejects/returns unsupported for effects absent from declared capabilities;
+- fixture-owned `assertMappedDecision(decision, mappedDecision)` proves the exact platform mapping for every declared-supported fixed, percent, and free-shipping probe and for the final evaluated decision; an empty or lossy mapping fails with `MAPPED_DECISION_INVALID`;
 - source verification distinguishes invalid from valid fixture requests;
 - the fixture propagates its order/idempotency reference unchanged;
 - the documented sequence is evaluate → map/apply → commit before payment capture.
 
-The connector interface remains the approved normalization/mapping/verification boundary; it does not gain speculative payment or persistence methods. `ConnectorFixture` supplies fake `evaluate`, `apply`, `commit`, and `capturePayment` hooks plus a trace. The conformance runner—not connector implementations or hooks—records the canonical operation markers while orchestrating and then verifies the trace. This proves the integration recipe without requiring production connectors to know about test instrumentation or performing real platform writes.
+The connector interface remains the approved normalization/mapping/verification boundary; it does not gain speculative payment or persistence methods. `ConnectorFixture` supplies fake `evaluate`, strongly typed `assertMappedDecision`, `apply`, `commit`, and `capturePayment` hooks plus a trace. The conformance runner—not connector implementations or hooks—records the canonical operation markers while orchestrating and then verifies the trace. This proves the integration recipe and exact mapped output without requiring production connectors to know about test instrumentation or performing real platform writes.
 
 Return `{ passed: true }` or throw a typed `ConnectorConformanceError` containing stable failure codes.
 
@@ -641,6 +648,7 @@ Run:
 ```bash
 pnpm install --frozen-lockfile
 pnpm -r test
+pnpm run verify:clean-tests
 pnpm -r build
 pnpm -r lint
 git diff --check
@@ -664,6 +672,7 @@ git commit -m "docs: publish integration core contracts"
 Do not start Plan 2 until:
 
 - every workspace test/build/lint command is green;
+- `pnpm run verify:clean-tests` passes from committed `HEAD`, proving all documented direct consumer tests and the recursive test gate without pre-existing build output;
 - the dashboard remains behaviourally unchanged;
 - contracts, engine, Promo, module conformance, and connector conformance have independent passing suites;
 - repo/Notion documents are synchronized;

@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-18
 
-**Status:** Approved design → awaiting implementation plan
+**Status:** Foundation implemented; Runtime and Operator UI planned
 
 **Purpose:** Build a client-usable, platform-neutral incentives foundation before the first client's commerce platform is known.
 
@@ -274,7 +274,9 @@ The conformance suite verifies normalization, money handling, identifiers, schem
 
 No production Shopify, manual-client, or other platform connector is included in this build. A fake connector proves the boundary.
 
-## 10. API surface implemented now
+## 10. API surface planned for Runtime
+
+Foundation defines the canonical schemas and seams for these endpoints; the Runtime plan will implement their HTTP and persistence behavior:
 
 - Schema definitions: create/list/update/publish customer/context/cart/line-item definitions and fetch the published schema/sample payload.
 - Customer upsert/read: schema-validated, versioned attributes.
