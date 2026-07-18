@@ -166,6 +166,61 @@ describe('canonical contracts', () => {
     }).success).toBe(false);
   });
 
+  test('rejects duplicate condition ids across top-level and nested groups', () => {
+    const result = PromoProgramSchema.safeParse({
+      id: 'duplicate-condition-id',
+      type: 'promo',
+      name: 'Duplicate condition id',
+      status: 'active',
+      code: 'DUPLICATE',
+      autoApply: false,
+      eligibility: {
+        match: 'ALL',
+        conditions: [{
+          id: 'same-id',
+          variable: 'cart.subtotal',
+          operator: 'gte',
+          value: 5_000,
+        }],
+        groups: [{
+          match: 'ALL',
+          conditions: [{
+            id: 'same-id',
+            variable: 'customer.tier',
+            operator: 'eq',
+            value: 'gold',
+          }],
+        }],
+      },
+      reward: { type: 'free_shipping' },
+      stackable: false,
+      priority: 10,
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues).toEqual(expect.arrayContaining([
+        expect.objectContaining({ message: 'duplicate condition id: same-id' }),
+      ]));
+    }
+  });
+
+  test('preserves program date ordering validation', () => {
+    expect(PromoProgramSchema.safeParse({
+      id: 'invalid-date-order',
+      type: 'promo',
+      name: 'Invalid date order',
+      status: 'active',
+      autoApply: true,
+      startDate: '2026-07-31',
+      endDate: '2026-07-01',
+      eligibility: { match: 'ALL', conditions: [] },
+      reward: { type: 'free_shipping' },
+      stackable: false,
+      priority: 10,
+    }).success).toBe(false);
+  });
+
   test('emits the strict canonical evaluation envelope with nested extensions', () => {
     const schema = buildPublishedEvaluationJsonSchema([
       {
@@ -288,5 +343,36 @@ describe('canonical contracts', () => {
     expect(effectSchema).not.toHaveProperty('anyOf.1.properties.amount');
     expect(effectSchema).not.toHaveProperty('anyOf.2.properties.basisPoints');
     expect(effectSchema).not.toHaveProperty('anyOf.3.properties.amount');
+
+    const promoSchema = document.components?.schemas?.PromoProgram as {
+      anyOf?: Array<Record<string, unknown>>;
+      oneOf?: Array<Record<string, unknown>>;
+    } | undefined;
+    const promoVariants = promoSchema?.oneOf ?? promoSchema?.anyOf;
+    expect(promoVariants).toHaveLength(2);
+
+    const autoApplyValue = (variant: Record<string, unknown>) => {
+      const properties = variant.properties as Record<string, unknown> | undefined;
+      const autoApply = properties?.autoApply as {
+        const?: boolean;
+        enum?: boolean[];
+      } | undefined;
+      return autoApply?.const ?? autoApply?.enum?.[0];
+    };
+    const manualVariant = promoVariants?.find((variant) => (
+      autoApplyValue(variant) === false
+    ));
+    const automaticVariant = promoVariants?.find((variant) => (
+      autoApplyValue(variant) === true
+    ));
+    expect(manualVariant).toMatchObject({
+      properties: { autoApply: {}, code: {} },
+      required: expect.arrayContaining(['autoApply', 'code']),
+    });
+    expect(automaticVariant).toMatchObject({
+      properties: { autoApply: {}, code: {} },
+    });
+    expect((automaticVariant as { required?: string[] } | undefined)?.required)
+      .not.toContain('code');
   });
 });

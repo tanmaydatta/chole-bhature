@@ -83,6 +83,9 @@ function assertDecisionConforms(
   if (!Number.isInteger(decision.priority)) {
     throw new Error('Decision priority must be an integer');
   }
+  if (typeof decision.stackable !== 'boolean') {
+    throw new Error('Decision stackable metadata must be a boolean');
+  }
   if (decision.stackingGroup !== undefined && decision.stackingGroup.length === 0) {
     throw new Error('Decision stacking group must not be empty');
   }

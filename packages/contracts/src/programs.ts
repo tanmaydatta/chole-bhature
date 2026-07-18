@@ -42,7 +42,32 @@ export const ConditionGroupSchema = z.object({
   match: z.enum(['ALL', 'ANY']),
   conditions: z.array(ConditionSchema),
   groups: z.array(NestedConditionGroupSchema).optional(),
-}).strict();
+}).strict().superRefine((group, context) => {
+  const seenIds = new Set<string>();
+  const conditions = [
+    ...group.conditions.map((condition, index) => ({
+      condition,
+      path: ['conditions', index, 'id'] as Array<string | number>,
+    })),
+    ...(group.groups ?? []).flatMap((nested, groupIndex) => (
+      nested.conditions.map((condition, conditionIndex) => ({
+        condition,
+        path: ['groups', groupIndex, 'conditions', conditionIndex, 'id'] as Array<string | number>,
+      }))
+    )),
+  ];
+
+  for (const { condition, path } of conditions) {
+    if (seenIds.has(condition.id)) {
+      context.addIssue({
+        code: 'custom',
+        path,
+        message: `duplicate condition id: ${condition.id}`,
+      });
+    }
+    seenIds.add(condition.id);
+  }
+});
 
 export const PromoRewardSchema = z.union([
   OrderDiscountEffectSchema,
@@ -58,15 +83,13 @@ export const ProgramStatusSchema = z.enum([
   'ended',
 ]);
 
-export const PromoProgramSchema = z.object({
+const PromoProgramBaseSchema = z.object({
   id: z.string().min(1),
   type: z.literal('promo'),
   name: z.string().min(1).max(200),
   status: ProgramStatusSchema,
   startDate: z.iso.date().optional(),
   endDate: z.iso.date().optional(),
-  code: z.string().min(1).optional(),
-  autoApply: z.boolean(),
   eligibility: ConditionGroupSchema,
   reward: PromoRewardSchema,
   budget: MoneySchema.refine((money) => money.minorUnits >= 0, {
@@ -77,14 +100,22 @@ export const PromoProgramSchema = z.object({
   stackable: z.boolean(),
   priority: z.number().int(),
   stackingGroup: z.string().min(1).optional(),
-}).strict().superRefine((program, context) => {
-  if (!program.autoApply && program.code === undefined) {
-    context.addIssue({
-      code: 'custom',
-      path: ['code'],
-      message: 'code is required unless the promo auto-applies',
-    });
-  }
+}).strict();
+
+const ManualPromoProgramSchema = PromoProgramBaseSchema.extend({
+  autoApply: z.literal(false),
+  code: z.string().min(1),
+});
+
+const AutomaticPromoProgramSchema = PromoProgramBaseSchema.extend({
+  autoApply: z.literal(true),
+  code: z.string().min(1).optional(),
+});
+
+export const PromoProgramSchema = z.discriminatedUnion('autoApply', [
+  ManualPromoProgramSchema,
+  AutomaticPromoProgramSchema,
+]).superRefine((program, context) => {
   if (program.startDate && program.endDate && program.startDate > program.endDate) {
     context.addIssue({
       code: 'custom',

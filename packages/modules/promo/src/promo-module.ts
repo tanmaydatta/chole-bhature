@@ -90,7 +90,10 @@ export const PromoModule: IncentiveModule<PromoProgram> = {
   async evaluate(context, config) {
     if (!isAvailable(context, config)) return [unavailableDecision(config)];
 
-    if (!config.autoApply && context.request.code !== config.code) {
+    if (
+      !config.autoApply
+      && (config.code === undefined || context.request.code !== config.code)
+    ) {
       return [{
         ...baseDecision(config),
         outcome: 'invalid_code',

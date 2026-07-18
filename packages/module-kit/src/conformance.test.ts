@@ -154,6 +154,27 @@ describe('runModuleConformanceSuite', () => {
   });
 
   test.each([
+    ['missing', undefined],
+    ['non-boolean', 'yes'],
+  ] as const)('rejects %s stackable conflict metadata at runtime', async (
+    _description,
+    stackable,
+  ) => {
+    const invalidStackable = {
+      ...fakeModule,
+      async evaluate(context, config) {
+        const [decision] = await fakeModule.evaluate(context, config);
+        if (!decision) return [];
+        return [{ ...decision, stackable }];
+      },
+    } as IncentiveModule<FakeConfig>;
+
+    await expect(
+      runModuleConformanceSuite(invalidStackable, fixture()),
+    ).rejects.toThrow(/stackable.*boolean/i);
+  });
+
+  test.each([
     ['request', (value: ModuleConformanceFixture<FakeConfig>) => {
       value.context.request.cart.subtotal = 1;
     }],

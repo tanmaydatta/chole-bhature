@@ -148,7 +148,12 @@ describe('PromoModule', () => {
   test('does not qualify a non-auto-apply program with no configured code', async () => {
     const { code: _code, ...withoutCode } = welcome10;
     const [decision] = await PromoModule.evaluate(
-      context,
+      {
+        ...context,
+        request: {
+          cart: context.request.cart,
+        },
+      },
       withoutCode as PromoProgram,
     );
 
