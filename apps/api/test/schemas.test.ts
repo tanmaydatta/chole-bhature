@@ -77,6 +77,12 @@ async function seedPublishedVersion(
   `).bind(merchantId, version, publishedAt, JSON.stringify(definitions)).run();
 }
 
+async function latestWorkingSchema(merchantId: string): Promise<SchemaVersionRecord | null> {
+  const repositories = createRepositories({ DB: env.DB });
+  return await repositories.schemas.getLatestVersion(merchantId, 'draft')
+    ?? await repositories.schemas.getLatestVersion(merchantId, 'published');
+}
+
 describe('schema registry API', () => {
   beforeEach(resetSchemaData);
 
@@ -323,6 +329,7 @@ describe('schema registry API', () => {
       await createRepositories({ DB: env.DB }).programs.create({
         merchantId: SEEDED_MERCHANT_ID,
         program,
+        schema: await latestWorkingSchema(SEEDED_MERCHANT_ID),
       });
 
       await expectError(await schemaRequest(
@@ -438,6 +445,7 @@ describe('schema registry API', () => {
     await createRepositories({ DB: env.DB }).programs.create({
       merchantId: SEEDED_MERCHANT_ID,
       program: programReferencing('source-lock', 'draft', 'customer.tier'),
+      schema: await latestWorkingSchema(SEEDED_MERCHANT_ID),
     });
     await expectError(await schemaRequest(
       'PATCH',
@@ -464,6 +472,7 @@ describe('schema registry API', () => {
     await createRepositories({ DB: env.DB }).programs.create({
       merchantId: SEEDED_MERCHANT_ID,
       program,
+      schema: await latestWorkingSchema(SEEDED_MERCHANT_ID),
     });
     await expectError(
       await schemaRequest('DELETE', `/v1/schema/definitions/${created.id}`),
@@ -487,6 +496,7 @@ describe('schema registry API', () => {
     await createRepositories({ DB: env.DB }).programs.create({
       merchantId: otherMerchant,
       program: programReferencing('other-ref', 'active', 'customer.tier'),
+      schema: null,
     });
     const response = await schemaRequest(
       'PATCH',
@@ -628,6 +638,7 @@ describe('atomic schema repository', () => {
         updated,
         draft.definitions,
         [updated],
+        null,
       ),
       repositories.schemas.publishDraft(
         SEEDED_MERCHANT_ID,
@@ -659,6 +670,7 @@ describe('atomic schema repository', () => {
         draft.version,
         draft.definitions,
         [],
+        channelDefinition.key,
       ),
       repositories.schemas.publishDraft(
         SEEDED_MERCHANT_ID,
@@ -717,6 +729,7 @@ describe('atomic schema repository', () => {
       draft!.version,
       draft!.definitions,
       [],
+      channelDefinition.key,
     );
 
     await expect(repositories.schemas.getVersion(
@@ -742,6 +755,7 @@ describe('atomic schema repository', () => {
       draft!.version,
       draft!.definitions,
       [],
+      channelDefinition.key,
     )).rejects.toMatchObject({ name: 'SchemaRevisionConflictError' });
 
     expect(await rawDraftState(draft!.version)).toEqual(before);
@@ -760,6 +774,7 @@ describe('atomic schema repository', () => {
       draft!.version,
       [],
       [],
+      channelDefinition.key,
     )).rejects.toMatchObject({ name: 'SchemaRevisionConflictError' });
 
     expect(await rawDraftState(draft!.version)).toEqual(before);
@@ -777,6 +792,7 @@ describe('atomic schema repository', () => {
         draft!.version,
         draft!.definitions,
         [],
+        channelDefinition.key,
       ),
       repositories.schemas.deleteDraftDefinition(
         SEEDED_MERCHANT_ID,
@@ -784,6 +800,7 @@ describe('atomic schema repository', () => {
         draft!.version,
         draft!.definitions,
         [],
+        channelDefinition.key,
       ),
     ]);
 

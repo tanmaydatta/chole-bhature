@@ -13,6 +13,9 @@ importers:
       '@incentives/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@incentives/engine':
+        specifier: workspace:*
+        version: link:../../packages/engine
       drizzle-orm:
         specifier: ^0.45.2
         version: 0.45.2(@cloudflare/workers-types@5.20260717.1)

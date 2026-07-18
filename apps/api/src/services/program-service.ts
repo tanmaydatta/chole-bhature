@@ -3,8 +3,8 @@ import {
   type Condition,
   type PromoProgram,
   type VariableDefinition,
-  type VariableType,
 } from '@incentives/contracts';
+import { OPERATORS_BY_TYPE } from '@incentives/engine';
 
 import { ContextValidationError, NotFoundError } from '../errors.js';
 import {
@@ -12,14 +12,6 @@ import {
   type Repositories,
 } from '../repositories/types.js';
 import { BUILTIN_VARIABLE_DEFINITIONS } from './schema-service.js';
-
-const OPERATORS_BY_TYPE = {
-  number: ['gt', 'gte', 'lt', 'lte', 'eq', 'neq', 'between'],
-  string: ['eq', 'neq', 'in'],
-  boolean: ['is'],
-  enum: ['eq', 'neq', 'in'],
-  date: ['eq', 'neq', 'gt', 'gte', 'lt', 'lte', 'between'],
-} as const satisfies Record<VariableType, readonly Condition['operator'][]>;
 
 function allConditions(program: PromoProgram): Condition[] {
   return [
@@ -111,31 +103,35 @@ function validateRewardAndCaps(program: PromoProgram): void {
   }
 }
 
-function patchObject(input: unknown): Record<string, unknown> {
-  if (input === null || typeof input !== 'object' || Array.isArray(input)) {
-    throw new ContextValidationError('The program patch must be a JSON object');
+function assertAddressableExternalRef(externalRef: string): void {
+  if (externalRef === '.' || externalRef === '..') {
+    throw new ContextValidationError('Program external reference cannot be . or ..');
   }
-  return input as Record<string, unknown>;
 }
 
 export function createProgramService(repositories: Repositories) {
-  async function currentDefinitions(merchantId: string): Promise<VariableDefinition[]> {
+  async function currentDefinitions(merchantId: string) {
     const current = await repositories.schemas.getLatestVersion(merchantId, 'draft')
       ?? await repositories.schemas.getLatestVersion(merchantId, 'published');
-    return [
-      ...BUILTIN_VARIABLE_DEFINITIONS,
-      ...(current?.definitions ?? []),
-    ];
+    return {
+      schema: current,
+      definitions: [
+        ...BUILTIN_VARIABLE_DEFINITIONS,
+        ...(current?.definitions ?? []),
+      ],
+    };
   }
 
   async function validatedProgram(
     merchantId: string,
     input: unknown,
-  ): Promise<PromoProgram> {
+  ) {
     const program = PromoProgramSchema.parse(input);
+    assertAddressableExternalRef(program.id);
     validateRewardAndCaps(program);
-    validateConditions(program, await currentDefinitions(merchantId));
-    return program;
+    const current = await currentDefinitions(merchantId);
+    validateConditions(program, current.definitions);
+    return { program, schema: current.schema };
   }
 
   async function find(merchantId: string, externalRef: string) {
@@ -148,8 +144,8 @@ export function createProgramService(repositories: Repositories) {
 
   return {
     async create(merchantId: string, input: unknown): Promise<PromoProgram> {
-      const program = await validatedProgram(merchantId, input);
-      return (await repositories.programs.create({ merchantId, program })).program;
+      const validated = await validatedProgram(merchantId, input);
+      return (await repositories.programs.create({ merchantId, ...validated })).program;
     },
 
     async get(merchantId: string, externalRef: string): Promise<PromoProgram> {
@@ -166,27 +162,23 @@ export function createProgramService(repositories: Repositories) {
       externalRef: string,
       input: unknown,
     ): Promise<PromoProgram> {
+      assertAddressableExternalRef(externalRef);
       const existing = await find(merchantId, externalRef);
       if (existing.program.status !== 'draft') {
         throw new ProgramConflictError('Only draft programs can be edited');
       }
 
-      const patch = patchObject(input);
-      if (Object.hasOwn(patch, 'id') && patch.id !== externalRef) {
-        throw new ProgramConflictError('The program external reference is immutable');
-      }
-      const program = await validatedProgram(merchantId, {
-        ...existing.program,
-        ...patch,
-      });
-      if (program.id !== externalRef) {
+      const validated = await validatedProgram(merchantId, input);
+      if (validated.program.id !== externalRef) {
         throw new ProgramConflictError('The program external reference is immutable');
       }
 
       return (await repositories.programs.updateDraft({
         merchantId,
         externalRef,
-        program,
+        ...validated,
+        expectedProgram: existing.program,
+        expectedUpdatedAt: existing.updatedAt,
       })).program;
     },
   };

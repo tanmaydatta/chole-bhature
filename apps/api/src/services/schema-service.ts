@@ -256,6 +256,9 @@ export function createSchemaService(repositories: Repositories) {
       const nextDefinitions = expectedDefinitions.map(candidate => (
         candidate.key === target.definition.key ? definition : candidate
       ));
+      const changesProtectedIdentity = definition.key !== target.definition.key
+        || definition.source !== target.definition.source
+        || definition.type !== target.definition.type;
       const updated = await repositories.schemas.updateDraftDefinition(
         merchantId,
         target.id,
@@ -263,6 +266,7 @@ export function createSchemaService(repositories: Repositories) {
         definition,
         expectedDefinitions,
         canonicalDefinitions(nextDefinitions),
+        changesProtectedIdentity ? target.definition.key : null,
       );
       return view(merchantId, updated, references);
     },
@@ -292,6 +296,7 @@ export function createSchemaService(repositories: Repositories) {
         draft.version,
         expectedDefinitions,
         expectedDefinitions.filter(candidate => candidate.key !== target.definition.key),
+        target.definition.key,
       );
     },
 

@@ -119,6 +119,33 @@ function parseSchemaVersion(input: SchemaVersionRecord): SchemaVersionRecord {
   };
 }
 
+function programSchemaSnapshot(
+  merchantId: string,
+  input: SchemaVersionRecord | null,
+): SchemaVersionRecord | null {
+  if (input === null) return null;
+  const parsed: SchemaVersionRecord = {
+    merchantId: z.string().min(1).parse(input.merchantId),
+    version: PositiveIntegerSchema.parse(input.version),
+    state: SchemaStateSchema.parse(input.state),
+    ...optional(
+      'publishedAt',
+      input.publishedAt === undefined ? undefined : DateTimeSchema.parse(input.publishedAt),
+    ),
+    definitions: DefinitionsSchema.parse(input.definitions),
+  };
+  if (parsed.merchantId !== merchantId) {
+    throw new ProgramConflictError('Program schema snapshot belongs to another merchant');
+  }
+  return parsed;
+}
+
+function nextProgramTimestamp(expectedUpdatedAt: string, candidate: string): string {
+  const expectedMillis = Date.parse(expectedUpdatedAt);
+  const candidateMillis = Date.parse(candidate);
+  return new Date(Math.max(candidateMillis, expectedMillis + 1)).toISOString();
+}
+
 function schemaVersionFromRow(row: typeof schemaVersions.$inferSelect): SchemaVersionRecord {
   return {
     merchantId: row.merchantId,
@@ -438,6 +465,7 @@ export function createRepositories(env: Env): Repositories {
         definition,
         expectedDefinitions,
         nextDefinitions,
+        protectedVariableKey,
       ) {
         const parsed = VariableDefinitionSchema.parse(definition);
         const expectedJson = definitionsJson(expectedDefinitions);
@@ -454,6 +482,15 @@ export function createRepositories(env: Env): Repositories {
                   WHERE merchant_id = ?9 AND version = ?11
                     AND state = 'draft' AND definitions_json = ?12
                 )
+                AND (?13 IS NULL OR NOT EXISTS (
+                  SELECT 1
+                  FROM programs AS referenced_program,
+                    json_tree(referenced_program.config_json, '$.eligibility') AS condition_node
+                  WHERE referenced_program.merchant_id = ?9
+                    AND referenced_program.status IN ('draft', 'active')
+                    AND condition_node.key = 'variable'
+                    AND condition_node.value = ?13
+                ))
             `).bind(
               parsed.key,
               parsed.label,
@@ -467,6 +504,7 @@ export function createRepositories(env: Env): Repositories {
               id,
               schemaVersion,
               expectedJson,
+              protectedVariableKey,
             ),
             env.DB.prepare(`
               UPDATE schema_versions SET definitions_json = ?1
@@ -477,7 +515,23 @@ export function createRepositories(env: Env): Repositories {
                   WHERE merchant_id = ?2 AND schema_version = ?3
                     AND id = ?5 AND state = 'draft'
                 )
-            `).bind(nextJson, merchantId, schemaVersion, expectedJson, id),
+                AND (?6 IS NULL OR NOT EXISTS (
+                  SELECT 1
+                  FROM programs AS referenced_program,
+                    json_tree(referenced_program.config_json, '$.eligibility') AS condition_node
+                  WHERE referenced_program.merchant_id = ?2
+                    AND referenced_program.status IN ('draft', 'active')
+                    AND condition_node.key = 'variable'
+                    AND condition_node.value = ?6
+                ))
+            `).bind(
+              nextJson,
+              merchantId,
+              schemaVersion,
+              expectedJson,
+              id,
+              protectedVariableKey,
+            ),
           ]);
           if (definitionResult?.meta.changes !== 1 || versionResult?.meta.changes !== 1) {
             throw new SchemaRevisionConflictError();
@@ -498,6 +552,7 @@ export function createRepositories(env: Env): Repositories {
         schemaVersion,
         expectedDefinitions,
         nextDefinitions,
+        protectedVariableKey,
       ) {
         const expectedJson = definitionsJson(expectedDefinitions);
         const nextJson = definitionsJson(nextDefinitions);
@@ -511,7 +566,23 @@ export function createRepositories(env: Env): Repositories {
                 WHERE merchant_id = ?2 AND schema_version = ?3
                   AND id = ?5 AND state = 'draft'
               )
-          `).bind(nextJson, merchantId, schemaVersion, expectedJson, id),
+              AND NOT EXISTS (
+                SELECT 1
+                FROM programs AS referenced_program,
+                  json_tree(referenced_program.config_json, '$.eligibility') AS condition_node
+                WHERE referenced_program.merchant_id = ?2
+                  AND referenced_program.status IN ('draft', 'active')
+                  AND condition_node.key = 'variable'
+                  AND condition_node.value = ?6
+              )
+          `).bind(
+            nextJson,
+            merchantId,
+            schemaVersion,
+            expectedJson,
+            id,
+            protectedVariableKey,
+          ),
           env.DB.prepare(`
             DELETE FROM variable_definitions
             WHERE merchant_id = ?1 AND id = ?2 AND schema_version = ?3
@@ -632,30 +703,67 @@ export function createRepositories(env: Env): Repositories {
       async create(input) {
         const merchantId = z.string().min(1).parse(input.merchantId);
         const parsedProgram = PromoProgramSchema.parse(input.program);
+        const schema = programSchemaSnapshot(merchantId, input.schema);
         const createdAt = DateTimeSchema.parse(input.createdAt ?? now());
-        let row: typeof programs.$inferSelect;
+        const id = crypto.randomUUID();
         try {
-          row = await db.insert(programs).values({
-            id: crypto.randomUUID(),
+          const result = await env.DB.prepare(`
+            INSERT INTO programs (
+              id, merchant_id, external_ref, type, name, status, config_json,
+              priority, max_uses, usage_count, budget_remaining, created_at, updated_at
+            )
+            SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 0, ?10, ?11, ?11
+            WHERE (
+              ?12 IS NULL AND NOT EXISTS (
+                SELECT 1 FROM schema_versions
+                WHERE merchant_id = ?2 AND state IN ('draft', 'published')
+              )
+            ) OR (
+              ?12 IS NOT NULL AND EXISTS (
+                SELECT 1 FROM schema_versions
+                WHERE merchant_id = ?2 AND version = ?12
+                  AND state = ?13 AND definitions_json = ?14
+              )
+              AND NOT EXISTS (
+                SELECT 1 FROM schema_versions
+                WHERE merchant_id = ?2 AND state = ?13 AND version > ?12
+              )
+              AND (?13 <> 'published' OR NOT EXISTS (
+                SELECT 1 FROM schema_versions
+                WHERE merchant_id = ?2 AND state = 'draft'
+              ))
+            )
+          `).bind(
+            id,
             merchantId,
-            externalRef: parsedProgram.id,
-            type: parsedProgram.type,
-            name: parsedProgram.name,
-            status: parsedProgram.status,
-            configJson: JSON.stringify(parsedProgram),
-            priority: parsedProgram.priority,
-            maxUses: parsedProgram.usageCap ?? null,
-            usageCount: 0,
-            budgetRemaining: parsedProgram.budget?.minorUnits ?? null,
+            parsedProgram.id,
+            parsedProgram.type,
+            parsedProgram.name,
+            parsedProgram.status,
+            JSON.stringify(parsedProgram),
+            parsedProgram.priority,
+            parsedProgram.usageCap ?? null,
+            parsedProgram.budget?.minorUnits ?? null,
             createdAt,
-            updatedAt: createdAt,
-          }).returning().get();
+            schema?.version ?? null,
+            schema?.state ?? null,
+            schema === null ? null : JSON.stringify(schema.definitions),
+          ).run();
+          if (result.meta.changes !== 1) {
+            throw new ProgramConflictError('The schema changed before the program was stored');
+          }
         } catch (error) {
+          if (error instanceof ProgramConflictError) throw error;
           if (isConstraintError(error)) {
             throw new ProgramConflictError('A program with this external reference already exists');
           }
           throw error;
         }
+        const row = await db.select().from(programs).where(and(
+          eq(programs.merchantId, merchantId),
+          eq(programs.id, id),
+        )).get();
+        if (row === undefined) throw new ProgramConflictError('The program was not stored');
         return programFromRow(row);
       },
 
@@ -678,28 +786,69 @@ export function createRepositories(env: Env): Repositories {
         const merchantId = z.string().min(1).parse(input.merchantId);
         const externalRef = z.string().min(1).parse(input.externalRef);
         const parsedProgram = PromoProgramSchema.parse(input.program);
+        const expectedProgram = PromoProgramSchema.parse(input.expectedProgram);
         if (parsedProgram.id !== externalRef) {
           throw new ProgramConflictError('The program external reference is immutable');
         }
-        const updatedAt = DateTimeSchema.parse(input.updatedAt ?? now());
-        const row = await db.update(programs).set({
-          type: parsedProgram.type,
-          name: parsedProgram.name,
-          status: parsedProgram.status,
-          configJson: JSON.stringify(parsedProgram),
-          priority: parsedProgram.priority,
-          maxUses: parsedProgram.usageCap ?? null,
-          budgetRemaining: parsedProgram.budget?.minorUnits ?? null,
+        if (expectedProgram.id !== externalRef) {
+          throw new ProgramConflictError('Expected program does not match the external reference');
+        }
+        const expectedUpdatedAt = DateTimeSchema.parse(input.expectedUpdatedAt);
+        const schema = programSchemaSnapshot(merchantId, input.schema);
+        const candidateUpdatedAt = DateTimeSchema.parse(input.updatedAt ?? now());
+        const updatedAt = nextProgramTimestamp(expectedUpdatedAt, candidateUpdatedAt);
+        const result = await env.DB.prepare(`
+          UPDATE programs SET
+            type = ?1, name = ?2, status = ?3, config_json = ?4,
+            priority = ?5, max_uses = ?6, budget_remaining = ?7, updated_at = ?8
+          WHERE merchant_id = ?9 AND external_ref = ?10 AND status = 'draft'
+            AND config_json = ?11 AND updated_at = ?12
+            AND (
+              ?13 IS NULL AND NOT EXISTS (
+                SELECT 1 FROM schema_versions
+                WHERE merchant_id = ?9 AND state IN ('draft', 'published')
+              )
+            OR
+              ?13 IS NOT NULL AND EXISTS (
+                SELECT 1 FROM schema_versions
+                WHERE merchant_id = ?9 AND version = ?13
+                  AND state = ?14 AND definitions_json = ?15
+              )
+              AND NOT EXISTS (
+                SELECT 1 FROM schema_versions
+                WHERE merchant_id = ?9 AND state = ?14 AND version > ?13
+              )
+              AND (?14 <> 'published' OR NOT EXISTS (
+                SELECT 1 FROM schema_versions
+                WHERE merchant_id = ?9 AND state = 'draft'
+              ))
+            )
+        `).bind(
+          parsedProgram.type,
+          parsedProgram.name,
+          parsedProgram.status,
+          JSON.stringify(parsedProgram),
+          parsedProgram.priority,
+          parsedProgram.usageCap ?? null,
+          parsedProgram.budget?.minorUnits ?? null,
           updatedAt,
-        }).where(and(
-          eq(programs.merchantId, merchantId),
-          eq(programs.externalRef, externalRef),
-          eq(programs.status, 'draft'),
-        )).returning().get();
+          merchantId,
+          externalRef,
+          JSON.stringify(expectedProgram),
+          expectedUpdatedAt,
+          schema?.version ?? null,
+          schema?.state ?? null,
+          schema === null ? null : JSON.stringify(schema.definitions),
+        ).run();
 
-        if (row === undefined) {
+        if (result.meta.changes !== 1) {
           throw new ProgramConflictError('Only draft programs can be edited');
         }
+        const row = await db.select().from(programs).where(and(
+          eq(programs.merchantId, merchantId),
+          eq(programs.externalRef, externalRef),
+        )).get();
+        if (row === undefined) throw new ProgramConflictError('The program was not stored');
         return programFromRow(row);
       },
 

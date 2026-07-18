@@ -9,6 +9,7 @@ import { beforeEach, describe, expect, test } from 'vitest';
 
 import { SEEDED_MERCHANT_ID } from '../src/auth/static-token.js';
 import { createRepositories } from '../src/repositories/d1-repositories.js';
+import { createProgramService } from '../src/services/program-service.js';
 
 const publishedAt = '2026-07-18T12:00:00.000Z';
 
@@ -140,6 +141,14 @@ async function resetProgramData(): Promise<void> {
   await seedPublishedSchema();
 }
 
+async function draftFixture() {
+  const repositories = createRepositories({ DB: env.DB });
+  const draft = await repositories.schemas.createNextDraft(SEEDED_MERCHANT_ID);
+  const records = await repositories.schemas.listDefinitions(SEEDED_MERCHANT_ID, draft.version);
+  const tier = records.find(record => record.definition.key === 'customer.tier')!;
+  return { repositories, draft, records, tier };
+}
+
 describe('Promo program API', () => {
   beforeEach(resetProgramData);
 
@@ -155,19 +164,21 @@ describe('Promo program API', () => {
     expect(list.status).toBe(200);
     expect(await list.json()).toEqual({ programs: [created] });
 
-    const updatedResponse = await programRequest('PATCH', '/welcome-10', 'secret-test', {
-      name: 'Updated gold offer',
-      priority: 20,
-      status: 'scheduled',
-    });
-    expect(updatedResponse.status).toBe(200);
-    const updated = await updatedResponse.json() as PromoProgram;
-    expect(updated).toEqual({
+    const replacement = {
       ...created,
       name: 'Updated gold offer',
       priority: 20,
       status: 'scheduled',
-    });
+    } as const satisfies PromoProgram;
+    const updatedResponse = await programRequest(
+      'PATCH',
+      '/welcome-10',
+      'secret-test',
+      replacement,
+    );
+    expect(updatedResponse.status).toBe(200);
+    const updated = await updatedResponse.json() as PromoProgram;
+    expect(updated).toEqual(replacement);
 
     const stored = await env.DB.prepare(`
       SELECT external_ref, type, name, status, priority, config_json
@@ -181,6 +192,65 @@ describe('Promo program API', () => {
       priority: 20,
     });
     expect(JSON.parse(stored?.config_json as string)).toEqual(updated);
+  });
+
+  test('PATCH is a full canonical replacement that removes omitted optional fields', async () => {
+    const created = await createProgram(promo('replace-all', {
+      startDate: '2026-08-01',
+      endDate: '2026-08-31',
+      stackingGroup: 'welcome',
+    }));
+    const replacement: PromoProgram = {
+      id: created.id,
+      type: 'promo',
+      name: 'Replacement without limits',
+      status: 'draft',
+      eligibility: created.eligibility,
+      reward: { type: 'free_shipping' },
+      stackable: false,
+      priority: 2,
+      autoApply: true,
+    };
+
+    const response = await programRequest('PATCH', '/replace-all', 'secret-test', replacement);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual(replacement);
+    expect((await createRepositories({ DB: env.DB }).programs.get(
+      SEEDED_MERCHANT_ID,
+      'replace-all',
+    ))?.program).toEqual(replacement);
+  });
+
+  test.each(['.', '..'])('rejects the unaddressable external reference %s', async (externalRef) => {
+    await expectError(
+      await programRequest('POST', '', 'secret-test', promo(externalRef)),
+      400,
+      'CONTEXT_VALIDATION_FAILED',
+    );
+  });
+
+  test.each(['.', '..'])(
+    'rejects the unaddressable update external reference %s before lookup',
+    async (externalRef) => {
+      const service = createProgramService(createRepositories({ DB: env.DB }));
+      await expect(service.update(
+        SEEDED_MERCHANT_ID,
+        externalRef,
+        promo(externalRef),
+      )).rejects.toMatchObject({ name: 'ContextValidationError' });
+    },
+  );
+
+  test('round-trips an encoded non-dot external reference', async () => {
+    const externalRef = 'offer/one #1?';
+    const created = await createProgram(promo(externalRef));
+    const path = `/${encodeURIComponent(externalRef)}`;
+
+    expect(await (await programRequest('GET', path)).json()).toEqual(created);
+    const replacement = { ...created, name: 'Encoded ref updated' };
+    const update = await programRequest('PATCH', path, 'secret-test', replacement);
+    expect(update.status).toBe(200);
+    expect(await update.json()).toEqual(replacement);
   });
 
   test.each([
@@ -293,6 +363,7 @@ describe('Promo program API', () => {
     await createRepositories({ DB: env.DB }).programs.create({
       merchantId: otherMerchant,
       program: promo('cross-tenant'),
+      schema: null,
     });
 
     await expectError(
@@ -351,17 +422,188 @@ describe('Promo program API', () => {
     await createProgram(promo('immutable'));
 
     await expectError(await programRequest('PATCH', '/immutable', 'secret-test', {
-      id: 'renamed',
+      ...promo('renamed'),
     }), 409, 'PROGRAM_CONFLICT');
 
     const activation = await programRequest('PATCH', '/immutable', 'secret-test', {
+      ...promo('immutable'),
       status: 'active',
     });
     expect(activation.status).toBe(200);
 
     await expectError(await programRequest('PATCH', '/immutable', 'secret-test', {
+      ...promo('immutable'),
       name: 'Cannot change active program',
+      status: 'active',
     }), 409, 'PROGRAM_CONFLICT');
+  });
+
+  test('concurrent full replacements from one revision have one CAS winner and no lost update', async () => {
+    const created = await createProgram(promo('concurrent-replacement'));
+    const repositories = createRepositories({ DB: env.DB });
+    const existing = await repositories.programs.get(
+      SEEDED_MERCHANT_ID,
+      created.id,
+    );
+    const schema = await repositories.schemas.getLatestVersion(SEEDED_MERCHANT_ID, 'draft')
+      ?? await repositories.schemas.getLatestVersion(SEEDED_MERCHANT_ID, 'published');
+    const replacements = [
+      { ...created, name: 'First replacement', priority: 21 },
+      { ...created, name: 'Second replacement', priority: 22 },
+    ] as const;
+
+    const outcomes = await Promise.allSettled(replacements.map(program => (
+      repositories.programs.updateDraft({
+        merchantId: SEEDED_MERCHANT_ID,
+        externalRef: created.id,
+        program,
+        expectedProgram: existing!.program,
+        expectedUpdatedAt: existing!.updatedAt,
+        schema,
+      })
+    )));
+    const winners = outcomes.filter(
+      (outcome): outcome is PromiseFulfilledResult<Awaited<ReturnType<
+        typeof repositories.programs.updateDraft
+      >>> => outcome.status === 'fulfilled',
+    );
+    const losers = outcomes.filter(
+      (outcome): outcome is PromiseRejectedResult => outcome.status === 'rejected',
+    );
+    expect(winners).toHaveLength(1);
+    expect(losers).toHaveLength(1);
+    expect(losers[0]!.reason).toMatchObject({ name: 'ProgramConflictError' });
+    const winner = winners[0]!.value.program;
+    expect(replacements).toContainEqual(winner);
+    expect(await (await programRequest('GET', '/concurrent-replacement')).json()).toEqual(winner);
+  });
+
+  test('a schema delete winning after program validation rejects the stale create', async () => {
+    const { repositories, draft, tier } = await draftFixture();
+    const expectedDefinitions = draft.definitions;
+    const nextDefinitions = expectedDefinitions.filter(({ key }) => key !== tier.definition.key);
+    const staleCreate = {
+      merchantId: SEEDED_MERCHANT_ID,
+      program: promo('stale-create'),
+      schema: draft,
+    };
+
+    await repositories.schemas.deleteDraftDefinition(
+      SEEDED_MERCHANT_ID,
+      tier.id,
+      draft.version,
+      expectedDefinitions,
+      nextDefinitions,
+      tier.definition.key,
+    );
+
+    await expect(repositories.programs.create(staleCreate)).rejects.toMatchObject({
+      name: 'ProgramConflictError',
+    });
+    await expect(repositories.programs.get(SEEDED_MERCHANT_ID, 'stale-create')).resolves.toBeNull();
+  });
+
+  test('a program create winning first atomically blocks a referenced type mutation', async () => {
+    const { repositories, draft, tier } = await draftFixture();
+    const { enumValues: _enumValues, ...tierFields } = tier.definition;
+    const changed: VariableDefinition = { ...tierFields, type: 'string' };
+    const nextDefinitions = draft.definitions.map(definition => (
+      definition.key === tier.definition.key ? changed : definition
+    ));
+    const create = {
+      merchantId: SEEDED_MERCHANT_ID,
+      program: promo('create-wins'),
+      schema: draft,
+    };
+    await repositories.programs.create(create);
+
+    await expect(repositories.schemas.updateDraftDefinition(
+      SEEDED_MERCHANT_ID,
+      tier.id,
+      draft.version,
+      changed,
+      draft.definitions,
+      nextDefinitions,
+      tier.definition.key,
+    )).rejects.toMatchObject({ name: 'SchemaRevisionConflictError' });
+
+    await expect(repositories.schemas.getDefinition(SEEDED_MERCHANT_ID, tier.id))
+      .resolves.toMatchObject({ definition: tier.definition });
+    await expect(repositories.schemas.getVersion(SEEDED_MERCHANT_ID, draft.version))
+      .resolves.toMatchObject({ definitions: draft.definitions });
+  });
+
+  test('a schema delete winning after replacement validation rejects the stale update', async () => {
+    const { repositories, draft, tier } = await draftFixture();
+    const existing = await repositories.programs.create({
+      merchantId: SEEDED_MERCHANT_ID,
+      program: promo('stale-update', {
+        eligibility: {
+          match: 'ALL',
+          conditions: [{ id: 'subtotal', variable: 'cart.subtotal', operator: 'gte', value: 1 }],
+        },
+      }),
+      schema: draft,
+    });
+    const replacement = promo('stale-update');
+    const staleUpdate = {
+      merchantId: SEEDED_MERCHANT_ID,
+      externalRef: existing.externalRef,
+      program: replacement,
+      expectedProgram: existing.program,
+      expectedUpdatedAt: existing.updatedAt,
+      schema: draft,
+    };
+
+    await repositories.schemas.deleteDraftDefinition(
+      SEEDED_MERCHANT_ID,
+      tier.id,
+      draft.version,
+      draft.definitions,
+      draft.definitions.filter(({ key }) => key !== tier.definition.key),
+      tier.definition.key,
+    );
+
+    await expect(repositories.programs.updateDraft(staleUpdate)).rejects.toMatchObject({
+      name: 'ProgramConflictError',
+    });
+    await expect(repositories.programs.get(SEEDED_MERCHANT_ID, existing.externalRef))
+      .resolves.toMatchObject({ program: existing.program });
+  });
+
+  test('a replacement winning first atomically blocks referenced deletion', async () => {
+    const { repositories, draft, tier } = await draftFixture();
+    const existing = await repositories.programs.create({
+      merchantId: SEEDED_MERCHANT_ID,
+      program: promo('update-wins', {
+        eligibility: {
+          match: 'ALL',
+          conditions: [{ id: 'subtotal', variable: 'cart.subtotal', operator: 'gte', value: 1 }],
+        },
+      }),
+      schema: draft,
+    });
+    const replacement = promo('update-wins');
+    await repositories.programs.updateDraft({
+      merchantId: SEEDED_MERCHANT_ID,
+      externalRef: existing.externalRef,
+      program: replacement,
+      expectedProgram: existing.program,
+      expectedUpdatedAt: existing.updatedAt,
+      schema: draft,
+    });
+
+    await expect(repositories.schemas.deleteDraftDefinition(
+      SEEDED_MERCHANT_ID,
+      tier.id,
+      draft.version,
+      draft.definitions,
+      draft.definitions.filter(({ key }) => key !== tier.definition.key),
+      tier.definition.key,
+    )).rejects.toMatchObject({ name: 'SchemaRevisionConflictError' });
+
+    await expect(repositories.schemas.getDefinition(SEEDED_MERCHANT_ID, tier.id))
+      .resolves.toMatchObject({ definition: tier.definition });
   });
 
   test.each(['draft', 'scheduled', 'active', 'paused', 'ended'] as const)(

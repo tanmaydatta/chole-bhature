@@ -44,6 +44,7 @@ export interface SchemaRepository {
     definition: VariableDefinition,
     expectedDefinitions: VariableDefinition[],
     nextDefinitions: VariableDefinition[],
+    protectedVariableKey: string | null,
   ): Promise<VariableDefinitionRecord>;
   deleteDraftDefinition(
     merchantId: string,
@@ -51,6 +52,7 @@ export interface SchemaRepository {
     schemaVersion: number,
     expectedDefinitions: VariableDefinition[],
     nextDefinitions: VariableDefinition[],
+    protectedVariableKey: string,
   ): Promise<void>;
   getVersion(merchantId: string, version: number): Promise<SchemaVersionRecord | null>;
   getLatestVersion(merchantId: string, state: SchemaState): Promise<SchemaVersionRecord | null>;
@@ -86,6 +88,7 @@ export interface CustomerRepository {
 export interface ProgramCreate {
   merchantId: string;
   program: PromoProgram;
+  schema: SchemaVersionRecord | null;
   createdAt?: string;
 }
 
@@ -93,6 +96,9 @@ export interface ProgramUpdate {
   merchantId: string;
   externalRef: string;
   program: PromoProgram;
+  expectedProgram: PromoProgram;
+  expectedUpdatedAt: string;
+  schema: SchemaVersionRecord | null;
   updatedAt?: string;
 }
 

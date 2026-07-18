@@ -229,7 +229,12 @@ describe('D1 repositories', () => {
     await seedMerchant('merchant-b');
     const repositories = createRepositories({ DB: env.DB });
 
-    await repositories.programs.create({ merchantId: 'merchant-a', program, createdAt });
+    await repositories.programs.create({
+      merchantId: 'merchant-a',
+      program,
+      schema: null,
+      createdAt,
+    });
     await seedPublishedSchema('merchant-a');
     await repositories.customers.create('merchant-a', customer('shared', { tier: 'gold' }));
     await repositories.decisions.create(decision('merchant-a'));
@@ -255,6 +260,7 @@ describe('D1 repositories', () => {
     await expect(repositories.programs.create({
       merchantId: 'merchant-a',
       program: { ...program, type: 'unknown' } as unknown as PromoProgram,
+      schema: null,
       createdAt,
     })).rejects.toThrow();
   });
