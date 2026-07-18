@@ -1,10 +1,13 @@
 import { describe, expect, test } from 'vitest';
 
 import {
+  CartSnapshotSchema,
+  CustomerSnapshotSchema,
   EffectSchema,
   EvaluationResponseSchema,
   EvaluationRequestSchema,
   MoneySchema,
+  OrderSnapshotSchema,
   PromoProgramSchema,
   VariableDefinitionSchema,
   buildOpenApiDocument,
@@ -12,6 +15,59 @@ import {
 } from './index.js';
 
 describe('canonical contracts', () => {
+  test('defines strict platform-neutral commerce snapshots', () => {
+    expect(CustomerSnapshotSchema.safeParse({
+      externalRef: ' Customer::001 ',
+      attributes: { tier: 'gold' },
+    }).success).toBe(true);
+    expect(CustomerSnapshotSchema.safeParse({
+      externalRef: 'customer-1',
+      attributes: {},
+      platform: 'fake',
+    }).success).toBe(false);
+
+    expect(CartSnapshotSchema.safeParse({
+      currency: 'GBP',
+      subtotal: 6_500,
+      items: [{
+        productRef: ' Product::001 ',
+        variantRef: ' Variant::001 ',
+        quantity: 1,
+        unitPrice: 6_500,
+      }],
+    }).success).toBe(true);
+    expect(CartSnapshotSchema.safeParse({
+      currency: 'GBP',
+      subtotal: 6_500,
+      items: [],
+      customer: { tier: 'gold' },
+    }).success).toBe(false);
+
+    expect(OrderSnapshotSchema.safeParse({
+      externalRef: ' Order::001 ',
+      idempotencyKey: ' Idempotency::001 ',
+      currency: 'GBP',
+      total: 6_500,
+      customerRef: ' Customer::001 ',
+      items: [],
+    }).success).toBe(true);
+    expect(OrderSnapshotSchema.safeParse({
+      externalRef: 'order-1',
+      idempotencyKey: 'idempotency-1',
+      currency: 'gbp',
+      total: 65.5,
+      items: [],
+    }).success).toBe(false);
+    expect(OrderSnapshotSchema.safeParse({
+      externalRef: 'order-1',
+      idempotencyKey: 'idempotency-1',
+      currency: 'GBP',
+      total: -1,
+      items: [],
+      platform: 'fake',
+    }).success).toBe(false);
+  });
+
   test('requires integer minor units and a three-letter currency', () => {
     expect(MoneySchema.safeParse({ currency: 'GBP', minorUnits: 1000 }).success).toBe(true);
     expect(MoneySchema.safeParse({ currency: 'gb', minorUnits: 10.5 }).success).toBe(false);
