@@ -269,7 +269,7 @@ Use the port printed by Wrangler (normally `http://localhost:8787`). Fetch `http
 The automated acceptance path runs real Hono handlers against isolated workerd+D1 storage:
 
 ```bash
-pnpm --filter @incentives/api test -- full-flow.test.ts
+pnpm --filter @incentives/api exec vitest run test/full-flow.test.ts
 ```
 
 That test creates definitions, publishes them, stores a customer, creates a Promo, receives a qualified decision, and commits a redemption with `status: "committed"`. Run the complete workspace gate before integration changes are merged:

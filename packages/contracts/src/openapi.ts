@@ -45,6 +45,31 @@ export function buildOpenApiDocument(): OpenApiDocument {
     scheme: 'bearer',
     description: 'Secret static token for configuration, customer writes, and redemptions.',
   });
+  registry.registerComponent('headers', 'CorrelationId', {
+    description: 'Request correlation identifier returned by the runtime',
+    schema: { type: 'string', minLength: 1 },
+  });
+  registry.registerComponent('parameters', 'SchemaDefinitionId', {
+    name: 'id',
+    in: 'path',
+    required: true,
+    description: 'Definition identifier returned by the list/create API',
+    schema: { type: 'string', minLength: 1 },
+  });
+  registry.registerComponent('parameters', 'CustomerRef', {
+    name: 'customerRef',
+    in: 'path',
+    required: true,
+    description: 'Opaque client customer reference',
+    schema: { type: 'string', minLength: 1 },
+  });
+  registry.registerComponent('parameters', 'ProgramExternalRef', {
+    name: 'externalRef',
+    in: 'path',
+    required: true,
+    description: 'Immutable Promo program reference',
+    schema: { type: 'string', minLength: 1 },
+  });
 
   registry.register('Money', MoneySchema);
   const variableDefinition = registry.register('VariableDefinition', VariableDefinitionSchema);
@@ -82,6 +107,9 @@ export function buildOpenApiDocument(): OpenApiDocument {
   const errorResponse = (description: string) => ({
     description,
     content: jsonContent(apiError),
+    headers: {
+      'x-correlation-id': { $ref: '#/components/headers/CorrelationId' },
+    },
   });
   const errors = {
     400: errorResponse('Request or typed context validation failed'),
@@ -92,13 +120,9 @@ export function buildOpenApiDocument(): OpenApiDocument {
     410: errorResponse('The evaluation decision has expired'),
     503: errorResponse('The runtime is temporarily unavailable; inspect retryable'),
   };
-  const pathParameter = (name: string, description: string) => ({
-    name,
-    in: 'path' as const,
-    required: true,
-    description,
-    schema: { type: 'string' as const, minLength: 1 },
-  });
+  const schemaDefinitionId = { $ref: '#/components/parameters/SchemaDefinitionId' };
+  const customerRef = { $ref: '#/components/parameters/CustomerRef' };
+  const programExternalRef = { $ref: '#/components/parameters/ProgramExternalRef' };
 
   registry.registerPath({
     method: 'get',
@@ -175,7 +199,7 @@ export function buildOpenApiDocument(): OpenApiDocument {
     request: {
       body: { required: true, content: jsonContent(variableDefinition) },
     },
-    parameters: [pathParameter('id', 'Definition identifier returned by the list/create API')],
+    parameters: [schemaDefinitionId],
     responses: {
       200: { description: 'Draft field replaced', content: jsonContent(definitionView) },
       400: errors[400],
@@ -191,7 +215,7 @@ export function buildOpenApiDocument(): OpenApiDocument {
     path: '/v1/schema/definitions/{id}',
     summary: 'Delete an unreferenced typed draft field',
     security: secretSecurity,
-    parameters: [pathParameter('id', 'Definition identifier returned by the list/create API')],
+    parameters: [schemaDefinitionId],
     responses: {
       204: { description: 'Draft field deleted' },
       401: errors[401],
@@ -232,7 +256,7 @@ export function buildOpenApiDocument(): OpenApiDocument {
     path: '/v1/customers/{customerRef}',
     summary: 'Fetch the latest stored customer attributes',
     security: secretSecurity,
-    parameters: [pathParameter('customerRef', 'Opaque client customer reference')],
+    parameters: [customerRef],
     responses: {
       200: { description: 'Stored customer record', content: jsonContent(customerRecord) },
       400: errors[400],
@@ -247,7 +271,7 @@ export function buildOpenApiDocument(): OpenApiDocument {
     path: '/v1/customers/{customerRef}',
     summary: 'Replace all stored customer attributes with optimistic versioning',
     security: secretSecurity,
-    parameters: [pathParameter('customerRef', 'Opaque client customer reference')],
+    parameters: [customerRef],
     request: { body: { required: true, content: jsonContent(customerPatch) } },
     responses: {
       200: { description: 'Created or replaced customer record', content: jsonContent(customerRecord) },
@@ -292,7 +316,7 @@ export function buildOpenApiDocument(): OpenApiDocument {
     path: '/v1/programs/{externalRef}',
     summary: 'Fetch a Promo program',
     security: secretSecurity,
-    parameters: [pathParameter('externalRef', 'Immutable Promo program reference')],
+    parameters: [programExternalRef],
     responses: {
       200: { description: 'Promo program', content: jsonContent(promoProgram) },
       401: errors[401],
@@ -306,7 +330,7 @@ export function buildOpenApiDocument(): OpenApiDocument {
     path: '/v1/programs/{externalRef}',
     summary: 'Replace an editable draft Promo program',
     security: secretSecurity,
-    parameters: [pathParameter('externalRef', 'Immutable Promo program reference')],
+    parameters: [programExternalRef],
     request: { body: { required: true, content: jsonContent(promoProgram) } },
     responses: {
       200: { description: 'Promo program replaced', content: jsonContent(promoProgram) },

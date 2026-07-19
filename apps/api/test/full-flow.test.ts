@@ -169,96 +169,175 @@ describe('integration-ready runtime', () => {
     expect(await response.text()).toBe(JSON.stringify(buildOpenApiDocument()));
 
     const document = buildOpenApiDocument();
-    expect(Object.keys(document.paths ?? {}).sort()).toEqual([
-      '/v1/customers/{customerRef}',
-      '/v1/evaluate',
-      '/v1/health',
-      '/v1/openapi.json',
-      '/v1/programs',
-      '/v1/programs/{externalRef}',
-      '/v1/redemptions',
-      '/v1/schema/definitions',
-      '/v1/schema/definitions/{id}',
-      '/v1/schema/publish',
-      '/v1/schema/published',
-      '/v1/test-publishable',
-      '/v1/test-secret',
-    ]);
+    const expected = {
+      'GET /v1/health': {
+        security: 'public', success: ['200', 'HealthResponse'], errors: [],
+      },
+      'GET /v1/openapi.json': {
+        security: 'public', success: ['200', 'OpenApiDocument'], errors: [],
+      },
+      'GET /v1/test-publishable': {
+        security: 'publishable', success: ['200', 'AccessSummary'], errors: ['401', '503'],
+      },
+      'GET /v1/test-secret': {
+        security: 'secret', success: ['200', 'AccessSummary'], errors: ['401', '403', '503'],
+      },
+      'GET /v1/schema/definitions': {
+        security: 'secret', success: ['200', 'SchemaDefinitionsResponse'],
+        errors: ['401', '403', '503'],
+      },
+      'POST /v1/schema/definitions': {
+        security: 'secret', success: ['201', 'SchemaDefinitionView'],
+        requestBody: 'VariableDefinition', errors: ['400', '401', '403', '409', '503'],
+      },
+      'PATCH /v1/schema/definitions/{id}': {
+        security: 'secret', success: ['200', 'SchemaDefinitionView'],
+        requestBody: 'VariableDefinition', parameters: ['SchemaDefinitionId'],
+        errors: ['400', '401', '403', '404', '409', '503'],
+      },
+      'DELETE /v1/schema/definitions/{id}': {
+        security: 'secret', success: ['204', null], parameters: ['SchemaDefinitionId'],
+        errors: ['401', '403', '404', '409', '503'],
+      },
+      'POST /v1/schema/publish': {
+        security: 'secret', success: ['201', 'PublishedSchemaResponse'],
+        errors: ['401', '403', '409', '503'],
+      },
+      'GET /v1/schema/published': {
+        security: 'publishable', success: ['200', 'PublishedSchemaResponse'],
+        errors: ['401', '404', '503'],
+      },
+      'GET /v1/customers/{customerRef}': {
+        security: 'secret', success: ['200', 'CustomerRecord'],
+        parameters: ['CustomerRef'], errors: ['400', '401', '403', '404', '503'],
+      },
+      'PATCH /v1/customers/{customerRef}': {
+        security: 'secret', success: ['200', 'CustomerRecord'],
+        requestBody: 'CustomerPatchRequest', parameters: ['CustomerRef'],
+        errors: ['400', '401', '403', '404', '409', '503'],
+      },
+      'GET /v1/programs': {
+        security: 'secret', success: ['200', 'ProgramListResponse'],
+        errors: ['401', '403', '503'],
+      },
+      'POST /v1/programs': {
+        security: 'secret', success: ['201', 'PromoProgram'], requestBody: 'PromoProgram',
+        errors: ['400', '401', '403', '409', '503'],
+      },
+      'GET /v1/programs/{externalRef}': {
+        security: 'secret', success: ['200', 'PromoProgram'],
+        parameters: ['ProgramExternalRef'], errors: ['401', '403', '404', '503'],
+      },
+      'PATCH /v1/programs/{externalRef}': {
+        security: 'secret', success: ['200', 'PromoProgram'], requestBody: 'PromoProgram',
+        parameters: ['ProgramExternalRef'], errors: ['400', '401', '403', '404', '409', '503'],
+      },
+      'POST /v1/evaluate': {
+        security: 'publishable', success: ['200', 'EvaluationResponse'],
+        requestBody: 'EvaluationRequest', errors: ['400', '401', '404', '503'],
+      },
+      'POST /v1/redemptions': {
+        security: 'secret', success: ['200', 'RedemptionResponse'],
+        requestBody: 'RedemptionRequest',
+        errors: ['400', '401', '403', '404', '409', '410', '503'],
+      },
+    } as const;
+
+    type HttpMethod = 'get' | 'post' | 'patch' | 'delete';
+    type Operation = {
+      security?: Array<Record<string, never[]>>;
+      parameters?: Array<{ $ref?: string }>;
+      requestBody?: {
+        content?: { 'application/json'?: { schema?: { $ref?: string } } };
+      };
+      responses: Record<string, {
+        content?: { 'application/json'?: { schema?: { $ref?: string } } };
+        headers?: Record<string, { $ref?: string }>;
+      }>;
+    };
+    const methods: HttpMethod[] = ['get', 'post', 'patch', 'delete'];
+    const paths = document.paths as Record<string, Partial<Record<HttpMethod, Operation>>>;
+    const actualMatrix = Object.entries(paths).flatMap(([path, pathItem]) => (
+      methods.flatMap(method => pathItem[method] === undefined
+        ? []
+        : [`${method.toUpperCase()} ${path}`])
+    ));
+    expect(actualMatrix.sort()).toEqual(Object.keys(expected).sort());
 
     expect(document.components?.securitySchemes).toMatchObject({
       publishableBearer: { type: 'http', scheme: 'bearer' },
       secretBearer: { type: 'http', scheme: 'bearer' },
     });
+    expect(document.components?.headers).toMatchObject({
+      CorrelationId: {
+        description: 'Request correlation identifier returned by the runtime',
+        schema: { type: 'string', minLength: 1 },
+      },
+    });
+    expect(document.components?.parameters).toMatchObject({
+      SchemaDefinitionId: {
+        name: 'id', in: 'path', required: true,
+        schema: { type: 'string', minLength: 1 },
+      },
+      CustomerRef: {
+        name: 'customerRef', in: 'path', required: true,
+        schema: { type: 'string', minLength: 1 },
+      },
+      ProgramExternalRef: {
+        name: 'externalRef', in: 'path', required: true,
+        schema: { type: 'string', minLength: 1 },
+      },
+    });
 
-    const protectedOperations = [
-      document.paths?.['/v1/schema/definitions']?.get,
-      document.paths?.['/v1/schema/definitions']?.post,
-      document.paths?.['/v1/schema/definitions/{id}']?.patch,
-      document.paths?.['/v1/schema/definitions/{id}']?.delete,
-      document.paths?.['/v1/schema/publish']?.post,
-      document.paths?.['/v1/schema/published']?.get,
-      document.paths?.['/v1/customers/{customerRef}']?.get,
-      document.paths?.['/v1/customers/{customerRef}']?.patch,
-      document.paths?.['/v1/programs']?.get,
-      document.paths?.['/v1/programs']?.post,
-      document.paths?.['/v1/programs/{externalRef}']?.get,
-      document.paths?.['/v1/programs/{externalRef}']?.patch,
-      document.paths?.['/v1/evaluate']?.post,
-      document.paths?.['/v1/redemptions']?.post,
-    ];
-    for (const operation of protectedOperations) {
-      expect(operation?.responses).toHaveProperty('401');
-      expect(operation?.responses?.['401']).toHaveProperty(
-        'content.application/json.schema.$ref',
-        '#/components/schemas/ApiError',
+    for (const [key, specification] of Object.entries(expected)) {
+      const separator = key.indexOf(' ');
+      const method = key.slice(0, separator).toLowerCase() as HttpMethod;
+      const path = key.slice(separator + 1);
+      const operation = paths[path]?.[method];
+      expect(operation, key).toBeDefined();
+
+      const expectedSecurity = specification.security === 'public'
+        ? undefined
+        : specification.security === 'secret'
+          ? [{ secretBearer: [] }]
+          : [{ publishableBearer: [] }, { secretBearer: [] }];
+      expect(operation?.security, `${key} security`).toEqual(expectedSecurity);
+
+      const expectedParameters = 'parameters' in specification
+        ? specification.parameters.map(name => `#/components/parameters/${name}`)
+        : [];
+      expect(
+        (operation?.parameters ?? []).map(parameter => parameter.$ref),
+        `${key} parameters`,
+      ).toEqual(expectedParameters);
+
+      const expectedRequestBody = 'requestBody' in specification
+        ? `#/components/schemas/${specification.requestBody}`
+        : undefined;
+      expect(
+        operation?.requestBody?.content?.['application/json']?.schema?.$ref,
+        `${key} request body`,
+      ).toBe(expectedRequestBody);
+
+      const [successStatus, successSchema] = specification.success;
+      expect(Object.keys(operation?.responses ?? {}).sort(), `${key} response statuses`).toEqual(
+        [successStatus, ...specification.errors].sort(),
       );
-    }
+      expect(
+        operation?.responses[successStatus]?.content?.['application/json']?.schema?.$ref,
+        `${key} success schema`,
+      ).toBe(successSchema === null ? undefined : `#/components/schemas/${successSchema}`);
 
-    const secretOperations = [
-      document.paths?.['/v1/schema/definitions']?.get,
-      document.paths?.['/v1/schema/definitions']?.post,
-      document.paths?.['/v1/schema/definitions/{id}']?.patch,
-      document.paths?.['/v1/schema/definitions/{id}']?.delete,
-      document.paths?.['/v1/schema/publish']?.post,
-      document.paths?.['/v1/customers/{customerRef}']?.get,
-      document.paths?.['/v1/customers/{customerRef}']?.patch,
-      document.paths?.['/v1/programs']?.get,
-      document.paths?.['/v1/programs']?.post,
-      document.paths?.['/v1/programs/{externalRef}']?.get,
-      document.paths?.['/v1/programs/{externalRef}']?.patch,
-      document.paths?.['/v1/redemptions']?.post,
-    ];
-    for (const operation of secretOperations) {
-      expect(operation?.security).toEqual([{ secretBearer: [] }]);
-      expect(operation?.responses).toHaveProperty('403');
+      for (const status of specification.errors) {
+        const error = operation?.responses[status];
+        expect(
+          error?.content?.['application/json']?.schema?.$ref,
+          `${key} ${status} error schema`,
+        ).toBe('#/components/schemas/ApiError');
+        expect(error?.headers, `${key} ${status} response headers`).toEqual({
+          'x-correlation-id': { $ref: '#/components/headers/CorrelationId' },
+        });
+      }
     }
-    for (const operation of [
-      document.paths?.['/v1/schema/published']?.get,
-      document.paths?.['/v1/evaluate']?.post,
-    ]) {
-      expect(operation?.security).toEqual([
-        { publishableBearer: [] },
-        { secretBearer: [] },
-      ]);
-      expect(operation?.responses).not.toHaveProperty('403');
-    }
-
-    for (const operation of protectedOperations) {
-      expect(operation?.responses).toHaveProperty('503');
-    }
-
-    expect(document.paths?.['/v1/redemptions']?.post?.responses).toMatchObject({
-      400: {},
-      403: {},
-      404: {},
-      409: {},
-      410: {},
-      503: {},
-    });
-    expect(document.paths?.['/v1/evaluate']?.post?.responses).toMatchObject({
-      400: {},
-      404: {},
-      503: {},
-    });
   });
 });
