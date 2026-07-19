@@ -412,6 +412,63 @@ describe('POST /v1/evaluate', () => {
     expect(error.error.retryable).toBe(false);
   });
 
+  test.each([
+    ['type change', {
+      original: [{
+        key: 'customer.value', label: 'Value', source: 'customer', type: 'number', required: false,
+      }],
+      attributes: { value: 7 },
+      changed: [{
+        key: 'customer.value', label: 'Value', source: 'customer', type: 'string', required: false,
+      }],
+    }],
+    ['enum narrowing', {
+      original: [{
+        key: 'customer.value', label: 'Value', source: 'customer', type: 'enum', required: false,
+        enumValues: ['gold', 'silver'],
+      }],
+      attributes: { value: 'gold' },
+      changed: [{
+        key: 'customer.value', label: 'Value', source: 'customer', type: 'enum', required: false,
+        enumValues: ['silver'],
+      }],
+    }],
+    ['field removal', {
+      original: [{
+        key: 'customer.value', label: 'Value', source: 'customer', type: 'string', required: false,
+      }],
+      attributes: { value: 'legacy' },
+      changed: [],
+    }],
+  ] as const)(
+    'fails closed when a stored customer profile is stale after a published %s',
+    async (_name, fixture) => {
+      await env.DB.batch([
+        env.DB.prepare('DELETE FROM customers'),
+        env.DB.prepare('DELETE FROM schema_versions'),
+      ]);
+      await seedPublishedSchema(SEEDED_MERCHANT_ID, fixture.original);
+      await seedCustomer('customer-1', fixture.attributes);
+      await env.DB.prepare(`
+        UPDATE schema_versions SET definitions_json = ?1
+        WHERE merchant_id = ?2 AND version = 1 AND state = 'published'
+      `).bind(JSON.stringify(fixture.changed), SEEDED_MERCHANT_ID).run();
+
+      const error = await expectError(
+        await evaluateRaw({
+          customerRef: 'customer-1',
+          cart: { currency: 'GBP', subtotal: 6_500, items: [] },
+        }),
+        503,
+        'EVALUATION_UNAVAILABLE',
+      );
+      expect(error.error.retryable).toBe(true);
+      expect(JSON.stringify(error)).not.toContain('not_qualified');
+      expect(await env.DB.prepare('SELECT COUNT(*) AS count FROM evaluation_decisions')
+        .first<{ count: number }>()).toEqual({ count: 0 });
+    },
+  );
+
   test('emits qualified, not-qualified, invalid-code, and unavailable decisions with stable messages', async () => {
     await seedCustomer();
     await seedProgram(promo('qualified', { priority: 40, stackable: true }));

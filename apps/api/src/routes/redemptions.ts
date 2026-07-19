@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import type { Context } from 'hono';
+import { RedemptionRequestSchema } from '@incentives/contracts';
 
 import { requireSecret } from '../auth/static-token.js';
 import type { AppEnvironment } from '../env.js';
@@ -20,7 +21,7 @@ export function createRedemptionRoutes(): Hono<AppEnvironment> {
     const service = createRedemptionService(context.get('repositories'), context.env);
     return context.json(await service.redeem(
       context.get('merchantId'),
-      await requestJson(context),
+      RedemptionRequestSchema.parse(await requestJson(context)),
     ));
   });
   return routes;

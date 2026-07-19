@@ -467,7 +467,7 @@ export function createRepositories(env: Env): Repositories {
       id: crypto.randomUUID(),
       merchantId,
       externalRef: snapshot.externalRef,
-      attributesJson: JSON.stringify(snapshot.attributes),
+      attributesJson: canonicalJson(snapshot.attributes),
       version: 1,
       updatedAt,
     }).returning().get();
@@ -819,6 +819,7 @@ export function createRepositories(env: Env): Repositories {
 
     customers: {
       async create(merchantId, customer) {
+        canonicalJson(customer);
         const snapshot = CustomerSnapshotSchema.parse(customer);
         return insertCustomer(merchantId, snapshot, now());
       },
@@ -826,6 +827,10 @@ export function createRepositories(env: Env): Repositories {
       get: getCustomer,
 
       async upsert(input: CustomerUpsert) {
+        canonicalJson({
+          externalRef: input.externalRef,
+          attributes: input.attributes,
+        });
         const snapshot = CustomerSnapshotSchema.parse({
           externalRef: input.externalRef,
           attributes: input.attributes,
@@ -845,7 +850,7 @@ export function createRepositories(env: Env): Repositories {
 
         const expectedVersion = PositiveIntegerSchema.parse(input.expectedVersion);
         const row = await db.update(customers).set({
-          attributesJson: JSON.stringify(snapshot.attributes),
+          attributesJson: canonicalJson(snapshot.attributes),
           version: expectedVersion + 1,
           updatedAt,
         }).where(and(
@@ -888,10 +893,6 @@ export function createRepositories(env: Env): Repositories {
                 SELECT 1 FROM schema_versions
                 WHERE merchant_id = ?2 AND state = ?13 AND version > ?12
               )
-              AND (?13 <> 'published' OR NOT EXISTS (
-                SELECT 1 FROM schema_versions
-                WHERE merchant_id = ?2 AND state = 'draft'
-              ))
             )
           `).bind(
             id,
@@ -978,10 +979,6 @@ export function createRepositories(env: Env): Repositories {
                 SELECT 1 FROM schema_versions
                 WHERE merchant_id = ?9 AND state = ?14 AND version > ?13
               )
-              AND (?14 <> 'published' OR NOT EXISTS (
-                SELECT 1 FROM schema_versions
-                WHERE merchant_id = ?9 AND state = 'draft'
-              ))
             )
         `).bind(
           parsedProgram.type,

@@ -35,6 +35,13 @@ function customerAttributesSchema(definitions: readonly VariableDefinition[]) {
   return z.object(shape).strict();
 }
 
+export function validateCustomerAttributes(
+  attributes: unknown,
+  definitions: readonly VariableDefinition[],
+): Record<string, unknown> {
+  return customerAttributesSchema(definitions).parse(attributes);
+}
+
 export function createCustomerService(repositories: Repositories) {
   return {
     async get(merchantId: string, customerRef: string) {

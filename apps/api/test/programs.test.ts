@@ -338,6 +338,92 @@ describe('Promo program API', () => {
     await expect(createProgram(input)).resolves.toEqual(input);
   });
 
+  test('active programs validate only against the latest published schema', async () => {
+    const repositories = createRepositories({ DB: env.DB });
+    const draft = await repositories.schemas.createNextDraft(SEEDED_MERCHANT_ID);
+    const draftOnly: VariableDefinition = {
+      key: 'context.draft_only',
+      label: 'Draft-only context',
+      source: 'context',
+      type: 'string',
+      required: false,
+    };
+    await repositories.schemas.createDraftDefinition({
+      id: 'draft-only-active-create',
+      merchantId: SEEDED_MERCHANT_ID,
+      schemaVersion: draft.version,
+      state: 'draft',
+      definition: draftOnly,
+      createdAt: publishedAt,
+    }, draft.definitions, [...draft.definitions, draftOnly]);
+    const draftOnlyProgram = promo('draft-only-active', {
+      status: 'active',
+      eligibility: {
+        match: 'ALL',
+        conditions: [{
+          id: 'draft-only',
+          variable: draftOnly.key,
+          operator: 'eq',
+          value: 'yes',
+        }],
+      },
+    });
+
+    await expectError(
+      await programRequest('POST', '', 'secret-test', draftOnlyProgram),
+      400,
+      'CONTEXT_VALIDATION_FAILED',
+    );
+    expect(await repositories.programs.get(
+      SEEDED_MERCHANT_ID,
+      draftOnlyProgram.id,
+    )).toBeNull();
+
+    const publishedProgram = promo('published-active', { status: 'active' });
+    expect(await createProgram(publishedProgram)).toEqual(publishedProgram);
+  });
+
+  test('draft to active transition rejects fields that are only in the draft schema', async () => {
+    const repositories = createRepositories({ DB: env.DB });
+    const draft = await repositories.schemas.createNextDraft(SEEDED_MERCHANT_ID);
+    const draftOnly: VariableDefinition = {
+      key: 'context.activation_only',
+      label: 'Activation-only context',
+      source: 'context',
+      type: 'string',
+      required: false,
+    };
+    await repositories.schemas.createDraftDefinition({
+      id: 'draft-only-transition',
+      merchantId: SEEDED_MERCHANT_ID,
+      schemaVersion: draft.version,
+      state: 'draft',
+      definition: draftOnly,
+      createdAt: publishedAt,
+    }, draft.definitions, [...draft.definitions, draftOnly]);
+    const draftProgram = promo('draft-transition', {
+      eligibility: {
+        match: 'ALL',
+        conditions: [{
+          id: 'draft-only',
+          variable: draftOnly.key,
+          operator: 'eq',
+          value: 'yes',
+        }],
+      },
+    });
+    await createProgram(draftProgram);
+
+    await expectError(await programRequest('PATCH', '/draft-transition', 'secret-test', {
+      ...draftProgram,
+      status: 'active',
+    }), 400, 'CONTEXT_VALIDATION_FAILED');
+    expect((await repositories.programs.get(
+      SEEDED_MERCHANT_ID,
+      draftProgram.id,
+    ))?.program.status).toBe('draft');
+  });
+
   test.each([
     ['string', 'context.channel', 'gt', 2],
     ['boolean', 'customer.first_purchase', 'eq', false],

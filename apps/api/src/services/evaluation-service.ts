@@ -22,6 +22,7 @@ import type {
   Repositories,
 } from '../repositories/types.js';
 import { BUILTIN_VARIABLE_DEFINITIONS } from './schema-service.js';
+import { validateCustomerAttributes } from './customer-service.js';
 
 const DEFAULT_TTL_SECONDS = 300;
 const SigningSecretSchema = z.string().min(16).max(4_096);
@@ -420,6 +421,9 @@ export function createEvaluationService(repositories: Repositories, env: Env) {
           : await repositories.customers.get(merchantId, request.customerRef);
         if (request.customerRef !== undefined && customer === null) {
           throw new NotFoundError('Customer not found', 'CUSTOMER_NOT_FOUND');
+        }
+        if (customer !== null) {
+          validateCustomerAttributes(customer.attributes, published.definitions);
         }
         const signingSecret = SigningSecretSchema.parse(env.DECISION_SIGNING_SECRET);
         const verifyHistoricalDecision = (snapshot: EvaluationDecisionRecord) => (

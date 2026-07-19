@@ -113,9 +113,11 @@ function assertAddressableExternalRef(externalRef: string): void {
 }
 
 export function createProgramService(repositories: Repositories) {
-  async function currentDefinitions(merchantId: string) {
-    const current = await repositories.schemas.getLatestVersion(merchantId, 'draft')
-      ?? await repositories.schemas.getLatestVersion(merchantId, 'published');
+  async function currentDefinitions(merchantId: string, status: PromoProgram['status']) {
+    const current = status === 'draft'
+      ? await repositories.schemas.getLatestVersion(merchantId, 'draft')
+        ?? await repositories.schemas.getLatestVersion(merchantId, 'published')
+      : await repositories.schemas.getLatestVersion(merchantId, 'published');
     return {
       schema: current,
       definitions: [
@@ -132,7 +134,7 @@ export function createProgramService(repositories: Repositories) {
     const program = PromoProgramSchema.parse(input);
     assertAddressableExternalRef(program.id);
     validateRewardAndCaps(program);
-    const current = await currentDefinitions(merchantId);
+    const current = await currentDefinitions(merchantId, program.status);
     validateConditions(program, current.definitions);
     return { program, schema: current.schema };
   }

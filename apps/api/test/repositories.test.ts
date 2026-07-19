@@ -221,6 +221,48 @@ describe('D1 repositories', () => {
     expect((await repositories.customers.get('merchant-b', 'shared'))?.attributes.tier).toBe('silver');
   });
 
+  test('customer writes reject every raw value that cannot round-trip through strict JSON', async () => {
+    await seedMerchant('merchant-a');
+    const repositories = createRepositories({ DB: env.DB });
+    const sparse: unknown[] = [null];
+    delete sparse[0];
+    const cyclic: Record<string, unknown> = {};
+    cyclic.self = cyclic;
+    const unsafeValues: unknown[] = [
+      undefined,
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+      1n,
+      () => 'not-json',
+      Symbol('not-json'),
+      new Date(),
+      [undefined],
+      sparse,
+      cyclic,
+    ];
+
+    const outcomes = await Promise.allSettled(unsafeValues.map((value, index) => (
+      repositories.customers.create('merchant-a', {
+        externalRef: `unsafe-${index}`,
+        attributes: { value },
+      })
+    )));
+    expect(outcomes.every(outcome => outcome.status === 'rejected')).toBe(true);
+    expect(await env.DB.prepare('SELECT COUNT(*) AS count FROM customers').first())
+      .toEqual({ count: 0 });
+  });
+
+  test('composite decision foreign keys reject customer ownership from another merchant', async () => {
+    await seedMerchant('merchant-a');
+    await seedMerchant('merchant-b');
+    await seedPublishedSchema('merchant-a');
+    const repositories = createRepositories({ DB: env.DB });
+    await repositories.customers.create('merchant-b', customer('shared', { tier: 'gold' }));
+
+    await expect(repositories.decisions.create(decision('merchant-a'))).rejects.toThrow();
+    expect(await repositories.decisions.get('merchant-a', 'merchant-a-evaluation')).toBeNull();
+  });
+
   test('customer updates require the current optimistic version', async () => {
     await seedMerchant('merchant-a');
     const repositories = createRepositories({ DB: env.DB });

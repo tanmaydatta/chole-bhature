@@ -11,6 +11,7 @@ import { env } from 'cloudflare:workers';
 import { beforeEach, describe, expect, test } from 'vitest';
 
 import { SEEDED_MERCHANT_ID } from '../src/auth/static-token.js';
+import { createApp } from '../src/app.js';
 import { createRepositories } from '../src/repositories/d1-repositories.js';
 import { signDecisionSnapshot } from '../src/services/evaluation-service.js';
 
@@ -141,6 +142,77 @@ async function resign(evaluationId: string, mutate: (record: Awaited<ReturnType<
 
 describe('POST /v1/redemptions', () => {
   beforeEach(resetData);
+
+  test('keeps request validation at 400 before entering the internal redemption boundary', async () => {
+    const response = await createApp().request('https://example.test/v1/redemptions', {
+      method: 'POST',
+      headers: {
+        authorization: 'Bearer secret-test',
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ evaluationId: 'missing-program-and-identifier' }),
+    }, {
+      DB: env.DB,
+      PUBLISHABLE_TOKEN: 'publishable-test',
+      SECRET_TOKEN: 'secret-test',
+      DECISION_SIGNING_SECRET: 'weak',
+    });
+    await expectError(response, 400, 'CONTEXT_VALIDATION_FAILED');
+  });
+
+  test('maps weak signing configuration to a generic retryable 503', async () => {
+    const response = await createApp().request('https://example.test/v1/redemptions', {
+      method: 'POST',
+      headers: {
+        authorization: 'Bearer secret-test',
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        evaluationId: 'evaluation-1',
+        programRef: 'welcome',
+        externalOrderRef: 'order-1',
+      }),
+    }, {
+      DB: env.DB,
+      PUBLISHABLE_TOKEN: 'publishable-test',
+      SECRET_TOKEN: 'secret-test',
+      DECISION_SIGNING_SECRET: 'weak',
+    });
+    const error = await expectError(response, 503, 'EVALUATION_UNAVAILABLE');
+    expect(error.error.retryable).toBe(true);
+    expect(JSON.stringify(error)).not.toContain('weak');
+  });
+
+  test.each([
+    ['stored decision', 'evaluation_decisions', "decisions_json = '[{\"programRef\":\"welcome\"}]'"],
+    ['stored redemption retry', 'redemptions', "result_json = '{\"programRef\":\"welcome\"}'"],
+    ['stored program', 'programs', "config_json = '{\"id\":\"welcome\"}'"],
+  ])('maps a schema-invalid %s row to a generic retryable 503', async (
+    _name,
+    table,
+    mutation,
+  ) => {
+    await seedProgram(promo('welcome'));
+    const evaluation = await evaluate();
+    if (table === 'redemptions') {
+      await redeem({
+        evaluationId: evaluation.evaluationId,
+        programRef: 'welcome',
+        externalOrderRef: 'corrupt-retry',
+      });
+    }
+    await env.DB.prepare(`UPDATE ${table} SET ${mutation} WHERE merchant_id = ?1`)
+      .bind(SEEDED_MERCHANT_ID).run();
+
+    const response = await redeemRaw({
+      evaluationId: evaluation.evaluationId,
+      programRef: 'welcome',
+      externalOrderRef: table === 'redemptions' ? 'corrupt-retry' : `corrupt-${table}`,
+    });
+    const error = await expectError(response, 503, 'EVALUATION_UNAVAILABLE');
+    expect(error.error.retryable).toBe(true);
+    expect(JSON.stringify(error)).not.toMatch(/Zod|config_json|decisions_json|result_json/u);
+  });
 
   test.each([
     ['external order only', { externalOrderRef: 'order-1' }],

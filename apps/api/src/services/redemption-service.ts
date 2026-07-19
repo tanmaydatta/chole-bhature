@@ -1,5 +1,4 @@
 import {
-  RedemptionRequestSchema,
   RedemptionResponseSchema,
   type RedemptionRequest,
   type RedemptionResponse,
@@ -142,101 +141,115 @@ function selectedDecision(record: EvaluationDecisionRecord, programRef: string) 
 
 export function createRedemptionService(repositories: Repositories, env: Env) {
   return {
-    async redeem(merchantId: string, input: unknown): Promise<RedemptionResponse> {
-      const request = RedemptionRequestSchema.parse(input);
-      const signingSecret = SigningSecretSchema.parse(env.DECISION_SIGNING_SECRET);
-      const existing = await findExisting(repositories, merchantId, request, signingSecret);
-      if (existing !== null) return existing.result;
-
-      const record = await verifiedDecision(
-        repositories,
-        merchantId,
-        request.evaluationId,
-        signingSecret,
-        false,
-      );
-      if (Date.parse(record.expiresAt) <= Date.now()) throw new DecisionExpiredError();
-
-      const decision = selectedDecision(record, request.programRef);
-      const program = await repositories.programs.get(merchantId, request.programRef);
-      if (program === null || program.program.status !== 'active') throw new ExhaustedError();
-      if (canonicalJson(decision.effects) !== canonicalJson([program.program.reward])) {
-        throw new VersionConflictError('The program reward changed after evaluation');
-      }
-      const cartCurrency = record.request.cart.currency;
-      if (
-        ('amount' in program.program.reward
-          && program.program.reward.amount.currency !== cartCurrency)
-        || (program.program.budget !== undefined
-          && program.program.budget.currency !== cartCurrency)
-      ) {
-        throw new VersionConflictError('The program currency changed after evaluation');
-      }
-      const discountMinorUnits = projectedDiscountMinorUnits(
-        decision.effects,
-        record.request.cart,
-      );
-
-      if (program.program.perCustomerCap !== undefined) {
-        if (record.customerRef === undefined) {
-          throw new VersionConflictError('A customer is required for this redemption');
-        }
-        const count = await repositories.redemptions.countCommittedForCustomerProgram(
-          merchantId,
-          record.customerRef,
-          request.programRef,
-          snapshot => verifyDecisionIntegrity(snapshot, signingSecret),
-        );
-        if (count >= program.program.perCustomerCap) throw new ExhaustedError();
-      }
-
-      const result = RedemptionResponseSchema.parse({
-        redemptionId: crypto.randomUUID(),
-        evaluationId: request.evaluationId,
-        programRef: request.programRef,
-        ...(request.externalOrderRef === undefined
-          ? {}
-          : { externalOrderRef: request.externalOrderRef }),
-        ...(request.idempotencyKey === undefined
-          ? {}
-          : { idempotencyKey: request.idempotencyKey }),
-        status: 'committed',
-        effects: decision.effects,
-      });
-      const commit = {
-        redemptionId: result.redemptionId,
-        merchantId,
-        ...(request.externalOrderRef === undefined
-          ? {}
-          : { externalOrderRef: request.externalOrderRef }),
-        ...(request.idempotencyKey === undefined
-          ? {}
-          : { idempotencyKey: request.idempotencyKey }),
-        evaluationId: request.evaluationId,
-        result,
-        discountMinorUnits,
-        currency: cartCurrency,
-        createdAt: new Date().toISOString(),
-        programId: program.id,
-        programRef: request.programRef,
-        expectedProgram: program.program,
-        ...(record.customerRef === undefined ? {} : { customerRef: record.customerRef }),
-        ...(program.program.perCustomerCap === undefined
-          ? {}
-          : { perCustomerCap: program.program.perCustomerCap }),
-      };
-
+    async redeem(
+      merchantId: string,
+      request: RedemptionRequest,
+    ): Promise<RedemptionResponse> {
       try {
-        if (await repositories.redemptions.commitAtomically(commit)) return result;
-      } catch (error) {
+        const signingSecret = SigningSecretSchema.parse(env.DECISION_SIGNING_SECRET);
+        const existing = await findExisting(repositories, merchantId, request, signingSecret);
+        if (existing !== null) return existing.result;
+
+        const record = await verifiedDecision(
+          repositories,
+          merchantId,
+          request.evaluationId,
+          signingSecret,
+          false,
+        );
+        if (Date.parse(record.expiresAt) <= Date.now()) throw new DecisionExpiredError();
+
+        const decision = selectedDecision(record, request.programRef);
+        const program = await repositories.programs.get(merchantId, request.programRef);
+        if (program === null || program.program.status !== 'active') throw new ExhaustedError();
+        if (canonicalJson(decision.effects) !== canonicalJson([program.program.reward])) {
+          throw new VersionConflictError('The program reward changed after evaluation');
+        }
+        const cartCurrency = record.request.cart.currency;
+        if (
+          ('amount' in program.program.reward
+            && program.program.reward.amount.currency !== cartCurrency)
+          || (program.program.budget !== undefined
+            && program.program.budget.currency !== cartCurrency)
+        ) {
+          throw new VersionConflictError('The program currency changed after evaluation');
+        }
+        const discountMinorUnits = projectedDiscountMinorUnits(
+          decision.effects,
+          record.request.cart,
+        );
+
+        if (program.program.perCustomerCap !== undefined) {
+          if (record.customerRef === undefined) {
+            throw new VersionConflictError('A customer is required for this redemption');
+          }
+          const count = await repositories.redemptions.countCommittedForCustomerProgram(
+            merchantId,
+            record.customerRef,
+            request.programRef,
+            snapshot => verifyDecisionIntegrity(snapshot, signingSecret),
+          );
+          if (count >= program.program.perCustomerCap) throw new ExhaustedError();
+        }
+
+        const result = RedemptionResponseSchema.parse({
+          redemptionId: crypto.randomUUID(),
+          evaluationId: request.evaluationId,
+          programRef: request.programRef,
+          ...(request.externalOrderRef === undefined
+            ? {}
+            : { externalOrderRef: request.externalOrderRef }),
+          ...(request.idempotencyKey === undefined
+            ? {}
+            : { idempotencyKey: request.idempotencyKey }),
+          status: 'committed',
+          effects: decision.effects,
+        });
+        const commit = {
+          redemptionId: result.redemptionId,
+          merchantId,
+          ...(request.externalOrderRef === undefined
+            ? {}
+            : { externalOrderRef: request.externalOrderRef }),
+          ...(request.idempotencyKey === undefined
+            ? {}
+            : { idempotencyKey: request.idempotencyKey }),
+          evaluationId: request.evaluationId,
+          result,
+          discountMinorUnits,
+          currency: cartCurrency,
+          createdAt: new Date().toISOString(),
+          programId: program.id,
+          programRef: request.programRef,
+          expectedProgram: program.program,
+          ...(record.customerRef === undefined ? {} : { customerRef: record.customerRef }),
+          ...(program.program.perCustomerCap === undefined
+            ? {}
+            : { perCustomerCap: program.program.perCustomerCap }),
+        };
+
+        try {
+          if (await repositories.redemptions.commitAtomically(commit)) return result;
+        } catch (error) {
+          const raced = await findExisting(repositories, merchantId, request, signingSecret);
+          if (raced !== null) return raced.result;
+          throw error;
+        }
         const raced = await findExisting(repositories, merchantId, request, signingSecret);
         if (raced !== null) return raced.result;
-        throw error;
+        await repositories.programs.get(merchantId, request.programRef);
+        throw new ExhaustedError();
+      } catch (error) {
+        if (
+          error instanceof DecisionExpiredError
+          || error instanceof ExhaustedError
+          || error instanceof NotFoundError
+          || error instanceof VersionConflictError
+        ) {
+          throw error;
+        }
+        throw new Error('Redemption pipeline failed', { cause: error });
       }
-      const raced = await findExisting(repositories, merchantId, request, signingSecret);
-      if (raced !== null) return raced.result;
-      await repositories.programs.get(merchantId, request.programRef);
-      throw new ExhaustedError();
     },
   };
 }
