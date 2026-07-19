@@ -41,6 +41,7 @@ const fakeModule: IncentiveModule<FakeConfig> = {
       programRef: config.programRef,
       programType: 'promo',
       outcome: 'qualified',
+      rewardRuleRef: 'default-reward',
       effects: [{ type: 'free_shipping' }],
       reasonCodes: [],
       commitRequired: true,

@@ -1,6 +1,7 @@
 import {
   ApiErrorSchema,
   EvaluationResponseSchema,
+  type CommerceReward,
   type EvaluationRequest,
   type PromoProgram,
   type VariableDefinition,
@@ -47,7 +48,27 @@ const baseRequest = {
   context: { channel: 'web' },
 } as const satisfies EvaluationRequest;
 
-function promo(id: string, overrides: Partial<PromoProgram> = {}): PromoProgram {
+type PromoOverrides = Partial<PromoProgram> & { reward?: CommerceReward };
+
+function conditionalRule(reward: CommerceReward, id = 'default-reward') {
+  return {
+    id,
+    name: id === 'default-reward' ? 'Default reward' : id,
+    conditions: {
+      match: 'ALL' as const,
+      conditions: [{
+        id: `${id}-positive-cart`,
+        variable: 'cart.subtotal',
+        operator: 'gte' as const,
+        value: 0,
+      }],
+    },
+    reward,
+  };
+}
+
+function promo(id: string, overrides: PromoOverrides = {}): PromoProgram {
+  const { reward, ...canonicalOverrides } = overrides;
   return {
     id,
     type: 'promo',
@@ -62,15 +83,15 @@ function promo(id: string, overrides: Partial<PromoProgram> = {}): PromoProgram 
         value: 'gold',
       }],
     },
-    reward: {
+    rewardRules: [conditionalRule(reward ?? {
       type: 'order_discount',
       calculation: 'fixed',
       amount: { currency: 'GBP', minorUnits: 1_000 },
-    },
+    })],
     stackable: false,
     priority: 10,
     autoApply: true,
-    ...overrides,
+    ...canonicalOverrides,
   } as PromoProgram;
 }
 
@@ -187,7 +208,7 @@ async function storedDecision(evaluationId: string): Promise<DecisionRow> {
 async function commitDecision(
   evaluationId: string,
   programRef: string,
-  effects: PromoProgram['reward'][],
+  effects: CommerceReward[],
   suffix = '1',
 ): Promise<void> {
   await createRepositories({ DB: env.DB }).redemptions.create({
@@ -199,6 +220,7 @@ async function commitDecision(
       redemptionId: `redemption-${suffix}`,
       evaluationId,
       programRef,
+      rewardRuleRef: 'default-reward',
       externalOrderRef: `order-${suffix}`,
       status: 'committed',
       effects,
@@ -367,6 +389,77 @@ describe('POST /v1/evaluate', () => {
       customer_version: 2,
       schema_version: 1,
     });
+  });
+
+  test('selects tiered rewards, exposes only the winner, and snapshots exact configuration', async () => {
+    await seedCustomer();
+    const lowerReward = {
+      type: 'order_discount' as const,
+      calculation: 'fixed' as const,
+      amount: { currency: 'GBP', minorUnits: 1_000 },
+    };
+    const higherReward = {
+      type: 'order_discount' as const,
+      calculation: 'fixed' as const,
+      amount: { currency: 'GBP', minorUnits: 2_000 },
+    };
+    const program = promo('tiered', {
+      rewardRules: [
+        {
+          ...conditionalRule(higherReward, 'over-100'),
+          conditions: {
+            match: 'ALL',
+            conditions: [{
+              id: 'over-100-cart',
+              variable: 'cart.subtotal',
+              operator: 'gte',
+              value: 10_000,
+            }],
+          },
+        },
+        {
+          ...conditionalRule(lowerReward, 'under-100'),
+          conditions: {
+            match: 'ALL',
+            conditions: [{
+              id: 'under-100-cart',
+              variable: 'cart.subtotal',
+              operator: 'lt',
+              value: 10_000,
+            }],
+          },
+        },
+      ],
+    });
+    await seedProgram(program);
+
+    const lower = await evaluate();
+    expect(lower.decisions[0]).toMatchObject({
+      outcome: 'qualified',
+      rewardRuleRef: 'under-100',
+      effects: [lowerReward],
+    });
+    expect(JSON.stringify(lower.decisions[0])).not.toContain('2000');
+
+    const higher = await evaluate({
+      ...baseRequest,
+      cart: { ...baseRequest.cart, subtotal: 12_000 },
+    });
+    expect(higher.decisions[0]).toMatchObject({
+      outcome: 'qualified',
+      rewardRuleRef: 'over-100',
+      effects: [higherReward],
+    });
+
+    const snapshot = JSON.parse((await storedDecision(lower.evaluationId)).facts_json);
+    expect(snapshot.programs[0]).toEqual(expect.objectContaining({
+      programRef: 'tiered',
+      config: program,
+    }));
+    expect(JSON.parse((await storedDecision(lower.evaluationId)).decisions_json)[0])
+      .toMatchObject({ rewardRuleRef: 'under-100', effects: [lowerReward] });
+    expect(JSON.parse((await storedDecision(lower.evaluationId)).decisions_json))
+      .not.toContainEqual(expect.objectContaining({ effects: [higherReward] }));
   });
 
   test('rejects any caller path that tries to override stored customer attributes', async () => {
@@ -581,7 +674,7 @@ describe('POST /v1/evaluate', () => {
     await commitDecision(
       first.evaluationId,
       program.id,
-      [program.reward],
+      [program.rewardRules[0]!.reward],
       'per-customer',
     );
 
@@ -607,7 +700,12 @@ describe('POST /v1/evaluate', () => {
     const program = promo('corrupt-customer-count', { perCustomerCap: 2 });
     await seedProgram(program);
     const first = await evaluate();
-    await commitDecision(first.evaluationId, program.id, [program.reward], 'corrupt-count');
+    await commitDecision(
+      first.evaluationId,
+      program.id,
+      [program.rewardRules[0]!.reward],
+      'corrupt-count',
+    );
     const tamperedEffects = [{
       type: 'order_discount' as const,
       calculation: 'fixed' as const,
@@ -771,7 +869,7 @@ describe('POST /v1/evaluate', () => {
       },
     } satisfies EvaluationRequest;
     await seedProgram(promo('projected', {
-      reward: reward as PromoProgram['reward'],
+      reward: reward as CommerceReward,
       budget: { currency: 'GBP', minorUnits: projectedCost },
     }));
 
@@ -848,7 +946,7 @@ describe('POST /v1/evaluate', () => {
     },
   );
 
-  test('checks percent-reward budget currency before qualification', async () => {
+  test('preserves global eligibility failure before selected-reward currency checks', async () => {
     await seedCustomer('customer-1', { tier: 'silver' });
     await seedProgram(promo('percent-budget-currency', {
       reward: {
@@ -864,9 +962,9 @@ describe('POST /v1/evaluate', () => {
       cart: { ...baseRequest.cart, currency: 'USD' },
     });
     expect(result.decisions[0]).toEqual(expect.objectContaining({
-      outcome: 'unavailable',
+      outcome: 'not_qualified',
       effects: [],
-      reasonCodes: ['CURRENCY_MISMATCH'],
+      reasonCodes: ['CONDITION_NOT_MET'],
       commitRequired: false,
       eligible: false,
     }));
@@ -1146,6 +1244,9 @@ describe('POST /v1/evaluate', () => {
     const tamperedRecord = structuredClone(persisted!);
     tamperedRecord.facts.scalar['customer.tier'] = 'silver';
     expect(await verifyDecisionIntegrity(tamperedRecord, signingSecret)).toBe(false);
+    const tamperedConfig = structuredClone(persisted!);
+    tamperedConfig.facts.programs[0]!.config.rewardRules[0]!.name = 'Tampered reward';
+    expect(await verifyDecisionIntegrity(tamperedConfig, signingSecret)).toBe(false);
 
     await env.DB.prepare(
       "INSERT INTO merchants (id, name, created_at) VALUES ('merchant-b', 'Merchant B', ?1)",

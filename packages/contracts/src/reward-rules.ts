@@ -119,7 +119,8 @@ type ConditionalRewardsValue = {
   fallbackReward?: { id: string } | undefined;
 };
 
-function validateConditionalRewardIdentitiesAndPresence(
+/** @internal Shared by concrete program schemas without widening the package API. */
+export function validateConditionalRewardIdentitiesAndPresence(
   rewards: ConditionalRewardsValue,
   context: z.RefinementCtx,
 ) {

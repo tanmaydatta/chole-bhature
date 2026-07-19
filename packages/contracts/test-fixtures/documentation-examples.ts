@@ -68,6 +68,7 @@ export const canonicalDecision = {
   programRef: 'welcome-10',
   programType: 'promo',
   outcome: 'qualified',
+  rewardRuleRef: 'default-reward',
   effects: [{
     type: 'order_discount',
     calculation: 'fixed',

@@ -1,5 +1,7 @@
 import {
   RedemptionResponseSchema,
+  type CommerceReward,
+  type PromoProgram,
   type RedemptionRequest,
   type RedemptionResponse,
 } from '@incentives/contracts';
@@ -84,7 +86,9 @@ async function validateCommittedRedemption(
   const decision = committedDecision(record, existing.result.programRef);
   const discountMinorUnits = projectedDiscountMinorUnits(decision.effects, record.request.cart);
   if (
-    canonicalJson(existing.result.effects) !== canonicalJson(decision.effects)
+    decision.rewardRuleRef === undefined
+    || existing.result.rewardRuleRef !== decision.rewardRuleRef
+    || canonicalJson(existing.result.effects) !== canonicalJson(decision.effects)
     || existing.currency !== record.request.cart.currency
     || existing.discountMinorUnits !== discountMinorUnits
   ) {
@@ -133,10 +137,34 @@ function selectedDecision(record: EvaluationDecisionRecord, programRef: string) 
     matches.length !== 1
     || matches[0]?.outcome !== 'qualified'
     || !matches[0].commitRequired
+    || matches[0].rewardRuleRef === undefined
   ) {
     throw new VersionConflictError('The evaluation has no selected committable decision');
   }
-  return matches[0];
+  return { ...matches[0], rewardRuleRef: matches[0].rewardRuleRef };
+}
+
+function rewardByRef(program: PromoProgram, rewardRuleRef: string): CommerceReward {
+  const matches = [
+    ...program.rewardRules
+      .filter(rule => rule.id === rewardRuleRef)
+      .map(rule => rule.reward),
+    ...(program.fallbackReward?.id === rewardRuleRef
+      ? [program.fallbackReward.reward]
+      : []),
+  ];
+  if (matches.length !== 1) {
+    throw new VersionConflictError('The selected reward rule changed after evaluation');
+  }
+  return matches[0]!;
+}
+
+function snapshotProgram(record: EvaluationDecisionRecord, programRef: string): PromoProgram {
+  const matches = record.facts.programs.filter(program => program.programRef === programRef);
+  if (matches.length !== 1) {
+    throw new VersionConflictError('The signed program snapshot is missing or ambiguous');
+  }
+  return matches[0]!.config;
 }
 
 export function createRedemptionService(repositories: Repositories, env: Env) {
@@ -160,15 +188,23 @@ export function createRedemptionService(repositories: Repositories, env: Env) {
         if (Date.parse(record.expiresAt) <= Date.now()) throw new DecisionExpiredError();
 
         const decision = selectedDecision(record, request.programRef);
+        const snapshotReward = rewardByRef(
+          snapshotProgram(record, request.programRef),
+          decision.rewardRuleRef,
+        );
+        if (canonicalJson(decision.effects) !== canonicalJson([snapshotReward])) {
+          throw new VersionConflictError('The signed selected reward does not match its rule');
+        }
         const program = await repositories.programs.get(merchantId, request.programRef);
         if (program === null || program.program.status !== 'active') throw new ExhaustedError();
-        if (canonicalJson(decision.effects) !== canonicalJson([program.program.reward])) {
+        const currentReward = rewardByRef(program.program, decision.rewardRuleRef);
+        if (canonicalJson(decision.effects) !== canonicalJson([currentReward])) {
           throw new VersionConflictError('The program reward changed after evaluation');
         }
         const cartCurrency = record.request.cart.currency;
         if (
-          ('amount' in program.program.reward
-            && program.program.reward.amount.currency !== cartCurrency)
+          ('amount' in currentReward
+            && currentReward.amount.currency !== cartCurrency)
           || (program.program.budget !== undefined
             && program.program.budget.currency !== cartCurrency)
         ) {
@@ -196,6 +232,7 @@ export function createRedemptionService(repositories: Repositories, env: Env) {
           redemptionId: crypto.randomUUID(),
           evaluationId: request.evaluationId,
           programRef: request.programRef,
+          rewardRuleRef: decision.rewardRuleRef,
           ...(request.externalOrderRef === undefined
             ? {}
             : { externalOrderRef: request.externalOrderRef }),

@@ -2,6 +2,7 @@ import {
   ApiErrorSchema,
   EvaluationResponseSchema,
   RedemptionResponseSchema,
+  type CommerceReward,
   type EvaluationRequest,
   type PromoProgram,
   type RedemptionRequest,
@@ -22,24 +23,44 @@ const baseRequest = {
   cart: { currency: 'GBP', subtotal: 6_500, items: [] },
 } as const satisfies EvaluationRequest;
 
-function promo(id: string, overrides: Partial<PromoProgram> = {}): PromoProgram {
+type PromoOverrides = Partial<PromoProgram> & { reward?: CommerceReward };
+
+function conditionalRule(reward: CommerceReward, id = 'default-reward') {
+  return {
+    id,
+    name: id === 'default-reward' ? 'Default reward' : id,
+    conditions: {
+      match: 'ALL' as const,
+      conditions: [{
+        id: `${id}-positive-cart`,
+        variable: 'cart.subtotal',
+        operator: 'gte' as const,
+        value: 0,
+      }],
+    },
+    reward,
+  };
+}
+
+function promo(id: string, overrides: PromoOverrides = {}): PromoProgram {
+  const { reward, ...canonicalOverrides } = overrides;
   return {
     id,
     type: 'promo',
     name: `Promo ${id}`,
     status: 'active',
     eligibility: { match: 'ALL', conditions: [] },
-    reward: {
+    rewardRules: [conditionalRule(reward ?? {
       type: 'order_discount',
       calculation: 'fixed',
       amount: { currency: 'GBP', minorUnits: 1_000 },
-    },
+    })],
     budget: { currency: 'GBP', minorUnits: 10_000 },
     usageCap: 10,
     stackable: false,
     priority: 10,
     autoApply: true,
-    ...overrides,
+    ...canonicalOverrides,
   } as PromoProgram;
 }
 
@@ -232,9 +253,10 @@ describe('POST /v1/redemptions', () => {
       redemptionId: expect.any(String),
       evaluationId: evaluation.evaluationId,
       programRef: 'welcome',
+      rewardRuleRef: 'default-reward',
       ...identifiers,
       status: 'committed',
-      effects: [promo('welcome').reward],
+      effects: [promo('welcome').rewardRules[0]!.reward],
     });
     const stored = await env.DB.prepare(`
       SELECT discount_minor_units, currency FROM redemptions WHERE id = ?1
@@ -406,6 +428,7 @@ describe('POST /v1/redemptions', () => {
     ['result program', "result_json = json_set(result_json, '$.programRef', 'other-program')"],
     ['effects', `result_json = json_set(result_json,
       '$.effects[0].amount.minorUnits', 500)`],
+    ['reward rule reference', "result_json = json_set(result_json, '$.rewardRuleRef', 'other-rule')"],
     ['currency', "currency = 'USD'"],
     ['discount amount', 'discount_minor_units = 999'],
     ['decision HMAC', "integrity_hash = 'tampered'"],
@@ -546,6 +569,124 @@ describe('POST /v1/redemptions', () => {
       programRef: 'welcome',
       externalOrderRef: 'mismatch',
     }), 409, 'VERSION_CONFLICT');
+  });
+
+  test('commits a selected fallback by stable rule reference', async () => {
+    await seedProgram(promo('fallback-offer', {
+      rewardRules: [{
+        ...conditionalRule({ type: 'free_shipping' }, 'never-matches'),
+        conditions: {
+          match: 'ALL',
+          conditions: [{
+            id: 'impossible-cart',
+            variable: 'cart.subtotal',
+            operator: 'gt',
+            value: 100_000,
+          }],
+        },
+      }],
+      fallbackReward: {
+        id: 'fallback',
+        name: 'Fallback',
+        reward: {
+          type: 'order_discount',
+          calculation: 'fixed',
+          amount: { currency: 'GBP', minorUnits: 500 },
+        },
+      },
+    }));
+    const evaluation = await evaluate();
+
+    expect(await redeem({
+      evaluationId: evaluation.evaluationId,
+      programRef: 'fallback-offer',
+      externalOrderRef: 'fallback-order',
+    })).toMatchObject({
+      rewardRuleRef: 'fallback',
+      effects: [{
+        type: 'order_discount',
+        calculation: 'fixed',
+        amount: { currency: 'GBP', minorUnits: 500 },
+      }],
+    });
+  });
+
+  test.each([
+    ['missing', undefined],
+    ['unknown', 'unknown-rule'],
+  ])('fails closed for a %s signed reward rule reference', async (_name, rewardRuleRef) => {
+    await seedProgram(promo('rule-reference'));
+    const evaluation = await evaluate();
+    await resign(evaluation.evaluationId, record => {
+      if (rewardRuleRef === undefined) {
+        delete record!.decisions[0]!.rewardRuleRef;
+      } else {
+        record!.decisions[0]!.rewardRuleRef = rewardRuleRef;
+      }
+    });
+
+    await expectError(await redeemRaw({
+      evaluationId: evaluation.evaluationId,
+      programRef: 'rule-reference',
+      externalOrderRef: `bad-rule-${_name}`,
+    }), 409, 'VERSION_CONFLICT');
+  });
+
+  test('fails closed for duplicate reward ids in the signed program snapshot', async () => {
+    await seedProgram(promo('duplicate-snapshot'));
+    const evaluation = await evaluate();
+    await resign(evaluation.evaluationId, record => {
+      record!.facts.programs[0]!.config.fallbackReward = {
+        id: 'default-reward',
+        name: 'Duplicate',
+        reward: { type: 'free_shipping' },
+      };
+    });
+
+    await expectError(await redeemRaw({
+      evaluationId: evaluation.evaluationId,
+      programRef: 'duplicate-snapshot',
+      externalOrderRef: 'duplicate-snapshot-order',
+    }), 503, 'EVALUATION_UNAVAILABLE');
+  });
+
+  test('fails closed when the selected rule id changes in the current program', async () => {
+    await seedProgram(promo('changed-rule-id'));
+    const evaluation = await evaluate();
+    await env.DB.prepare(`
+      UPDATE programs
+      SET config_json = json_set(config_json, '$.rewardRules[0].id', 'renamed-rule')
+      WHERE merchant_id = ?1 AND external_ref = 'changed-rule-id'
+    `).bind(SEEDED_MERCHANT_ID).run();
+
+    await expectError(await redeemRaw({
+      evaluationId: evaluation.evaluationId,
+      programRef: 'changed-rule-id',
+      externalOrderRef: 'changed-rule-order',
+    }), 409, 'VERSION_CONFLICT');
+  });
+
+  test('does not re-evaluate rule conditions against changed current configuration', async () => {
+    await seedProgram(promo('no-reevaluation'));
+    const evaluation = await evaluate();
+    await env.DB.prepare(`
+      UPDATE programs
+      SET config_json = json_set(
+        config_json,
+        '$.rewardRules[0].conditions.conditions[0].value',
+        100000
+      )
+      WHERE merchant_id = ?1 AND external_ref = 'no-reevaluation'
+    `).bind(SEEDED_MERCHANT_ID).run();
+
+    await expect(redeem({
+      evaluationId: evaluation.evaluationId,
+      programRef: 'no-reevaluation',
+      externalOrderRef: 'no-reevaluation-order',
+    })).resolves.toMatchObject({
+      rewardRuleRef: 'default-reward',
+      status: 'committed',
+    });
   });
 
   test('fails closed on corrupt committed history used for a per-customer cap', async () => {

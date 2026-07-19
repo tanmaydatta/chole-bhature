@@ -46,6 +46,7 @@ const FactsSchema = z.object({
   programs: z.array(z.object({
     programRef: z.string().min(1),
     system: AttributesSchema,
+    config: PromoProgramSchema,
   }).strict()),
 }).strict();
 const DateTimeSchema = z.iso.datetime({ offset: true });
@@ -637,7 +638,7 @@ export function createRepositories(env: Env): Repositories {
                 AND (?9 IS NULL OR NOT EXISTS (
                   SELECT 1
                   FROM programs AS referenced_program,
-                    json_tree(referenced_program.config_json, '$.eligibility') AS condition_node
+                    json_tree(referenced_program.config_json, '$') AS condition_node
                   WHERE referenced_program.merchant_id = ?2
                     AND referenced_program.status IN ('draft', 'active')
                     AND condition_node.key = 'variable'
@@ -669,7 +670,7 @@ export function createRepositories(env: Env): Repositories {
                 AND (?16 IS NULL OR NOT EXISTS (
                   SELECT 1
                   FROM programs AS referenced_program,
-                    json_tree(referenced_program.config_json, '$.eligibility') AS condition_node
+                    json_tree(referenced_program.config_json, '$') AS condition_node
                   WHERE referenced_program.merchant_id = ?9
                     AND referenced_program.status IN ('draft', 'active')
                     AND condition_node.key = 'variable'
@@ -740,7 +741,7 @@ export function createRepositories(env: Env): Repositories {
               AND NOT EXISTS (
                 SELECT 1
                 FROM programs AS referenced_program,
-                  json_tree(referenced_program.config_json, '$.eligibility') AS condition_node
+                  json_tree(referenced_program.config_json, '$') AS condition_node
                 WHERE referenced_program.merchant_id = ?2
                   AND referenced_program.status IN ('draft', 'active')
                   AND condition_node.key = 'variable'
@@ -769,7 +770,7 @@ export function createRepositories(env: Env): Repositories {
               AND NOT EXISTS (
                 SELECT 1
                 FROM programs AS referenced_program,
-                  json_tree(referenced_program.config_json, '$.eligibility') AS condition_node
+                  json_tree(referenced_program.config_json, '$') AS condition_node
                 WHERE referenced_program.merchant_id = ?1
                   AND referenced_program.status IN ('draft', 'active')
                   AND condition_node.key = 'variable'
@@ -1064,6 +1065,12 @@ export function createRepositories(env: Env): Repositories {
           for (const condition of program.eligibility.conditions) keys.add(condition.variable);
           for (const group of program.eligibility.groups ?? []) {
             for (const condition of group.conditions) keys.add(condition.variable);
+          }
+          for (const rule of program.rewardRules) {
+            for (const condition of rule.conditions.conditions) keys.add(condition.variable);
+            for (const group of rule.conditions.groups ?? []) {
+              for (const condition of group.conditions) keys.add(condition.variable);
+            }
           }
         }
         return keys;

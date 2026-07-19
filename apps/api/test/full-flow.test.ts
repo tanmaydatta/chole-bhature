@@ -54,11 +54,24 @@ const goldWebPromo = {
       },
     ],
   },
-  reward: {
-    type: 'order_discount',
-    calculation: 'fixed',
-    amount: { currency: 'GBP', minorUnits: 1_000 },
-  },
+  rewardRules: [{
+    id: 'default-reward',
+    name: 'Default reward',
+    conditions: {
+      match: 'ALL',
+      conditions: [{
+        id: 'positive-cart',
+        variable: 'cart.subtotal',
+        operator: 'gte',
+        value: 0,
+      }],
+    },
+    reward: {
+      type: 'order_discount',
+      calculation: 'fixed',
+      amount: { currency: 'GBP', minorUnits: 1_000 },
+    },
+  }],
   budget: { currency: 'GBP', minorUnits: 10_000 },
   usageCap: 10,
   perCustomerCap: 1,
@@ -140,6 +153,7 @@ describe('integration-ready runtime', () => {
       expect.objectContaining({
         programRef: goldWebPromo.id,
         outcome: 'qualified',
+        rewardRuleRef: 'default-reward',
         eligible: true,
         commitRequired: true,
       }),
@@ -156,6 +170,7 @@ describe('integration-ready runtime', () => {
     expect(redemption).toMatchObject({
       evaluationId: evaluation.evaluationId,
       programRef: goldWebPromo.id,
+      rewardRuleRef: 'default-reward',
       externalOrderRef: 'order-1',
       idempotencyKey: 'checkout-attempt-1',
       status: 'committed',

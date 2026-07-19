@@ -331,9 +331,9 @@ function baseProgramDecision(program: PromoProgram): Pick<
   };
 }
 
-function currencyMismatchDecision(program: PromoProgram): PromoDecision {
+function currencyMismatchDecision(decision: PromoDecision): PromoDecision {
   return {
-    ...baseProgramDecision(program),
+    ...decision,
     outcome: 'unavailable',
     effects: [],
     reasonCodes: ['CURRENCY_MISMATCH'],
@@ -367,13 +367,19 @@ function customerRequiredDecision(program: PromoProgram): PromoDecision {
   };
 }
 
-function hasCurrencyMismatch(program: PromoProgram, cartCurrency: string): boolean {
+function selectedCurrencyMismatch(
+  program: PromoProgram,
+  decision: PromoDecision,
+  cartCurrency: string,
+): boolean {
+  const effect = decision.effects[0];
   return (
     program.budget !== undefined
     && program.budget.currency !== cartCurrency
   ) || (
-    'amount' in program.reward
-    && program.reward.amount.currency !== cartCurrency
+    effect !== undefined
+    && 'amount' in effect
+    && effect.amount.currency !== cartCurrency
   );
 }
 
@@ -467,28 +473,36 @@ export function createEvaluationService(repositories: Repositories, env: Env) {
             customer_uses_count: customerUsesCount,
             today: now.toISOString().slice(0, 10),
           };
-          facts.programs.push({ programRef: record.externalRef, system });
+          facts.programs.push({
+            programRef: record.externalRef,
+            system,
+            config: record.program,
+          });
           const programFacts = assembleFacts({
             ...(customer === null ? {} : { customer: customer.attributes }),
             ...(request.context === undefined ? {} : { context: request.context }),
             ...liveFacts,
             system,
           });
-          const moduleEvaluated = hasCurrencyMismatch(record.program, request.cart.currency)
-            ? [currencyMismatchDecision(record.program)]
-            : await PromoModule.evaluate({
-              merchantId,
-              evaluationId,
-              now,
-              request,
-              facts: programFacts,
-              definitions,
-            }, record.program);
+          const moduleEvaluated = await PromoModule.evaluate({
+            merchantId,
+            evaluationId,
+            now,
+            request,
+            facts: programFacts,
+            definitions,
+          }, record.program);
+          const currencyChecked = moduleEvaluated.map(decision => (
+            decision.outcome === 'qualified'
+            && selectedCurrencyMismatch(record.program, decision, request.cart.currency)
+              ? currencyMismatchDecision(decision)
+              : decision
+          ));
           const evaluated = customer === null && record.program.perCustomerCap !== undefined
-            ? moduleEvaluated.map(decision => decision.outcome === 'qualified'
+            ? currencyChecked.map(decision => decision.outcome === 'qualified'
               ? customerRequiredDecision(record.program)
               : decision)
-            : moduleEvaluated;
+            : currencyChecked;
           for (const decision of evaluated) {
             if (decision.outcome !== 'qualified') {
               moduleDecisions.push(decision);

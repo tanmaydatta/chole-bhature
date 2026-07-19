@@ -242,6 +242,7 @@ describe('canonical contracts', () => {
         programRef: 'welcome-10',
         programType: 'promo',
         outcome: 'qualified',
+        rewardRuleRef: 'default-reward',
         effects: [{
           type: 'order_discount',
           calculation: 'fixed',
@@ -250,6 +251,41 @@ describe('canonical contracts', () => {
         reasonCodes: [],
         commitRequired: true,
         eligible: true,
+      }],
+    }).success).toBe(true);
+  });
+
+  test('rejects an empty selected reward rule reference', () => {
+    expect(EvaluationResponseSchema.safeParse({
+      evaluationId: 'evaluation-1',
+      schemaVersion: 3,
+      expiresAt: '2026-07-18T15:05:00Z',
+      decisions: [{
+        programRef: 'welcome-10',
+        programType: 'promo',
+        outcome: 'qualified',
+        rewardRuleRef: '',
+        effects: [],
+        reasonCodes: [],
+        commitRequired: true,
+        eligible: true,
+      }],
+    }).success).toBe(false);
+  });
+
+  test('keeps non-qualified shared decisions valid without a reward rule reference', () => {
+    expect(EvaluationResponseSchema.safeParse({
+      evaluationId: 'evaluation-1',
+      schemaVersion: 3,
+      expiresAt: '2026-07-18T15:05:00Z',
+      decisions: [{
+        programRef: 'referral-1',
+        programType: 'referral',
+        outcome: 'not_qualified',
+        effects: [],
+        reasonCodes: ['NOT_ELIGIBLE'],
+        commitRequired: false,
+        eligible: false,
       }],
     }).success).toBe(true);
   });
@@ -339,10 +375,23 @@ describe('canonical contracts', () => {
       redemptionId: 'redemption-1',
       evaluationId: 'evaluation-1',
       programRef: 'promo-1',
+      rewardRuleRef: 'default-reward',
       status: 'committed',
       effects: [],
       ...identifiers,
     }).success).toBe(true);
+  });
+
+  test('rejects an empty redemption reward rule reference', () => {
+    expect(RedemptionResponseSchema.safeParse({
+      redemptionId: 'redemption-1',
+      evaluationId: 'evaluation-1',
+      programRef: 'promo-1',
+      rewardRuleRef: '',
+      status: 'committed',
+      effects: [],
+      idempotencyKey: 'key-1',
+    }).success).toBe(false);
   });
 
   test('rejects redemption responses without an idempotency identifier', () => {
@@ -355,7 +404,7 @@ describe('canonical contracts', () => {
     }).success).toBe(false);
   });
 
-  test('preserves existing condition operator names in promo programs', () => {
+  test('accepts canonical reward rules in promo programs', () => {
     const result = PromoProgramSchema.safeParse({
       id: 'welcome-10',
       type: 'promo',
@@ -372,15 +421,41 @@ describe('canonical contracts', () => {
           value: 5000,
         }],
       },
-      reward: {
-        type: 'order_discount',
-        calculation: 'fixed',
-        amount: { currency: 'GBP', minorUnits: 1000 },
-      },
+      rewardRules: [over100Rule],
       stackable: false,
       priority: 10,
     });
     expect(result.success).toBe(true);
+  });
+
+  test('rejects the removed top-level promo reward', () => {
+    expect(PromoProgramSchema.safeParse({
+      id: 'legacy-reward',
+      type: 'promo',
+      name: 'Legacy reward',
+      status: 'active',
+      code: 'LEGACY',
+      autoApply: false,
+      eligibility: { match: 'ALL', conditions: [] },
+      reward: { type: 'free_shipping' },
+      stackable: false,
+      priority: 10,
+    }).success).toBe(false);
+  });
+
+  test('requires a promo reward rule or fallback reward', () => {
+    expect(PromoProgramSchema.safeParse({
+      id: 'missing-reward',
+      type: 'promo',
+      name: 'Missing reward',
+      status: 'active',
+      code: 'MISSING',
+      autoApply: false,
+      eligibility: { match: 'ALL', conditions: [] },
+      rewardRules: [],
+      stackable: false,
+      priority: 10,
+    }).success).toBe(false);
   });
 
   test('requires a code for promos that do not auto-apply', () => {
@@ -391,7 +466,7 @@ describe('canonical contracts', () => {
       status: 'active',
       autoApply: false,
       eligibility: { match: 'ALL', conditions: [] },
-      reward: { type: 'free_shipping' },
+      fallbackReward: fallback,
       stackable: false,
       priority: 10,
     }).success).toBe(false);
@@ -423,7 +498,7 @@ describe('canonical contracts', () => {
           }],
         }],
       },
-      reward: { type: 'free_shipping' },
+      fallbackReward: fallback,
       stackable: false,
       priority: 10,
     });
@@ -446,7 +521,7 @@ describe('canonical contracts', () => {
       startDate: '2026-07-31',
       endDate: '2026-07-01',
       eligibility: { match: 'ALL', conditions: [] },
-      reward: { type: 'free_shipping' },
+      fallbackReward: fallback,
       stackable: false,
       priority: 10,
     }).success).toBe(false);

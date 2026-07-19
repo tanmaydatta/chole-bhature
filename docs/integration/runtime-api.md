@@ -116,11 +116,28 @@ Use the secret-gated `/v1/programs` routes to create, list, read, and replace Pr
       }
     ]
   },
-  "reward": {
-    "type": "order_discount",
-    "calculation": "fixed",
-    "amount": { "currency": "GBP", "minorUnits": 1000 }
-  },
+  "rewardRules": [
+    {
+      "id": "default-reward",
+      "name": "Default reward",
+      "conditions": {
+        "match": "ALL",
+        "conditions": [
+          {
+            "id": "positive-cart",
+            "variable": "cart.subtotal",
+            "operator": "gte",
+            "value": 0
+          }
+        ]
+      },
+      "reward": {
+        "type": "order_discount",
+        "calculation": "fixed",
+        "amount": { "currency": "GBP", "minorUnits": 1000 }
+      }
+    }
+  ],
   "budget": { "currency": "GBP", "minorUnits": 10000 },
   "usageCap": 10,
   "perCustomerCap": 1,
@@ -166,6 +183,7 @@ The response contains an immutable decision snapshot identity and one structured
       "programRef": "gold-web-10",
       "programType": "promo",
       "outcome": "qualified",
+      "rewardRuleRef": "default-reward",
       "effects": [
         {
           "type": "order_discount",
@@ -182,7 +200,7 @@ The response contains an immutable decision snapshot identity and one structured
 }
 ```
 
-`outcome` is authoritative. It can be `qualified`, `not_qualified`, `unavailable`, `invalid_code`, `exhausted`, or `conflict`. `eligible` is only a derived convenience boolean (`true` exactly when outcome is `qualified`). `reasonCodes`, `message`, and `effects` explain what happened; `commitRequired` tells the integration whether applying the effect must be followed by redemption. Never apply effects from a decision that is not qualified.
+`outcome` is authoritative. It can be `qualified`, `not_qualified`, `unavailable`, `invalid_code`, `exhausted`, or `conflict`. `eligible` is only a derived convenience boolean (`true` exactly when outcome is `qualified`). `rewardRuleRef` identifies the selected conditional rule or fallback when a Promo reward was selected. `reasonCodes`, `message`, and `effects` explain what happened; `commitRequired` tells the integration whether applying the effect must be followed by redemption. Never apply effects from a decision that is not qualified.
 
 The server stores the facts, request, program/system state, decisions, schema/customer versions, and expiry in an HMAC-SHA-256-protected snapshot. The default time-to-live is 300 seconds and can be configured up to 86,400 seconds. Do not alter a decision or construct a redemption from client-calculated effects. If checkout cannot commit before `expiresAt`, evaluate again and use the new decision.
 
@@ -206,6 +224,7 @@ At least one of `externalOrderRef` or `idempotencyKey` is required; callers may 
   "redemptionId": "redemption-123",
   "evaluationId": "evaluation-789",
   "programRef": "gold-web-10",
+  "rewardRuleRef": "default-reward",
   "externalOrderRef": "order-456",
   "idempotencyKey": "checkout-attempt-abc",
   "status": "committed",
@@ -219,7 +238,7 @@ At least one of `externalOrderRef` or `idempotencyKey` is required; callers may 
 }
 ```
 
-Redemption verifies the signed snapshot and its TTL, requires exactly one qualified committable decision for the selected program, and atomically rechecks active status, reward/currency consistency, total usage, per-customer cap, and remaining budget while inserting the ledger row. A successful result always has `status: "committed"`.
+Redemption verifies the signed snapshot and its TTL, resolves `rewardRuleRef` against both the signed Promo configuration and the current program without re-evaluating conditions, and atomically rechecks active status, reward/currency consistency, total usage, per-customer cap, and remaining budget while inserting the ledger row. A successful result always has `status: "committed"`.
 
 Retries do not consume a second use or decrement the budget twice. Reusing either identifier with a different evaluation, program, order, or counterpart identifier returns `409 VERSION_CONFLICT`. If identifiers resolve to two different previous redemptions, the request also conflicts. Do not create a new idempotency key merely because a network response was lost; retry the identical request. If the service returns `409 EXHAUSTED`, remove or re-price the stale discount before capture.
 

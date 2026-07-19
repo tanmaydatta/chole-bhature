@@ -1,17 +1,11 @@
-import {
-  FreeShippingEffectSchema,
-  LineItemDiscountEffectSchema,
-  OrderDiscountEffectSchema,
-} from './evaluation.js';
 import { ConditionGroupSchema } from './conditions.js';
 import { MoneySchema } from './money.js';
+import {
+  PromoFallbackRewardSchema,
+  PromoRewardRuleSchema,
+  validateConditionalRewardIdentitiesAndPresence,
+} from './reward-rules.js';
 import { z } from './zod.js';
-
-export const PromoRewardSchema = z.union([
-  OrderDiscountEffectSchema,
-  LineItemDiscountEffectSchema,
-  FreeShippingEffectSchema,
-]);
 
 export const ProgramStatusSchema = z.enum([
   'draft',
@@ -29,7 +23,8 @@ const PromoProgramBaseSchema = z.object({
   startDate: z.iso.date().optional(),
   endDate: z.iso.date().optional(),
   eligibility: ConditionGroupSchema,
-  reward: PromoRewardSchema,
+  rewardRules: z.array(PromoRewardRuleSchema),
+  fallbackReward: PromoFallbackRewardSchema.optional(),
   budget: MoneySchema.refine((money) => money.minorUnits >= 0, {
     message: 'budget must not be negative',
   }).optional(),
@@ -61,8 +56,7 @@ export const PromoProgramSchema = z.discriminatedUnion('autoApply', [
       message: 'endDate must be on or after startDate',
     });
   }
-});
+}).superRefine(validateConditionalRewardIdentitiesAndPresence);
 
-export type PromoReward = z.infer<typeof PromoRewardSchema>;
 export type ProgramStatus = z.infer<typeof ProgramStatusSchema>;
 export type PromoProgram = z.infer<typeof PromoProgramSchema>;

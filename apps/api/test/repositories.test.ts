@@ -41,6 +41,7 @@ const incentiveDecision: IncentiveDecision = {
   programRef: 'welcome-10',
   programType: 'promo',
   outcome: 'qualified',
+  rewardRuleRef: 'default-reward',
   effects: [{
     type: 'order_discount',
     calculation: 'fixed',
@@ -56,10 +57,45 @@ const program: PromoProgram = {
   name: 'Welcome discount',
   status: 'active',
   eligibility: { match: 'ALL', conditions: [] },
-  reward: {
-    type: 'order_discount',
-    calculation: 'fixed',
-    amount: { currency: 'GBP', minorUnits: 500 },
+  rewardRules: [{
+    id: 'default-reward',
+    name: 'Default reward',
+    conditions: {
+      match: 'ALL',
+      conditions: [{
+        id: 'positive-cart',
+        variable: 'cart.subtotal',
+        operator: 'gte',
+        value: 0,
+      }],
+    },
+    reward: {
+      type: 'order_discount',
+      calculation: 'fixed',
+      amount: { currency: 'GBP', minorUnits: 500 },
+    },
+  }, {
+    id: 'higher-cart',
+    name: 'Higher cart',
+    conditions: {
+      match: 'ALL',
+      conditions: [{
+        id: 'higher-cart-condition',
+        variable: 'cart.subtotal',
+        operator: 'gte',
+        value: 10_000,
+      }],
+    },
+    reward: {
+      type: 'order_discount',
+      calculation: 'percent',
+      basisPoints: 1_000,
+    },
+  }],
+  fallbackReward: {
+    id: 'fallback',
+    name: 'Fallback',
+    reward: { type: 'order_discount', calculation: 'percent', basisPoints: 500 },
   },
   budget: { currency: 'GBP', minorUnits: 10_000 },
   usageCap: 20,
@@ -104,6 +140,7 @@ function redemptionResult(
     redemptionId,
     evaluationId,
     programRef: 'welcome-10',
+    rewardRuleRef: 'default-reward',
     status: 'committed',
     effects: incentiveDecision.effects,
     ...identifiers,
@@ -313,6 +350,9 @@ describe('D1 repositories', () => {
       usageCount: 0,
     });
     expect(await repositories.programs.get('merchant-b', 'welcome-10')).toBeNull();
+    expect((await repositories.programs.get('merchant-a', 'welcome-10'))
+      ?.program.rewardRules.map(rule => rule.id))
+      .toEqual(['default-reward', 'higher-cart']);
     expect(await repositories.decisions.get('merchant-a', 'merchant-a-evaluation')).toMatchObject({
       merchantId: 'merchant-a',
       request,
@@ -384,6 +424,33 @@ describe('D1 repositories', () => {
       'expires_at',
       'created_at',
     ]);
+  });
+
+  test('decision snapshots round-trip canonical program config and reject corrupt config', async () => {
+    await seedMerchant('merchant-a');
+    await seedPublishedSchema('merchant-a');
+    const repositories = createRepositories({ DB: env.DB });
+    await repositories.customers.create('merchant-a', customer('shared', { tier: 'gold' }));
+    const snapshot = decision('merchant-a', 'config-snapshot');
+    snapshot.facts.programs = [{
+      programRef: program.id,
+      system: { redemptions_total: 0 },
+      config: program,
+    }];
+    snapshot.integrityHash = await signDecisionSnapshot(snapshot, signingSecret);
+    await repositories.decisions.create(snapshot);
+
+    await expect(repositories.decisions.get('merchant-a', 'config-snapshot'))
+      .resolves.toMatchObject({
+        facts: { programs: [{ programRef: program.id, config: program }] },
+      });
+    await env.DB.prepare(`
+      UPDATE evaluation_decisions
+      SET facts_json = json_set(facts_json, '$.programs[0].config.rewardRules[0].id', '')
+      WHERE merchant_id = 'merchant-a' AND id = 'config-snapshot'
+    `).run();
+    await expect(repositories.decisions.get('merchant-a', 'config-snapshot'))
+      .rejects.toThrow('Stored evaluation decision is not canonical');
   });
 
   test('decision writes reject outer customer identity that differs from the request snapshot', async () => {

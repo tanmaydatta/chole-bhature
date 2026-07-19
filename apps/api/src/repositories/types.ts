@@ -137,6 +137,7 @@ export interface EvaluationFactsSnapshot {
   programs: Array<{
     programRef: string;
     system: Record<string, unknown>;
+    config: PromoProgram;
   }>;
 }
 
