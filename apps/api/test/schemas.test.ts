@@ -344,7 +344,7 @@ describe('schema registry API', () => {
     })).rejects.toMatchObject({ name: 'NotFoundError' });
   });
 
-  test.each(['draft', 'active'] as const)(
+  test.each(['draft', 'scheduled', 'active', 'paused', 'ended'] as const)(
     'prevents changing or deleting a field referenced by a %s program',
     async (status) => {
       const created = await createDefinition({
@@ -379,7 +379,7 @@ describe('schema registry API', () => {
         priority: 1,
         autoApply: true,
       };
-      if (status === 'active') {
+      if (status !== 'draft') {
         expect((await schemaRequest('POST', '/v1/schema/publish')).status).toBe(201);
       }
       await createRepositories({ DB: env.DB }).programs.create({
@@ -624,7 +624,7 @@ describe('schema registry API', () => {
 
 function programReferencing(
   id: string,
-  status: 'draft' | 'active',
+  status: 'draft' | 'scheduled' | 'active' | 'paused' | 'ended',
   variable: string,
 ): PromoProgram {
   return {
@@ -632,23 +632,25 @@ function programReferencing(
     type: 'promo',
     name: id,
     status,
-    eligibility: {
-      match: 'ALL',
-      conditions: [{ id: 'condition', variable, operator: 'eq', value: 'gold' }],
-    },
-    rewardRules: [],
-    fallbackReward: {
+    eligibility: { match: 'ALL', conditions: [] },
+    rewardRules: [{
       id: 'default-reward',
       name: 'Default reward',
+      conditions: {
+        match: 'ALL',
+        conditions: [{ id: 'condition', variable, operator: 'eq', value: 'gold' }],
+      },
       reward: { type: 'free_shipping' },
-    },
+    }],
     stackable: false,
     priority: 1,
     autoApply: true,
   };
 }
 
-async function referencedDefinitionFixture(status: 'draft' | 'active') {
+async function referencedDefinitionFixture(
+  status: 'draft' | 'scheduled' | 'active' | 'paused' | 'ended',
+) {
   const repositories = createRepositories({ DB: env.DB });
   const service = createSchemaService(repositories);
   const created = await service.create(SEEDED_MERCHANT_ID, {
@@ -661,7 +663,7 @@ async function referencedDefinitionFixture(status: 'draft' | 'active') {
   let draft = await repositories.schemas.getLatestVersion(SEEDED_MERCHANT_ID, 'draft');
   let programSchema = draft;
   let mutableDefinition = created;
-  if (status === 'active') {
+  if (status !== 'draft') {
     await service.publish(SEEDED_MERCHANT_ID);
     programSchema = await repositories.schemas.getLatestVersion(SEEDED_MERCHANT_ID, 'published');
     draft = await repositories.schemas.createNextDraft(SEEDED_MERCHANT_ID);
@@ -858,6 +860,28 @@ describe('atomic schema repository', () => {
     expect(await rawDraftState(draft.version)).toEqual(before);
     expect(error).toMatchObject({ name: 'SchemaRevisionConflictError' });
   });
+
+  test.each(['draft', 'scheduled', 'active', 'paused', 'ended'] as const)(
+    'repository CAS guards reject reward-rule identity mutation and deletion for %s programs',
+    async (status) => {
+      const { repositories, created, draft } = await referencedDefinitionFixture(status);
+      const changed = { ...created.definition, key: 'customer.segment' };
+
+      await expect(repositories.schemas.updateDraftDefinition(
+        SEEDED_MERCHANT_ID,
+        created.id,
+        draft.version,
+        changed,
+        draft.definitions,
+      )).rejects.toMatchObject({ name: 'SchemaRevisionConflictError' });
+      await expect(repositories.schemas.deleteDraftDefinition(
+        SEEDED_MERCHANT_ID,
+        created.id,
+        draft.version,
+        draft.definitions,
+      )).rejects.toMatchObject({ name: 'SchemaRevisionConflictError' });
+    },
+  );
 
   test('referenced metadata-only update succeeds without a reference-guard argument', async () => {
     const { repositories, created, draft } = await referencedDefinitionFixture('active');

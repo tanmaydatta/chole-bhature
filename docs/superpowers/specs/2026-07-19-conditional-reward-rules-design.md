@@ -362,9 +362,13 @@ General overlap and exhaustiveness are not API errors. The dashboard may produce
 
 ## 12. Operator UI
 
-The Promo wizard retains its global **Eligibility** step. Its single **Discount** step becomes **Reward rules**.
+Operator UI implementation is an amended follow-on delivery under
+`docs/superpowers/plans/2026-07-18-integration-ready-core-operator-ui.md`; it is not
+part of this runtime delivery. In that follow-on, the Promo wizard will retain its
+global **Eligibility** step and its single **Discount** step will become **Reward
+rules**.
 
-The shared editor provides:
+The planned shared editor will provide:
 
 - stable rule name and ID;
 - the existing nested typed condition builder;
@@ -377,9 +381,15 @@ The shared editor provides:
 - advisory overlap, gap, duplicate, and unreachable-rule warnings;
 - review/detail summaries in authoritative order.
 
-Program list/detail summaries show “2 conditional rewards” or a concise ordered summary rather than pretending the program has one discount. A future simulator shows the selected `rewardRuleRef` and the facts that caused the rule to win.
+The follow-on program list/detail summaries will show “2 conditional rewards” or a
+concise ordered summary rather than pretending the program has one discount. A future
+simulator may show the selected `rewardRuleRef` and the facts that caused the rule to
+win.
 
-The shared React editor accepts a module-specific reward renderer. Promo is wired to the real API in this delivery. Affiliate, Referral, and Loyalty may use adapters in internal/demo code, but the product must not present them as operational backend features until their runtimes exist.
+The planned shared React editor will accept a module-specific reward renderer, and the
+follow-on Operator UI delivery will wire Promo to the real API. Affiliate, Referral,
+and Loyalty may use adapters in internal/demo code, but the product must not present
+them as operational backend features until their runtimes exist.
 
 The existing Operator UI implementation plan must be amended before implementation so it does not build the obsolete single-reward Promo form.
 
@@ -464,7 +474,6 @@ No D1 table change is required because program configuration is stored as valida
 - Promo clean contract change and complete runtime behavior.
 - Shared `rewardRuleRef` decision/redemption support.
 - Promo API, OpenAPI, persistence validation, budget/cap, HMAC, idempotency, and end-to-end updates.
-- Shared reward-rule editor and Promo operator UI integration.
 - Amendments to affected Runtime and Operator UI documentation/plans.
 
 ### Deferred
@@ -473,6 +482,8 @@ No D1 table change is required because program configuration is stored as valida
 - Referral identity, links/codes, qualification events, attribution, wallet crediting, persistence, and runtime.
 - Loyalty event ingestion, asset registry, wallet ledger, accrual execution, redemption/spending, persistence, and runtime.
 - Wallet Asset Catalog labels, symbols, precision, backing, expiry, and redemption behavior.
+- Shared reward-rule editor and Promo Operator UI integration, delivered through the
+  amended follow-on Operator UI plan.
 - Mathematical satisfiability/exhaustiveness analysis for arbitrary nested conditions.
 - Arbitrary executable merchant expressions.
 

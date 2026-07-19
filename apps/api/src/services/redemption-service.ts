@@ -16,14 +16,20 @@ import {
 } from '../errors.js';
 import { canonicalJson } from '../json.js';
 import type {
+  AtomicRedemptionCommit,
   EvaluationDecisionRecord,
   RedemptionCreate,
+  RedemptionIntegrityVerifiers,
   Repositories,
 } from '../repositories/types.js';
 import {
   projectedDiscountMinorUnits,
   verifyDecisionIntegrity,
 } from './evaluation-service.js';
+import {
+  signRedemptionReceipt,
+  verifyRedemptionReceipt,
+} from './redemption-receipt.js';
 
 const SigningSecretSchema = z.string().min(16).max(4_096);
 
@@ -44,7 +50,7 @@ async function verifiedDecision(
   repositories: Repositories,
   merchantId: string,
   evaluationId: string,
-  signingSecret: string,
+  verifyIntegrity: RedemptionIntegrityVerifiers['verifyDecision'],
   missingIsCorruption: boolean,
 ): Promise<EvaluationDecisionRecord> {
   const record = await repositories.decisions.get(merchantId, evaluationId);
@@ -52,7 +58,7 @@ async function verifiedDecision(
     if (missingIsCorruption) throw new Error('Committed redemption decision is missing');
     throw new NotFoundError('Evaluation decision not found');
   }
-  if (!(await verifyDecisionIntegrity(record, signingSecret))) {
+  if (!(await verifyIntegrity(record))) {
     throw new Error('Decision snapshot integrity verification failed');
   }
   return record;
@@ -74,13 +80,13 @@ async function validateCommittedRedemption(
   repositories: Repositories,
   merchantId: string,
   existing: RedemptionCreate,
-  signingSecret: string,
+  verifyIntegrity: RedemptionIntegrityVerifiers['verifyDecision'],
 ): Promise<void> {
   const record = await verifiedDecision(
     repositories,
     merchantId,
     existing.evaluationId,
-    signingSecret,
+    verifyIntegrity,
     true,
   );
   const decision = committedDecision(record, existing.result.programRef);
@@ -100,15 +106,23 @@ async function findExisting(
   repositories: Repositories,
   merchantId: string,
   request: RedemptionRequest,
-  signingSecret: string,
+  verifyIntegrity: RedemptionIntegrityVerifiers,
 ): Promise<RedemptionCreate | null> {
   const [byOrder, byKey] = await Promise.all([
     request.externalOrderRef === undefined
       ? Promise.resolve(null)
-      : repositories.redemptions.getByExternalOrderRef(merchantId, request.externalOrderRef),
+      : repositories.redemptions.getByExternalOrderRef(
+        merchantId,
+        request.externalOrderRef,
+        verifyIntegrity.verifyReceipt,
+      ),
     request.idempotencyKey === undefined
       ? Promise.resolve(null)
-      : repositories.redemptions.getByIdempotencyKey(merchantId, request.idempotencyKey),
+      : repositories.redemptions.getByIdempotencyKey(
+        merchantId,
+        request.idempotencyKey,
+        verifyIntegrity.verifyReceipt,
+      ),
   ]);
   const candidates = [byOrder, byKey].filter(
     (candidate): candidate is RedemptionCreate => candidate !== null,
@@ -119,7 +133,7 @@ async function findExisting(
     repositories,
     merchantId,
     candidate,
-    signingSecret,
+    verifyIntegrity.verifyDecision,
   )));
   if (byOrder !== null && byKey !== null && !sameRedemption(byOrder, byKey)) {
     throw new VersionConflictError();
@@ -175,14 +189,18 @@ export function createRedemptionService(repositories: Repositories, env: Env) {
     ): Promise<RedemptionResponse> {
       try {
         const signingSecret = SigningSecretSchema.parse(env.DECISION_SIGNING_SECRET);
-        const existing = await findExisting(repositories, merchantId, request, signingSecret);
+        const verifyIntegrity: RedemptionIntegrityVerifiers = {
+          verifyDecision: record => verifyDecisionIntegrity(record, signingSecret),
+          verifyReceipt: receipt => verifyRedemptionReceipt(receipt, signingSecret),
+        };
+        const existing = await findExisting(repositories, merchantId, request, verifyIntegrity);
         if (existing !== null) return existing.result;
 
         const record = await verifiedDecision(
           repositories,
           merchantId,
           request.evaluationId,
-          signingSecret,
+          verifyIntegrity.verifyDecision,
           false,
         );
         if (Date.parse(record.expiresAt) <= Date.now()) throw new DecisionExpiredError();
@@ -223,7 +241,7 @@ export function createRedemptionService(repositories: Repositories, env: Env) {
             merchantId,
             record.customerRef,
             request.programRef,
-            snapshot => verifyDecisionIntegrity(snapshot, signingSecret),
+            verifyIntegrity,
           );
           if (count >= program.program.perCustomerCap) throw new ExhaustedError();
         }
@@ -242,7 +260,7 @@ export function createRedemptionService(repositories: Repositories, env: Env) {
           status: 'committed',
           effects: decision.effects,
         });
-        const commit = {
+        const unsignedCommit = {
           redemptionId: result.redemptionId,
           merchantId,
           ...(request.externalOrderRef === undefined
@@ -263,16 +281,20 @@ export function createRedemptionService(repositories: Repositories, env: Env) {
           ...(program.program.perCustomerCap === undefined
             ? {}
             : { perCustomerCap: program.program.perCustomerCap }),
+        } satisfies Omit<AtomicRedemptionCommit, 'receiptIntegrityHash'>;
+        const commit: AtomicRedemptionCommit = {
+          ...unsignedCommit,
+          receiptIntegrityHash: await signRedemptionReceipt(unsignedCommit, signingSecret),
         };
 
         try {
           if (await repositories.redemptions.commitAtomically(commit)) return result;
         } catch (error) {
-          const raced = await findExisting(repositories, merchantId, request, signingSecret);
+          const raced = await findExisting(repositories, merchantId, request, verifyIntegrity);
           if (raced !== null) return raced.result;
           throw error;
         }
-        const raced = await findExisting(repositories, merchantId, request, signingSecret);
+        const raced = await findExisting(repositories, merchantId, request, verifyIntegrity);
         if (raced !== null) return raced.result;
         await repositories.programs.get(merchantId, request.programRef);
         throw new ExhaustedError();

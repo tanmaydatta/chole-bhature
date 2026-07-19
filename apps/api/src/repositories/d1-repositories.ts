@@ -7,7 +7,7 @@ import {
   VariableDefinitionSchema,
   type VariableDefinition,
 } from '@incentives/contracts';
-import { and, asc, desc, eq, inArray } from 'drizzle-orm';
+import { and, asc, desc, eq } from 'drizzle-orm';
 import { z } from 'zod';
 
 import { createDatabase } from '../db/client.js';
@@ -31,6 +31,7 @@ import {
   type EvaluationDecisionRecord,
   type ProgramRecord,
   type RedemptionCreate,
+  type RedemptionReceiptIntegrityVerifier,
   type Repositories,
   type SchemaVersionRecord,
   type VariableDefinitionCreate,
@@ -53,6 +54,12 @@ const DateTimeSchema = z.iso.datetime({ offset: true });
 const SchemaStateSchema = z.enum(['draft', 'published']);
 const PositiveIntegerSchema = z.number().int().positive();
 const CurrencySchema = z.string().regex(/^[A-Z]{3}$/);
+const ReceiptIntegrityHashSchema = z.string().regex(/^[0-9a-f]{64}$/u);
+const StoredRedemptionEnvelopeSchema = z.object({
+  version: z.literal(1),
+  result: RedemptionResponseSchema,
+  receiptIntegrityHash: ReceiptIntegrityHashSchema,
+}).strict();
 
 function normalizedDefinitions(definitions: readonly VariableDefinition[]): VariableDefinition[] {
   return DefinitionsSchema.parse(definitions).sort((left, right) => left.key.localeCompare(right.key));
@@ -355,25 +362,47 @@ function parseRedemption(input: RedemptionCreate): RedemptionCreate {
     discountMinorUnits: z.number().int().nonnegative().parse(input.discountMinorUnits),
     currency: CurrencySchema.parse(input.currency),
     createdAt: DateTimeSchema.parse(input.createdAt),
+    receiptIntegrityHash: ReceiptIntegrityHashSchema.parse(input.receiptIntegrityHash),
   };
 }
 
 function parseRedemptionRow(row: typeof redemptions.$inferSelect): RedemptionCreate {
+  const envelope = parseJson(row.resultJson, StoredRedemptionEnvelopeSchema);
   return parseRedemption({
     redemptionId: row.id,
     merchantId: row.merchantId,
     ...optional('externalOrderRef', row.externalOrderRef),
     ...optional('idempotencyKey', row.idempotencyKey),
     evaluationId: row.evaluationId,
-    result: parseJson(row.resultJson, RedemptionResponseSchema),
+    result: envelope.result,
     discountMinorUnits: row.discountMinorUnits,
     currency: row.currency,
     createdAt: row.createdAt,
+    receiptIntegrityHash: envelope.receiptIntegrityHash,
   });
 }
 
 function redemptionFromRow(row: typeof redemptions.$inferSelect): RedemptionCreate {
   return persistedRecord('redemption', () => parseRedemptionRow(row));
+}
+
+function redemptionEnvelope(redemption: RedemptionCreate): string {
+  return JSON.stringify(StoredRedemptionEnvelopeSchema.parse({
+    version: 1,
+    result: redemption.result,
+    receiptIntegrityHash: redemption.receiptIntegrityHash,
+  }));
+}
+
+async function verifiedRedemptionFromRow(
+  row: typeof redemptions.$inferSelect,
+  verifyIntegrity: RedemptionReceiptIntegrityVerifier,
+): Promise<RedemptionCreate> {
+  const redemption = redemptionFromRow(row);
+  if (!(await verifyIntegrity(redemption))) {
+    throw new Error('Redemption receipt integrity verification failed');
+  }
+  return redemption;
 }
 
 function parseAtomicRedemption(input: AtomicRedemptionCommit): AtomicRedemptionCommit {
@@ -640,7 +669,6 @@ export function createRepositories(env: Env): Repositories {
                   FROM programs AS referenced_program,
                     json_tree(referenced_program.config_json, '$') AS condition_node
                   WHERE referenced_program.merchant_id = ?2
-                    AND referenced_program.status IN ('draft', 'active')
                     AND condition_node.key = 'variable'
                     AND condition_node.value = ?9
                 ))
@@ -672,7 +700,6 @@ export function createRepositories(env: Env): Repositories {
                   FROM programs AS referenced_program,
                     json_tree(referenced_program.config_json, '$') AS condition_node
                   WHERE referenced_program.merchant_id = ?9
-                    AND referenced_program.status IN ('draft', 'active')
                     AND condition_node.key = 'variable'
                     AND condition_node.value = ?16
                 ))
@@ -743,7 +770,6 @@ export function createRepositories(env: Env): Repositories {
                 FROM programs AS referenced_program,
                   json_tree(referenced_program.config_json, '$') AS condition_node
                 WHERE referenced_program.merchant_id = ?2
-                  AND referenced_program.status IN ('draft', 'active')
                   AND condition_node.key = 'variable'
                   AND condition_node.value = ?6
               )
@@ -772,7 +798,6 @@ export function createRepositories(env: Env): Repositories {
                 FROM programs AS referenced_program,
                   json_tree(referenced_program.config_json, '$') AS condition_node
                 WHERE referenced_program.merchant_id = ?1
-                  AND referenced_program.status IN ('draft', 'active')
                   AND condition_node.key = 'variable'
                   AND condition_node.value = ?4
               )
@@ -1055,10 +1080,9 @@ export function createRepositories(env: Env): Repositories {
       },
 
       async listReferencedVariableKeys(merchantId) {
-        const rows = await db.select().from(programs).where(and(
+        const rows = await db.select().from(programs).where(
           eq(programs.merchantId, merchantId),
-          inArray(programs.status, ['draft', 'active']),
-        )).all();
+        ).all();
         const keys = new Set<string>();
         for (const row of rows) {
           const program = programFromRow(row).program;
@@ -1113,7 +1137,7 @@ export function createRepositories(env: Env): Repositories {
           externalOrderRef: parsed.externalOrderRef ?? null,
           idempotencyKey: parsed.idempotencyKey ?? null,
           evaluationId: parsed.evaluationId,
-          resultJson: JSON.stringify(parsed.result),
+          resultJson: redemptionEnvelope(parsed),
           discountMinorUnits: parsed.discountMinorUnits,
           currency: parsed.currency,
           createdAt: parsed.createdAt,
@@ -1165,7 +1189,7 @@ export function createRepositories(env: Env): Repositories {
                       AND prior.evaluation_id = prior_decision.id
                     WHERE prior.merchant_id = ?3
                       AND prior_decision.customer_ref = ?9
-                      AND json_extract(prior.result_json, '$.programRef') = ?4
+                      AND json_extract(prior.result_json, '$.result.programRef') = ?4
                   ) < ?8
                 )
               )
@@ -1195,7 +1219,7 @@ export function createRepositories(env: Env): Repositories {
             parsed.externalOrderRef ?? null,
             parsed.idempotencyKey ?? null,
             parsed.evaluationId,
-            JSON.stringify(parsed.result),
+            redemptionEnvelope(parsed),
             parsed.discountMinorUnits,
             parsed.currency,
             parsed.createdAt,
@@ -1208,20 +1232,20 @@ export function createRepositories(env: Env): Repositories {
         return true;
       },
 
-      async getByExternalOrderRef(merchantId, externalOrderRef) {
+      async getByExternalOrderRef(merchantId, externalOrderRef, verifyIntegrity) {
         const row = await db.select().from(redemptions).where(and(
           eq(redemptions.merchantId, merchantId),
           eq(redemptions.externalOrderRef, externalOrderRef),
         )).get();
-        return row === undefined ? null : redemptionFromRow(row);
+        return row === undefined ? null : verifiedRedemptionFromRow(row, verifyIntegrity);
       },
 
-      async getByIdempotencyKey(merchantId, idempotencyKey) {
+      async getByIdempotencyKey(merchantId, idempotencyKey, verifyIntegrity) {
         const row = await db.select().from(redemptions).where(and(
           eq(redemptions.merchantId, merchantId),
           eq(redemptions.idempotencyKey, idempotencyKey),
         )).get();
-        return row === undefined ? null : redemptionFromRow(row);
+        return row === undefined ? null : verifiedRedemptionFromRow(row, verifyIntegrity);
       },
 
       async countCommittedForCustomerProgram(
@@ -1291,7 +1315,10 @@ export function createRepositories(env: Env): Repositories {
             expiresAt: candidate.expiresAt,
             createdAt: candidate.decisionCreatedAt,
           });
-          if (!(await verifyIntegrity(snapshot))) {
+          if (!(await verifyIntegrity.verifyReceipt(redemption))) {
+            throw new Error('Redemption receipt integrity verification failed');
+          }
+          if (!(await verifyIntegrity.verifyDecision(snapshot))) {
             throw new Error('Decision snapshot integrity verification failed');
           }
           const matchingDecision = snapshot.decisions.find(decision => (

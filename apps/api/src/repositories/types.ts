@@ -156,6 +156,7 @@ export interface RedemptionCreate {
   discountMinorUnits: number;
   currency: string;
   createdAt: string;
+  receiptIntegrityHash: string;
 }
 
 export interface AtomicRedemptionCommit extends RedemptionCreate {
@@ -170,22 +171,33 @@ export type DecisionIntegrityVerifier = (
   record: EvaluationDecisionRecord,
 ) => Promise<boolean>;
 
+export type RedemptionReceiptIntegrityVerifier = (
+  record: RedemptionCreate,
+) => Promise<boolean>;
+
+export interface RedemptionIntegrityVerifiers {
+  verifyDecision: DecisionIntegrityVerifier;
+  verifyReceipt: RedemptionReceiptIntegrityVerifier;
+}
+
 export interface RedemptionRepository {
   create(input: RedemptionCreate): Promise<void>;
   commitAtomically(input: AtomicRedemptionCommit): Promise<boolean>;
   getByExternalOrderRef(
     merchantId: string,
     externalOrderRef: string,
+    verifyIntegrity: RedemptionReceiptIntegrityVerifier,
   ): Promise<RedemptionCreate | null>;
   getByIdempotencyKey(
     merchantId: string,
     idempotencyKey: string,
+    verifyIntegrity: RedemptionReceiptIntegrityVerifier,
   ): Promise<RedemptionCreate | null>;
   countCommittedForCustomerProgram(
     merchantId: string,
     customerRef: string,
     programRef: string,
-    verifyIntegrity: DecisionIntegrityVerifier,
+    verifyIntegrity: RedemptionIntegrityVerifiers,
   ): Promise<number>;
 }
 

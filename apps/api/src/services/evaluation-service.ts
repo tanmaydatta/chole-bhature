@@ -19,10 +19,12 @@ import { canonicalJson } from '../json.js';
 import type {
   EvaluationDecisionRecord,
   EvaluationFactsSnapshot,
+  RedemptionIntegrityVerifiers,
   Repositories,
 } from '../repositories/types.js';
 import { BUILTIN_VARIABLE_DEFINITIONS } from './schema-service.js';
 import { validateCustomerAttributes } from './customer-service.js';
+import { verifyRedemptionReceipt } from './redemption-receipt.js';
 
 const DEFAULT_TTL_SECONDS = 300;
 const SigningSecretSchema = z.string().min(16).max(4_096);
@@ -246,7 +248,9 @@ function stableDecision(decision: ReturnType<typeof resolveDecisionConflicts>[nu
     case 'not_qualified':
       return {
         ...canonical,
-        message: canonical.message ?? "This promotion isn't valid for your order.",
+        message: canonical.reasonCodes.includes('NO_REWARD_RULE_MATCHED')
+          ? 'No reward rule matched.'
+          : canonical.message ?? "This promotion isn't valid for your order.",
       };
     case 'invalid_code':
       return { ...canonical, message: 'This promotion code is invalid.' };
@@ -432,9 +436,14 @@ export function createEvaluationService(repositories: Repositories, env: Env) {
           validateCustomerAttributes(customer.attributes, published.definitions);
         }
         const signingSecret = SigningSecretSchema.parse(env.DECISION_SIGNING_SECRET);
-        const verifyHistoricalDecision = (snapshot: EvaluationDecisionRecord) => (
-          verifyDecisionIntegrity(snapshot, signingSecret)
-        );
+        const verifyHistoricalIntegrity: RedemptionIntegrityVerifiers = {
+          verifyDecision: (snapshot: EvaluationDecisionRecord) => (
+            verifyDecisionIntegrity(snapshot, signingSecret)
+          ),
+          verifyReceipt: receipt => (
+            verifyRedemptionReceipt(receipt, signingSecret)
+          ),
+        };
 
         const programs = await repositories.programs.list(merchantId);
         const now = new Date();
@@ -463,7 +472,7 @@ export function createEvaluationService(repositories: Repositories, env: Env) {
               merchantId,
               customer.externalRef,
               record.externalRef,
-              verifyHistoricalDecision,
+              verifyHistoricalIntegrity,
             );
           const system = {
             ...(record.budgetRemaining === undefined

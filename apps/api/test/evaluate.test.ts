@@ -19,6 +19,7 @@ import {
   signDecisionSnapshot,
   verifyDecisionIntegrity,
 } from '../src/services/evaluation-service.js';
+import { signRedemptionReceipt } from '../src/services/redemption-receipt.js';
 
 const publishedAt = '2026-07-18T12:00:00.000Z';
 const signingSecret = 'decision-signing-test-secret';
@@ -211,7 +212,7 @@ async function commitDecision(
   effects: CommerceReward[],
   suffix = '1',
 ): Promise<void> {
-  await createRepositories({ DB: env.DB }).redemptions.create({
+  const unsigned = {
     redemptionId: `redemption-${suffix}`,
     merchantId: SEEDED_MERCHANT_ID,
     externalOrderRef: `order-${suffix}`,
@@ -228,6 +229,10 @@ async function commitDecision(
     discountMinorUnits: 1_000,
     currency: 'GBP',
     createdAt: publishedAt,
+  };
+  await createRepositories({ DB: env.DB }).redemptions.create({
+    ...unsigned,
+    receiptIntegrityHash: await signRedemptionReceipt(unsigned, signingSecret),
   });
 }
 
@@ -505,6 +510,7 @@ describe('POST /v1/evaluate', () => {
         outcome: 'not_qualified',
         effects: [],
         reasonCodes: ['NO_REWARD_RULE_MATCHED'],
+        message: 'No reward rule matched.',
         commitRequired: false,
         eligible: false,
       }),
@@ -808,23 +814,16 @@ describe('POST /v1/evaluate', () => {
       calculation: 'fixed' as const,
       amount: { currency: 'GBP', minorUnits: 999 },
     }];
-    const corruptedResult = {
-      redemptionId: 'redemption-corrupt-count',
-      evaluationId: first.evaluationId,
-      programRef: program.id,
-      externalOrderRef: 'order-corrupt-count',
-      status: 'committed',
-      effects: tamperedEffects,
-    };
     const corruptedDecision = {
       ...first.decisions[0]!,
       effects: tamperedEffects,
     };
     await env.DB.batch([
       env.DB.prepare(`
-        UPDATE redemptions SET result_json = ?1
+        UPDATE redemptions
+        SET result_json = json_set(result_json, '$.result.effects', json(?1))
         WHERE merchant_id = ?2 AND evaluation_id = ?3
-      `).bind(JSON.stringify(corruptedResult), SEEDED_MERCHANT_ID, first.evaluationId),
+      `).bind(JSON.stringify(tamperedEffects), SEEDED_MERCHANT_ID, first.evaluationId),
       env.DB.prepare(`
         UPDATE evaluation_decisions SET decisions_json = ?1
         WHERE merchant_id = ?2 AND id = ?3
