@@ -14,6 +14,8 @@
 
 **Notion mirror:** https://app.notion.com/p/Integration-Ready-Core-Runtime-Implementation-Plan-3a1e5c7c2b8e817aa380c66100f83b5c
 
+**Implementation status:** Completed and verified on 2026-07-19. Repository and Notion copies are synchronized; the Operator UI and Simulator Plan remains next.
+
 ## Global Constraints
 
 - Execute only after the Foundation Plan completion gate passes, in the same `feat/integration-ready-core` worktree/branch.
@@ -396,20 +398,22 @@ git commit -m "feat: add structured promo evaluation API"
 
 **Interfaces:**
 - Consumes: decision snapshot/HMAC, program counters, D1 batch helper.
-- Produces: secret-gated `POST /v1/redemptions` with stable accepted/already-processed/exhausted/expired/conflict results.
+- Produces: secret-gated `POST /v1/redemptions` with canonical `RedemptionResponse` successes (`status: 'committed'`) and canonical `ApiError` envelopes for exhausted, expired, and conflict outcomes.
 
 - [ ] **Step 1: Write failing redemption tests**
 
-Test accepted commit and stable response for all request variants: external order ref only, idempotency key only, and both. Reject neither at the canonical request boundary. Test retry by external order ref, retry by idempotency key, expired/tampered/cross-merchant decision, decision currency/amount mismatch, paused program after evaluation, budget exhaustion, usage exhaustion, and concurrent last-cap attempts.
+Test a newly committed redemption and its stable canonical response for all request variants: external order ref only, idempotency key only, and both. Reject neither at the canonical request boundary. Test that retries by external order ref or idempotency key return the original `RedemptionResponse` with `status: 'committed'`. Test expired/tampered/cross-merchant decision, decision currency/amount mismatch, paused program after evaluation, budget exhaustion, usage exhaustion, and concurrent last-cap attempts; exhausted, expired, and conflict outcomes must return the canonical `ApiError` envelope with the Task 2 HTTP/error mapping.
 
 ```ts
 test('concurrent final-cap commits allow exactly one redemption', async () => {
-  const results = await Promise.all([
-    redeem({ evaluationId, externalOrderRef: 'o-1', idempotencyKey: 'k-1' }),
-    redeem({ evaluationId: secondEvaluationId, externalOrderRef: 'o-2', idempotencyKey: 'k-2' }),
+  const responses = await Promise.all([
+    redeemRaw({ evaluationId, externalOrderRef: 'o-1', idempotencyKey: 'k-1' }),
+    redeemRaw({ evaluationId: secondEvaluationId, externalOrderRef: 'o-2', idempotencyKey: 'k-2' }),
   ]);
-  expect(results.filter(result => result.status === 'accepted')).toHaveLength(1);
-  expect(results.filter(result => result.status === 'exhausted')).toHaveLength(1);
+  expect(responses.filter(({ status, body }) =>
+    status === 200 && body.status === 'committed')).toHaveLength(1);
+  expect(responses.filter(({ status, body }) =>
+    status === 409 && body.error?.code === 'EXHAUSTED')).toHaveLength(1);
 });
 ```
 
@@ -433,7 +437,7 @@ WHERE id = ?2 AND merchant_id = ?3 AND status = 'active'
   AND (budget_remaining IS NULL OR budget_remaining >= ?1);
 ```
 
-Zero affected rows returns structured `exhausted` without a ledger row. Unique-key races reread and return the winning stable result.
+Zero affected rows returns the canonical `ApiError` envelope as `409 EXHAUSTED` without a ledger row. An expired decision returns `410 DECISION_EXPIRED`; an optimistic conflict returns `409 VERSION_CONFLICT`. Unique-key races reread and return the original stable canonical `RedemptionResponse` with `status: 'committed'`.
 
 - [ ] **Step 4: Verify retry/concurrency correctness**
 
@@ -474,7 +478,7 @@ test('define → publish → customer → promo → evaluate → redeem', async 
   const evaluation = await evaluate(goldWebCart);
   const redemption = await redeemEvaluation(evaluation.evaluationId, 'order-1');
   expect(evaluation.decisions[0]?.outcome).toBe('qualified');
-  expect(redemption.status).toBe('accepted');
+  expect(redemption.status).toBe('committed');
 });
 ```
 

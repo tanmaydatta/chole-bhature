@@ -6,13 +6,33 @@
   "exports": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "scripts": {
+    "build:dependencies": "pnpm --filter @incentives/contracts --filter @incentives/engine --filter @incentives/module-kit --filter @incentives/promo build",
+    "prebuild": "pnpm run build:dependencies",
     "build": "tsc -p tsconfig.json",
-    "test": "vitest run --passWithNoTests",
+    "db:check": "drizzle-kit check",
+    "predev": "pnpm run build:dependencies",
+    "dev": "wrangler dev",
+    "pretest": "pnpm run build:dependencies",
+    "test": "vitest run",
+    "pretest:full-flow": "pnpm run build:dependencies",
+    "test:full-flow": "vitest run test/full-flow.test.ts",
     "lint": "oxlint src"
   },
   "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.18.6",
+    "@cloudflare/workers-types": "^5.20260717.1",
+    "drizzle-kit": "^0.31.10",
+    "oxlint": "^1.69.0",
     "typescript": "~6.0.2",
-    "vitest": "^4.1.9",
-    "oxlint": "^1.69.0"
+    "vitest": "^4.1.10",
+    "wrangler": "^4.112.0"
+  },
+  "dependencies": {
+    "@incentives/contracts": "workspace:*",
+    "@incentives/engine": "workspace:*",
+    "@incentives/promo": "workspace:*",
+    "drizzle-orm": "^0.45.2",
+    "hono": "^4.12.30",
+    "zod": "^4.4.3"
   }
 }

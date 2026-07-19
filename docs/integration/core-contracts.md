@@ -1,12 +1,16 @@
 # Integration-Ready Core Contracts
 
+**Notion mirror:** https://app.notion.com/p/Integration-Ready-Core-Contracts-3a1e5c7c2b8e81e4afe0ef82709f8d13
+
+**Mirror state:** Repository and Notion copies synchronized on 2026-07-19.
+
 The foundation exposes platform-neutral TypeScript and Zod contracts for typed data, evaluation, decisions, modules, and connectors. It is deliberately independent of Shopify, a custom checkout, HTTP framework, database, and UI.
 
 ## Stored customer data is not evaluation context
 
 Customer attributes and live facts have different lifecycles:
 
-- `customer.*` is persistent merchant-scoped data. A future runtime API stores it independently and evaluation loads it by `customerRef`.
+- `customer.*` is persistent merchant-scoped data. The runtime API stores it independently and evaluation loads it by `customerRef`.
 - `context.*`, `cart.*`, and `line_item.*` arrive with the live evaluation request.
 - `event.*` belongs to a commerce event, while `system.*` is read-only engine state.
 
@@ -135,9 +139,9 @@ Dependencies point inward: `contracts` has validation dependencies only; `engine
 
 ## Supported now and deferred
 
-The foundation currently includes canonical schemas/OpenAPI generation, typed fact assembly and conditions, deterministic conflict resolution, the module contract/conformance suite, a pure Promo module, and the connector contract/conformance suite. Promo can produce fixed/percent order or line-item discounts and free shipping from parsed configuration.
+The foundation includes canonical schemas/OpenAPI generation, typed fact assembly and conditions, deterministic conflict resolution, the module contract/conformance suite, a pure Promo module, and the connector contract/conformance suite. Promo can produce fixed/percent order or line-item discounts and free shipping from parsed configuration.
 
-Persistence, HTTP routes, merchant/auth boundaries, customer storage, schema publication state, decision snapshots, caps, atomic/idempotent redemption, effect application, event processing, and production Shopify/manual connectors are deferred to later plans. Wallet, points, attribution, affiliate, referral, and loyalty shapes are reserved shared semantics; their production runtimes are not implemented yet.
+The Runtime is implemented and verified: D1 persistence, HTTP routes, static merchant/auth boundaries, customer storage, schema publication, Promo configuration, structured signed decision snapshots, mutable caps, and atomic/idempotent redemption are available through the platform-neutral API. Commerce-platform effect application, event processing, production Shopify/manual connectors, and the Operator UI remain deferred. Wallet, points, attribution, affiliate, referral, and loyalty shapes are reserved shared semantics; their production runtimes are not implemented yet.
 
 ## Executable checks
 
@@ -146,12 +150,14 @@ From the repository root:
 ```bash
 pnpm --filter @incentives/contracts test -- src/documentation-examples.test.ts
 pnpm --filter @incentives/contracts test
+pnpm --filter @incentives/api test:full-flow
+pnpm --filter @incentives/api db:check
 pnpm -r test
 pnpm run verify:clean-tests
 pnpm -r build
 pnpm -r lint
 ```
 
-Consumer package test scripts build their internal workspace dependencies in `pretest`, so the focused commands work from a clean checkout where no `dist/` directories exist. `verify:clean-tests` archives committed `HEAD` into a validated temporary directory, performs a frozen install, and runs the recursive and filtered no-`dist` regression gates.
+Consumer package test scripts build their internal workspace dependencies in lifecycle hooks, so the focused commands work from a clean checkout where no `dist/` directories exist. `verify:clean-tests` archives committed `HEAD` into a validated temporary directory, performs a frozen install, and runs the recursive and filtered no-`dist` regression gates, including the API as an independent consumer.
 
 The authoritative fixture is `packages/contracts/test-fixtures/documentation-examples.ts`; `packages/contracts/src/documentation-examples.test.ts` parses it exclusively through public contract exports.

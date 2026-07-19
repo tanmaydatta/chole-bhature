@@ -2,13 +2,15 @@
 
 **Date:** 2026-07-18
 
-**Status:** Foundation implemented; Runtime and Operator UI planned
+**Status:** Foundation and Runtime implemented and verified; Operator UI planned
 
 **Purpose:** Build a client-usable, platform-neutral incentives foundation before the first client's commerce platform is known.
 
 **Relationship to existing plans:** This design does not change the four-module MVP vision. It refines the work that should precede any Shopify, manual, or other commerce integration and requires the Phase 0 tickets to be replanned before implementation.
 
 **Notion mirror:** https://app.notion.com/p/Integration-Ready-Incentives-Core-Design-Spec-3a1e5c7c2b8e8150bdcdde92990e114a
+
+**Mirror state:** Repository and Notion copies synchronized on 2026-07-19.
 
 ---
 
@@ -274,9 +276,9 @@ The conformance suite verifies normalization, money handling, identifiers, schem
 
 No production Shopify, manual-client, or other platform connector is included in this build. A fake connector proves the boundary.
 
-## 10. API surface planned for Runtime
+## 10. API surface implemented by Runtime
 
-Foundation defines the canonical schemas and seams for these endpoints; the Runtime plan will implement their HTTP and persistence behavior:
+Foundation defines the canonical schemas and seams for these endpoints; Runtime implements their HTTP and persistence behavior:
 
 - Schema definitions: create/list/update/publish customer/context/cart/line-item definitions and fetch the published schema/sample payload.
 - Customer upsert/read: schema-validated, versioned attributes.
