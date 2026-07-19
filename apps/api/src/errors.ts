@@ -74,6 +74,16 @@ export class ExhaustedError extends ApiFailure {
   }
 }
 
+export class VersionConflictError extends ApiFailure {
+  override readonly name = 'VersionConflictError';
+  readonly code = 'VERSION_CONFLICT';
+  readonly status = 409;
+
+  constructor(message = 'The redemption identifiers or decision version conflict') {
+    super(message);
+  }
+}
+
 export class SchemaConflictError extends ApiFailure {
   override readonly name = 'SchemaConflictError';
   readonly code = 'SCHEMA_CONFLICT';

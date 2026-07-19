@@ -157,12 +157,21 @@ export interface RedemptionCreate {
   createdAt: string;
 }
 
+export interface AtomicRedemptionCommit extends RedemptionCreate {
+  programId: string;
+  programRef: string;
+  expectedProgram: PromoProgram;
+  customerRef?: string;
+  perCustomerCap?: number;
+}
+
 export type DecisionIntegrityVerifier = (
   record: EvaluationDecisionRecord,
 ) => Promise<boolean>;
 
 export interface RedemptionRepository {
   create(input: RedemptionCreate): Promise<void>;
+  commitAtomically(input: AtomicRedemptionCommit): Promise<boolean>;
   getByExternalOrderRef(
     merchantId: string,
     externalOrderRef: string,

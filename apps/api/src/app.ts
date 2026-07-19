@@ -12,6 +12,7 @@ import { createRepositories } from './repositories/d1-repositories.js';
 import { createCustomerRoutes } from './routes/customers.js';
 import { createProgramRoutes } from './routes/programs.js';
 import { createEvaluationRoutes } from './routes/evaluate.js';
+import { createRedemptionRoutes } from './routes/redemptions.js';
 import { createSchemaRoutes } from './routes/schemas.js';
 
 const correlationId: MiddlewareHandler<AppEnvironment> = async (context, next) => {
@@ -57,6 +58,7 @@ export function createApp(): Hono<AppEnvironment> {
   app.route('/v1/programs', createProgramRoutes());
   app.route('/v1/schema', createSchemaRoutes());
   app.route('/v1/evaluate', createEvaluationRoutes());
+  app.route('/v1/redemptions', createRedemptionRoutes());
 
   return app;
 }
