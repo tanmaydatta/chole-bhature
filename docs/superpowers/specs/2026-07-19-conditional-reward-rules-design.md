@@ -27,7 +27,7 @@
 
 ## 1. Problem and outcome
 
-The current production Promo contract has one program-wide eligibility group and one reward. It cannot express a common tiered offer such as:
+Before this change, the production Promo contract had one program-wide eligibility group and one reward. It could not express a common tiered offer such as:
 
 - £10 off when the cart subtotal is below £100;
 - £20 off when the cart subtotal is £100 or more.

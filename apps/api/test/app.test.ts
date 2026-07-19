@@ -17,6 +17,7 @@ import {
   NotFoundError,
 } from '../src/errors.js';
 import { OptimisticVersionConflictError } from '../src/repositories/types.js';
+import wranglerConfiguration from '../wrangler.toml?raw';
 
 const correlationHeader = 'x-correlation-id';
 
@@ -63,9 +64,11 @@ async function requestApp(
 }
 
 describe('Worker API composition', () => {
-  test('exposes a default-only Worker service entrypoint', async () => {
+  test('configures Wrangler with the default-only Worker service entrypoint', async () => {
+    const configuredMain = /^main\s*=\s*"([^"]+)"$/mu.exec(wranglerConfiguration)?.[1];
     const workerEntrypoint = await import('../src/worker.js');
 
+    expect(configuredMain).toBe('src/worker.ts');
     expect(Object.keys(workerEntrypoint)).toEqual(['default']);
     expect(workerEntrypoint.default).toBeDefined();
   });
