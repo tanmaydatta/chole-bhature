@@ -2,12 +2,14 @@ import { describe, expect, test } from 'vitest';
 
 import {
   CartSnapshotSchema,
+  CommerceRewardSchema,
   CustomerSnapshotSchema,
   EffectSchema,
   EvaluationResponseSchema,
   EvaluationRequestSchema,
   MoneySchema,
   OrderSnapshotSchema,
+  PromoConditionalRewardsSchema,
   PromoProgramSchema,
   RedemptionRequestSchema,
   RedemptionResponseSchema,
@@ -15,8 +17,135 @@ import {
   buildOpenApiDocument,
   buildPublishedEvaluationJsonSchema,
 } from './index.js';
+import type { CommerceReward, RewardRule } from './index.js';
+
+const over100Rule: RewardRule<CommerceReward> = {
+  id: 'over-100',
+  name: 'Over 100',
+  conditions: {
+    match: 'ALL',
+    conditions: [{
+      id: 'cart-over-100',
+      variable: 'cart.subtotal',
+      operator: 'gte',
+      value: 10_000,
+    }],
+  },
+  reward: {
+    type: 'order_discount',
+    calculation: 'percent',
+    basisPoints: 2_000,
+  },
+};
+
+const under100Rule: RewardRule<CommerceReward> = {
+  id: 'under-100',
+  name: 'Under 100',
+  conditions: {
+    match: 'ANY',
+    conditions: [],
+    groups: [{
+      match: 'ALL',
+      conditions: [{
+        id: 'cart-under-100',
+        variable: 'cart.subtotal',
+        operator: 'lt',
+        value: 10_000,
+      }],
+    }],
+  },
+  reward: {
+    type: 'line_item_discount',
+    productRef: 'product-1',
+    calculation: 'fixed',
+    amount: { currency: 'GBP', minorUnits: 500 },
+  },
+};
+
+const fallback = {
+  id: 'default-reward',
+  name: 'Default reward',
+  reward: { type: 'free_shipping' as const },
+};
 
 describe('canonical contracts', () => {
+  test('requires bounded conditional reward rule names', () => {
+    expect(PromoConditionalRewardsSchema.safeParse({
+      rewardRules: [{ ...over100Rule, name: '' }],
+    }).success).toBe(false);
+    expect(PromoConditionalRewardsSchema.safeParse({
+      rewardRules: [{ ...over100Rule, name: 'x'.repeat(201) }],
+    }).success).toBe(false);
+    expect(PromoConditionalRewardsSchema.safeParse({
+      rewardRules: [over100Rule],
+    }).success).toBe(true);
+  });
+
+  test('requires every conditional reward rule to contain a condition leaf', () => {
+    expect(PromoConditionalRewardsSchema.safeParse({
+      rewardRules: [{
+        ...over100Rule,
+        conditions: { match: 'ALL', conditions: [] },
+      }],
+    }).success).toBe(false);
+    expect(PromoConditionalRewardsSchema.safeParse({
+      rewardRules: [{
+        ...over100Rule,
+        conditions: {
+          match: 'ALL',
+          conditions: [],
+          groups: [{ match: 'ANY', conditions: [] }],
+        },
+      }],
+    }).success).toBe(false);
+    expect(PromoConditionalRewardsSchema.safeParse({
+      rewardRules: [under100Rule],
+    }).success).toBe(true);
+  });
+
+  test('requires unique conditional reward rule ids', () => {
+    expect(PromoConditionalRewardsSchema.safeParse({
+      rewardRules: [over100Rule, { ...under100Rule, id: 'over-100' }],
+    }).success).toBe(false);
+  });
+
+  test('requires at least one conditional reward rule or fallback', () => {
+    expect(PromoConditionalRewardsSchema.safeParse({ rewardRules: [] }).success).toBe(false);
+    expect(PromoConditionalRewardsSchema.safeParse({
+      rewardRules: [],
+      fallbackReward: fallback,
+    }).success).toBe(true);
+  });
+
+  test('preserves authoritative rule order and rejects a duplicate fallback id', () => {
+    const parsed = PromoConditionalRewardsSchema.parse({
+      rewardRules: [over100Rule, under100Rule],
+      fallbackReward: fallback,
+    });
+    expect(parsed.rewardRules.map(rule => rule.id)).toEqual(['over-100', 'under-100']);
+    expect(PromoConditionalRewardsSchema.safeParse({
+      rewardRules: [over100Rule],
+      fallbackReward: { ...fallback, id: 'over-100' },
+    }).success).toBe(false);
+  });
+
+  test.each([
+    {
+      type: 'order_discount',
+      calculation: 'fixed',
+      amount: { currency: 'GBP', minorUnits: 1_000 },
+    },
+    {
+      type: 'line_item_discount',
+      productRef: 'product-1',
+      calculation: 'percent',
+      basisPoints: 1_000,
+    },
+    { type: 'free_shipping' },
+  ])('parses $type payloads as commerce rewards', (reward) => {
+    expect(CommerceRewardSchema.safeParse(reward).success).toBe(true);
+  });
+
   test('defines strict platform-neutral commerce snapshots', () => {
     expect(CustomerSnapshotSchema.safeParse({
       externalRef: ' Customer::001 ',
