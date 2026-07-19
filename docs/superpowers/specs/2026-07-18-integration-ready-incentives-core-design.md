@@ -1,8 +1,10 @@
 # Integration-Ready Incentives Core — Design Spec
 
+> **Plan 3 amendment:** Foundation, Runtime, and conditional reward delivery remain historical inputs. The original unauthenticated operator-UI assumptions are superseded by `docs/superpowers/specs/2026-07-19-production-operator-platform-design.md`, which defines the approved production identity, tenancy, Worker/database isolation, merchant credentials, program revision, operator tooling, deployment, and audit boundaries.
+
 **Date:** 2026-07-18
 
-**Status:** Foundation and Runtime implemented and verified; Operator UI planned
+**Status:** Foundation and Runtime implemented and verified; original Operator UI scope superseded by the production Plan 3 design
 
 **Purpose:** Build a client-usable, platform-neutral incentives foundation before the first client's commerce platform is known.
 
