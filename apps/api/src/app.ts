@@ -12,6 +12,7 @@ import { createRepositories } from './repositories/d1-repositories.js';
 import { createCustomerRoutes } from './routes/customers.js';
 import { createProgramRoutes } from './routes/programs.js';
 import { createEvaluationRoutes } from './routes/evaluate.js';
+import { createOpenApiRoutes } from './routes/openapi.js';
 import { createRedemptionRoutes } from './routes/redemptions.js';
 import { createSchemaRoutes } from './routes/schemas.js';
 
@@ -59,6 +60,7 @@ export function createApp(): Hono<AppEnvironment> {
   app.route('/v1/schema', createSchemaRoutes());
   app.route('/v1/evaluate', createEvaluationRoutes());
   app.route('/v1/redemptions', createRedemptionRoutes());
+  app.route('/v1/openapi.json', createOpenApiRoutes());
 
   return app;
 }
