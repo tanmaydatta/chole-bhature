@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-19
 
-**Status:** Approved design; written-spec review pending
+**Status:** Approved design; implementation plan written
 
 **Sequence:** Revised Plan 3, after Foundation, Runtime, and conditional reward rules
 
