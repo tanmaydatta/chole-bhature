@@ -63,6 +63,13 @@ async function requestApp(
 }
 
 describe('Worker API composition', () => {
+  test('exposes a default-only Worker service entrypoint', async () => {
+    const workerEntrypoint = await import('../src/worker.js');
+
+    expect(Object.keys(workerEntrypoint)).toEqual(['default']);
+    expect(workerEntrypoint.default).toBeDefined();
+  });
+
   test.each([
     ['/v1/health', undefined, 200],
     ['/v1/test-publishable', undefined, 401],

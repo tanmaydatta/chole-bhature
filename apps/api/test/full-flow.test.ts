@@ -32,10 +32,22 @@ const contextChannelDefinition = {
   enumValues: ['web', 'mobile'],
 } as const satisfies VariableDefinition;
 
-const goldWebPromo = {
-  id: 'gold-web-10',
+const underHundredReward = {
+  type: 'order_discount',
+  calculation: 'fixed',
+  amount: { currency: 'GBP', minorUnits: 1_000 },
+} as const;
+
+const overHundredReward = {
+  type: 'order_discount',
+  calculation: 'fixed',
+  amount: { currency: 'GBP', minorUnits: 2_000 },
+} as const;
+
+const tieredGoldWebPromo = {
+  id: 'gold-web-tiered',
   type: 'promo',
-  name: 'Gold web offer',
+  name: 'Gold web tiered offer',
   status: 'active',
   eligibility: {
     match: 'ALL',
@@ -54,30 +66,77 @@ const goldWebPromo = {
       },
     ],
   },
-  rewardRules: [{
-    id: 'default-reward',
-    name: 'Default reward',
-    conditions: {
-      match: 'ALL',
-      conditions: [{
-        id: 'positive-cart',
-        variable: 'cart.subtotal',
-        operator: 'gte',
-        value: 0,
-      }],
+  rewardRules: [
+    {
+      id: 'over-100',
+      name: 'Twenty pounds off orders of one hundred pounds or more',
+      conditions: {
+        match: 'ALL',
+        conditions: [{
+          id: 'cart-at-least-100',
+          variable: 'cart.subtotal',
+          operator: 'gte',
+          value: 10_000,
+        }],
+      },
+      reward: overHundredReward,
     },
+    {
+      id: 'under-100',
+      name: 'Ten pounds off orders below one hundred pounds',
+      conditions: {
+        match: 'ALL',
+        conditions: [{
+          id: 'cart-under-100',
+          variable: 'cart.subtotal',
+          operator: 'lt',
+          value: 10_000,
+        }],
+      },
+      reward: underHundredReward,
+    },
+  ],
+  fallbackReward: {
+    id: 'tiered-fallback',
+    name: 'Fallback five pounds off',
     reward: {
       type: 'order_discount',
       calculation: 'fixed',
-      amount: { currency: 'GBP', minorUnits: 1_000 },
+      amount: { currency: 'GBP', minorUnits: 500 },
     },
-  }],
-  budget: { currency: 'GBP', minorUnits: 10_000 },
-  usageCap: 10,
+  },
+  budget: { currency: 'GBP', minorUnits: 2_000 },
+  usageCap: 1,
   perCustomerCap: 1,
   stackable: false,
   priority: 10,
   autoApply: true,
+} as const satisfies PromoProgram;
+
+const noFallbackPromo = {
+  ...tieredGoldWebPromo,
+  id: 'gold-web-no-fallback',
+  name: 'Gold web high-cart offer without fallback',
+  rewardRules: [{
+    id: 'over-200',
+    name: 'Twenty pounds off orders of two hundred pounds or more',
+    conditions: {
+      match: 'ALL',
+      conditions: [{
+        id: 'cart-at-least-200',
+        variable: 'cart.subtotal',
+        operator: 'gte',
+        value: 20_000,
+      }],
+    },
+    reward: overHundredReward,
+  }],
+  fallbackReward: undefined,
+  budget: undefined,
+  usageCap: undefined,
+  perCustomerCap: undefined,
+  stackable: true,
+  priority: 5,
 } as const satisfies PromoProgram;
 
 async function resetData(): Promise<void> {
@@ -110,7 +169,7 @@ async function jsonRequest(
 describe('integration-ready runtime', () => {
   beforeEach(resetData);
 
-  test('define → publish → customer → promo → evaluate → redeem', async () => {
+  test('proves tiered rewards, selected-rule integrity, and program-wide exhaustion', async () => {
     for (const definition of [customerTierDefinition, contextChannelDefinition]) {
       const response = await jsonRequest('POST', '/v1/schema/definitions', definition);
       expect(response.status).toBe(201);
@@ -139,41 +198,132 @@ describe('integration-ready runtime', () => {
       version: 1,
     });
 
-    const program = await jsonRequest('POST', '/v1/programs', goldWebPromo);
-    expect(program.status).toBe(201);
+    for (const promo of [tieredGoldWebPromo, noFallbackPromo]) {
+      const program = await jsonRequest('POST', '/v1/programs', promo);
+      expect(program.status).toBe(201);
+    }
 
-    const evaluationResponse = await jsonRequest('POST', '/v1/evaluate', {
+    const lowerEvaluationResponse = await jsonRequest('POST', '/v1/evaluate', {
       customerRef: 'customer-1',
       cart: { currency: 'GBP', subtotal: 6_500, items: [] },
       context: { channel: 'web' },
     }, 'publishable-test');
-    expect(evaluationResponse.status).toBe(200);
-    const evaluation = EvaluationResponseSchema.parse(await evaluationResponse.json());
-    expect(evaluation.decisions).toEqual([
+    expect(lowerEvaluationResponse.status).toBe(200);
+    const lowerEvaluation = EvaluationResponseSchema.parse(
+      await lowerEvaluationResponse.json(),
+    );
+    expect(lowerEvaluation).toMatchObject({
+      customerRef: 'customer-1',
+      customerVersion: 1,
+      schemaVersion: 1,
+    });
+    expect(lowerEvaluation.decisions).toEqual([
       expect.objectContaining({
-        programRef: goldWebPromo.id,
+        programRef: tieredGoldWebPromo.id,
         outcome: 'qualified',
-        rewardRuleRef: 'default-reward',
+        rewardRuleRef: 'under-100',
+        effects: [underHundredReward],
         eligible: true,
         commitRequired: true,
       }),
+      expect.objectContaining({
+        programRef: noFallbackPromo.id,
+        outcome: 'not_qualified',
+        effects: [],
+        reasonCodes: ['NO_REWARD_RULE_MATCHED'],
+        eligible: false,
+        commitRequired: false,
+      }),
     ]);
+    expect(lowerEvaluation.decisions[1]).not.toHaveProperty('rewardRuleRef');
+
+    const higherEvaluationResponse = await jsonRequest('POST', '/v1/evaluate', {
+      customerRef: 'customer-1',
+      cart: { currency: 'GBP', subtotal: 12_500, items: [] },
+      context: { channel: 'web' },
+    }, 'publishable-test');
+    expect(higherEvaluationResponse.status).toBe(200);
+    const higherEvaluation = EvaluationResponseSchema.parse(
+      await higherEvaluationResponse.json(),
+    );
+    expect(higherEvaluation).toMatchObject({
+      customerRef: 'customer-1',
+      customerVersion: 1,
+      schemaVersion: 1,
+    });
+    expect(higherEvaluation.decisions).toEqual([
+      expect.objectContaining({
+        programRef: tieredGoldWebPromo.id,
+        outcome: 'qualified',
+        rewardRuleRef: 'over-100',
+        effects: [overHundredReward],
+        eligible: true,
+        commitRequired: true,
+      }),
+      expect.objectContaining({
+        programRef: noFallbackPromo.id,
+        outcome: 'not_qualified',
+        effects: [],
+        reasonCodes: ['NO_REWARD_RULE_MATCHED'],
+      }),
+    ]);
+    expect(higherEvaluation.decisions[1]).not.toHaveProperty('rewardRuleRef');
 
     const redemptionResponse = await jsonRequest('POST', '/v1/redemptions', {
-      evaluationId: evaluation.evaluationId,
-      programRef: goldWebPromo.id,
+      evaluationId: lowerEvaluation.evaluationId,
+      programRef: tieredGoldWebPromo.id,
       externalOrderRef: 'order-1',
       idempotencyKey: 'checkout-attempt-1',
     });
     expect(redemptionResponse.status).toBe(200);
     const redemption = RedemptionResponseSchema.parse(await redemptionResponse.json());
     expect(redemption).toMatchObject({
-      evaluationId: evaluation.evaluationId,
-      programRef: goldWebPromo.id,
-      rewardRuleRef: 'default-reward',
+      evaluationId: lowerEvaluation.evaluationId,
+      programRef: tieredGoldWebPromo.id,
+      rewardRuleRef: 'under-100',
       externalOrderRef: 'order-1',
       idempotencyKey: 'checkout-attempt-1',
       status: 'committed',
+      effects: [underHundredReward],
+    });
+
+    const retryResponse = await jsonRequest('POST', '/v1/redemptions', {
+      evaluationId: lowerEvaluation.evaluationId,
+      programRef: tieredGoldWebPromo.id,
+      externalOrderRef: 'order-1',
+      idempotencyKey: 'checkout-attempt-1',
+    });
+    expect(retryResponse.status).toBe(200);
+    expect(RedemptionResponseSchema.parse(await retryResponse.json())).toEqual(redemption);
+
+    expect(await env.DB.prepare(`
+      SELECT usage_count, budget_remaining
+      FROM programs WHERE external_ref = ?1
+    `).bind(tieredGoldWebPromo.id).first()).toEqual({
+      usage_count: 1,
+      budget_remaining: 1_000,
+    });
+
+    const exhaustedResponse = await jsonRequest('POST', '/v1/evaluate', {
+      customerRef: 'customer-1',
+      cart: { currency: 'GBP', subtotal: 12_500, items: [] },
+      context: { channel: 'web' },
+    }, 'publishable-test');
+    expect(exhaustedResponse.status).toBe(200);
+    const exhausted = EvaluationResponseSchema.parse(await exhaustedResponse.json());
+    expect(exhausted).toMatchObject({ customerVersion: 1, schemaVersion: 1 });
+    expect(exhausted.decisions[0]).toMatchObject({
+      programRef: tieredGoldWebPromo.id,
+      outcome: 'exhausted',
+      rewardRuleRef: 'over-100',
+      effects: [],
+      reasonCodes: [
+        'USAGE_CAP_EXHAUSTED',
+        'PER_CUSTOMER_CAP_EXHAUSTED',
+        'BUDGET_EXHAUSTED',
+      ],
+      eligible: false,
+      commitRequired: false,
     });
   });
 

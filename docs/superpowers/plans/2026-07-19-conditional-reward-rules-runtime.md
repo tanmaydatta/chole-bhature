@@ -4,7 +4,7 @@
 
 **Goal:** Replace Promo's single reward with deterministic ordered conditional rewards, expose reusable validated configuration contracts for Affiliate, Referral, and Loyalty, and carry the selected rule identity safely through evaluation and redemption.
 
-**Status:** Ready for execution after planning review.
+**Status:** Repository runtime implemented and locally verified; Notion synchronization pending.
 
 **Architecture:** Shared contract factories define ordered rules independently of reward payloads; each module exports a concrete strict schema. Only Promo is connected to persistence and runtime execution. Promo evaluates global eligibility once, selects the first matching rule or fallback, and signs `rewardRuleRef` with the selected effect. Configuration, evaluation, and redemption each independently fail closed on invalid or mismatched rule state.
 
@@ -16,7 +16,13 @@
 
 **Notion mirror:** https://app.notion.com/p/Conditional-Reward-Rules-Contracts-and-Promo-Runtime-Implementation-Plan-3a2e5c7c2b8e81448f05c2db9a00fe60
 
-**Mirror state:** Repository and Notion copies synchronized on 2026-07-19.
+**Mirror state:** Repository execution status updated on 2026-07-19; Notion write and read-back verification are pending.
+
+**Implementation evidence:** Tasks 1–8 are linked by commits `4dac7e9`, `d9b4d17`,
+`a2780c9`, `944c4ef`, and `8209828`. Task 9 repository/runtime proof is provided by
+`apps/api/test/full-flow.test.ts`, the isolated-D1 commands in
+`docs/integration/runtime-api.md`, and the verification record below. The Operator UI
+plan remains the next delivery and does not widen this runtime.
 
 ## Global constraints
 
@@ -144,7 +150,7 @@ docs/integration/runtime-api.md                         live Promo evaluation/re
 - `reward-rules.ts` exports `CommerceRewardSchema`, concrete rule/fallback schemas used by module schemas, generic TypeScript interfaces, and module reward payload schemas.
 - `programs.ts` re-exports or imports conditions without changing condition JSON.
 
-- [ ] **Step 1: Write failing shared-rule schema tests**
+- [x] **Step 1: Write failing shared-rule schema tests**
 
 Add tests that prove:
 
@@ -169,7 +175,7 @@ test('preserves authoritative rule order and rejects a duplicate fallback id', (
 });
 ```
 
-- [ ] **Step 2: Run the test and confirm missing exports**
+- [x] **Step 2: Run the test and confirm missing exports**
 
 Run:
 
@@ -179,11 +185,11 @@ pnpm --filter @incentives/contracts test -- contracts.test.ts
 
 Expected: FAIL because `PromoConditionalRewardsSchema`, `RewardRule`, and `CommerceRewardSchema` do not exist.
 
-- [ ] **Step 3: Move condition schemas without changing behavior**
+- [x] **Step 3: Move condition schemas without changing behavior**
 
 Move `ConditionOperatorSchema`, `ConditionValueSchema`, `ConditionSchema`, `ConditionGroupSchema`, and their inferred types verbatim into `conditions.ts`. Update imports and package exports. Run the existing contracts, engine, Promo, and API tests before adding rule behavior; they must remain green.
 
-- [ ] **Step 4: Implement the shared schema factory and concrete Promo instance**
+- [x] **Step 4: Implement the shared schema factory and concrete Promo instance**
 
 Use one internal factory so identity/non-empty validation cannot drift between modules:
 
@@ -218,7 +224,7 @@ export const PromoConditionalRewardsSchema =
 
 The factory also exposes concrete `PromoRewardRuleSchema` and `PromoFallbackRewardSchema` instances for composition into `PromoProgramSchema`; the complete `PromoConditionalRewardsSchema` owns the cross-field presence/identity refinement. `NonEmptyConditionGroupSchema` must count leaves in both `conditions` and `groups[].conditions`; it must not reject an empty global eligibility group.
 
-- [ ] **Step 5: Verify and commit shared primitives**
+- [x] **Step 5: Verify and commit shared primitives**
 
 Run:
 
@@ -294,7 +300,7 @@ interface LoyaltyProgram extends ConditionalRewards<WalletAccrual> {
 
 These schemas describe configuration only. Do not add them to `ProgramListResponseSchema`, repositories, routes, or runtime module registration.
 
-- [ ] **Step 1: Write failing module-contract tests**
+- [x] **Step 1: Write failing module-contract tests**
 
 Cover:
 
@@ -334,13 +340,13 @@ test('accepts a loyalty asset with client-defined terminology', () => {
 });
 ```
 
-- [ ] **Step 2: Run and confirm missing concrete schemas**
+- [x] **Step 2: Run and confirm missing concrete schemas**
 
 Run `pnpm --filter @incentives/contracts test -- future-programs.test.ts`.
 
 Expected: FAIL because the three program schemas and module reward schemas are absent.
 
-- [ ] **Step 3: Implement module reward payload schemas**
+- [x] **Step 3: Implement module reward payload schemas**
 
 Use strict discriminated unions, positive safe integers, and bundle `.superRefine()` checks. The per-unit arithmetic contract is represented exactly; runtime accrual calculation remains deferred:
 
@@ -368,13 +374,13 @@ export const WalletAccrualSchema = z.discriminatedUnion('calculation', [
 ]);
 ```
 
-- [ ] **Step 4: Implement and export the three strict program schemas**
+- [x] **Step 4: Implement and export the three strict program schemas**
 
 Share schedule/cap refinements where practical, but export only concrete public schemas and inferred types. Attach OpenAPI descriptions saying “Future configuration contract; no runtime routes” so component generation cannot imply operational support.
 
 The schema can validate the `sourceVariable` namespace but cannot resolve a merchant's published registry by itself. Document numeric-definition resolution as a required contextual validation for the future Loyalty configuration service; do not imply the current Promo API performs it.
 
-- [ ] **Step 5: Prove runtime isolation and commit**
+- [x] **Step 5: Prove runtime isolation and commit**
 
 Add a test asserting `ProgramListResponseSchema` rejects an Affiliate/Referral/Loyalty entry. Run contracts build/test and API typecheck/test.
 
@@ -417,7 +423,7 @@ Apply the shared presence/unique-ID refinement to the completed manual/automatic
 
 `IncentiveDecisionSchema` and both branches of `RedemptionResponseSchema` add `rewardRuleRef: z.string().min(1).optional()`.
 
-- [ ] **Step 1: Write failing clean-break and response tests**
+- [x] **Step 1: Write failing clean-break and response tests**
 
 Assert:
 
@@ -428,11 +434,11 @@ Assert:
 - empty `rewardRuleRef` fails;
 - ordinary non-qualified shared decisions remain valid without the optional field.
 
-- [ ] **Step 2: Run and observe failures at the old contract**
+- [x] **Step 2: Run and observe failures at the old contract**
 
 Run contracts tests. Expected: new payload fails and old payload still succeeds.
 
-- [ ] **Step 3: Replace the Promo field and update canonical fixtures**
+- [x] **Step 3: Replace the Promo field and update canonical fixtures**
 
 Remove the top-level `reward` schema/type. Prefer `CommerceReward` naming; do not retain a legacy input alias. Mechanically update test factories to one default rule:
 
@@ -455,11 +461,11 @@ rewardRules: [{
 
 Use an explicit fallback where a fixture truly means unconditional reward; never invent an empty conditional group.
 
-- [ ] **Step 4: Add selected-rule fields to shared outputs**
+- [x] **Step 4: Add selected-rule fields to shared outputs**
 
 Update schema tests and conformance fixtures. Because the field is optional, existing non-Promo connector decisions remain source-compatible.
 
-- [ ] **Step 5: Audit the clean break and commit**
+- [x] **Step 5: Audit the clean break and commit**
 
 Run:
 
@@ -485,7 +491,7 @@ git commit -m "feat: replace promo reward with ordered rules"
 
 **Behavior order:** lifecycle → manual code → global eligibility → ordered reward rules → fallback → no-match.
 
-- [ ] **Step 1: Write failing module tests**
+- [x] **Step 1: Write failing module tests**
 
 Cover:
 
@@ -508,13 +514,13 @@ expect(await evaluate(over150Cart, [over100, over50])).toMatchObject([{
 }]);
 ```
 
-- [ ] **Step 2: Run focused tests and confirm selection is absent**
+- [x] **Step 2: Run focused tests and confirm selection is absent**
 
 Run `pnpm --filter @incentives/promo test -- promo-module.test.ts`.
 
 Expected: FAIL because implementation still assumes one reward.
 
-- [ ] **Step 3: Implement one-pass ordered selection**
+- [x] **Step 3: Implement one-pass ordered selection**
 
 ```ts
 function selectReward(
@@ -537,11 +543,11 @@ function selectReward(
 
 Return `NO_REWARD_RULE_MATCHED` when `selectReward()` returns `null`; do not expose an arbitrary failed rule's condition message.
 
-- [ ] **Step 4: Verify module and downstream types**
+- [x] **Step 4: Verify module and downstream types**
 
 Run Promo tests/build, module-kit tests/build, then API build. Expected: all exit `0`.
 
-- [ ] **Step 5: Commit selection behavior**
+- [x] **Step 5: Commit selection behavior**
 
 ```bash
 git add packages/modules/promo
@@ -559,7 +565,7 @@ git commit -m "feat: select promo rewards by ordered conditions"
 
 **Interfaces:** `POST/PATCH /v1/programs` still parse `PromoProgramSchema` and return field-aware validation failures through the existing error boundary.
 
-- [ ] **Step 1: Write failing Program API tests**
+- [x] **Step 1: Write failing Program API tests**
 
 Cover:
 
@@ -575,13 +581,13 @@ Cover:
 - PATCH of a draft can reorder rules while keeping IDs, while non-draft edit remains blocked;
 - old top-level `reward` gets a 400 response.
 
-- [ ] **Step 2: Run focused tests and confirm only global conditions are inspected**
+- [x] **Step 2: Run focused tests and confirm only global conditions are inspected**
 
 Run `pnpm --filter @incentives/api test -- programs.test.ts repositories.test.ts`.
 
 Expected: FAIL on rule variables and multi-reward money validation.
 
-- [ ] **Step 3: Generalize condition traversal with paths**
+- [x] **Step 3: Generalize condition traversal with paths**
 
 Traverse global eligibility plus every rule condition group. Pass the structural prefix into `ContextValidationError`/Zod issue mapping so errors resolve to paths such as `rewardRules.1.conditions.conditions.0.value`; do not flatten away rule identity.
 
@@ -595,7 +601,7 @@ throw new ContextValidationError('The program failed validation', [{
 }]);
 ```
 
-- [ ] **Step 4: Validate the complete selectable reward set**
+- [x] **Step 4: Validate the complete selectable reward set**
 
 ```ts
 function selectableRewards(program: PromoProgram): CommerceReward[] {
@@ -608,11 +614,11 @@ function selectableRewards(program: PromoProgram): CommerceReward[] {
 
 Validate positive fixed amounts, at most one fixed commerce currency, budget currency, any-free-shipping budget exclusion, and existing caps. Percent rewards need no currency but remain bounded by their canonical schema.
 
-- [ ] **Step 5: Verify repository round-trip and no migration**
+- [x] **Step 5: Verify repository round-trip and no migration**
 
 In the real-D1 repository test, create a two-rule Promo plus fallback, read it back, and assert `['over-100', 'under-100']` order. Confirm `git diff -- apps/api/migrations apps/api/src/db/schema.ts` is empty.
 
-- [ ] **Step 6: Verify and commit configuration validation**
+- [x] **Step 6: Verify and commit configuration validation**
 
 Run API tests/build/lint and contracts tests, then:
 
@@ -632,7 +638,7 @@ git commit -m "feat: validate conditional promo configuration"
 - Modify: `apps/api/test/repositories.test.ts`
 - Modify: `packages/engine/src/stacking.test.ts` only if a qualified decision fixture must include a rule reference
 
-- [ ] **Step 1: Write failing evaluation tests**
+- [x] **Step 1: Write failing evaluation tests**
 
 Cover:
 
@@ -647,13 +653,13 @@ Cover:
 - the exact Promo configuration used for selection is embedded in the signed snapshot, and changing it in persisted `facts_json` invalidates the HMAC;
 - failed/unselected rules do not appear in the response or signed effects.
 
-- [ ] **Step 2: Run focused tests and confirm single-reward helpers fail**
+- [x] **Step 2: Run focused tests and confirm single-reward helpers fail**
 
 Run `pnpm --filter @incentives/api test -- evaluate.test.ts`.
 
 Expected: FAIL at `hasCurrencyMismatch(program.reward)`, selected-cost expectations, or missing rule references.
 
-- [ ] **Step 3: Move currency checks after rule selection**
+- [x] **Step 3: Move currency checks after rule selection**
 
 Evaluate Promo first, then inspect the qualified decision's selected effect and the program budget:
 
@@ -672,7 +678,7 @@ function selectedCurrencyMismatch(
 
 Transform only the selected decision to the existing currency-unavailable shape. Keep `projectedDiscountMinorUnits(decision.effects, cart)` unchanged so BigInt/floor behavior remains centralized.
 
-- [ ] **Step 4: Preserve selected identity through exhaustion and signing**
+- [x] **Step 4: Preserve selected identity through exhaustion and signing**
 
 Spreading an already selected decision may retain `rewardRuleRef` for `exhausted` because a rule was genuinely selected; ordinary lifecycle/code/global/no-match decisions must omit it. Verify `decisionSnapshot()` and `integrityPayload()` include the complete decision object without a special exclusion.
 
@@ -694,7 +700,7 @@ facts.programs.push({
 
 Update `FactsSchema` to parse `config` with `PromoProgramSchema`. Because `decisionSnapshot()` already includes `facts`, HMAC signing now covers the exact ordered rules, fallback, selected effects, rule reference, facts, and expiry without a table migration. Add repository corruption tests for malformed or tampered snapshotted configs.
 
-- [ ] **Step 5: Verify and commit evaluation behavior**
+- [x] **Step 5: Verify and commit evaluation behavior**
 
 Run API evaluation/full tests, engine tests, and API build/lint.
 
@@ -712,7 +718,7 @@ git commit -m "feat: evaluate selected promo reward safely"
 - Modify: `apps/api/test/redemptions.test.ts`
 - Modify: `apps/api/test/repositories.test.ts`
 
-- [ ] **Step 1: Write failing redemption and corruption tests**
+- [x] **Step 1: Write failing redemption and corruption tests**
 
 Cover:
 
@@ -733,13 +739,13 @@ expect(await redeem(evaluationId, 'spend-more')).toMatchObject({
 });
 ```
 
-- [ ] **Step 2: Run focused tests and confirm current comparison targets one top-level reward**
+- [x] **Step 2: Run focused tests and confirm current comparison targets one top-level reward**
 
 Run `pnpm --filter @incentives/api test -- redemptions.test.ts repositories.test.ts`.
 
 Expected: FAIL because redemption compares to `[program.program.reward]` and omits the rule reference.
 
-- [ ] **Step 3: Resolve the selected reward by stable ID**
+- [x] **Step 3: Resolve the selected reward by stable ID**
 
 ```ts
 function rewardByRef(program: PromoProgram, rewardRuleRef: string): CommerceReward {
@@ -762,11 +768,11 @@ Require `decision.rewardRuleRef` for a qualified Promo decision, compare canonic
 
 Resolve and validate the selected reward first against the signed `facts.programs[].config`, then against the current repository program. The snapshot proves what was evaluated; the current program supplies authoritative status/cap/budget state. Missing/duplicate snapshot entries, unknown IDs, or either effect mismatch fail closed. Do not re-run the rule's conditions.
 
-- [ ] **Step 4: Include the reference in response and retry integrity**
+- [x] **Step 4: Include the reference in response and retry integrity**
 
 Construct `RedemptionResponseSchema` with `rewardRuleRef: decision.rewardRuleRef`. `validateCommittedRedemption()` compares response rule reference and effects to the signed decision. Atomic repository commit continues to compare the full `expectedProgram` JSON, so reordered/changed configuration cannot slip through.
 
-- [ ] **Step 5: Verify and commit redemption behavior**
+- [x] **Step 5: Verify and commit redemption behavior**
 
 Run all redemption/repository/full-flow tests and API build/lint.
 
@@ -787,7 +793,7 @@ git commit -m "feat: commit selected promo reward rule"
 - Modify: `docs/integration/runtime-api.md`
 - Modify: `docs/integration/connector-conformance.md` only if a Promo decision example is present
 
-- [ ] **Step 1: Write failing OpenAPI/documentation-example tests**
+- [x] **Step 1: Write failing OpenAPI/documentation-example tests**
 
 Assert generated OpenAPI contains components for:
 
@@ -798,15 +804,15 @@ Assert generated OpenAPI contains components for:
 
 Add validated examples for a two-tier Promo, first-match response, fallback response, no-match response, and committed redemption.
 
-- [ ] **Step 2: Run and confirm stale generated schemas/examples**
+- [x] **Step 2: Run and confirm stale generated schemas/examples**
 
 Run contracts tests. Expected: FAIL because OpenAPI and documentation fixtures still describe one reward.
 
-- [ ] **Step 3: Register concrete components without widening live routes**
+- [x] **Step 3: Register concrete components without widening live routes**
 
 Register all four program components. Use future-schema descriptions/metadata, but keep `promoProgram` as the only schema passed to `POST /v1/programs`, `PATCH /v1/programs/{externalRef}`, and `ProgramListResponseSchema`.
 
-- [ ] **Step 4: Update client-facing docs**
+- [x] **Step 4: Update client-facing docs**
 
 Document:
 
@@ -821,7 +827,7 @@ Document:
 
 Every JSON example must be imported from or duplicated into a schema-validated fixture.
 
-- [ ] **Step 5: Verify and commit generated contract documentation**
+- [x] **Step 5: Verify and commit generated contract documentation**
 
 Run contracts test/build/lint and API OpenAPI route tests.
 
@@ -839,7 +845,7 @@ git commit -m "docs: publish conditional reward runtime contracts"
 - Modify: this plan's checkbox/status metadata during execution
 - Modify: Notion mirrors for the design, this runtime plan, the Operator UI plan, and changed integration docs
 
-- [ ] **Step 1: Write the failing real-D1 full-flow scenario**
+- [x] **Step 1: Write the real-D1 full-flow scenario**
 
 The test must:
 
@@ -852,17 +858,19 @@ The test must:
 7. prove program-wide usage/customer/budget exhaustion across different rules;
 8. assert no-match behavior in a second Promo without fallback.
 
-- [ ] **Step 2: Run the scenario and confirm the feature is not yet complete**
+- [x] **Step 2: Run the scenario and record the Task 9 baseline**
 
 Run `pnpm --filter @incentives/api test:full-flow`.
 
-Expected before implementation: FAIL on new Promo payload/selected rule assertions.
+The scenario passed immediately (`2/2`) because Tasks 3–7 had already implemented the
+runtime behavior. These assertions are coverage hardening, not evidence of a Task 9
+production behavior change.
 
-- [ ] **Step 3: Make only integration-level corrections**
+- [x] **Step 3: Make only integration-level corrections**
 
 Do not add new production behavior here. Correct fixture wiring or expose a missing already-designed field, then rerun focused suites if any production file changes.
 
-- [ ] **Step 4: Run the complete verification matrix**
+- [x] **Step 4: Run the complete verification matrix**
 
 ```bash
 pnpm install --frozen-lockfile
@@ -885,7 +893,13 @@ git diff --check
 
 Expected: every command exits `0` and `git diff --check` prints nothing.
 
-- [ ] **Step 5: Perform the clean-break/manual audit**
+Execution evidence on 2026-07-19: contracts `86`, engine `59`, module-kit `12`,
+connector-kit `41`, Promo `23`, and API `300` tests passed. `pnpm test` passed all
+`697` workspace tests; all focused/workspace builds, lints, `db:check`, frozen install,
+and `git diff --check` exited `0`. Workspace lint retained only the two pre-existing
+dashboard Fast Refresh warnings.
+
+- [x] **Step 5: Perform the clean-break/manual audit**
 
 Create an isolated local D1 state directory so old single-reward rows are never read:
 
@@ -899,11 +913,18 @@ Using the exact curl payloads added to `docs/integration/runtime-api.md`, create
 
 Run the stale-field audit from Task 3 again. Confirm no migration files changed and no future module appears in a live route.
 
-- [ ] **Step 6: Synchronize repository and Notion copies**
+Manual evidence on 2026-07-19: the unchanged `0001_core.sql` baseline applied to an
+isolated temporary D1 directory; both cart evaluations qualified under different rule
+references; the selected higher-tier decision committed; and an identical retry returned
+the same redemption identity and rule reference. The stale-field, migration, and runtime
+boundary audits passed. No credential or customer-attribute value was retained in this
+execution record.
+
+- [ ] **Step 6: Synchronize repository and Notion copies — controller follow-up pending**
 
 Update implementation status and exact verification evidence in repository docs. Mirror every changed document to its existing Notion page; create this plan's page under the Plans parent. Read each page back and verify it is not truncated and contains no unknown blocks.
 
-- [ ] **Step 7: Request review and commit the integration proof**
+- [x] **Step 7: Request review and commit the integration proof**
 
 Use `superpowers:requesting-code-review`, address verified findings, rerun affected gates, then:
 

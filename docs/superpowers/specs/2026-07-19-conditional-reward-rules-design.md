@@ -2,19 +2,26 @@
 
 **Date:** 2026-07-19
 
-**Status:** Approved for implementation planning
+**Status:** Runtime implemented and locally verified; Operator UI deferred
 
 **Purpose:** Let merchants configure different rewards for different typed conditions inside one program, with deterministic first-match selection and a reusable contract shared by Promo, Affiliate, Referral, and Loyalty.
 
 **Notion mirror:** https://app.notion.com/p/Conditional-Reward-Rules-Cross-Module-Design-Spec-3a2e5c7c2b8e812a95dcd669ffdb8671
 
-**Mirror state:** Repository and Notion copies synchronized on 2026-07-19.
+**Mirror state:** Repository implementation status updated on 2026-07-19; Notion write and read-back verification are pending.
 
 **Builds on:**
 
 - `docs/superpowers/specs/2026-07-18-integration-ready-incentives-core-design.md`
 - `docs/integration/core-contracts.md`
 - `docs/integration/runtime-api.md`
+
+**Implementation linkage:**
+
+- Runtime execution record: `docs/superpowers/plans/2026-07-19-conditional-reward-rules-runtime.md`
+- Real Worker/D1 acceptance proof: `apps/api/test/full-flow.test.ts`
+- Reproducible isolated-D1 walkthrough: `docs/integration/runtime-api.md#local-end-to-end-test`
+- Operator UI follow-on: `docs/superpowers/plans/2026-07-18-integration-ready-core-operator-ui.md`
 
 ---
 

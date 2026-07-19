@@ -370,29 +370,117 @@ Retry transport failures and retryable `503` responses. Do not automatically ret
 
 ## Local end-to-end test
 
-From the repository root:
+From the repository root, create a fresh isolated D1 state. This leaves any existing
+`apps/api/.wrangler/state` directory untouched:
 
 ```bash
 pnpm install --frozen-lockfile
-rm -rf apps/api/.wrangler/state/v3/d1
-pnpm --filter @incentives/api exec wrangler d1 migrations apply incentives-dev --local
-pnpm --filter @incentives/api dev --local \
+INCENTIVES_D1_STATE_DIR="$(mktemp -d)"
+pnpm --filter @incentives/api run build:dependencies
+pnpm --filter @incentives/api exec wrangler d1 migrations apply incentives-dev \
+  --local --persist-to "$INCENTIVES_D1_STATE_DIR"
+pnpm --filter @incentives/api exec wrangler dev \
+  --persist-to "$INCENTIVES_D1_STATE_DIR" \
   --var PUBLISHABLE_TOKEN:publishable-local \
   --var SECRET_TOKEN:secret-local-token \
   --var DECISION_SIGNING_SECRET:local-decision-signing-secret
 ```
 
-The conditional-reward migration is a clean break from earlier local D1 layouts. Before testing an old workspace, remove only the local `apps/api/.wrangler/state/v3/d1` directory as shown above, then reapply migrations. This does not touch remote D1 data; do not substitute `--remote`.
+The conditional-reward contract is a clean break from old single-reward program JSON.
+Apply the unchanged baseline migration to a fresh state directory as shown above; do not
+read old program rows, delete an existing Wrangler state directory, or substitute
+`--remote`.
 
-Use the port printed by Wrangler (normally `http://localhost:8787`). Fetch `http://localhost:8787/v1/openapi.json`, then execute the five sections above with `curl` or an API client. Keep `Authorization: Bearer secret-local-token` for configuration/customer/redemption calls and use `publishable-local` for the published-schema/evaluate calls.
+Use the port printed by Wrangler (normally `http://localhost:8787`). The following exact
+requests reproduce the tiered flow above. These tokens are local examples, not production
+credentials. The first four calls define and publish the two typed fields, then store the
+customer once:
 
-The `dev` lifecycle builds the API's internal workspace dependencies first, so this command works from a clean checkout without pre-existing `dist/` directories. The automated acceptance path likewise builds those dependencies and then runs real Hono handlers against isolated workerd+D1 storage:
+```bash
+INCENTIVES_API_URL="http://localhost:8787"
+
+curl --fail-with-body --silent --request POST \
+  "$INCENTIVES_API_URL/v1/schema/definitions" \
+  --header 'Authorization: Bearer secret-local-token' \
+  --header 'Content-Type: application/json' \
+  --data '{"key":"customer.tier","label":"Customer tier","source":"customer","type":"enum","required":true,"enumValues":["bronze","silver","gold"]}'
+
+curl --fail-with-body --silent --request POST \
+  "$INCENTIVES_API_URL/v1/schema/definitions" \
+  --header 'Authorization: Bearer secret-local-token' \
+  --header 'Content-Type: application/json' \
+  --data '{"key":"context.channel","label":"Sales channel","source":"context","type":"enum","required":true,"enumValues":["web","mobile"]}'
+
+curl --fail-with-body --silent --request POST \
+  "$INCENTIVES_API_URL/v1/schema/publish" \
+  --header 'Authorization: Bearer secret-local-token'
+
+curl --fail-with-body --silent --request PATCH \
+  "$INCENTIVES_API_URL/v1/customers/customer-123" \
+  --header 'Authorization: Bearer secret-local-token' \
+  --header 'Content-Type: application/json' \
+  --data '{"attributes":{"tier":"gold"}}'
+```
+
+Create the schema-validated tiered Promo from section 3:
+
+```bash
+curl --fail-with-body --silent --request POST \
+  "$INCENTIVES_API_URL/v1/programs" \
+  --header 'Authorization: Bearer secret-local-token' \
+  --header 'Content-Type: application/json' \
+  --data '{"id":"gold-web-rewards","type":"promo","name":"Gold web rewards","status":"active","eligibility":{"match":"ALL","conditions":[{"id":"gold-tier","variable":"customer.tier","operator":"eq","value":"gold"},{"id":"web-channel","variable":"context.channel","operator":"eq","value":"web"}]},"rewardRules":[{"id":"large-cart-20-percent","name":"Twenty percent off large carts","conditions":{"match":"ALL","conditions":[{"id":"cart-at-least-100","variable":"cart.subtotal","operator":"gte","value":10000}]},"reward":{"type":"order_discount","calculation":"percent","basisPoints":2000}},{"id":"medium-cart-10-off","name":"Ten pounds off medium carts","conditions":{"match":"ALL","conditions":[{"id":"cart-at-least-50","variable":"cart.subtotal","operator":"gte","value":5000}]},"reward":{"type":"order_discount","calculation":"fixed","amount":{"currency":"GBP","minorUnits":1000}}}],"fallbackReward":{"id":"fallback-5-off","name":"Fallback five pounds off","reward":{"type":"order_discount","calculation":"fixed","amount":{"currency":"GBP","minorUnits":500}}},"budget":{"currency":"GBP","minorUnits":100000},"usageCap":100,"perCustomerCap":1,"stackable":false,"priority":10,"autoApply":true}'
+```
+
+Evaluate both sides of the threshold. Neither evaluation resends customer attributes:
+
+```bash
+curl --fail-with-body --silent --request POST \
+  "$INCENTIVES_API_URL/v1/evaluate" \
+  --header 'Authorization: Bearer publishable-local' \
+  --header 'Content-Type: application/json' \
+  --data '{"customerRef":"customer-123","cart":{"currency":"GBP","subtotal":7500,"items":[]},"context":{"channel":"web"}}'
+
+HIGH_EVALUATION="$(curl --fail-with-body --silent --request POST \
+  "$INCENTIVES_API_URL/v1/evaluate" \
+  --header 'Authorization: Bearer publishable-local' \
+  --header 'Content-Type: application/json' \
+  --data '{"customerRef":"customer-123","cart":{"currency":"GBP","subtotal":12500,"items":[]},"context":{"channel":"web"}}')"
+HIGH_EVALUATION_ID="$(node -e \
+  'process.stdout.write(JSON.parse(process.argv[1]).evaluationId)' \
+  "$HIGH_EVALUATION")"
+```
+
+Commit the higher-tier decision before capture, then retry the identical request. Both
+responses must contain the same `redemptionId` and `rewardRuleRef`:
+
+```bash
+curl --fail-with-body --silent --request POST \
+  "$INCENTIVES_API_URL/v1/redemptions" \
+  --header 'Authorization: Bearer secret-local-token' \
+  --header 'Content-Type: application/json' \
+  --data "{\"evaluationId\":\"$HIGH_EVALUATION_ID\",\"programRef\":\"gold-web-rewards\",\"externalOrderRef\":\"manual-order-1\",\"idempotencyKey\":\"manual-checkout-1\"}"
+
+curl --fail-with-body --silent --request POST \
+  "$INCENTIVES_API_URL/v1/redemptions" \
+  --header 'Authorization: Bearer secret-local-token' \
+  --header 'Content-Type: application/json' \
+  --data "{\"evaluationId\":\"$HIGH_EVALUATION_ID\",\"programRef\":\"gold-web-rewards\",\"externalOrderRef\":\"manual-order-1\",\"idempotencyKey\":\"manual-checkout-1\"}"
+```
+
+The explicit dependency build makes this sequence work from a clean checkout without
+pre-existing `dist/` directories. The automated acceptance path likewise builds those
+dependencies and then runs real Hono handlers against isolated workerd+D1 storage:
 
 ```bash
 pnpm --filter @incentives/api test:full-flow
 ```
 
-That test creates definitions, publishes them, stores a customer, creates a Promo, receives a qualified decision, and commits a redemption with `status: "committed"`. Run the complete workspace gate before integration changes are merged:
+That test creates definitions, publishes them, stores a customer once, creates ordered
+tiered and no-fallback Promos, evaluates both cart thresholds without customer-attribute
+overrides, retries a committed redemption idempotently, and proves program-wide cap and
+budget exhaustion across selected rules. Run the complete workspace gate before
+integration changes are merged:
 
 ```bash
 pnpm -r test
