@@ -258,7 +258,7 @@ From the repository root:
 ```bash
 pnpm install --frozen-lockfile
 pnpm --filter @incentives/api exec wrangler d1 migrations apply incentives-dev --local
-pnpm --filter @incentives/api exec wrangler dev --local \
+pnpm --filter @incentives/api dev --local \
   --var PUBLISHABLE_TOKEN:publishable-local \
   --var SECRET_TOKEN:secret-local-token \
   --var DECISION_SIGNING_SECRET:local-decision-signing-secret
@@ -266,16 +266,17 @@ pnpm --filter @incentives/api exec wrangler dev --local \
 
 Use the port printed by Wrangler (normally `http://localhost:8787`). Fetch `http://localhost:8787/v1/openapi.json`, then execute the five sections above with `curl` or an API client. Keep `Authorization: Bearer secret-local-token` for configuration/customer/redemption calls and use `publishable-local` for the published-schema/evaluate calls.
 
-The automated acceptance path runs real Hono handlers against isolated workerd+D1 storage:
+The `dev` lifecycle builds the API's internal workspace dependencies first, so this command works from a clean checkout without pre-existing `dist/` directories. The automated acceptance path likewise builds those dependencies and then runs real Hono handlers against isolated workerd+D1 storage:
 
 ```bash
-pnpm --filter @incentives/api exec vitest run test/full-flow.test.ts
+pnpm --filter @incentives/api test:full-flow
 ```
 
 That test creates definitions, publishes them, stores a customer, creates a Promo, receives a qualified decision, and commits a redemption with `status: "committed"`. Run the complete workspace gate before integration changes are merged:
 
 ```bash
 pnpm -r test
+pnpm --filter @incentives/api db:check
 pnpm -r build
 pnpm -r lint
 git diff --check

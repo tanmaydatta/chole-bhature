@@ -6,10 +6,16 @@
   "exports": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "scripts": {
+    "build:dependencies": "pnpm --filter @incentives/contracts --filter @incentives/engine --filter @incentives/module-kit --filter @incentives/promo build",
+    "prebuild": "pnpm run build:dependencies",
     "build": "tsc -p tsconfig.json",
     "db:check": "drizzle-kit check",
-    "pretest": "pnpm --filter @incentives/contracts --filter @incentives/engine --filter @incentives/module-kit --filter @incentives/promo build",
+    "predev": "pnpm run build:dependencies",
+    "dev": "wrangler dev",
+    "pretest": "pnpm run build:dependencies",
     "test": "vitest run",
+    "pretest:full-flow": "pnpm run build:dependencies",
+    "test:full-flow": "vitest run test/full-flow.test.ts",
     "lint": "oxlint src"
   },
   "devDependencies": {

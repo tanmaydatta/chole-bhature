@@ -226,6 +226,54 @@ describe('customer profile API', () => {
     expect((await customerRequest('GET', 'concurrent')).status).toBe(200);
   });
 
+  test('allows exactly one concurrent initial write and persists the returned winner', async () => {
+    const candidates = [
+      { ...validAttributes, note: 'first initial writer' },
+      { ...validAttributes, note: 'second initial writer' },
+    ];
+    const writes = await Promise.all(candidates.map(attributes => (
+      customerRequest('PATCH', 'initial-race', 'secret-test', { attributes })
+    )));
+    expect(writes.map(response => response.status).sort()).toEqual([200, 409]);
+    const success = writes.find(response => response.status === 200)!;
+    const winner = await success.json() as CustomerRecord;
+    await expectError(writes.find(response => response.status === 409)!, 409, 'VERSION_CONFLICT');
+
+    expect(winner.version).toBe(1);
+    expect(candidates).toContainEqual(winner.attributes);
+    expect(await (await customerRequest('GET', 'initial-race')).json()).toEqual(winner);
+  });
+
+  test('validates customer writes against published definitions when a newer draft exists', async () => {
+    const repositories = createRepositories({ DB: env.DB });
+    const draft = await repositories.schemas.createNextDraft(SEEDED_MERCHANT_ID);
+    const draftDefinitions = await repositories.schemas.listDefinitions(
+      SEEDED_MERCHANT_ID,
+      draft.version,
+    );
+    const tier = draftDefinitions.find(record => record.definition.key === 'customer.tier')!;
+    const { enumValues: _enumValues, ...tierWithoutEnum } = tier.definition;
+    await repositories.schemas.updateDraftDefinition(
+      SEEDED_MERCHANT_ID,
+      tier.id,
+      draft.version,
+      { ...tierWithoutEnum, type: 'string' },
+      draft.definitions,
+    );
+
+    const stored = await patchCustomer('published-over-draft', { attributes: validAttributes });
+    expect(stored.attributes).toEqual(validAttributes);
+  });
+
+  test('round-trips an encoded opaque customer reference', async () => {
+    const externalRef = 'customer/one #1?';
+    const encoded = encodeURIComponent(externalRef);
+    const stored = await patchCustomer(encoded, { attributes: validAttributes });
+
+    expect(stored.externalRef).toBe(externalRef);
+    expect(await (await customerRequest('GET', encoded)).json()).toEqual(stored);
+  });
+
   test('does not expose a customer from another merchant', async () => {
     const otherMerchant = 'other-customer-merchant';
     await env.DB.prepare(

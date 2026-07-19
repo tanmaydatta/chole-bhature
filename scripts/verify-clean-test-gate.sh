@@ -46,7 +46,8 @@ for consumer in \
   @incentives/connector-kit \
   @incentives/module-kit \
   @incentives/promo \
-  @incentives/dashboard
+  @incentives/dashboard \
+  @incentives/api
 do
   reset_dist
   pnpm --filter "$consumer" test
