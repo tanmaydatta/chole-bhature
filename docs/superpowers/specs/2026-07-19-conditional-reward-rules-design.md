@@ -8,7 +8,7 @@
 
 **Notion mirror:** https://app.notion.com/p/Conditional-Reward-Rules-Cross-Module-Design-Spec-3a2e5c7c2b8e812a95dcd669ffdb8671
 
-**Mirror state:** Repository implementation status updated on 2026-07-19; Notion write and read-back verification are pending.
+**Mirror state:** Repository and Notion copies synchronized and read back successfully on 2026-07-19.
 
 **Builds on:**
 

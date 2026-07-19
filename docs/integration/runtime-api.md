@@ -2,7 +2,7 @@
 
 **Notion mirror:** https://app.notion.com/p/Integration-Runtime-API-3a2e5c7c2b8e812f889eeddd2d56ef70
 
-**Mirror state:** Repository copy updated on 2026-07-19; Notion synchronization is deferred.
+**Mirror state:** Repository and Notion copies synchronized and read back successfully on 2026-07-19.
 
 This is the platform-neutral HTTP boundary for the first client integration. A custom checkout, a manual backend integration, and a future Shopify adapter all follow the same sequence: define typed fields, store customer attributes, configure a Promo program, evaluate a cart, apply the selected effects, and commit the selected decision before payment capture.
 

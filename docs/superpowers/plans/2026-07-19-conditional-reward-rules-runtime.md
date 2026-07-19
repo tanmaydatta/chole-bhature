@@ -4,7 +4,7 @@
 
 **Goal:** Replace Promo's single reward with deterministic ordered conditional rewards, expose reusable validated configuration contracts for Affiliate, Referral, and Loyalty, and carry the selected rule identity safely through evaluation and redemption.
 
-**Status:** Repository runtime implemented and locally verified; Notion synchronization pending.
+**Status:** Runtime implemented, verified, and synchronized; Operator UI deferred.
 
 **Architecture:** Shared contract factories define ordered rules independently of reward payloads; each module exports a concrete strict schema. Only Promo is connected to persistence and runtime execution. Promo evaluates global eligibility once, selects the first matching rule or fallback, and signs `rewardRuleRef` with the selected effect. Configuration, evaluation, and redemption each independently fail closed on invalid or mismatched rule state.
 
@@ -16,7 +16,7 @@
 
 **Notion mirror:** https://app.notion.com/p/Conditional-Reward-Rules-Contracts-and-Promo-Runtime-Implementation-Plan-3a2e5c7c2b8e81448f05c2db9a00fe60
 
-**Mirror state:** Repository execution status updated on 2026-07-19; Notion write and read-back verification are pending.
+**Mirror state:** Repository and Notion copies synchronized and read back successfully on 2026-07-19.
 
 **Implementation evidence:** Tasks 1–8 are linked by commits `4dac7e9`, `d9b4d17`,
 `a2780c9`, `944c4ef`, and `8209828`. Task 9 repository/runtime proof is provided by
@@ -920,9 +920,9 @@ the same redemption identity and rule reference. The stale-field, migration, and
 boundary audits passed. No credential or customer-attribute value was retained in this
 execution record.
 
-- [ ] **Step 6: Synchronize repository and Notion copies — controller follow-up pending**
+- [x] **Step 6: Synchronize repository and Notion copies**
 
-Update implementation status and exact verification evidence in repository docs. Mirror every changed document to its existing Notion page; create this plan's page under the Plans parent. Read each page back and verify it is not truncated and contains no unknown blocks.
+Implementation status and exact verification evidence are recorded in repository docs. Every changed document was mirrored to its existing Notion page, then read back with `truncated: false` and no unknown blocks.
 
 - [x] **Step 7: Request review and commit the integration proof**
 

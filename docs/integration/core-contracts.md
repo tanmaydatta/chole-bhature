@@ -2,7 +2,7 @@
 
 **Notion mirror:** https://app.notion.com/p/Integration-Ready-Core-Contracts-3a1e5c7c2b8e81e4afe0ef82709f8d13
 
-**Mirror state:** Repository copy updated on 2026-07-19; Notion synchronization is deferred.
+**Mirror state:** Repository and Notion copies synchronized and read back successfully on 2026-07-19.
 
 The foundation exposes platform-neutral TypeScript and Zod contracts for typed data, evaluation, decisions, modules, and connectors. It is deliberately independent of Shopify, a custom checkout, HTTP framework, database, and UI.
 
