@@ -94,4 +94,11 @@ describe('production operator contracts', () => {
       metadata: { request: { cart: canonicalEvaluationRequest.cart } },
     }).success).toBe(false);
   });
+
+  test('rejects a revision whose configuration belongs to another program', () => {
+    expect(ProgramRevisionSchema.safeParse({
+      ...canonicalProgramRevision,
+      programRef: 'another-program',
+    }).success).toBe(false);
+  });
 });

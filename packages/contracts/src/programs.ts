@@ -67,6 +67,13 @@ export const ProgramRevisionSchema = z.object({
   publishedAt: z.iso.datetime({ offset: true }).optional(),
   publishedBy: z.string().min(1).optional(),
 }).strict().superRefine((revision, context) => {
+  if (revision.configuration.id !== revision.programRef) {
+    context.addIssue({
+      code: 'custom',
+      path: ['configuration', 'id'],
+      message: 'configuration id must match programRef',
+    });
+  }
   if ((revision.publishedAt === undefined) === (revision.publishedBy === undefined)) return;
   context.addIssue({
     code: 'custom',
