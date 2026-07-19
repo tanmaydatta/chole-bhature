@@ -1,4 +1,5 @@
 import type {
+  CommerceReward,
   Condition,
   Effect,
   PromoProgram,
@@ -77,11 +78,28 @@ function resolvedFirstFailureMessage(
   return resolveFailureMessage(condition, definition);
 }
 
-function copyReward(reward: PromoProgram['reward']): Effect {
+function copyReward(reward: CommerceReward): Effect {
   if ('amount' in reward) {
     return { ...reward, amount: { ...reward.amount } };
   }
   return { ...reward };
+}
+
+function selectReward(
+  context: ModuleEvaluationContext,
+  config: PromoProgram,
+): { rewardRuleRef: string; reward: CommerceReward } | null {
+  for (const rule of config.rewardRules) {
+    if (evaluateConditionGroup(rule.conditions, context.definitions, context.facts).passed) {
+      return { rewardRuleRef: rule.id, reward: rule.reward };
+    }
+  }
+  return config.fallbackReward === undefined
+    ? null
+    : {
+      rewardRuleRef: config.fallbackReward.id,
+      reward: config.fallbackReward.reward,
+    };
 }
 
 export const PromoModule: IncentiveModule<PromoProgram> = {
@@ -125,10 +143,23 @@ export const PromoModule: IncentiveModule<PromoProgram> = {
       }];
     }
 
+    const selected = selectReward(context, config);
+    if (selected === null) {
+      return [{
+        ...baseDecision(config),
+        outcome: 'not_qualified',
+        effects: [],
+        reasonCodes: ['NO_REWARD_RULE_MATCHED'],
+        commitRequired: false,
+        eligible: false,
+      }];
+    }
+
     return [{
       ...baseDecision(config),
       outcome: 'qualified',
-      effects: [copyReward(config.reward)],
+      rewardRuleRef: selected.rewardRuleRef,
+      effects: [copyReward(selected.reward)],
       reasonCodes: [],
       commitRequired: true,
       eligible: true,

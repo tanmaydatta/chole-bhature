@@ -31,6 +31,23 @@ const merchantDefinitions = [
   },
 ] as const satisfies readonly VariableDefinition[];
 
+function rewardRule(reward: unknown, id = 'default-reward') {
+  return {
+    id,
+    name: id === 'default-reward' ? 'Default reward' : id,
+    conditions: {
+      match: 'ALL' as const,
+      conditions: [{
+        id: `${id}-positive-cart`,
+        variable: 'cart.subtotal',
+        operator: 'gte' as const,
+        value: 0,
+      }],
+    },
+    reward,
+  };
+}
+
 function promo(
   id: string,
   overrides: Partial<PromoProgram> = {},
@@ -49,11 +66,11 @@ function promo(
         value: 'gold',
       }],
     },
-    reward: {
+    rewardRules: [rewardRule({
       type: 'order_discount',
       calculation: 'fixed',
       amount: { currency: 'GBP', minorUnits: 1_000 },
-    },
+    })],
     budget: { currency: 'GBP', minorUnits: 10_000 },
     usageCap: 100,
     perCustomerCap: 1,
@@ -207,7 +224,12 @@ describe('Promo program API', () => {
       name: 'Replacement without limits',
       status: 'draft',
       eligibility: created.eligibility,
-      reward: { type: 'free_shipping' },
+      rewardRules: [],
+      fallbackReward: {
+        id: 'shipping',
+        name: 'Shipping',
+        reward: { type: 'free_shipping' },
+      },
       stackable: false,
       priority: 2,
       autoApply: true,
@@ -226,7 +248,7 @@ describe('Promo program API', () => {
     const created = await createProgram(promo('shipping-budget-update'));
     const replacement: PromoProgram = {
       ...created,
-      reward: { type: 'free_shipping' },
+      rewardRules: [rewardRule({ type: 'free_shipping' })],
     };
 
     await expectError(
@@ -289,12 +311,12 @@ describe('Promo program API', () => {
   });
 
   test.each([
-    ['unknown reward', { reward: { type: 'wallet_credit', amount: { currency: 'GBP', minorUnits: 100 } } }],
-    ['negative fixed reward', { reward: { type: 'order_discount', calculation: 'fixed', amount: { currency: 'GBP', minorUnits: -1 } } }],
-    ['excess percent reward', { reward: { type: 'order_discount', calculation: 'percent', basisPoints: 10_001 } }],
-    ['lowercase currency', { reward: { type: 'order_discount', calculation: 'fixed', amount: { currency: 'gbp', minorUnits: 100 } } }],
+    ['unknown reward', { rewardRules: [rewardRule({ type: 'wallet_credit', amount: { currency: 'GBP', minorUnits: 100 } })] }],
+    ['negative fixed reward', { rewardRules: [rewardRule({ type: 'order_discount', calculation: 'fixed', amount: { currency: 'GBP', minorUnits: -1 } })] }],
+    ['excess percent reward', { rewardRules: [rewardRule({ type: 'order_discount', calculation: 'percent', basisPoints: 10_001 })] }],
+    ['lowercase currency', { rewardRules: [rewardRule({ type: 'order_discount', calculation: 'fixed', amount: { currency: 'gbp', minorUnits: 100 } })] }],
     ['reward and budget currency mismatch', { budget: { currency: 'USD', minorUnits: 10_000 } }],
-    ['free shipping with monetary budget', { reward: { type: 'free_shipping' } }],
+    ['free shipping with monetary budget', { rewardRules: [rewardRule({ type: 'free_shipping' })] }],
     ['zero usage cap', { usageCap: 0 }],
     ['negative customer cap', { perCustomerCap: -1 }],
     ['customer cap above total cap', { usageCap: 2, perCustomerCap: 3 }],
@@ -304,6 +326,158 @@ describe('Promo program API', () => {
       400,
       'CONTEXT_VALIDATION_FAILED',
     );
+  });
+
+  test('rejects old top-level reward input at the HTTP boundary', async () => {
+    const input = { ...promo('legacy-reward'), reward: { type: 'free_shipping' } };
+    delete (input as { rewardRules?: unknown }).rewardRules;
+
+    const error = await expectError(
+      await programRequest('POST', '', 'secret-test', input),
+      400,
+      'CONTEXT_VALIDATION_FAILED',
+    );
+    expect(error.error.fields).toEqual(expect.arrayContaining([
+      expect.objectContaining({ path: 'reward' }),
+    ]));
+  });
+
+  test('validates every rule condition and reports its canonical field path', async () => {
+    const input = promo('invalid-rule-condition', {
+      rewardRules: [
+        promo('source').rewardRules[0]!,
+        {
+          ...promo('source').rewardRules[0]!,
+          id: 'invalid-rule',
+          name: 'Invalid rule',
+          conditions: {
+            match: 'ALL',
+            conditions: [{
+              id: 'invalid-value',
+              variable: 'context.channel',
+              operator: 'eq',
+              value: 42,
+            }],
+          },
+        },
+      ],
+    });
+
+    const error = await expectError(
+      await programRequest('POST', '', 'secret-test', input),
+      400,
+      'CONTEXT_VALIDATION_FAILED',
+    );
+    expect(error.error.fields).toContainEqual({
+      path: 'rewardRules.1.conditions.conditions.0.value',
+      code: 'invalid_condition_value',
+      message: 'Condition invalid-value has an invalid value for string',
+    });
+  });
+
+  test.each([
+    [
+      'undefined variable',
+      {
+        id: 'undefined-variable',
+        variable: 'context.undefined',
+        operator: 'eq',
+        value: 'web',
+      },
+      'rewardRules.1.conditions.conditions.0.variable',
+      'undefined_condition_variable',
+    ],
+    [
+      'invalid operator',
+      {
+        id: 'invalid-operator',
+        variable: 'context.channel',
+        operator: 'gt',
+        value: 'web',
+      },
+      'rewardRules.1.conditions.conditions.0.operator',
+      'invalid_condition_operator',
+    ],
+  ] as const)('reports an indexed rule path for an %s', async (
+    _name,
+    condition,
+    path,
+    code,
+  ) => {
+    const source = promo('source').rewardRules[0]!;
+    const input = promo(`indexed-${_name}`, {
+      rewardRules: [source, {
+        ...source,
+        id: `indexed-${_name}`,
+        name: `Indexed ${_name}`,
+        conditions: { match: 'ALL', conditions: [condition] },
+      }],
+    } as Partial<PromoProgram>);
+
+    const error = await expectError(
+      await programRequest('POST', '', 'secret-test', input),
+      400,
+      'CONTEXT_VALIDATION_FAILED',
+    );
+    expect(error.error.fields).toEqual(expect.arrayContaining([
+      expect.objectContaining({ path, code }),
+    ]));
+  });
+
+  test('validates all selectable reward currencies and fallback budget compatibility', async () => {
+    await expectError(await programRequest('POST', '', 'secret-test', promo('mixed-currency', {
+      rewardRules: [
+        promo('source').rewardRules[0]!,
+        rewardRule({
+          type: 'line_item_discount',
+          productRef: 'product-1',
+          calculation: 'fixed',
+          amount: { currency: 'USD', minorUnits: 200 },
+        }, 'usd-rule') as PromoProgram['rewardRules'][number],
+      ],
+    })), 400, 'CONTEXT_VALIDATION_FAILED');
+
+    await expectError(await programRequest('POST', '', 'secret-test', promo('fallback-shipping', {
+      fallbackReward: {
+        id: 'shipping',
+        name: 'Shipping',
+        reward: { type: 'free_shipping' },
+      },
+    })), 400, 'CONTEXT_VALIDATION_FAILED');
+  });
+
+  test('round-trips rule identity and order and permits draft reordering', async () => {
+    const lower = promo('source').rewardRules[0]!;
+    const higher = rewardRule({
+      type: 'order_discount',
+      calculation: 'fixed',
+      amount: { currency: 'GBP', minorUnits: 2_000 },
+    }, 'higher') as PromoProgram['rewardRules'][number];
+    const created = await createProgram(promo('ordered-rules', {
+      rewardRules: [lower, higher],
+      fallbackReward: {
+        id: 'fallback',
+        name: 'Fallback',
+        reward: { type: 'order_discount', calculation: 'percent', basisPoints: 500 },
+      },
+    }));
+    expect(created.rewardRules.map(rule => rule.id)).toEqual(['default-reward', 'higher']);
+
+    const readResponse = await programRequest('GET', '/ordered-rules');
+    expect(readResponse.status).toBe(200);
+    expect((await readResponse.json() as PromoProgram).rewardRules.map(rule => rule.id))
+      .toEqual(['default-reward', 'higher']);
+    const listResponse = await programRequest('GET');
+    expect(listResponse.status).toBe(200);
+    expect((await listResponse.json() as { programs: PromoProgram[] }).programs[0]
+      ?.rewardRules.map(rule => rule.id))
+      .toEqual(['default-reward', 'higher']);
+
+    const replacement = { ...created, rewardRules: [higher, lower] };
+    const response = await programRequest('PATCH', '/ordered-rules', 'secret-test', replacement);
+    expect(response.status).toBe(200);
+    expect((await response.json() as PromoProgram).rewardRules.map(rule => rule.id))
+      .toEqual(['higher', 'default-reward']);
   });
 
   test.each([
@@ -355,7 +529,7 @@ describe('Promo program API', () => {
     await expect(createProgram(input)).resolves.toEqual(input);
   });
 
-  test('active programs validate only against the latest published schema', async () => {
+  test('rule conditions use the latest draft or published schema for the target status', async () => {
     const repositories = createRepositories({ DB: env.DB });
     const draft = await repositories.schemas.createNextDraft(SEEDED_MERCHANT_ID);
     const draftOnly: VariableDefinition = {
@@ -373,17 +547,21 @@ describe('Promo program API', () => {
       definition: draftOnly,
       createdAt: publishedAt,
     }, draft.definitions, [...draft.definitions, draftOnly]);
-    const draftOnlyProgram = promo('draft-only-active', {
-      status: 'active',
-      eligibility: {
-        match: 'ALL',
+    const draftOnlyRule = {
+      ...promo('source').rewardRules[0]!,
+      conditions: {
+        match: 'ALL' as const,
         conditions: [{
           id: 'draft-only',
           variable: draftOnly.key,
-          operator: 'eq',
+          operator: 'eq' as const,
           value: 'yes',
         }],
       },
+    };
+    const draftOnlyProgram = promo('draft-only-active', {
+      status: 'active',
+      rewardRules: [draftOnlyRule],
     });
 
     await expectError(
@@ -395,6 +573,9 @@ describe('Promo program API', () => {
       SEEDED_MERCHANT_ID,
       draftOnlyProgram.id,
     )).toBeNull();
+
+    const draftProgram = promo('draft-only-rule', { rewardRules: [draftOnlyRule] });
+    expect(await createProgram(draftProgram)).toEqual(draftProgram);
 
     const publishedProgram = promo('published-active', { status: 'active' });
     expect(await createProgram(publishedProgram)).toEqual(publishedProgram);

@@ -18,6 +18,10 @@ import {
   signDecisionSnapshot,
   verifyDecisionIntegrity,
 } from '../src/services/evaluation-service.js';
+import {
+  signRedemptionReceipt,
+  verifyRedemptionReceipt,
+} from '../src/services/redemption-receipt.js';
 
 const createdAt = '2026-07-18T12:00:00.000Z';
 const expiresAt = '2026-07-18T12:05:00.000Z';
@@ -41,6 +45,7 @@ const incentiveDecision: IncentiveDecision = {
   programRef: 'welcome-10',
   programType: 'promo',
   outcome: 'qualified',
+  rewardRuleRef: 'default-reward',
   effects: [{
     type: 'order_discount',
     calculation: 'fixed',
@@ -56,10 +61,45 @@ const program: PromoProgram = {
   name: 'Welcome discount',
   status: 'active',
   eligibility: { match: 'ALL', conditions: [] },
-  reward: {
-    type: 'order_discount',
-    calculation: 'fixed',
-    amount: { currency: 'GBP', minorUnits: 500 },
+  rewardRules: [{
+    id: 'default-reward',
+    name: 'Default reward',
+    conditions: {
+      match: 'ALL',
+      conditions: [{
+        id: 'positive-cart',
+        variable: 'cart.subtotal',
+        operator: 'gte',
+        value: 0,
+      }],
+    },
+    reward: {
+      type: 'order_discount',
+      calculation: 'fixed',
+      amount: { currency: 'GBP', minorUnits: 500 },
+    },
+  }, {
+    id: 'higher-cart',
+    name: 'Higher cart',
+    conditions: {
+      match: 'ALL',
+      conditions: [{
+        id: 'higher-cart-condition',
+        variable: 'cart.subtotal',
+        operator: 'gte',
+        value: 10_000,
+      }],
+    },
+    reward: {
+      type: 'order_discount',
+      calculation: 'percent',
+      basisPoints: 1_000,
+    },
+  }],
+  fallbackReward: {
+    id: 'fallback',
+    name: 'Fallback',
+    reward: { type: 'order_discount', calculation: 'percent', basisPoints: 500 },
   },
   budget: { currency: 'GBP', minorUnits: 10_000 },
   usageCap: 20,
@@ -104,19 +144,20 @@ function redemptionResult(
     redemptionId,
     evaluationId,
     programRef: 'welcome-10',
+    rewardRuleRef: 'default-reward',
     status: 'committed',
     effects: incentiveDecision.effects,
     ...identifiers,
   } as RedemptionResponse;
 }
 
-function redemption(
+async function redemption(
   merchantId: string,
   evaluationId: string,
   identifiers: { externalOrderRef?: string; idempotencyKey?: string },
-): RedemptionCreate {
+): Promise<RedemptionCreate> {
   const redemptionId = `${evaluationId}-${identifiers.externalOrderRef ?? identifiers.idempotencyKey}`;
-  return {
+  const unsigned = {
     redemptionId,
     merchantId,
     evaluationId,
@@ -125,6 +166,10 @@ function redemption(
     discountMinorUnits: 500,
     currency: 'GBP',
     createdAt,
+  };
+  return {
+    ...unsigned,
+    receiptIntegrityHash: await signRedemptionReceipt(unsigned, signingSecret),
   };
 }
 
@@ -154,15 +199,20 @@ async function seedDecision(merchantId: string, evaluationId?: string): Promise<
   return id;
 }
 
-function verifyHistoricalDecision(snapshot: EvaluationDecisionRecord): Promise<boolean> {
-  return verifyDecisionIntegrity(snapshot, signingSecret);
-}
+const verifyHistoricalIntegrity = {
+  verifyDecision: (snapshot: EvaluationDecisionRecord) => (
+    verifyDecisionIntegrity(snapshot, signingSecret)
+  ),
+  verifyReceipt: (receipt: RedemptionCreate) => (
+    verifyRedemptionReceipt(receipt, signingSecret)
+  ),
+};
 
 async function seedCommittedRedemption() {
   await seedMerchant('merchant-a');
   const repositories = createRepositories({ DB: env.DB });
   const evaluationId = await seedDecision('merchant-a');
-  await repositories.redemptions.create(redemption('merchant-a', evaluationId, {
+  await repositories.redemptions.create(await redemption('merchant-a', evaluationId, {
     externalOrderRef: 'counted-order',
   }));
   return { evaluationId, repositories };
@@ -313,6 +363,9 @@ describe('D1 repositories', () => {
       usageCount: 0,
     });
     expect(await repositories.programs.get('merchant-b', 'welcome-10')).toBeNull();
+    expect((await repositories.programs.get('merchant-a', 'welcome-10'))
+      ?.program.rewardRules.map(rule => rule.id))
+      .toEqual(['default-reward', 'higher-cart']);
     expect(await repositories.decisions.get('merchant-a', 'merchant-a-evaluation')).toMatchObject({
       merchantId: 'merchant-a',
       request,
@@ -320,6 +373,43 @@ describe('D1 repositories', () => {
     });
     expect(await repositories.decisions.get('merchant-b', 'merchant-a-evaluation')).toBeNull();
   });
+
+  test.each(['draft', 'scheduled', 'active', 'paused', 'ended'] as const)(
+    'lists reward-rule-only variable references from %s programs',
+    async (status) => {
+      await seedMerchant('merchant-a');
+      await seedPublishedSchema('merchant-a');
+      const repositories = createRepositories({ DB: env.DB });
+      await repositories.programs.create({
+        merchantId: 'merchant-a',
+        program: {
+          ...program,
+          id: `reference-${status}`,
+          name: `Reference ${status}`,
+          status,
+          eligibility: { match: 'ALL', conditions: [] },
+          rewardRules: [{
+            ...program.rewardRules[0]!,
+            conditions: {
+              match: 'ALL',
+              conditions: [{
+                id: 'reward-tier',
+                variable: definition.key,
+                operator: 'eq',
+                value: 'gold',
+              }],
+            },
+          }],
+          fallbackReward: undefined,
+        },
+        schema: await repositories.schemas.getLatestVersion('merchant-a', 'published'),
+        createdAt,
+      });
+
+      await expect(repositories.programs.listReferencedVariableKeys('merchant-a'))
+        .resolves.toContain(definition.key);
+    },
+  );
 
   test.each([
     ['missing configured usage cap', 'max_uses = NULL'],
@@ -384,6 +474,33 @@ describe('D1 repositories', () => {
       'expires_at',
       'created_at',
     ]);
+  });
+
+  test('decision snapshots round-trip canonical program config and reject corrupt config', async () => {
+    await seedMerchant('merchant-a');
+    await seedPublishedSchema('merchant-a');
+    const repositories = createRepositories({ DB: env.DB });
+    await repositories.customers.create('merchant-a', customer('shared', { tier: 'gold' }));
+    const snapshot = decision('merchant-a', 'config-snapshot');
+    snapshot.facts.programs = [{
+      programRef: program.id,
+      system: { redemptions_total: 0 },
+      config: program,
+    }];
+    snapshot.integrityHash = await signDecisionSnapshot(snapshot, signingSecret);
+    await repositories.decisions.create(snapshot);
+
+    await expect(repositories.decisions.get('merchant-a', 'config-snapshot'))
+      .resolves.toMatchObject({
+        facts: { programs: [{ programRef: program.id, config: program }] },
+      });
+    await env.DB.prepare(`
+      UPDATE evaluation_decisions
+      SET facts_json = json_set(facts_json, '$.programs[0].config.rewardRules[0].id', '')
+      WHERE merchant_id = 'merchant-a' AND id = 'config-snapshot'
+    `).run();
+    await expect(repositories.decisions.get('merchant-a', 'config-snapshot'))
+      .rejects.toThrow('Stored evaluation decision is not canonical');
   });
 
   test('decision writes reject outer customer identity that differs from the request snapshot', async () => {
@@ -456,28 +573,29 @@ describe('D1 repositories', () => {
     await seedMerchant('merchant-b');
     const repositories = createRepositories({ DB: env.DB });
     const evaluationId = await seedDecision('merchant-a');
-    await repositories.redemptions.create(redemption('merchant-a', evaluationId, {
+    const countedReceipt = await redemption('merchant-a', evaluationId, {
       externalOrderRef: 'counted-order',
-    }));
+    });
+    await repositories.redemptions.create(countedReceipt);
     const counter = repositories.redemptions;
 
     await expect(counter.countCommittedForCustomerProgram(
       'merchant-a',
       'shared',
       'welcome-10',
-      verifyHistoricalDecision,
+      verifyHistoricalIntegrity,
     )).resolves.toBe(1);
     await expect(counter.countCommittedForCustomerProgram(
       'merchant-a',
       'other-customer',
       'welcome-10',
-      verifyHistoricalDecision,
+      verifyHistoricalIntegrity,
     )).resolves.toBe(0);
     await expect(counter.countCommittedForCustomerProgram(
       'merchant-b',
       'shared',
       'welcome-10',
-      verifyHistoricalDecision,
+      verifyHistoricalIntegrity,
     )).resolves.toBe(0);
 
     const otherProgramResult = {
@@ -499,11 +617,20 @@ describe('D1 repositories', () => {
       decisions: [otherProgramDecision],
     };
     const integrityHash = await signDecisionSnapshot(otherProgramSnapshot, signingSecret);
+    const otherProgramReceipt = { ...countedReceipt, result: otherProgramResult };
+    const receiptIntegrityHash = await signRedemptionReceipt(
+      otherProgramReceipt,
+      signingSecret,
+    );
     await env.DB.batch([
       env.DB.prepare(`
         UPDATE redemptions SET result_json = ?1
         WHERE merchant_id = 'merchant-a' AND evaluation_id = ?2
-      `).bind(JSON.stringify(otherProgramResult), evaluationId),
+      `).bind(JSON.stringify({
+        version: 1,
+        result: otherProgramResult,
+        receiptIntegrityHash,
+      }), evaluationId),
       env.DB.prepare(`
         UPDATE evaluation_decisions SET decisions_json = ?1, integrity_hash = ?2
         WHERE merchant_id = 'merchant-a' AND id = ?3
@@ -513,33 +640,29 @@ describe('D1 repositories', () => {
       'merchant-a',
       'shared',
       'welcome-10',
-      verifyHistoricalDecision,
+      verifyHistoricalIntegrity,
     )).resolves.toBe(0);
     await expect(counter.countCommittedForCustomerProgram(
       'merchant-a',
       'shared',
       'other-program',
-      verifyHistoricalDecision,
+      verifyHistoricalIntegrity,
     )).resolves.toBe(1);
   });
 
   test('rejects a committed result whose canonical fields do not match its row', async () => {
     const { evaluationId, repositories } = await seedCommittedRedemption();
-    const mismatched = redemptionResult(
-      `${evaluationId}-counted-order`,
-      'different-evaluation',
-      { externalOrderRef: 'counted-order' },
-    );
     await env.DB.prepare(`
-      UPDATE redemptions SET result_json = ?1
-      WHERE merchant_id = 'merchant-a' AND evaluation_id = ?2
-    `).bind(JSON.stringify(mismatched), evaluationId).run();
+      UPDATE redemptions
+      SET result_json = json_set(result_json, '$.result.evaluationId', 'different-evaluation')
+      WHERE merchant_id = 'merchant-a' AND evaluation_id = ?1
+    `).bind(evaluationId).run();
 
     await expect(repositories.redemptions.countCommittedForCustomerProgram(
       'merchant-a',
       'shared',
       'welcome-10',
-      verifyHistoricalDecision,
+      verifyHistoricalIntegrity,
     )).rejects.toThrow('Stored redemption is not canonical');
   });
 
@@ -554,35 +677,44 @@ describe('D1 repositories', () => {
       'merchant-a',
       'shared',
       'welcome-10',
-      verifyHistoricalDecision,
+      verifyHistoricalIntegrity,
     )).rejects.toThrow();
   });
 
   test('rejects a committed result whose effects differ from its qualified decision', async () => {
     const { evaluationId, repositories } = await seedCommittedRedemption();
-    const mismatched = {
-      ...redemptionResult(
-        `${evaluationId}-counted-order`,
-        evaluationId,
-        { externalOrderRef: 'counted-order' },
-      ),
-      effects: [{
-        type: 'order_discount',
-        calculation: 'fixed',
-        amount: { currency: 'GBP', minorUnits: 999 },
-      }],
-    };
     await env.DB.prepare(`
-      UPDATE redemptions SET result_json = ?1
-      WHERE merchant_id = 'merchant-a' AND evaluation_id = ?2
-    `).bind(JSON.stringify(mismatched), evaluationId).run();
+      UPDATE redemptions
+      SET result_json = json_set(
+        result_json,
+        '$.result.effects[0].amount.minorUnits',
+        999
+      )
+      WHERE merchant_id = 'merchant-a' AND evaluation_id = ?1
+    `).bind(evaluationId).run();
 
     await expect(repositories.redemptions.countCommittedForCustomerProgram(
       'merchant-a',
       'shared',
       'welcome-10',
-      verifyHistoricalDecision,
-    )).rejects.toThrow(/qualified decision|effects/i);
+      verifyHistoricalIntegrity,
+    )).rejects.toThrow(/integrity|signature|qualified decision|effects/i);
+  });
+
+  test('rejects a committed result whose reward rule reference differs from its decision', async () => {
+    const { evaluationId, repositories } = await seedCommittedRedemption();
+    await env.DB.prepare(`
+      UPDATE redemptions
+      SET result_json = json_set(result_json, '$.result.rewardRuleRef', 'other-rule')
+      WHERE merchant_id = 'merchant-a' AND evaluation_id = ?1
+    `).bind(evaluationId).run();
+
+    await expect(repositories.redemptions.countCommittedForCustomerProgram(
+      'merchant-a',
+      'shared',
+      'welcome-10',
+      verifyHistoricalIntegrity,
+    )).rejects.toThrow(/integrity|signature|qualified decision|rule reference|snapshot/i);
   });
 
   test('rejects coordinated result and snapshot tampering without a valid HMAC', async () => {
@@ -592,23 +724,16 @@ describe('D1 repositories', () => {
       calculation: 'fixed' as const,
       amount: { currency: 'GBP', minorUnits: 999 },
     }];
-    const tamperedResult = {
-      ...redemptionResult(
-        `${evaluationId}-counted-order`,
-        evaluationId,
-        { externalOrderRef: 'counted-order' },
-      ),
-      effects: tamperedEffects,
-    };
     const tamperedDecision = {
       ...incentiveDecision,
       effects: tamperedEffects,
     };
     await env.DB.batch([
       env.DB.prepare(`
-        UPDATE redemptions SET result_json = ?1
+        UPDATE redemptions
+        SET result_json = json_set(result_json, '$.result.effects', json(?1))
         WHERE merchant_id = 'merchant-a' AND evaluation_id = ?2
-      `).bind(JSON.stringify(tamperedResult), evaluationId),
+      `).bind(JSON.stringify(tamperedEffects), evaluationId),
       env.DB.prepare(`
         UPDATE evaluation_decisions SET decisions_json = ?1
         WHERE merchant_id = 'merchant-a' AND id = ?2
@@ -619,7 +744,7 @@ describe('D1 repositories', () => {
       'merchant-a',
       'shared',
       'welcome-10',
-      verifyHistoricalDecision,
+      verifyHistoricalIntegrity,
     )).rejects.toThrow(/integrity|signature/i);
   });
 
@@ -634,7 +759,7 @@ describe('D1 repositories', () => {
       'merchant-a',
       'shared',
       'welcome-10',
-      verifyHistoricalDecision,
+      verifyHistoricalIntegrity,
     )).rejects.toThrow(/qualified decision|snapshot/i);
   });
 
@@ -649,32 +774,29 @@ describe('D1 repositories', () => {
       'merchant-a',
       'shared',
       'welcome-10',
-      verifyHistoricalDecision,
+      verifyHistoricalIntegrity,
     )).rejects.toThrow();
   });
 
   test('validates other-program candidates before excluding them from the requested count', async () => {
     const { evaluationId, repositories } = await seedCommittedRedemption();
-    const malformedOtherProgram = {
-      ...redemptionResult(
-        `${evaluationId}-counted-order`,
-        evaluationId,
-        { externalOrderRef: 'counted-order' },
-      ),
-      programRef: 'different-program',
-      effects: [],
-    };
     await env.DB.prepare(`
-      UPDATE redemptions SET result_json = ?1
-      WHERE merchant_id = 'merchant-a' AND evaluation_id = ?2
-    `).bind(JSON.stringify(malformedOtherProgram), evaluationId).run();
+      UPDATE redemptions SET result_json = json_set(
+        result_json,
+        '$.result.programRef',
+        'different-program',
+        '$.result.effects',
+        json('[]')
+      )
+      WHERE merchant_id = 'merchant-a' AND evaluation_id = ?1
+    `).bind(evaluationId).run();
 
     await expect(repositories.redemptions.countCommittedForCustomerProgram(
       'merchant-a',
       'shared',
       'welcome-10',
-      verifyHistoricalDecision,
-    )).rejects.toThrow(/qualified decision|snapshot/i);
+      verifyHistoricalIntegrity,
+    )).rejects.toThrow(/integrity|signature|qualified decision|snapshot/i);
   });
 
   test('repository writes reject JSON outside canonical contracts', async () => {
@@ -697,7 +819,7 @@ describe('D1 repositories', () => {
     await seedMerchant('merchant-a');
     const repositories = createRepositories({ DB: env.DB });
     const evaluationId = await seedDecision('merchant-a');
-    const input = redemption('merchant-a', evaluationId, identifiers);
+    const input = await redemption('merchant-a', evaluationId, identifiers);
 
     await repositories.redemptions.create(input);
 
@@ -705,12 +827,14 @@ describe('D1 repositories', () => {
       expect(await repositories.redemptions.getByExternalOrderRef(
         'merchant-a',
         identifiers.externalOrderRef,
+        verifyHistoricalIntegrity.verifyReceipt,
       )).toMatchObject(input);
     }
     if (identifiers.idempotencyKey) {
       expect(await repositories.redemptions.getByIdempotencyKey(
         'merchant-a',
         identifiers.idempotencyKey,
+        verifyHistoricalIntegrity.verifyReceipt,
       )).toMatchObject(input);
     }
   });
@@ -721,7 +845,7 @@ describe('D1 repositories', () => {
     const evaluationId = await seedDecision('merchant-a');
 
     await expect(repositories.redemptions.create({
-      ...redemption('merchant-a', evaluationId, { externalOrderRef: 'temporary' }),
+      ...await redemption('merchant-a', evaluationId, { externalOrderRef: 'temporary' }),
       externalOrderRef: undefined,
       idempotencyKey: undefined,
     } as unknown as RedemptionCreate)).rejects.toThrow(/identifier/i);
@@ -737,15 +861,15 @@ describe('D1 repositories', () => {
     const evaluationA = await seedDecision('merchant-a');
     const evaluationB = await seedDecision('merchant-b');
 
-    await repositories.redemptions.create(redemption('merchant-a', evaluationA, identifiers));
-    const duplicate = redemption('merchant-a', evaluationA, identifiers);
+    await repositories.redemptions.create(await redemption('merchant-a', evaluationA, identifiers));
+    const duplicate = await redemption('merchant-a', evaluationA, identifiers);
     await expect(repositories.redemptions.create({
       ...duplicate,
       redemptionId: 'second-redemption',
       result: { ...duplicate.result, redemptionId: 'second-redemption' },
     })).rejects.toThrow();
     await expect(repositories.redemptions.create(
-      redemption('merchant-b', evaluationB, identifiers),
+      await redemption('merchant-b', evaluationB, identifiers),
     )).resolves.toBeUndefined();
   });
 
@@ -755,7 +879,7 @@ describe('D1 repositories', () => {
     const repositories = createRepositories({ DB: env.DB });
     const evaluationId = await seedDecision('merchant-a');
 
-    await repositories.redemptions.create(redemption('merchant-a', evaluationId, {
+    await repositories.redemptions.create(await redemption('merchant-a', evaluationId, {
       externalOrderRef: 'isolated-order',
       idempotencyKey: 'isolated-key',
     }));
@@ -763,10 +887,12 @@ describe('D1 repositories', () => {
     expect(await repositories.redemptions.getByExternalOrderRef(
       'merchant-b',
       'isolated-order',
+      verifyHistoricalIntegrity.verifyReceipt,
     )).toBeNull();
     expect(await repositories.redemptions.getByIdempotencyKey(
       'merchant-b',
       'isolated-key',
+      verifyHistoricalIntegrity.verifyReceipt,
     )).toBeNull();
   });
 
@@ -776,18 +902,20 @@ describe('D1 repositories', () => {
     const repositories = createRepositories({ DB: env.DB });
     const evaluationA = await seedDecision('merchant-a');
     const evaluationB = await seedDecision('merchant-b');
-    await repositories.redemptions.create(redemption('merchant-a', evaluationA, {
+    await repositories.redemptions.create(await redemption('merchant-a', evaluationA, {
       externalOrderRef: 'shared-order', idempotencyKey: 'shared-key',
     }));
-    await repositories.redemptions.create(redemption('merchant-b', evaluationB, {
+    await repositories.redemptions.create(await redemption('merchant-b', evaluationB, {
       externalOrderRef: 'shared-order', idempotencyKey: 'shared-key',
     }));
 
     expect((await repositories.redemptions.getByExternalOrderRef(
       'merchant-a', 'shared-order',
+      verifyHistoricalIntegrity.verifyReceipt,
     ))?.merchantId).toBe('merchant-a');
     expect((await repositories.redemptions.getByIdempotencyKey(
       'merchant-b', 'shared-key',
+      verifyHistoricalIntegrity.verifyReceipt,
     ))?.merchantId).toBe('merchant-b');
   });
 });

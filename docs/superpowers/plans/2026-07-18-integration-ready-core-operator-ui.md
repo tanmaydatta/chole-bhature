@@ -2,15 +2,18 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Wire the existing dashboard's schema and Promo surfaces to the real runtime API and add a non-visual integration simulator that proves how unknown future commerce platforms use the canonical contract.
+**Goal:** Wire the existing dashboard's schema and conditional-reward Promo surfaces to the real runtime API and add a non-visual integration simulator that proves how unknown future commerce platforms use the canonical contract.
 
 **Architecture:** A typed fetch client owns the dashboard network boundary; focused query hooks replace only the Variables and Promo in-memory stores. The simulator is a separate Node/TypeScript CLI implementing the connector lifecycle with canonical fixtures—no new storefront or platform-specific UI.
 
 **Tech Stack:** React 19, Vite 8, React Router 7, Zustand 5 where still appropriate for local UI state, TypeScript 6, Vitest/RTL, Node CLI, canonical workspace packages.
 
-**Approved design:** `docs/superpowers/specs/2026-07-18-integration-ready-incentives-core-design.md`
+**Approved designs:**
 
-**Sequence:** Plan 3 of 3; requires Foundation and Runtime.
+- `docs/superpowers/specs/2026-07-18-integration-ready-incentives-core-design.md`
+- `docs/superpowers/specs/2026-07-19-conditional-reward-rules-design.md`
+
+**Sequence:** Plan 3 of 3; requires Foundation, Runtime, and the Conditional Reward Rules Runtime plan.
 
 **Notion mirror:** https://app.notion.com/p/Integration-Ready-Core-Operator-UI-and-Simulator-Implementation-Plan-3a1e5c7c2b8e816097afe6f2eb594f59
 
@@ -21,6 +24,8 @@
 - Do not add login/signup, billing, analytics, platform connectors, or a reference storefront.
 - Never persist or log a secret token in browser storage; inject the Phase-0 token at build/runtime configuration for the controlled first-client environment.
 - The dashboard imports canonical types from workspace packages; no duplicate request/response interfaces.
+- Promo must author ordered `rewardRules` and optional `fallbackReward`; it must never emit or accept the removed top-level `reward` field.
+- The shared reward-rule editor accepts a module-specific reward renderer, but only Promo is connected to a production API in this plan.
 - The simulator must not import `apps/api` internals—only public contracts and HTTP.
 - Use TDD, run full workspace checks per task, and sync repository/Notion docs when behaviour changes.
 
@@ -36,6 +41,8 @@ apps/dashboard/src/data/schemaApi.ts                schema endpoint functions
 apps/dashboard/src/data/programApi.ts               Promo endpoint functions
 apps/dashboard/src/pages/setup/Variables.tsx        live schema list/publish flow
 apps/dashboard/src/components/setup/VariablePanel.tsx live create/edit safety UI
+apps/dashboard/src/components/rewards/RewardRulesEditor.tsx shared ordered rule/fallback editor
+apps/dashboard/src/components/rewards/PromoRewardEditor.tsx canonical commerce reward adapter
 apps/dashboard/src/pages/promo/*.tsx                 live Promo list/detail/create/edit
 apps/integration-simulator/
   src/client.ts                                      canonical HTTP client
@@ -173,6 +180,10 @@ git commit -m "feat: wire dashboard schema registry"
 
 **Files:**
 - Create: `apps/dashboard/src/data/programApi.ts`
+- Create: `apps/dashboard/src/components/rewards/RewardRulesEditor.tsx`
+- Create: `apps/dashboard/src/components/rewards/RewardRulesEditor.test.tsx`
+- Create: `apps/dashboard/src/components/rewards/PromoRewardEditor.tsx`
+- Create: `apps/dashboard/src/components/rewards/PromoRewardEditor.test.tsx`
 - Modify: `apps/dashboard/src/pages/promo/PromoList.tsx`
 - Modify: `apps/dashboard/src/pages/promo/PromoCreate.tsx`
 - Modify: `apps/dashboard/src/pages/ProgramDetail.tsx`
@@ -181,42 +192,86 @@ git commit -m "feat: wire dashboard schema registry"
 
 **Interfaces:**
 - Consumes: canonical Promo program and program endpoints; live definitions from Task 2.
-- Produces: `listPromos()`, `getPromo()`, `createPromo()`, `updatePromo()`, and real Promo list/detail/create/edit screens.
+- Produces: `listPromos()`, `getPromo()`, `createPromo()`, `updatePromo()`, reusable `RewardRulesEditor<TReward>`, canonical Promo reward adapter, and real Promo list/detail/create/edit screens.
 
-- [ ] **Step 1: Write the failing screen flow**
+- [ ] **Step 1: Write failing shared-editor tests**
+
+Test add, duplicate, delete, move up/down, stable IDs, names, per-rule typed conditions, module-specific reward rendering, optional fallback, keyboard-accessible labels, and the persistent “first matching rule wins” explanation. Verify array order is the emitted order and deleting the final rule without a fallback is blocked.
+
+```tsx
+test('moves a rule and emits authoritative array order', async () => {
+  renderRewardRulesEditor({ value: [under100, over100] });
+  await user.click(screen.getByRole('button', { name: /move over 100 up/i }));
+  expect(onChange).toHaveBeenLastCalledWith({
+    rewardRules: [over100, under100],
+  });
+});
+```
+
+- [ ] **Step 2: Run shared-editor tests and confirm missing components**
+
+Run `pnpm --filter @incentives/dashboard test -- RewardRulesEditor.test.tsx PromoRewardEditor.test.tsx`.
+
+Expected: FAIL because the shared editor and canonical Promo adapter do not exist.
+
+- [ ] **Step 3: Implement the generic ordered editor and Promo adapter**
+
+```ts
+interface RewardRulesEditorProps<TReward> {
+  value: ConditionalRewards<TReward>;
+  definitions: readonly VariableDefinition[];
+  renderReward: (props: {
+    value: TReward;
+    onChange: (reward: TReward) => void;
+    fieldPath: string;
+  }) => ReactNode;
+  onChange: (value: ConditionalRewards<TReward>) => void;
+  issues?: readonly FieldIssue[];
+}
+```
+
+The editor owns ordering and rule identity controls, delegates reward payloads through `renderReward`, reuses `ConditionBuilder`, and maps server issue paths such as `rewardRules.1.conditions.conditions.0.value` to the relevant rule. `PromoRewardEditor` edits only canonical order discount, line-item discount, and free-shipping effects with currencies in minor units and basis points; it does not reuse the loose demo `Reward` shape.
+
+- [ ] **Step 4: Write the failing API-backed Promo flow**
 
 ```tsx
 test('creates and reloads a promo through the API boundary', async () => {
   renderPromoRoutesWithApi();
   await user.type(screen.getByLabelText(/name/i), 'Gold Web Welcome');
-  await completeConditionAndReward(user);
+  await completeEligibilityAndTwoRewardRules(user);
   await user.click(screen.getByRole('button', { name: /create/i }));
   expect(await screen.findByText('Gold Web Welcome')).toBeInTheDocument();
-  expect(mockProgramApi.create).toHaveBeenCalledWith(expect.objectContaining({ type: 'promo' }));
+  expect(mockProgramApi.create).toHaveBeenCalledWith(expect.objectContaining({
+    type: 'promo',
+    rewardRules: [
+      expect.objectContaining({ id: 'over-100' }),
+      expect.objectContaining({ id: 'under-100' }),
+    ],
+  }));
 });
 ```
 
-Also test API validation errors remain on the relevant step, draft edit works, non-draft edit is blocked, refresh reads server data, and no Promo screen falls back to the in-memory program store.
+Also test fallback creation, reorder persistence, `rewardRuleRef` display in an evaluation sample, API validation errors remaining on the relevant rule/step, draft edit, non-draft edit blocking, refresh, clean rejection of top-level `reward`, and no Promo screen falling back to the in-memory program store.
 
-- [ ] **Step 2: Run and confirm store-backed behaviour fails**
+- [ ] **Step 5: Run and confirm store-backed behaviour fails**
 
 Run focused flow test; expected failure at network expectations.
 
-- [ ] **Step 3: Implement typed program API and async pages**
+- [ ] **Step 6: Implement typed program API and async pages**
 
-Keep existing create/detail/list presentation. Convert loose `[k: string]: unknown` handling at the API boundary into canonical `PromoProgram` parsing. Surface field issues beside the relevant step and preserve the server correlation id in a collapsible support detail. Invalidate/reload list/detail data after successful creates/updates.
+Keep the existing create/detail/list presentation. Retain global **Eligibility**, replace **Discount** with **Reward rules**, and submit canonical `rewardRules` plus optional `fallbackReward`. Convert loose `[k: string]: unknown` handling at the API boundary into canonical `PromoProgram` parsing. Surface field issues beside the relevant rule and preserve the server correlation id in a collapsible support detail. Invalidate/reload list/detail data after successful creates/updates. List/detail summaries show the ordered conditional reward count or concise ordered summary, never a fabricated single discount.
 
 Other program-type pages remain demo-only and must show a small “Demo data” marker so a client cannot mistake them for live functionality.
 
-- [ ] **Step 4: Verify no live/demo ambiguity**
+- [ ] **Step 7: Verify no live/demo ambiguity**
 
-Run route tests proving Promo is API-backed while Affiliate/Referral/Loyalty stay explicitly marked demo-only. Run all workspace checks.
+Run focused component and route tests proving Promo is API-backed and conditional while Affiliate/Referral/Loyalty stay explicitly marked demo-only. Run all workspace checks.
 
-- [ ] **Step 5: Commit live Promo UI**
+- [ ] **Step 8: Commit live conditional Promo UI**
 
 ```bash
 git add apps/dashboard
-git commit -m "feat: wire promo configuration to runtime API"
+git commit -m "feat: wire conditional promo configuration to runtime API"
 ```
 
 ### Task 4: Build the non-visual integration simulator
@@ -293,7 +348,7 @@ git commit -m "feat: add canonical integration simulator"
 
 - [ ] **Step 1: Add a cross-surface client journey test**
 
-Use mocked network only at the dashboard fetch boundary and assert the operator can define `customer.tier` and `context.channel`, publish, configure a matching Promo, and copy the generated evaluation sample. Runtime full-flow correctness remains Plan 2's real D1 test.
+Use mocked network only at the dashboard fetch boundary and assert the operator can define `customer.tier` and `context.channel`, publish, configure an ordered two-tier Promo, and copy a generated evaluation sample that exposes the selected `rewardRuleRef`. Runtime full-flow correctness remains the Conditional Reward Rules Runtime plan's real-D1 test.
 
 - [ ] **Step 2: Write the operator/integrator quickstart**
 
@@ -301,9 +356,9 @@ Document:
 
 1. define/publish typed fields in the UI;
 2. PATCH a customer separately;
-3. configure a Promo;
+3. configure ordered Promo reward rules and an optional fallback;
 4. send `customerRef` plus live cart/context;
-5. interpret decisions/outcomes/reasons;
+5. interpret decisions/outcomes/reasons and `rewardRuleRef`;
 6. map the effect;
 7. redeem before capture;
 8. retry with the same order/idempotency key;
@@ -341,11 +396,11 @@ git commit -m "docs: add first-client integration quickstart"
 
 ## Plan 3 completion gate
 
-The implementation-ready-core branch is complete only when the schema and Promo UI persist through refresh, the full client journey passes at both UI and real-D1 API layers, the simulator proves accepted/retry/exhausted paths, all workspaces are green, and repository/Notion documentation is synchronized.
+The implementation-ready-core branch is complete only when the schema and conditional Promo UI persist through refresh, the full client journey passes at both UI and real-D1 API layers, selected `rewardRuleRef` is visible through simulation/redemption, the simulator proves accepted/retry/exhausted paths, all workspaces are green, and repository/Notion documentation is synchronized.
 
 ## Self-Review
 
-- **Spec coverage:** focused schema UI, typed context shapes, live Promo config, generated samples, client-visible flow, fake connector/simulator, demo-only labelling, and documentation map to Tasks 1–5.
+- **Spec coverage:** focused schema UI, typed context shapes, ordered conditional Promo config, selected-rule samples, client-visible flow, fake connector/simulator, demo-only labelling, and documentation map to Tasks 1–5.
 - **Deferred intentionally:** Shopify/other production adapters, checkout UI, authentication, billing, analytics, affiliate/referral/loyalty/wallet runtimes.
 - **Instruction-quality scan:** no deferred-detail markers or vague test instructions; exact files, tests, code boundaries, commands, and expected states are present.
 - **Type consistency:** dashboard/simulator consume Foundation canonical types and Runtime endpoints without local duplicates; `customerRef`, `evaluationId`, `externalOrderRef`, and idempotency naming remain stable.

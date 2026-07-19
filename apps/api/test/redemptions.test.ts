@@ -2,6 +2,7 @@ import {
   ApiErrorSchema,
   EvaluationResponseSchema,
   RedemptionResponseSchema,
+  type CommerceReward,
   type EvaluationRequest,
   type PromoProgram,
   type RedemptionRequest,
@@ -22,24 +23,44 @@ const baseRequest = {
   cart: { currency: 'GBP', subtotal: 6_500, items: [] },
 } as const satisfies EvaluationRequest;
 
-function promo(id: string, overrides: Partial<PromoProgram> = {}): PromoProgram {
+type PromoOverrides = Partial<PromoProgram> & { reward?: CommerceReward };
+
+function conditionalRule(reward: CommerceReward, id = 'default-reward') {
+  return {
+    id,
+    name: id === 'default-reward' ? 'Default reward' : id,
+    conditions: {
+      match: 'ALL' as const,
+      conditions: [{
+        id: `${id}-positive-cart`,
+        variable: 'cart.subtotal',
+        operator: 'gte' as const,
+        value: 0,
+      }],
+    },
+    reward,
+  };
+}
+
+function promo(id: string, overrides: PromoOverrides = {}): PromoProgram {
+  const { reward, ...canonicalOverrides } = overrides;
   return {
     id,
     type: 'promo',
     name: `Promo ${id}`,
     status: 'active',
     eligibility: { match: 'ALL', conditions: [] },
-    reward: {
+    rewardRules: [conditionalRule(reward ?? {
       type: 'order_discount',
       calculation: 'fixed',
       amount: { currency: 'GBP', minorUnits: 1_000 },
-    },
+    })],
     budget: { currency: 'GBP', minorUnits: 10_000 },
     usageCap: 10,
     stackable: false,
     priority: 10,
     autoApply: true,
-    ...overrides,
+    ...canonicalOverrides,
   } as PromoProgram;
 }
 
@@ -77,7 +98,13 @@ async function seedProgram(program: PromoProgram): Promise<void> {
 async function evaluate(
   request: EvaluationRequest = baseRequest,
 ): Promise<ReturnType<typeof EvaluationResponseSchema.parse>> {
-  const response = await SELF.fetch('https://example.test/v1/evaluate', {
+  const response = await evaluateRaw(request);
+  expect(response.status).toBe(200);
+  return EvaluationResponseSchema.parse(await response.json());
+}
+
+function evaluateRaw(request: EvaluationRequest = baseRequest): Promise<Response> {
+  return SELF.fetch('https://example.test/v1/evaluate', {
     method: 'POST',
     headers: {
       authorization: 'Bearer publishable-test',
@@ -85,8 +112,6 @@ async function evaluate(
     },
     body: JSON.stringify(request),
   });
-  expect(response.status).toBe(200);
-  return EvaluationResponseSchema.parse(await response.json());
 }
 
 function redeemRaw(body: unknown, token = 'secret-test'): Promise<Response> {
@@ -232,14 +257,70 @@ describe('POST /v1/redemptions', () => {
       redemptionId: expect.any(String),
       evaluationId: evaluation.evaluationId,
       programRef: 'welcome',
+      rewardRuleRef: 'default-reward',
       ...identifiers,
       status: 'committed',
-      effects: [promo('welcome').reward],
+      effects: [promo('welcome').rewardRules[0]!.reward],
     });
     const stored = await env.DB.prepare(`
-      SELECT discount_minor_units, currency FROM redemptions WHERE id = ?1
+      SELECT result_json, discount_minor_units, currency FROM redemptions WHERE id = ?1
     `).bind(result.redemptionId).first();
-    expect(stored).toEqual({ discount_minor_units: 1_000, currency: 'GBP' });
+    expect(stored).toEqual({
+      result_json: expect.any(String),
+      discount_minor_units: 1_000,
+      currency: 'GBP',
+    });
+    expect(JSON.parse(stored!.result_json as string)).toEqual({
+      version: 1,
+      result,
+      receiptIntegrityHash: expect.stringMatching(/^[0-9a-f]{64}$/u),
+    });
+  });
+
+  test('decrements budget by only the selected rule cost', async () => {
+    const expensive = {
+      ...conditionalRule({
+        type: 'order_discount',
+        calculation: 'fixed',
+        amount: { currency: 'GBP', minorUnits: 2_000 },
+      }, 'expensive'),
+      conditions: {
+        match: 'ALL' as const,
+        conditions: [{
+          id: 'expensive-cart',
+          variable: 'cart.subtotal',
+          operator: 'gte' as const,
+          value: 10_000,
+        }],
+      },
+    };
+    const selected = conditionalRule({
+      type: 'order_discount',
+      calculation: 'fixed',
+      amount: { currency: 'GBP', minorUnits: 500 },
+    }, 'selected-cheap');
+    await seedProgram(promo('selected-cost-commit', {
+      rewardRules: [expensive, selected],
+      budget: { currency: 'GBP', minorUnits: 1_000 },
+    }));
+    const evaluation = await evaluate();
+    expect(evaluation.decisions[0]).toMatchObject({
+      rewardRuleRef: 'selected-cheap',
+      effects: [selected.reward],
+    });
+
+    await redeem({
+      evaluationId: evaluation.evaluationId,
+      programRef: 'selected-cost-commit',
+      externalOrderRef: 'selected-cost-order',
+    });
+    expect(await env.DB.prepare(`
+      SELECT usage_count, budget_remaining FROM programs
+      WHERE merchant_id = ?1 AND external_ref = 'selected-cost-commit'
+    `).bind(SEEDED_MERCHANT_ID).first()).toEqual({
+      usage_count: 1,
+      budget_remaining: 500,
+    });
   });
 
   test('stable retries by either identifier return the original response without mutation', async () => {
@@ -266,6 +347,82 @@ describe('POST /v1/redemptions', () => {
       .first()).toEqual({ usage_count: 1, budget_remaining: 9_000 });
     expect(await env.DB.prepare('SELECT COUNT(*) AS count FROM redemptions')
       .first()).toEqual({ count: 1 });
+  });
+
+  test('rejects cross-program receipt reassignment between identical qualified programs', async () => {
+    await seedProgram(promo('identical-a', { priority: 20, stackable: true }));
+    await seedProgram(promo('identical-b', { priority: 10, stackable: true }));
+    const evaluation = await evaluate();
+    await redeem({
+      evaluationId: evaluation.evaluationId,
+      programRef: 'identical-a',
+      externalOrderRef: 'reassigned-order',
+    });
+    await env.DB.prepare(`
+      UPDATE redemptions SET result_json = CASE
+        WHEN json_type(result_json, '$.result') = 'object'
+          THEN json_set(result_json, '$.result.programRef', 'identical-b')
+        ELSE json_set(result_json, '$.programRef', 'identical-b')
+      END
+      WHERE merchant_id = ?1 AND external_order_ref = 'reassigned-order'
+    `).bind(SEEDED_MERCHANT_ID).run();
+
+    await expectError(await redeemRaw({
+      evaluationId: evaluation.evaluationId,
+      programRef: 'identical-b',
+      externalOrderRef: 'reassigned-order',
+    }), 503, 'EVALUATION_UNAVAILABLE');
+  });
+
+  test.each([
+    ['stored currency', "currency = 'USD'"],
+    ['stored projected discount', 'discount_minor_units = 999'],
+  ])('historical counting rejects %s corruption', async (_name, mutation) => {
+    await seedProgram(promo('history-integrity', {
+      perCustomerCap: 3,
+    }));
+    const evaluation = await evaluate();
+    await redeem({
+      evaluationId: evaluation.evaluationId,
+      programRef: 'history-integrity',
+      externalOrderRef: `history-${_name}`,
+    });
+    await env.DB.prepare(`
+      UPDATE redemptions SET ${mutation}
+      WHERE merchant_id = ?1 AND external_order_ref = ?2
+    `).bind(SEEDED_MERCHANT_ID, `history-${_name}`).run();
+
+    const error = await expectError(
+      await evaluateRaw(),
+      503,
+      'EVALUATION_UNAVAILABLE',
+    );
+    expect(error.error.retryable).toBe(true);
+  });
+
+  test('a corrupted persisted receipt signature fails closed on retry', async () => {
+    await seedProgram(promo('receipt-signature'));
+    const evaluation = await evaluate();
+    await redeem({
+      evaluationId: evaluation.evaluationId,
+      programRef: 'receipt-signature',
+      idempotencyKey: 'receipt-signature-key',
+    });
+    await env.DB.prepare(`
+      UPDATE redemptions
+      SET result_json = json_set(
+        result_json,
+        '$.receiptIntegrityHash',
+        '0000000000000000000000000000000000000000000000000000000000000000'
+      )
+      WHERE merchant_id = ?1 AND idempotency_key = 'receipt-signature-key'
+    `).bind(SEEDED_MERCHANT_ID).run();
+
+    await expectError(await redeemRaw({
+      evaluationId: evaluation.evaluationId,
+      programRef: 'receipt-signature',
+      idempotencyKey: 'receipt-signature-key',
+    }), 503, 'EVALUATION_UNAVAILABLE');
   });
 
   test('concurrent identical requests converge on one stable idempotent response', async () => {
@@ -403,9 +560,10 @@ describe('POST /v1/redemptions', () => {
   });
 
   test.each([
-    ['result program', "result_json = json_set(result_json, '$.programRef', 'other-program')"],
+    ['result program', "result_json = json_set(result_json, '$.result.programRef', 'other-program')"],
     ['effects', `result_json = json_set(result_json,
-      '$.effects[0].amount.minorUnits', 500)`],
+      '$.result.effects[0].amount.minorUnits', 500)`],
+    ['reward rule reference', "result_json = json_set(result_json, '$.result.rewardRuleRef', 'other-rule')"],
     ['currency', "currency = 'USD'"],
     ['discount amount', 'discount_minor_units = 999'],
     ['decision HMAC', "integrity_hash = 'tampered'"],
@@ -546,6 +704,142 @@ describe('POST /v1/redemptions', () => {
       programRef: 'welcome',
       externalOrderRef: 'mismatch',
     }), 409, 'VERSION_CONFLICT');
+  });
+
+  test('fails closed when signed selected effects differ from signed snapshot config', async () => {
+    await seedProgram(promo('signed-effect-mismatch'));
+    const evaluation = await evaluate();
+    await resign(evaluation.evaluationId, record => {
+      record!.facts.programs[0]!.config.rewardRules[0]!.reward = {
+        type: 'order_discount',
+        calculation: 'fixed',
+        amount: { currency: 'GBP', minorUnits: 500 },
+      };
+    });
+
+    await expectError(await redeemRaw({
+      evaluationId: evaluation.evaluationId,
+      programRef: 'signed-effect-mismatch',
+      externalOrderRef: 'signed-effect-mismatch-order',
+    }), 409, 'VERSION_CONFLICT');
+  });
+
+  test('commits a selected fallback by stable rule reference', async () => {
+    await seedProgram(promo('fallback-offer', {
+      rewardRules: [{
+        ...conditionalRule({ type: 'free_shipping' }, 'never-matches'),
+        conditions: {
+          match: 'ALL',
+          conditions: [{
+            id: 'impossible-cart',
+            variable: 'cart.subtotal',
+            operator: 'gt',
+            value: 100_000,
+          }],
+        },
+      }],
+      fallbackReward: {
+        id: 'fallback',
+        name: 'Fallback',
+        reward: {
+          type: 'order_discount',
+          calculation: 'fixed',
+          amount: { currency: 'GBP', minorUnits: 500 },
+        },
+      },
+    }));
+    const evaluation = await evaluate();
+
+    expect(await redeem({
+      evaluationId: evaluation.evaluationId,
+      programRef: 'fallback-offer',
+      externalOrderRef: 'fallback-order',
+    })).toMatchObject({
+      rewardRuleRef: 'fallback',
+      effects: [{
+        type: 'order_discount',
+        calculation: 'fixed',
+        amount: { currency: 'GBP', minorUnits: 500 },
+      }],
+    });
+  });
+
+  test.each([
+    ['missing', undefined],
+    ['unknown', 'unknown-rule'],
+  ])('fails closed for a %s signed reward rule reference', async (_name, rewardRuleRef) => {
+    await seedProgram(promo('rule-reference'));
+    const evaluation = await evaluate();
+    await resign(evaluation.evaluationId, record => {
+      if (rewardRuleRef === undefined) {
+        delete record!.decisions[0]!.rewardRuleRef;
+      } else {
+        record!.decisions[0]!.rewardRuleRef = rewardRuleRef;
+      }
+    });
+
+    await expectError(await redeemRaw({
+      evaluationId: evaluation.evaluationId,
+      programRef: 'rule-reference',
+      externalOrderRef: `bad-rule-${_name}`,
+    }), 409, 'VERSION_CONFLICT');
+  });
+
+  test('fails closed for duplicate reward ids in the signed program snapshot', async () => {
+    await seedProgram(promo('duplicate-snapshot'));
+    const evaluation = await evaluate();
+    await resign(evaluation.evaluationId, record => {
+      record!.facts.programs[0]!.config.fallbackReward = {
+        id: 'default-reward',
+        name: 'Duplicate',
+        reward: { type: 'free_shipping' },
+      };
+    });
+
+    await expectError(await redeemRaw({
+      evaluationId: evaluation.evaluationId,
+      programRef: 'duplicate-snapshot',
+      externalOrderRef: 'duplicate-snapshot-order',
+    }), 503, 'EVALUATION_UNAVAILABLE');
+  });
+
+  test('fails closed when the selected rule id changes in the current program', async () => {
+    await seedProgram(promo('changed-rule-id'));
+    const evaluation = await evaluate();
+    await env.DB.prepare(`
+      UPDATE programs
+      SET config_json = json_set(config_json, '$.rewardRules[0].id', 'renamed-rule')
+      WHERE merchant_id = ?1 AND external_ref = 'changed-rule-id'
+    `).bind(SEEDED_MERCHANT_ID).run();
+
+    await expectError(await redeemRaw({
+      evaluationId: evaluation.evaluationId,
+      programRef: 'changed-rule-id',
+      externalOrderRef: 'changed-rule-order',
+    }), 409, 'VERSION_CONFLICT');
+  });
+
+  test('does not re-evaluate rule conditions against changed current configuration', async () => {
+    await seedProgram(promo('no-reevaluation'));
+    const evaluation = await evaluate();
+    await env.DB.prepare(`
+      UPDATE programs
+      SET config_json = json_set(
+        config_json,
+        '$.rewardRules[0].conditions.conditions[0].value',
+        100000
+      )
+      WHERE merchant_id = ?1 AND external_ref = 'no-reevaluation'
+    `).bind(SEEDED_MERCHANT_ID).run();
+
+    await expect(redeem({
+      evaluationId: evaluation.evaluationId,
+      programRef: 'no-reevaluation',
+      externalOrderRef: 'no-reevaluation-order',
+    })).resolves.toMatchObject({
+      rewardRuleRef: 'default-reward',
+      status: 'committed',
+    });
   });
 
   test('fails closed on corrupt committed history used for a per-customer cap', async () => {

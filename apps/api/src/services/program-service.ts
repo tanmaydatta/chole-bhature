@@ -1,6 +1,9 @@
 import {
   PromoProgramSchema,
+  type ApiFieldError,
+  type CommerceReward,
   type Condition,
+  type ConditionGroup,
   type PromoProgram,
   type VariableDefinition,
 } from '@incentives/contracts';
@@ -13,10 +16,32 @@ import {
 } from '../repositories/types.js';
 import { BUILTIN_VARIABLE_DEFINITIONS } from './schema-service.js';
 
-function allConditions(program: PromoProgram): Condition[] {
+interface ConditionEntry {
+  condition: Condition;
+  path: string;
+}
+
+function conditionEntries(group: ConditionGroup, prefix: string): ConditionEntry[] {
   return [
-    ...program.eligibility.conditions,
-    ...(program.eligibility.groups ?? []).flatMap(group => group.conditions),
+    ...group.conditions.map((condition, index) => ({
+      condition,
+      path: `${prefix}.conditions.${index}`,
+    })),
+    ...(group.groups ?? []).flatMap((nested, groupIndex) => (
+      nested.conditions.map((condition, conditionIndex) => ({
+        condition,
+        path: `${prefix}.groups.${groupIndex}.conditions.${conditionIndex}`,
+      }))
+    )),
+  ];
+}
+
+function allConditionEntries(program: PromoProgram): ConditionEntry[] {
+  return [
+    ...conditionEntries(program.eligibility, 'eligibility'),
+    ...program.rewardRules.flatMap((rule, index) => (
+      conditionEntries(rule.conditions, `rewardRules.${index}.conditions`)
+    )),
   ];
 }
 
@@ -62,40 +87,108 @@ function validateConditions(
 ): void {
   const definitionsByKey = new Map(definitions.map(definition => [definition.key, definition]));
 
-  for (const condition of allConditions(program)) {
+  for (const { condition, path } of allConditionEntries(program)) {
     const definition = definitionsByKey.get(condition.variable);
     if (definition === undefined) {
       throw new ContextValidationError(
-        `Condition variable is not defined: ${condition.variable}`,
+        'The program failed validation',
+        [{
+          path: `${path}.variable`,
+          code: 'undefined_condition_variable',
+          message: `Condition variable is not defined: ${condition.variable}`,
+        }],
       );
     }
     const allowedOperators: readonly Condition['operator'][] = OPERATORS_BY_TYPE[definition.type];
     if (!allowedOperators.includes(condition.operator)) {
       throw new ContextValidationError(
-        `Operator ${condition.operator} is not valid for ${definition.type} variables`,
+        'The program failed validation',
+        [{
+          path: `${path}.operator`,
+          code: 'invalid_condition_operator',
+          message: `Operator ${condition.operator} is not valid for ${definition.type} variables`,
+        }],
       );
     }
     if (!isConditionValueValid(condition, definition)) {
       throw new ContextValidationError(
-        `Condition ${condition.id} has an invalid value for ${definition.type}`,
+        'The program failed validation',
+        [{
+          path: `${path}.value`,
+          code: 'invalid_condition_value',
+          message: `Condition ${condition.id} has an invalid value for ${definition.type}`,
+        }],
       );
     }
   }
 }
 
+function selectableRewards(program: PromoProgram): Array<{
+  reward: CommerceReward;
+  path: string;
+}> {
+  return [
+    ...program.rewardRules.map((rule, index) => ({
+      reward: rule.reward,
+      path: `rewardRules.${index}.reward`,
+    })),
+    ...(program.fallbackReward === undefined ? [] : [{
+      reward: program.fallbackReward.reward,
+      path: 'fallbackReward.reward',
+    }]),
+  ];
+}
+
+function validationError(field: ApiFieldError): ContextValidationError {
+  return new ContextValidationError('The program failed validation', [field]);
+}
+
 function validateRewardAndCaps(program: PromoProgram): void {
-  if ('amount' in program.reward && program.reward.amount.minorUnits <= 0) {
-    throw new ContextValidationError('Fixed discount rewards must be positive');
+  const rewards = selectableRewards(program);
+  const fixedRewards = rewards.filter((entry): entry is typeof entry & {
+    reward: Extract<CommerceReward, { calculation: 'fixed' }>;
+  } => 'amount' in entry.reward);
+
+  for (const { reward, path } of fixedRewards) {
+    if (reward.amount.minorUnits <= 0) {
+      throw validationError({
+        path: `${path}.amount.minorUnits`,
+        code: 'invalid_reward_amount',
+        message: 'Fixed discount rewards must be positive',
+      });
+    }
   }
-  if (program.reward.type === 'free_shipping' && program.budget !== undefined) {
-    throw new ContextValidationError('Free-shipping rewards cannot have a monetary budget');
+
+  const firstCurrency = fixedRewards[0]?.reward.amount.currency;
+  const mismatchedCurrency = fixedRewards.find(({ reward }) => (
+    firstCurrency !== undefined && reward.amount.currency !== firstCurrency
+  ));
+  if (mismatchedCurrency !== undefined) {
+    throw validationError({
+      path: `${mismatchedCurrency.path}.amount.currency`,
+      code: 'mixed_reward_currencies',
+      message: 'All fixed rewards must use the same currency',
+    });
+  }
+
+  const freeShipping = rewards.find(({ reward }) => reward.type === 'free_shipping');
+  if (freeShipping !== undefined && program.budget !== undefined) {
+    throw validationError({
+      path: freeShipping.path,
+      code: 'free_shipping_budget_conflict',
+      message: 'Free-shipping rewards cannot have a monetary budget',
+    });
   }
   if (
-    'amount' in program.reward
+    firstCurrency !== undefined
     && program.budget !== undefined
-    && program.reward.amount.currency !== program.budget.currency
+    && firstCurrency !== program.budget.currency
   ) {
-    throw new ContextValidationError('Reward and budget currencies must match');
+    throw validationError({
+      path: 'budget.currency',
+      code: 'reward_budget_currency_mismatch',
+      message: 'Reward and budget currencies must match',
+    });
   }
   if (
     program.usageCap !== undefined

@@ -2,7 +2,7 @@
 
 **Notion mirror:** https://app.notion.com/p/Integration-Runtime-API-3a2e5c7c2b8e812f889eeddd2d56ef70
 
-**Mirror state:** Repository and Notion copies synchronized on 2026-07-19.
+**Mirror state:** Repository and Notion copies synchronized and read back successfully on 2026-07-19.
 
 This is the platform-neutral HTTP boundary for the first client integration. A custom checkout, a manual backend integration, and a future Shopify adapter all follow the same sequence: define typed fields, store customer attributes, configure a Promo program, evaluate a cart, apply the selected effects, and commit the selected decision before payment capture.
 
@@ -31,7 +31,7 @@ Create fields with `POST /v1/schema/definitions` using the secret token. The cli
   "source": "customer",
   "type": "enum",
   "required": true,
-  "enumValues": ["gold", "silver"]
+  "enumValues": ["bronze", "silver", "gold"]
 }
 ```
 
@@ -95,9 +95,9 @@ Use the secret-gated `/v1/programs` routes to create, list, read, and replace Pr
 
 ```json
 {
-  "id": "gold-web-10",
+  "id": "gold-web-rewards",
   "type": "promo",
-  "name": "Gold web offer",
+  "name": "Gold web rewards",
   "status": "active",
   "eligibility": {
     "match": "ALL",
@@ -116,13 +116,59 @@ Use the secret-gated `/v1/programs` routes to create, list, read, and replace Pr
       }
     ]
   },
-  "reward": {
-    "type": "order_discount",
-    "calculation": "fixed",
-    "amount": { "currency": "GBP", "minorUnits": 1000 }
+  "rewardRules": [
+    {
+      "id": "large-cart-20-percent",
+      "name": "Twenty percent off large carts",
+      "conditions": {
+        "match": "ALL",
+        "conditions": [
+          {
+            "id": "cart-at-least-100",
+            "variable": "cart.subtotal",
+            "operator": "gte",
+            "value": 10000
+          }
+        ]
+      },
+      "reward": {
+        "type": "order_discount",
+        "calculation": "percent",
+        "basisPoints": 2000
+      }
+    },
+    {
+      "id": "medium-cart-10-off",
+      "name": "Ten pounds off medium carts",
+      "conditions": {
+        "match": "ALL",
+        "conditions": [
+          {
+            "id": "cart-at-least-50",
+            "variable": "cart.subtotal",
+            "operator": "gte",
+            "value": 5000
+          }
+        ]
+      },
+      "reward": {
+        "type": "order_discount",
+        "calculation": "fixed",
+        "amount": { "currency": "GBP", "minorUnits": 1000 }
+      }
+    }
+  ],
+  "fallbackReward": {
+    "id": "fallback-5-off",
+    "name": "Fallback five pounds off",
+    "reward": {
+      "type": "order_discount",
+      "calculation": "fixed",
+      "amount": { "currency": "GBP", "minorUnits": 500 }
+    }
   },
-  "budget": { "currency": "GBP", "minorUnits": 10000 },
-  "usageCap": 10,
+  "budget": { "currency": "GBP", "minorUnits": 100000 },
+  "usageCap": 100,
   "perCustomerCap": 1,
   "stackable": false,
   "priority": 10,
@@ -130,7 +176,11 @@ Use the secret-gated `/v1/programs` routes to create, list, read, and replace Pr
 }
 ```
 
-Money is always an ISO currency plus integer minor units. Fixed rewards and budgets must use the same currency; evaluation currency must also match. Free-shipping rewards cannot have a monetary budget because the request does not contain a shipping cost. Lifecycle values are `draft`, `scheduled`, `active`, `paused`, and `ended`. Only a draft program can be edited, and its external `id` is immutable.
+`eligibility` is the global gate. If it passes, `rewardRules` are evaluated in the configured order and the first matching rule wins, even when a later rule also matches. If none match, `fallbackReward` is selected when configured. A Promo without a matching rule or fallback returns `not_qualified` with `NO_REWARD_RULE_MATCHED`.
+
+Money is always an ISO currency plus integer minor units. Fixed rewards and budgets must use the same currency; evaluation currency must also match. Free-shipping rewards cannot coexist with a monetary budget because the request does not contain a shipping cost. Lifecycle values are `draft`, `scheduled`, `active`, `paused`, and `ended`. Only a draft program can be edited, and its external `id` is immutable.
+
+The OpenAPI document also publishes `AffiliateProgram`, `ReferralProgram`, and `LoyaltyProgram` as future configuration contracts. They are not accepted by any current `/v1/programs` request or returned by its responses, and no runtime evaluates or persists them. Loyalty `assetRef` values are opaque references; preserve them byte-for-byte. Defining and resolving them through a Wallet Asset Catalog is deferred.
 
 ## 4. Evaluate with stored customer data and live context
 
@@ -141,7 +191,7 @@ Call `POST /v1/evaluate` with a publishable or secret token:
   "customerRef": "customer-123",
   "cart": {
     "currency": "GBP",
-    "subtotal": 6500,
+    "subtotal": 12500,
     "items": []
   },
   "context": {
@@ -163,18 +213,19 @@ The response contains an immutable decision snapshot identity and one structured
   "expiresAt": "2026-07-19T10:05:00.000Z",
   "decisions": [
     {
-      "programRef": "gold-web-10",
+      "programRef": "gold-web-rewards",
       "programType": "promo",
       "outcome": "qualified",
+      "rewardRuleRef": "large-cart-20-percent",
       "effects": [
         {
           "type": "order_discount",
-          "calculation": "fixed",
-          "amount": { "currency": "GBP", "minorUnits": 1000 }
+          "calculation": "percent",
+          "basisPoints": 2000
         }
       ],
       "reasonCodes": [],
-      "message": "You received GBP 10.00 off.",
+      "message": "You received 20% off.",
       "commitRequired": true,
       "eligible": true
     }
@@ -182,7 +233,64 @@ The response contains an immutable decision snapshot identity and one structured
 }
 ```
 
-`outcome` is authoritative. It can be `qualified`, `not_qualified`, `unavailable`, `invalid_code`, `exhausted`, or `conflict`. `eligible` is only a derived convenience boolean (`true` exactly when outcome is `qualified`). `reasonCodes`, `message`, and `effects` explain what happened; `commitRequired` tells the integration whether applying the effect must be followed by redemption. Never apply effects from a decision that is not qualified.
+`outcome` is authoritative. It can be `qualified`, `not_qualified`, `unavailable`, `invalid_code`, `exhausted`, or `conflict`. `eligible` is only a derived convenience boolean (`true` exactly when outcome is `qualified`). `rewardRuleRef` identifies the selected conditional rule or fallback when a Promo reward was selected. `reasonCodes`, `message`, and `effects` explain what happened; `commitRequired` tells the integration whether applying the effect must be followed by redemption. Never apply effects from a decision that is not qualified.
+
+For a globally eligible cart below both thresholds, the configured fallback produces this qualified response:
+
+```json
+{
+  "evaluationId": "evaluation-789",
+  "customerRef": "customer-123",
+  "customerVersion": 1,
+  "schemaVersion": 1,
+  "expiresAt": "2026-07-19T10:05:00.000Z",
+  "decisions": [
+    {
+      "programRef": "gold-web-rewards",
+      "programType": "promo",
+      "outcome": "qualified",
+      "rewardRuleRef": "fallback-5-off",
+      "effects": [
+        {
+          "type": "order_discount",
+          "calculation": "fixed",
+          "amount": { "currency": "GBP", "minorUnits": 500 }
+        }
+      ],
+      "reasonCodes": [],
+      "message": "You received GBP 5.00 off.",
+      "commitRequired": true,
+      "eligible": true
+    }
+  ]
+}
+```
+
+If the same Promo has no fallback and no ordered rule matches, it returns no effects and no `rewardRuleRef`:
+
+```json
+{
+  "evaluationId": "evaluation-789",
+  "customerRef": "customer-123",
+  "customerVersion": 1,
+  "schemaVersion": 1,
+  "expiresAt": "2026-07-19T10:05:00.000Z",
+  "decisions": [
+    {
+      "programRef": "gold-web-rewards-no-fallback",
+      "programType": "promo",
+      "outcome": "not_qualified",
+      "effects": [],
+      "reasonCodes": ["NO_REWARD_RULE_MATCHED"],
+      "message": "No reward rule matched.",
+      "commitRequired": false,
+      "eligible": false
+    }
+  ]
+}
+```
+
+Budget and cap checks use the selected reward, not every configured reward. For the first-match percent reward above, the projected budget charge is 20% of the evaluated subtotal, capped by the order value. Fixed order discounts are capped by subtotal; fixed line-item discounts are multiplied by matching quantity and capped by line value. Evaluation marks the decision `exhausted` when the selected projected charge exceeds remaining budget or a program usage cap has been reached. Redemption recomputes the same selected charge from the signed cart and atomically rechecks the budget, total usage cap, and per-customer cap before committing.
 
 The server stores the facts, request, program/system state, decisions, schema/customer versions, and expiry in an HMAC-SHA-256-protected snapshot. The default time-to-live is 300 seconds and can be configured up to 86,400 seconds. Do not alter a decision or construct a redemption from client-calculated effects. If checkout cannot commit before `expiresAt`, evaluate again and use the new decision.
 
@@ -193,7 +301,7 @@ After mapping a qualified effect into the commerce platform, but **before final 
 ```json
 {
   "evaluationId": "evaluation-789",
-  "programRef": "gold-web-10",
+  "programRef": "gold-web-rewards",
   "externalOrderRef": "order-456",
   "idempotencyKey": "checkout-attempt-abc"
 }
@@ -205,21 +313,22 @@ At least one of `externalOrderRef` or `idempotencyKey` is required; callers may 
 {
   "redemptionId": "redemption-123",
   "evaluationId": "evaluation-789",
-  "programRef": "gold-web-10",
+  "programRef": "gold-web-rewards",
+  "rewardRuleRef": "large-cart-20-percent",
   "externalOrderRef": "order-456",
   "idempotencyKey": "checkout-attempt-abc",
   "status": "committed",
   "effects": [
     {
       "type": "order_discount",
-      "calculation": "fixed",
-      "amount": { "currency": "GBP", "minorUnits": 1000 }
+      "calculation": "percent",
+      "basisPoints": 2000
     }
   ]
 }
 ```
 
-Redemption verifies the signed snapshot and its TTL, requires exactly one qualified committable decision for the selected program, and atomically rechecks active status, reward/currency consistency, total usage, per-customer cap, and remaining budget while inserting the ledger row. A successful result always has `status: "committed"`.
+Redemption verifies the signed snapshot and its TTL, resolves `rewardRuleRef` against both the signed Promo configuration and the current program without re-evaluating conditions, and atomically rechecks active status, reward/currency consistency, total usage, per-customer cap, and remaining budget while inserting the ledger row. A successful result always has `status: "committed"`.
 
 Retries do not consume a second use or decrement the budget twice. Reusing either identifier with a different evaluation, program, order, or counterpart identifier returns `409 VERSION_CONFLICT`. If identifiers resolve to two different previous redemptions, the request also conflicts. Do not create a new idempotency key merely because a network response was lost; retry the identical request. If the service returns `409 EXHAUSTED`, remove or re-price the stale discount before capture.
 
@@ -232,10 +341,14 @@ All errors have the same envelope and carry the response's `x-correlation-id`:
   "error": {
     "code": "CONTEXT_VALIDATION_FAILED",
     "message": "The request context failed validation",
-    "correlationId": "...",
+    "correlationId": "correlation-123",
     "retryable": false,
     "fields": [
-      { "path": "context.channel", "code": "invalid_value", "message": "..." }
+      {
+        "path": "context.channel",
+        "code": "invalid_value",
+        "message": "Expected one of: web, mobile"
+      }
     ]
   }
 }
@@ -257,26 +370,117 @@ Retry transport failures and retryable `503` responses. Do not automatically ret
 
 ## Local end-to-end test
 
-From the repository root:
+From the repository root, create a fresh isolated D1 state. This leaves any existing
+`apps/api/.wrangler/state` directory untouched:
 
 ```bash
 pnpm install --frozen-lockfile
-pnpm --filter @incentives/api exec wrangler d1 migrations apply incentives-dev --local
-pnpm --filter @incentives/api dev --local \
+INCENTIVES_D1_STATE_DIR="$(mktemp -d)"
+pnpm --filter @incentives/api run build:dependencies
+pnpm --filter @incentives/api exec wrangler d1 migrations apply incentives-dev \
+  --local --persist-to "$INCENTIVES_D1_STATE_DIR"
+pnpm --filter @incentives/api exec wrangler dev \
+  --persist-to "$INCENTIVES_D1_STATE_DIR" \
   --var PUBLISHABLE_TOKEN:publishable-local \
   --var SECRET_TOKEN:secret-local-token \
   --var DECISION_SIGNING_SECRET:local-decision-signing-secret
 ```
 
-Use the port printed by Wrangler (normally `http://localhost:8787`). Fetch `http://localhost:8787/v1/openapi.json`, then execute the five sections above with `curl` or an API client. Keep `Authorization: Bearer secret-local-token` for configuration/customer/redemption calls and use `publishable-local` for the published-schema/evaluate calls.
+The conditional-reward contract is a clean break from old single-reward program JSON.
+Apply the unchanged baseline migration to a fresh state directory as shown above; do not
+read old program rows, delete an existing Wrangler state directory, or substitute
+`--remote`.
 
-The `dev` lifecycle builds the API's internal workspace dependencies first, so this command works from a clean checkout without pre-existing `dist/` directories. The automated acceptance path likewise builds those dependencies and then runs real Hono handlers against isolated workerd+D1 storage:
+Use the port printed by Wrangler (normally `http://localhost:8787`). The following exact
+requests reproduce the tiered flow above. These tokens are local examples, not production
+credentials. The first four calls define and publish the two typed fields, then store the
+customer once:
+
+```bash
+INCENTIVES_API_URL="http://localhost:8787"
+
+curl --fail-with-body --silent --request POST \
+  "$INCENTIVES_API_URL/v1/schema/definitions" \
+  --header 'Authorization: Bearer secret-local-token' \
+  --header 'Content-Type: application/json' \
+  --data '{"key":"customer.tier","label":"Customer tier","source":"customer","type":"enum","required":true,"enumValues":["bronze","silver","gold"]}'
+
+curl --fail-with-body --silent --request POST \
+  "$INCENTIVES_API_URL/v1/schema/definitions" \
+  --header 'Authorization: Bearer secret-local-token' \
+  --header 'Content-Type: application/json' \
+  --data '{"key":"context.channel","label":"Sales channel","source":"context","type":"enum","required":true,"enumValues":["web","mobile"]}'
+
+curl --fail-with-body --silent --request POST \
+  "$INCENTIVES_API_URL/v1/schema/publish" \
+  --header 'Authorization: Bearer secret-local-token'
+
+curl --fail-with-body --silent --request PATCH \
+  "$INCENTIVES_API_URL/v1/customers/customer-123" \
+  --header 'Authorization: Bearer secret-local-token' \
+  --header 'Content-Type: application/json' \
+  --data '{"attributes":{"tier":"gold"}}'
+```
+
+Create the schema-validated tiered Promo from section 3:
+
+```bash
+curl --fail-with-body --silent --request POST \
+  "$INCENTIVES_API_URL/v1/programs" \
+  --header 'Authorization: Bearer secret-local-token' \
+  --header 'Content-Type: application/json' \
+  --data '{"id":"gold-web-rewards","type":"promo","name":"Gold web rewards","status":"active","eligibility":{"match":"ALL","conditions":[{"id":"gold-tier","variable":"customer.tier","operator":"eq","value":"gold"},{"id":"web-channel","variable":"context.channel","operator":"eq","value":"web"}]},"rewardRules":[{"id":"large-cart-20-percent","name":"Twenty percent off large carts","conditions":{"match":"ALL","conditions":[{"id":"cart-at-least-100","variable":"cart.subtotal","operator":"gte","value":10000}]},"reward":{"type":"order_discount","calculation":"percent","basisPoints":2000}},{"id":"medium-cart-10-off","name":"Ten pounds off medium carts","conditions":{"match":"ALL","conditions":[{"id":"cart-at-least-50","variable":"cart.subtotal","operator":"gte","value":5000}]},"reward":{"type":"order_discount","calculation":"fixed","amount":{"currency":"GBP","minorUnits":1000}}}],"fallbackReward":{"id":"fallback-5-off","name":"Fallback five pounds off","reward":{"type":"order_discount","calculation":"fixed","amount":{"currency":"GBP","minorUnits":500}}},"budget":{"currency":"GBP","minorUnits":100000},"usageCap":100,"perCustomerCap":1,"stackable":false,"priority":10,"autoApply":true}'
+```
+
+Evaluate both sides of the threshold. Neither evaluation resends customer attributes:
+
+```bash
+curl --fail-with-body --silent --request POST \
+  "$INCENTIVES_API_URL/v1/evaluate" \
+  --header 'Authorization: Bearer publishable-local' \
+  --header 'Content-Type: application/json' \
+  --data '{"customerRef":"customer-123","cart":{"currency":"GBP","subtotal":7500,"items":[]},"context":{"channel":"web"}}'
+
+HIGH_EVALUATION="$(curl --fail-with-body --silent --request POST \
+  "$INCENTIVES_API_URL/v1/evaluate" \
+  --header 'Authorization: Bearer publishable-local' \
+  --header 'Content-Type: application/json' \
+  --data '{"customerRef":"customer-123","cart":{"currency":"GBP","subtotal":12500,"items":[]},"context":{"channel":"web"}}')"
+HIGH_EVALUATION_ID="$(node -e \
+  'process.stdout.write(JSON.parse(process.argv[1]).evaluationId)' \
+  "$HIGH_EVALUATION")"
+```
+
+Commit the higher-tier decision before capture, then retry the identical request. Both
+responses must contain the same `redemptionId` and `rewardRuleRef`:
+
+```bash
+curl --fail-with-body --silent --request POST \
+  "$INCENTIVES_API_URL/v1/redemptions" \
+  --header 'Authorization: Bearer secret-local-token' \
+  --header 'Content-Type: application/json' \
+  --data "{\"evaluationId\":\"$HIGH_EVALUATION_ID\",\"programRef\":\"gold-web-rewards\",\"externalOrderRef\":\"manual-order-1\",\"idempotencyKey\":\"manual-checkout-1\"}"
+
+curl --fail-with-body --silent --request POST \
+  "$INCENTIVES_API_URL/v1/redemptions" \
+  --header 'Authorization: Bearer secret-local-token' \
+  --header 'Content-Type: application/json' \
+  --data "{\"evaluationId\":\"$HIGH_EVALUATION_ID\",\"programRef\":\"gold-web-rewards\",\"externalOrderRef\":\"manual-order-1\",\"idempotencyKey\":\"manual-checkout-1\"}"
+```
+
+The explicit dependency build makes this sequence work from a clean checkout without
+pre-existing `dist/` directories. The automated acceptance path likewise builds those
+dependencies and then runs real Hono handlers against isolated workerd+D1 storage:
 
 ```bash
 pnpm --filter @incentives/api test:full-flow
 ```
 
-That test creates definitions, publishes them, stores a customer, creates a Promo, receives a qualified decision, and commits a redemption with `status: "committed"`. Run the complete workspace gate before integration changes are merged:
+That test creates definitions, publishes them, stores a customer once, creates ordered
+tiered and no-fallback Promos, evaluates both cart thresholds without customer-attribute
+overrides, retries a committed redemption idempotently, and proves program-wide cap and
+budget exhaustion across selected rules. Run the complete workspace gate before
+integration changes are merged:
 
 ```bash
 pnpm -r test
@@ -285,3 +489,5 @@ pnpm -r build
 pnpm -r lint
 git diff --check
 ```
+
+Every JSON block in this guide is copied from a named value in `packages/contracts/test-fixtures/documentation-examples.ts` (or, for the two field definitions, from `canonicalVariableDefinitions`). `packages/contracts/src/documentation-examples.test.ts` parses each value through its public contract schema.

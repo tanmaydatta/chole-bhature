@@ -99,7 +99,7 @@ export class ContextValidationError extends ApiFailure {
   readonly code = 'CONTEXT_VALIDATION_FAILED';
   readonly status = 400;
 
-  constructor(message: string) {
+  constructor(message: string, readonly fields?: ApiFieldError[]) {
     super(message);
   }
 }
@@ -175,6 +175,9 @@ function mapFailure(error: unknown, correlationId: string): MappedFailure {
         message: error.message,
         correlationId,
         retryable: error.retryable,
+        ...(error instanceof ContextValidationError && error.fields !== undefined
+          ? { fields: error.fields }
+          : {}),
       },
     };
   }

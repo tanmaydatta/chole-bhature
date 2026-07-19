@@ -64,11 +64,24 @@ const welcome10: PromoProgram = {
       value: 5_000,
     }],
   },
-  reward: {
-    type: 'order_discount',
-    calculation: 'fixed',
-    amount: { currency: 'GBP', minorUnits: 1_000 },
-  },
+  rewardRules: [{
+    id: 'default-reward',
+    name: 'Default reward',
+    conditions: {
+      match: 'ALL',
+      conditions: [{
+        id: 'positive-cart',
+        variable: 'cart.subtotal',
+        operator: 'gte',
+        value: 0,
+      }],
+    },
+    reward: {
+      type: 'order_discount',
+      calculation: 'fixed',
+      amount: { currency: 'GBP', minorUnits: 1_000 },
+    },
+  }],
   stackable: false,
   priority: 100,
 };
@@ -88,6 +101,7 @@ describe('PromoModule', () => {
       programRef: 'welcome-10',
       programType: 'promo',
       outcome: 'qualified',
+      rewardRuleRef: 'default-reward',
       effects: [{
         type: 'order_discount',
         calculation: 'fixed',
@@ -114,6 +128,7 @@ describe('PromoModule', () => {
       commitRequired: false,
       eligible: false,
     });
+    expect(decision).not.toHaveProperty('rewardRuleRef');
   });
 
   test.each(['draft', 'scheduled', 'paused', 'ended'] as const)(
@@ -127,6 +142,7 @@ describe('PromoModule', () => {
         commitRequired: false,
         eligible: false,
       });
+      expect(decision).not.toHaveProperty('rewardRuleRef');
     },
   );
 
@@ -164,6 +180,7 @@ describe('PromoModule', () => {
       commitRequired: false,
       eligible: false,
     });
+    expect(decision).not.toHaveProperty('rewardRuleRef');
   });
 
   test.each([
@@ -210,16 +227,116 @@ describe('PromoModule', () => {
       commitRequired: false,
       eligible: false,
     });
+    expect(decision).not.toHaveProperty('rewardRuleRef');
+  });
+
+  test('selects the first matching reward rule and preserves authoritative order', async () => {
+    const over5k = welcome10.rewardRules[0]!;
+    const over6k = {
+      ...over5k,
+      id: 'over-6000',
+      name: 'Over 6000',
+      conditions: {
+        match: 'ALL' as const,
+        conditions: [{
+          id: 'cart-over-6000',
+          variable: 'cart.subtotal',
+          operator: 'gte' as const,
+          value: 6_000,
+        }],
+      },
+      reward: { type: 'free_shipping' as const },
+    };
+
+    const [first] = await PromoModule.evaluate(context, {
+      ...welcome10,
+      rewardRules: [over5k, over6k],
+    });
+    const [reversed] = await PromoModule.evaluate(context, {
+      ...welcome10,
+      rewardRules: [over6k, over5k],
+    });
+
+    expect(first).toMatchObject({
+      outcome: 'qualified',
+      rewardRuleRef: 'default-reward',
+      effects: [over5k.reward],
+    });
+    expect(reversed).toMatchObject({
+      outcome: 'qualified',
+      rewardRuleRef: 'over-6000',
+      effects: [over6k.reward],
+    });
+  });
+
+  test('selects the fallback when no conditional rule matches', async () => {
+    const [decision] = await PromoModule.evaluate(context, {
+      ...welcome10,
+      rewardRules: [{
+        ...welcome10.rewardRules[0]!,
+        conditions: {
+          match: 'ALL',
+          conditions: [{
+            id: 'cart-over-10000',
+            variable: 'cart.subtotal',
+            operator: 'gte',
+            value: 10_000,
+          }],
+        },
+      }],
+      fallbackReward: {
+        id: 'fallback',
+        name: 'Fallback',
+        reward: { type: 'free_shipping' },
+      },
+    });
+
+    expect(decision).toMatchObject({
+      outcome: 'qualified',
+      rewardRuleRef: 'fallback',
+      effects: [{ type: 'free_shipping' }],
+    });
+  });
+
+  test('returns no-match semantics when no reward rule matches', async () => {
+    const [decision] = await PromoModule.evaluate(context, {
+      ...welcome10,
+      rewardRules: [{
+        ...welcome10.rewardRules[0]!,
+        conditions: {
+          match: 'ALL',
+          conditions: [{
+            id: 'cart-over-10000',
+            variable: 'cart.subtotal',
+            operator: 'gte',
+            value: 10_000,
+          }],
+        },
+      }],
+    });
+
+    expect(decision).toEqual(expect.objectContaining({
+      outcome: 'not_qualified',
+      effects: [],
+      reasonCodes: ['NO_REWARD_RULE_MATCHED'],
+      commitRequired: false,
+      eligible: false,
+    }));
+    expect(decision).not.toHaveProperty('rewardRuleRef');
+    expect(decision).not.toHaveProperty('message');
   });
 
   test('emits percent rewards as integer basis points without precomputing money', async () => {
     const [decision] = await PromoModule.evaluate(context, {
       ...welcome10,
-      reward: {
-        type: 'order_discount',
-        calculation: 'percent',
-        basisPoints: 1_250,
-      },
+      rewardRules: [{
+        ...welcome10.rewardRules[0]!,
+        reward: {
+          type: 'order_discount',
+          calculation: 'percent',
+          basisPoints: 1_250,
+        },
+      }],
     });
 
     expect(decision?.effects).toEqual([{
@@ -227,6 +344,27 @@ describe('PromoModule', () => {
       calculation: 'percent',
       basisPoints: 1_250,
     }]);
+  });
+
+  test.each([
+    {
+      type: 'line_item_discount' as const,
+      productRef: 'product-1',
+      calculation: 'fixed' as const,
+      amount: { currency: 'GBP', minorUnits: 250 },
+    },
+    { type: 'free_shipping' as const },
+  ])('copies a selected $type reward into effects', async (reward) => {
+    const [decision] = await PromoModule.evaluate(context, {
+      ...welcome10,
+      rewardRules: [{ ...welcome10.rewardRules[0]!, reward }],
+    });
+
+    expect(decision).toMatchObject({
+      rewardRuleRef: 'default-reward',
+      effects: [reward],
+    });
+    expect(decision?.effects[0]).not.toBe(reward);
   });
 
   test('handles absent optional customer data as an ordinary first failure', async () => {

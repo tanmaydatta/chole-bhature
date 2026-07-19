@@ -115,6 +115,7 @@ export const IncentiveDecisionSchema = z.object({
   programRef: z.string().min(1),
   programType: ProgramTypeSchema,
   outcome: DecisionOutcomeSchema,
+  rewardRuleRef: z.string().min(1).optional(),
   effects: z.array(EffectSchema),
   reasonCodes: z.array(z.string().regex(/^[A-Z][A-Z0-9_]*$/)),
   message: z.string().min(1).optional(),
@@ -164,6 +165,7 @@ const RedemptionResponseFields = {
   redemptionId: z.string().min(1),
   evaluationId: z.string().min(1),
   programRef: z.string().min(1),
+  rewardRuleRef: z.string().min(1).optional(),
   status: z.literal('committed'),
   effects: z.array(EffectSchema),
 };

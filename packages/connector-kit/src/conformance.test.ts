@@ -66,6 +66,7 @@ const qualifiedDecision: IncentiveDecision = {
   programRef: 'promo-1',
   programType: 'promo',
   outcome: 'qualified',
+  rewardRuleRef: 'default-reward',
   effects: [{
     type: 'order_discount',
     calculation: 'fixed',

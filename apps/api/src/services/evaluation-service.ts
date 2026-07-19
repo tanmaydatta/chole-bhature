@@ -19,10 +19,12 @@ import { canonicalJson } from '../json.js';
 import type {
   EvaluationDecisionRecord,
   EvaluationFactsSnapshot,
+  RedemptionIntegrityVerifiers,
   Repositories,
 } from '../repositories/types.js';
 import { BUILTIN_VARIABLE_DEFINITIONS } from './schema-service.js';
 import { validateCustomerAttributes } from './customer-service.js';
+import { verifyRedemptionReceipt } from './redemption-receipt.js';
 
 const DEFAULT_TTL_SECONDS = 300;
 const SigningSecretSchema = z.string().min(16).max(4_096);
@@ -246,7 +248,9 @@ function stableDecision(decision: ReturnType<typeof resolveDecisionConflicts>[nu
     case 'not_qualified':
       return {
         ...canonical,
-        message: canonical.message ?? "This promotion isn't valid for your order.",
+        message: canonical.reasonCodes.includes('NO_REWARD_RULE_MATCHED')
+          ? 'No reward rule matched.'
+          : canonical.message ?? "This promotion isn't valid for your order.",
       };
     case 'invalid_code':
       return { ...canonical, message: 'This promotion code is invalid.' };
@@ -331,9 +335,9 @@ function baseProgramDecision(program: PromoProgram): Pick<
   };
 }
 
-function currencyMismatchDecision(program: PromoProgram): PromoDecision {
+function currencyMismatchDecision(decision: PromoDecision): PromoDecision {
   return {
-    ...baseProgramDecision(program),
+    ...decision,
     outcome: 'unavailable',
     effects: [],
     reasonCodes: ['CURRENCY_MISMATCH'],
@@ -367,13 +371,19 @@ function customerRequiredDecision(program: PromoProgram): PromoDecision {
   };
 }
 
-function hasCurrencyMismatch(program: PromoProgram, cartCurrency: string): boolean {
+function selectedCurrencyMismatch(
+  program: PromoProgram,
+  decision: PromoDecision,
+  cartCurrency: string,
+): boolean {
+  const effect = decision.effects[0];
   return (
     program.budget !== undefined
     && program.budget.currency !== cartCurrency
   ) || (
-    'amount' in program.reward
-    && program.reward.amount.currency !== cartCurrency
+    effect !== undefined
+    && 'amount' in effect
+    && effect.amount.currency !== cartCurrency
   );
 }
 
@@ -426,9 +436,14 @@ export function createEvaluationService(repositories: Repositories, env: Env) {
           validateCustomerAttributes(customer.attributes, published.definitions);
         }
         const signingSecret = SigningSecretSchema.parse(env.DECISION_SIGNING_SECRET);
-        const verifyHistoricalDecision = (snapshot: EvaluationDecisionRecord) => (
-          verifyDecisionIntegrity(snapshot, signingSecret)
-        );
+        const verifyHistoricalIntegrity: RedemptionIntegrityVerifiers = {
+          verifyDecision: (snapshot: EvaluationDecisionRecord) => (
+            verifyDecisionIntegrity(snapshot, signingSecret)
+          ),
+          verifyReceipt: receipt => (
+            verifyRedemptionReceipt(receipt, signingSecret)
+          ),
+        };
 
         const programs = await repositories.programs.list(merchantId);
         const now = new Date();
@@ -457,7 +472,7 @@ export function createEvaluationService(repositories: Repositories, env: Env) {
               merchantId,
               customer.externalRef,
               record.externalRef,
-              verifyHistoricalDecision,
+              verifyHistoricalIntegrity,
             );
           const system = {
             ...(record.budgetRemaining === undefined
@@ -467,28 +482,36 @@ export function createEvaluationService(repositories: Repositories, env: Env) {
             customer_uses_count: customerUsesCount,
             today: now.toISOString().slice(0, 10),
           };
-          facts.programs.push({ programRef: record.externalRef, system });
+          facts.programs.push({
+            programRef: record.externalRef,
+            system,
+            config: record.program,
+          });
           const programFacts = assembleFacts({
             ...(customer === null ? {} : { customer: customer.attributes }),
             ...(request.context === undefined ? {} : { context: request.context }),
             ...liveFacts,
             system,
           });
-          const moduleEvaluated = hasCurrencyMismatch(record.program, request.cart.currency)
-            ? [currencyMismatchDecision(record.program)]
-            : await PromoModule.evaluate({
-              merchantId,
-              evaluationId,
-              now,
-              request,
-              facts: programFacts,
-              definitions,
-            }, record.program);
+          const moduleEvaluated = await PromoModule.evaluate({
+            merchantId,
+            evaluationId,
+            now,
+            request,
+            facts: programFacts,
+            definitions,
+          }, record.program);
+          const currencyChecked = moduleEvaluated.map(decision => (
+            decision.outcome === 'qualified'
+            && selectedCurrencyMismatch(record.program, decision, request.cart.currency)
+              ? currencyMismatchDecision(decision)
+              : decision
+          ));
           const evaluated = customer === null && record.program.perCustomerCap !== undefined
-            ? moduleEvaluated.map(decision => decision.outcome === 'qualified'
+            ? currencyChecked.map(decision => decision.outcome === 'qualified'
               ? customerRequiredDecision(record.program)
               : decision)
-            : moduleEvaluated;
+            : currencyChecked;
           for (const decision of evaluated) {
             if (decision.outcome !== 'qualified') {
               moduleDecisions.push(decision);
