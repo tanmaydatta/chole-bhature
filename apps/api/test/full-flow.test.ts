@@ -209,7 +209,7 @@ describe('integration-ready runtime', () => {
       },
       'GET /v1/customers/{customerRef}': {
         security: 'secret', success: ['200', 'CustomerRecord'],
-        parameters: ['CustomerRef'], errors: ['400', '401', '403', '404', '503'],
+        parameters: ['CustomerRef'], errors: ['401', '403', '404', '503'],
       },
       'PATCH /v1/customers/{customerRef}': {
         security: 'secret', success: ['200', 'CustomerRecord'],
@@ -243,7 +243,10 @@ describe('integration-ready runtime', () => {
       },
     } as const;
 
-    type HttpMethod = 'get' | 'post' | 'patch' | 'delete';
+    const methods = [
+      'get', 'put', 'post', 'delete', 'options', 'head', 'patch', 'trace',
+    ] as const;
+    type HttpMethod = typeof methods[number];
     type Operation = {
       security?: Array<Record<string, never[]>>;
       parameters?: Array<{ $ref?: string }>;
@@ -255,14 +258,30 @@ describe('integration-ready runtime', () => {
         headers?: Record<string, { $ref?: string }>;
       }>;
     };
-    const methods: HttpMethod[] = ['get', 'post', 'patch', 'delete'];
     const paths = document.paths as Record<string, Partial<Record<HttpMethod, Operation>>>;
-    const actualMatrix = Object.entries(paths).flatMap(([path, pathItem]) => (
-      methods.flatMap(method => pathItem[method] === undefined
-        ? []
-        : [`${method.toUpperCase()} ${path}`])
-    ));
+    const operationMatrix = (candidatePaths: Record<string, Record<string, unknown>>) => (
+      Object.entries(candidatePaths).flatMap(([path, pathItem]) => (
+        methods.flatMap(method => pathItem[method] === undefined
+          ? []
+          : [`${method.toUpperCase()} ${path}`])
+      ))
+    );
+    const actualMatrix = operationMatrix(paths as unknown as Record<string, Record<string, unknown>>);
     expect(actualMatrix.sort()).toEqual(Object.keys(expected).sort());
+    expect(operationMatrix({
+      '/operation-probe': {
+        put: {},
+        head: {},
+        parameters: [],
+        summary: 'ignored Path Item metadata',
+        description: 'ignored Path Item metadata',
+        servers: [],
+        $ref: '#/components/pathItems/Ignored',
+      },
+    })).toEqual([
+      'PUT /operation-probe',
+      'HEAD /operation-probe',
+    ]);
 
     expect(document.components?.securitySchemes).toMatchObject({
       publishableBearer: { type: 'http', scheme: 'bearer' },

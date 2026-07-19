@@ -259,7 +259,6 @@ export function buildOpenApiDocument(): OpenApiDocument {
     parameters: [customerRef],
     responses: {
       200: { description: 'Stored customer record', content: jsonContent(customerRecord) },
-      400: errors[400],
       401: errors[401],
       403: errors[403],
       404: errors[404],
