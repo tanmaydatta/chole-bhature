@@ -605,6 +605,46 @@ describe('Promo program API', () => {
     await expect(repositories.programs.get(SEEDED_MERCHANT_ID, 'stale-create')).resolves.toBeNull();
   });
 
+  test('a newer draft rejects a draft-program create validated against stale published definitions', async () => {
+    const repositories = createRepositories({ DB: env.DB });
+    const published = await repositories.schemas.getLatestVersion(
+      SEEDED_MERCHANT_ID,
+      'published',
+    );
+    expect(published).not.toBeNull();
+    await repositories.schemas.createNextDraft(SEEDED_MERCHANT_ID);
+
+    await expect(repositories.programs.create({
+      merchantId: SEEDED_MERCHANT_ID,
+      program: promo('stale-published-draft-create'),
+      schema: published,
+    })).rejects.toMatchObject({ name: 'ProgramConflictError' });
+  });
+
+  test('a newer draft rejects a draft-program update validated against stale published definitions', async () => {
+    const repositories = createRepositories({ DB: env.DB });
+    const published = await repositories.schemas.getLatestVersion(
+      SEEDED_MERCHANT_ID,
+      'published',
+    );
+    expect(published).not.toBeNull();
+    const existing = await repositories.programs.create({
+      merchantId: SEEDED_MERCHANT_ID,
+      program: promo('stale-published-draft-update'),
+      schema: published,
+    });
+    await repositories.schemas.createNextDraft(SEEDED_MERCHANT_ID);
+
+    await expect(repositories.programs.updateDraft({
+      merchantId: SEEDED_MERCHANT_ID,
+      externalRef: existing.externalRef,
+      program: { ...existing.program, name: 'Stale update' },
+      expectedProgram: existing.program,
+      expectedUpdatedAt: existing.updatedAt,
+      schema: published,
+    })).rejects.toMatchObject({ name: 'ProgramConflictError' });
+  });
+
   test('a program create winning first atomically blocks a referenced type mutation', async () => {
     const { repositories, draft, tier } = await draftFixture();
     const { enumValues: _enumValues, ...tierFields } = tier.definition;

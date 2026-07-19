@@ -893,6 +893,10 @@ export function createRepositories(env: Env): Repositories {
                 SELECT 1 FROM schema_versions
                 WHERE merchant_id = ?2 AND state = ?13 AND version > ?12
               )
+              AND (?13 <> 'published' OR ?15 <> 'draft' OR NOT EXISTS (
+                SELECT 1 FROM schema_versions
+                WHERE merchant_id = ?2 AND state = 'draft'
+              ))
             )
           `).bind(
             id,
@@ -909,6 +913,7 @@ export function createRepositories(env: Env): Repositories {
             schema?.version ?? null,
             schema?.state ?? null,
             schema === null ? null : JSON.stringify(schema.definitions),
+            parsedProgram.status,
           ).run();
           if (result.meta.changes !== 1) {
             throw new ProgramConflictError('The schema changed before the program was stored');
@@ -979,6 +984,10 @@ export function createRepositories(env: Env): Repositories {
                 SELECT 1 FROM schema_versions
                 WHERE merchant_id = ?9 AND state = ?14 AND version > ?13
               )
+              AND (?14 <> 'published' OR ?16 <> 'draft' OR NOT EXISTS (
+                SELECT 1 FROM schema_versions
+                WHERE merchant_id = ?9 AND state = 'draft'
+              ))
             )
         `).bind(
           parsedProgram.type,
@@ -996,6 +1005,7 @@ export function createRepositories(env: Env): Repositories {
           schema?.version ?? null,
           schema?.state ?? null,
           schema === null ? null : JSON.stringify(schema.definitions),
+          parsedProgram.status,
         ).run();
 
         if (result.meta.changes !== 1) {
