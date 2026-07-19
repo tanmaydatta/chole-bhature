@@ -1,8 +1,11 @@
 import {
+  ApiCredentialViewSchema,
+  AuditEntrySchema,
   CustomerSnapshotSchema,
   EvaluationRequestSchema,
   IncentiveDecisionSchema,
   PromoProgramSchema,
+  ProgramRevisionSchema,
   RedemptionResponseSchema,
   VariableDefinitionSchema,
   type VariableDefinition,
@@ -12,8 +15,13 @@ import { z } from 'zod';
 
 import { createDatabase } from '../db/client.js';
 import {
+  apiCredentials,
   customers,
   evaluationDecisions,
+  merchants,
+  productAudit,
+  programCounters,
+  programRevisions,
   programs,
   redemptions,
   schemaVersions,
@@ -28,8 +36,13 @@ import {
   type CustomerRecord,
   type CustomerUpsert,
   type AtomicRedemptionCommit,
+  type CredentialCreate,
   type EvaluationDecisionRecord,
+  type MerchantProvision,
+  type MerchantRecord,
+  type ProgramCounterRecord,
   type ProgramRecord,
+  type ProgramRevisionRecord,
   type RedemptionCreate,
   type RedemptionReceiptIntegrityVerifier,
   type Repositories,
@@ -52,8 +65,11 @@ const FactsSchema = z.object({
 }).strict();
 const DateTimeSchema = z.iso.datetime({ offset: true });
 const SchemaStateSchema = z.enum(['draft', 'published']);
+const DefinitionStateSchema = z.enum(['draft', 'published', 'deprecated']);
 const PositiveIntegerSchema = z.number().int().positive();
+const NonnegativeIntegerSchema = z.number().int().nonnegative();
 const CurrencySchema = z.string().regex(/^[A-Z]{3}$/);
+const CredentialDigestSchema = z.string().regex(/^[0-9a-f]{64}$/u);
 const ReceiptIntegrityHashSchema = z.string().regex(/^[0-9a-f]{64}$/u);
 const StoredRedemptionEnvelopeSchema = z.object({
   version: z.literal(1),
@@ -67,6 +83,12 @@ function normalizedDefinitions(definitions: readonly VariableDefinition[]): Vari
 
 function definitionsJson(definitions: readonly VariableDefinition[]): string {
   return JSON.stringify(normalizedDefinitions(definitions));
+}
+
+function storedProgramJson(program: z.infer<typeof PromoProgramSchema>): string {
+  const serialized = JSON.stringify(program);
+  if (serialized === undefined) throw new Error('Program config is not serializable');
+  return serialized;
 }
 
 function isConstraintError(error: unknown): boolean {
@@ -100,7 +122,7 @@ function parseDefinitionCreate(input: VariableDefinitionCreate): VariableDefinit
     id: z.string().min(1).parse(input.id),
     merchantId: z.string().min(1).parse(input.merchantId),
     schemaVersion: PositiveIntegerSchema.parse(input.schemaVersion),
-    state: SchemaStateSchema.parse(input.state),
+    state: DefinitionStateSchema.parse(input.state),
     definition: VariableDefinitionSchema.parse(input.definition),
     createdAt: DateTimeSchema.parse(input.createdAt ?? now()),
   };
@@ -125,9 +147,14 @@ function parseDefinitionRow(row: typeof variableDefinitions.$inferSelect): Varia
     id: row.id,
     merchantId: row.merchantId,
     schemaVersion: PositiveIntegerSchema.parse(row.schemaVersion),
-    state: SchemaStateSchema.parse(row.state),
+    state: DefinitionStateSchema.parse(row.state),
     definition,
     createdAt: DateTimeSchema.parse(row.createdAt),
+    ...optional(
+      'deprecatedAt',
+      row.deprecatedAt === null ? undefined : DateTimeSchema.parse(row.deprecatedAt),
+    ),
+    ...optional('deprecatedBy', row.deprecatedBy),
   };
 }
 
@@ -210,7 +237,60 @@ function customerFromRow(row: typeof customers.$inferSelect): CustomerRecord {
   return persistedRecord('customer', () => parseCustomerRow(row));
 }
 
-function parseProgramRow(row: typeof programs.$inferSelect): ProgramRecord {
+const MerchantStatusSchema = z.enum(['provisioning', 'active']);
+
+function parseMerchantRow(row: typeof merchants.$inferSelect): MerchantRecord {
+  return {
+    id: z.string().min(1).parse(row.id),
+    name: z.string().min(1).max(200).parse(row.name),
+    status: MerchantStatusSchema.parse(row.status),
+    ...optional('provisioningId', row.provisioningId),
+    createdAt: DateTimeSchema.parse(row.createdAt),
+    updatedAt: DateTimeSchema.parse(row.updatedAt ?? row.createdAt),
+  };
+}
+
+function merchantFromRow(row: typeof merchants.$inferSelect): MerchantRecord {
+  return persistedRecord('merchant', () => parseMerchantRow(row));
+}
+
+function credentialFromRow(row: typeof apiCredentials.$inferSelect) {
+  return persistedRecord('API credential', () => ApiCredentialViewSchema.parse({
+    id: row.id,
+    name: row.name,
+    merchantId: row.merchantId,
+    environment: row.environment,
+    kind: row.kind,
+    scopes: parseJson(row.scopesJson, z.array(z.string())),
+    ...optional('expiresAt', row.expiresAt),
+    createdAt: row.createdAt,
+    createdBy: row.createdBy,
+    ...optional('lastUsedAt', row.lastUsedAt),
+    status: row.status,
+    suffix: row.suffix,
+  }));
+}
+
+interface StoredProgramRow {
+  id: string;
+  merchantId: string;
+  externalRef: string;
+  type: string;
+  name: string;
+  status: string;
+  priority: number;
+  activeRevision: number | null;
+  draftRevision: number | null;
+  revision: number;
+  configJson: string;
+  maxUses: number | null;
+  usageCount: number;
+  budgetRemaining: number | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+function parseProgramRow(row: StoredProgramRow): ProgramRecord {
   let program: ReturnType<typeof PromoProgramSchema.parse>;
   try {
     program = parseJson(row.configJson, PromoProgramSchema);
@@ -265,8 +345,101 @@ function parseProgramRow(row: typeof programs.$inferSelect): ProgramRecord {
   };
 }
 
-function programFromRow(row: typeof programs.$inferSelect): ProgramRecord {
+function programFromRow(row: StoredProgramRow): ProgramRecord {
   return persistedRecord('program', () => parseProgramRow(row));
+}
+
+function parseProgramRevisionRow(
+  row: typeof programRevisions.$inferSelect & { externalRef: string },
+): ProgramRevisionRecord {
+  const revision = ProgramRevisionSchema.parse({
+    programRef: row.externalRef,
+    revision: row.revision,
+    configuration: parseJson(row.configJson, PromoProgramSchema),
+    createdAt: row.createdAt,
+    createdBy: row.createdBy,
+    ...optional('publishedAt', row.publishedAt),
+    ...optional('publishedBy', row.publishedBy),
+  });
+  return {
+    merchantId: row.merchantId,
+    programId: row.programId,
+    ...revision,
+  };
+}
+
+function programRevisionFromRow(
+  row: typeof programRevisions.$inferSelect & { externalRef: string },
+): ProgramRevisionRecord {
+  return persistedRecord('program revision', () => parseProgramRevisionRow(row));
+}
+
+function parseProgramCounterRow(row: typeof programCounters.$inferSelect): ProgramCounterRecord {
+  return {
+    programId: row.programId,
+    merchantId: row.merchantId,
+    ...optional('maxUses', row.maxUses),
+    usageCount: NonnegativeIntegerSchema.parse(row.usageCount),
+    ...optional('budgetRemaining', row.budgetRemaining),
+  };
+}
+
+function programCounterFromRow(row: typeof programCounters.$inferSelect): ProgramCounterRecord {
+  return persistedRecord('program counter', () => parseProgramCounterRow(row));
+}
+
+function auditFromRow(row: typeof productAudit.$inferSelect) {
+  return persistedRecord('product audit entry', () => AuditEntrySchema.parse({
+    id: row.id,
+    occurredAt: row.occurredAt,
+    actorKind: row.actorKind,
+    actorId: row.actorId,
+    ...optional('merchantId', row.merchantId),
+    action: row.action,
+    targetType: row.targetType,
+    targetId: row.targetId,
+    outcome: row.outcome,
+    correlationId: row.correlationId,
+    ...optional(
+      'metadata',
+      row.metadataJson === null
+        ? undefined
+        : parseJson(row.metadataJson, AuditEntrySchema.shape.metadata.unwrap()),
+    ),
+  }));
+}
+
+function parseMerchantProvision(input: MerchantProvision): MerchantRecord {
+  const createdAt = DateTimeSchema.parse(input.createdAt ?? now());
+  return {
+    id: z.string().min(1).parse(input.id),
+    name: z.string().min(1).max(200).parse(input.name),
+    status: 'provisioning',
+    provisioningId: z.string().min(1).parse(input.provisioningId),
+    createdAt,
+    updatedAt: createdAt,
+  };
+}
+
+function parseCredentialCreate(input: CredentialCreate) {
+  const createdAt = DateTimeSchema.parse(input.createdAt ?? now());
+  const view = ApiCredentialViewSchema.parse({
+    id: input.id,
+    name: input.name,
+    merchantId: input.merchantId,
+    environment: input.environment,
+    kind: input.kind,
+    scopes: input.scopes,
+    ...optional('expiresAt', input.expiresAt),
+    createdAt,
+    createdBy: input.createdBy,
+    status: 'active',
+    suffix: input.suffix,
+  });
+  return {
+    view,
+    digest: CredentialDigestSchema.parse(input.digest),
+  };
 }
 
 function parseDecision(input: EvaluationDecisionRecord): EvaluationDecisionRecord {
@@ -434,6 +607,54 @@ function parseAtomicRedemption(input: AtomicRedemptionCommit): AtomicRedemptionC
 export function createRepositories(env: Env): Repositories {
   const db = createDatabase(env);
 
+  const programProjection = `
+    SELECT
+      logical.id AS id,
+      logical.merchant_id AS merchantId,
+      logical.external_ref AS externalRef,
+      logical.type AS type,
+      logical.name AS name,
+      logical.status AS status,
+      logical.priority AS priority,
+      logical.active_revision AS activeRevision,
+      logical.draft_revision AS draftRevision,
+      revision.revision AS revision,
+      logical.config_json AS configJson,
+      logical.max_uses AS maxUses,
+      logical.usage_count AS usageCount,
+      logical.budget_remaining AS budgetRemaining,
+      logical.created_at AS createdAt,
+      logical.updated_at AS updatedAt
+    FROM programs AS logical
+    INNER JOIN program_revisions AS revision
+      ON revision.merchant_id = logical.merchant_id
+      AND revision.program_id = logical.id
+      AND revision.revision = COALESCE(logical.draft_revision, logical.active_revision)
+    INNER JOIN program_counters AS counter
+      ON counter.merchant_id = logical.merchant_id
+      AND counter.program_id = logical.id
+  `;
+
+  async function getProgramById(
+    merchantId: string,
+    id: string,
+  ): Promise<ProgramRecord | null> {
+    const row = await env.DB.prepare(`${programProjection}
+      WHERE logical.merchant_id = ?1 AND logical.id = ?2
+    `).bind(merchantId, id).first<StoredProgramRow>();
+    return row === null ? null : programFromRow(row);
+  }
+
+  async function getProgramByExternalRef(
+    merchantId: string,
+    externalRef: string,
+  ): Promise<ProgramRecord | null> {
+    const row = await env.DB.prepare(`${programProjection}
+      WHERE logical.merchant_id = ?1 AND logical.external_ref = ?2
+    `).bind(merchantId, externalRef).first<StoredProgramRow>();
+    return row === null ? null : programFromRow(row);
+  }
+
   async function getLatestSchemaVersion(
     merchantId: string,
     state: 'draft' | 'published',
@@ -537,6 +758,93 @@ export function createRepositories(env: Env): Repositories {
   }
 
   return {
+    merchants: {
+      async provision(input) {
+        const parsed = parseMerchantProvision(input);
+        const existing = await env.DB.prepare(`
+          SELECT id, name, status, provisioning_id AS provisioningId,
+            created_at AS createdAt, updated_at AS updatedAt
+          FROM merchants
+          WHERE id = ?1 OR provisioning_id = ?2
+        `).bind(parsed.id, parsed.provisioningId).first<{
+          id: string;
+          name: string;
+          status: string;
+          provisioningId: string | null;
+          createdAt: string;
+          updatedAt: string | null;
+        }>();
+        if (existing !== null) {
+          const record = merchantFromRow({
+            id: existing.id,
+            name: existing.name,
+            status: existing.status,
+            provisioningId: existing.provisioningId,
+            createdAt: existing.createdAt,
+            updatedAt: existing.updatedAt,
+          });
+          if (
+            record.id !== parsed.id
+            || record.name !== parsed.name
+            || record.provisioningId !== parsed.provisioningId
+          ) {
+            throw new Error('Merchant provisioning identity conflicts with an existing merchant');
+          }
+          return record;
+        }
+        const row = await db.insert(merchants).values({
+          id: parsed.id,
+          name: parsed.name,
+          status: parsed.status,
+          provisioningId: parsed.provisioningId,
+          createdAt: parsed.createdAt,
+          updatedAt: parsed.updatedAt,
+        }).returning().get();
+        return merchantFromRow(row);
+      },
+
+      async get(id) {
+        const row = await db.select().from(merchants).where(eq(merchants.id, id)).get();
+        return row === undefined ? null : merchantFromRow(row);
+      },
+    },
+
+    credentials: {
+      async create(input) {
+        const parsed = parseCredentialCreate(input);
+        const row = await db.insert(apiCredentials).values({
+          id: parsed.view.id,
+          merchantId: parsed.view.merchantId,
+          name: parsed.view.name,
+          environment: parsed.view.environment,
+          kind: parsed.view.kind,
+          scopesJson: canonicalJson(parsed.view.scopes),
+          digest: parsed.digest,
+          suffix: parsed.view.suffix,
+          status: parsed.view.status,
+          expiresAt: parsed.view.expiresAt ?? null,
+          createdAt: parsed.view.createdAt,
+          createdBy: parsed.view.createdBy,
+        }).returning().get();
+        return credentialFromRow(row);
+      },
+
+      async findByDigest(digest) {
+        const parsedDigest = CredentialDigestSchema.parse(digest);
+        const row = await db.select().from(apiCredentials).where(
+          eq(apiCredentials.digest, parsedDigest),
+        ).get();
+        return row === undefined ? null : credentialFromRow(row);
+      },
+
+      async list(merchantId) {
+        const rows = await db.select().from(apiCredentials).where(
+          eq(apiCredentials.merchantId, merchantId),
+        ).orderBy(asc(apiCredentials.createdAt), asc(apiCredentials.id)).all();
+        return rows.map(credentialFromRow);
+      },
+    },
+
     schemas: {
       async listDefinitions(merchantId, schemaVersion) {
         const rows = await db.select().from(variableDefinitions).where(and(
@@ -666,8 +974,15 @@ export function createRepositories(env: Env): Repositories {
                 )
                 AND (?9 IS NULL OR NOT EXISTS (
                   SELECT 1
-                  FROM programs AS referenced_program,
-                    json_tree(referenced_program.config_json, '$') AS condition_node
+                  FROM programs AS referenced_program
+                  INNER JOIN program_revisions AS referenced_revision
+                    ON referenced_revision.merchant_id = referenced_program.merchant_id
+                    AND referenced_revision.program_id = referenced_program.id
+                    AND referenced_revision.revision IN (
+                      referenced_program.active_revision,
+                      referenced_program.draft_revision
+                    )
+                  INNER JOIN json_tree(referenced_revision.config_json, '$') AS condition_node
                   WHERE referenced_program.merchant_id = ?2
                     AND condition_node.key = 'variable'
                     AND condition_node.value = ?9
@@ -697,8 +1012,15 @@ export function createRepositories(env: Env): Repositories {
                 )
                 AND (?16 IS NULL OR NOT EXISTS (
                   SELECT 1
-                  FROM programs AS referenced_program,
-                    json_tree(referenced_program.config_json, '$') AS condition_node
+                  FROM programs AS referenced_program
+                  INNER JOIN program_revisions AS referenced_revision
+                    ON referenced_revision.merchant_id = referenced_program.merchant_id
+                    AND referenced_revision.program_id = referenced_program.id
+                    AND referenced_revision.revision IN (
+                      referenced_program.active_revision,
+                      referenced_program.draft_revision
+                    )
+                  INNER JOIN json_tree(referenced_revision.config_json, '$') AS condition_node
                   WHERE referenced_program.merchant_id = ?9
                     AND condition_node.key = 'variable'
                     AND condition_node.value = ?16
@@ -767,8 +1089,15 @@ export function createRepositories(env: Env): Repositories {
               )
               AND NOT EXISTS (
                 SELECT 1
-                FROM programs AS referenced_program,
-                  json_tree(referenced_program.config_json, '$') AS condition_node
+                FROM programs AS referenced_program
+                INNER JOIN program_revisions AS referenced_revision
+                  ON referenced_revision.merchant_id = referenced_program.merchant_id
+                  AND referenced_revision.program_id = referenced_program.id
+                  AND referenced_revision.revision IN (
+                    referenced_program.active_revision,
+                    referenced_program.draft_revision
+                  )
+                INNER JOIN json_tree(referenced_revision.config_json, '$') AS condition_node
                 WHERE referenced_program.merchant_id = ?2
                   AND condition_node.key = 'variable'
                   AND condition_node.value = ?6
@@ -795,8 +1124,15 @@ export function createRepositories(env: Env): Repositories {
               )
               AND NOT EXISTS (
                 SELECT 1
-                FROM programs AS referenced_program,
-                  json_tree(referenced_program.config_json, '$') AS condition_node
+                FROM programs AS referenced_program
+                INNER JOIN program_revisions AS referenced_revision
+                  ON referenced_revision.merchant_id = referenced_program.merchant_id
+                  AND referenced_revision.program_id = referenced_program.id
+                  AND referenced_revision.revision IN (
+                    referenced_program.active_revision,
+                    referenced_program.draft_revision
+                  )
+                INNER JOIN json_tree(referenced_revision.config_json, '$') AS condition_node
                 WHERE referenced_program.merchant_id = ?1
                   AND condition_node.key = 'variable'
                   AND condition_node.value = ?4
@@ -873,6 +1209,55 @@ export function createRepositories(env: Env): Repositories {
         }
         return parsed;
       },
+
+      async getDefinitionImpact(merchantId, key) {
+        const parsedMerchantId = z.string().min(1).parse(merchantId);
+        const parsedKey = z.string().min(1).parse(key);
+        const [versions, references, customerCount] = await Promise.all([
+          env.DB.prepare(`
+            SELECT DISTINCT schema_version AS version
+            FROM variable_definitions
+            WHERE merchant_id = ?1 AND key = ?2
+              AND state IN ('published', 'deprecated')
+            ORDER BY schema_version
+          `).bind(parsedMerchantId, parsedKey).all<{ version: number }>(),
+          env.DB.prepare(`
+            SELECT DISTINCT logical.external_ref AS externalRef
+            FROM programs AS logical
+            INNER JOIN program_revisions AS revision
+              ON revision.merchant_id = logical.merchant_id
+              AND revision.program_id = logical.id
+              AND revision.revision IN (logical.active_revision, logical.draft_revision)
+            INNER JOIN json_tree(revision.config_json, '$') AS condition_node
+              ON condition_node.key = 'variable' AND condition_node.value = ?2
+            WHERE logical.merchant_id = ?1
+            ORDER BY logical.external_ref
+          `).bind(parsedMerchantId, parsedKey).all<{ externalRef: string }>(),
+          env.DB.prepare(`
+            SELECT COUNT(*) AS count FROM customers WHERE merchant_id = ?1
+          `).bind(parsedMerchantId).first<{ count: number }>(),
+        ]);
+        return {
+          publishedVersions: versions.results.map(row => row.version),
+          referencedProgramRefs: references.results.map(row => row.externalRef),
+          storedCustomerCount: customerCount?.count ?? 0,
+        };
+      },
+
+      async deprecateDefinition(input) {
+        const merchantId = z.string().min(1).parse(input.merchantId);
+        const id = z.string().min(1).parse(input.id);
+        const schemaVersion = PositiveIntegerSchema.parse(input.schemaVersion);
+        const deprecatedAt = DateTimeSchema.parse(input.deprecatedAt);
+        const deprecatedBy = z.string().min(1).parse(input.deprecatedBy);
+        const result = await env.DB.prepare(`
+          UPDATE variable_definitions
+          SET state = 'deprecated', deprecated_at = ?1, deprecated_by = ?2
+          WHERE merchant_id = ?3 AND id = ?4 AND schema_version = ?5
+            AND state = 'published'
+        `).bind(deprecatedAt, deprecatedBy, merchantId, id, schemaVersion).run();
+        if (result.meta.changes !== 1) throw new SchemaRevisionConflictError();
+      },
     },
 
     customers: {
@@ -929,30 +1314,33 @@ export function createRepositories(env: Env): Repositories {
         const schema = programSchemaSnapshot(merchantId, input.schema);
         const createdAt = DateTimeSchema.parse(input.createdAt ?? now());
         const id = crypto.randomUUID();
+        const isDraft = parsedProgram.status === 'draft';
         try {
-          const result = await env.DB.prepare(`
+          const [logicalResult, revisionResult, counterResult] = await env.DB.batch([
+            env.DB.prepare(`
             INSERT INTO programs (
               id, merchant_id, external_ref, type, name, status, config_json,
-              priority, max_uses, usage_count, budget_remaining, created_at, updated_at
+              priority, max_uses, usage_count, budget_remaining,
+              active_revision, draft_revision, created_at, updated_at
             )
-            SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 0, ?10, ?11, ?11
+            SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 0, ?10, ?11, ?12, ?13, ?13
             WHERE (
-              ?12 IS NULL AND ?15 = 'draft' AND NOT EXISTS (
+              ?14 IS NULL AND ?17 = 'draft' AND NOT EXISTS (
                 SELECT 1 FROM schema_versions
                 WHERE merchant_id = ?2 AND state IN ('draft', 'published')
               )
             ) OR (
-              ?12 IS NOT NULL AND EXISTS (
+              ?14 IS NOT NULL AND EXISTS (
                 SELECT 1 FROM schema_versions
-                WHERE merchant_id = ?2 AND version = ?12
-                  AND state = ?13 AND definitions_json = ?14
+                WHERE merchant_id = ?2 AND version = ?14
+                  AND state = ?15 AND definitions_json = ?16
               )
-              AND (?15 = 'draft' OR ?13 = 'published')
+              AND (?17 = 'draft' OR ?15 = 'published')
               AND NOT EXISTS (
                 SELECT 1 FROM schema_versions
-                WHERE merchant_id = ?2 AND state = ?13 AND version > ?12
+                WHERE merchant_id = ?2 AND state = ?15 AND version > ?14
               )
-              AND (?13 <> 'published' OR ?15 <> 'draft' OR NOT EXISTS (
+              AND (?15 <> 'published' OR ?17 <> 'draft' OR NOT EXISTS (
                 SELECT 1 FROM schema_versions
                 WHERE merchant_id = ?2 AND state = 'draft'
               ))
@@ -964,17 +1352,50 @@ export function createRepositories(env: Env): Repositories {
             parsedProgram.type,
             parsedProgram.name,
             parsedProgram.status,
-            JSON.stringify(parsedProgram),
+            storedProgramJson(parsedProgram),
             parsedProgram.priority,
             parsedProgram.usageCap ?? null,
             parsedProgram.budget?.minorUnits ?? null,
+            isDraft ? null : 1,
+            isDraft ? 1 : null,
             createdAt,
             schema?.version ?? null,
             schema?.state ?? null,
             schema === null ? null : JSON.stringify(schema.definitions),
             parsedProgram.status,
-          ).run();
-          if (result.meta.changes !== 1) {
+          ),
+            env.DB.prepare(`
+              INSERT INTO program_revisions (
+                program_id, merchant_id, revision, config_json, created_at, created_by,
+                published_at, published_by
+              )
+              SELECT ?1, ?2, 1, ?3, ?4, 'system:legacy-api', ?5, ?6
+              WHERE changes() = 1
+            `).bind(
+              id,
+              merchantId,
+              storedProgramJson(parsedProgram),
+              createdAt,
+              isDraft ? null : createdAt,
+              isDraft ? null : 'system:legacy-api',
+            ),
+            env.DB.prepare(`
+              INSERT INTO program_counters (
+                program_id, merchant_id, max_uses, usage_count, budget_remaining
+              )
+              SELECT ?1, ?2, ?3, 0, ?4 WHERE changes() = 1
+            `).bind(
+              id,
+              merchantId,
+              parsedProgram.usageCap ?? null,
+              parsedProgram.budget?.minorUnits ?? null,
+            ),
+          ]);
+          if (
+            logicalResult?.meta.changes !== 1
+            || revisionResult?.meta.changes !== 1
+            || counterResult?.meta.changes !== 1
+          ) {
             throw new ProgramConflictError('The schema changed before the program was stored');
           }
         } catch (error) {
@@ -984,27 +1405,21 @@ export function createRepositories(env: Env): Repositories {
           }
           throw error;
         }
-        const row = await db.select().from(programs).where(and(
-          eq(programs.merchantId, merchantId),
-          eq(programs.id, id),
-        )).get();
-        if (row === undefined) throw new ProgramConflictError('The program was not stored');
-        return programFromRow(row);
+        const stored = await getProgramById(merchantId, id);
+        if (stored === null) throw new ProgramConflictError('The program was not stored');
+        return stored;
       },
 
       async get(merchantId, externalRef) {
-        const row = await db.select().from(programs).where(and(
-          eq(programs.merchantId, merchantId),
-          eq(programs.externalRef, externalRef),
-        )).get();
-        return row === undefined ? null : programFromRow(row);
+        return getProgramByExternalRef(merchantId, externalRef);
       },
 
       async list(merchantId) {
-        const rows = await db.select().from(programs).where(
-          eq(programs.merchantId, merchantId),
-        ).orderBy(asc(programs.createdAt), asc(programs.externalRef)).all();
-        return rows.map(programFromRow);
+        const rows = await env.DB.prepare(`${programProjection}
+          WHERE logical.merchant_id = ?1
+          ORDER BY logical.created_at, logical.external_ref
+        `).bind(merchantId).all<StoredProgramRow>();
+        return rows.results.map(programFromRow);
       },
 
       async updateDraft(input) {
@@ -1053,14 +1468,14 @@ export function createRepositories(env: Env): Repositories {
           parsedProgram.type,
           parsedProgram.name,
           parsedProgram.status,
-          JSON.stringify(parsedProgram),
+          storedProgramJson(parsedProgram),
           parsedProgram.priority,
           parsedProgram.usageCap ?? null,
           parsedProgram.budget?.minorUnits ?? null,
           updatedAt,
           merchantId,
           externalRef,
-          JSON.stringify(expectedProgram),
+          storedProgramJson(expectedProgram),
           expectedUpdatedAt,
           schema?.version ?? null,
           schema?.state ?? null,
@@ -1068,23 +1483,22 @@ export function createRepositories(env: Env): Repositories {
           parsedProgram.status,
         ).run();
 
-        if (result.meta.changes !== 1) {
+        // D1 may include rows written by the owned revision/counter sync triggers.
+        // The merchant/external-ref unique key still limits the CAS target to one parent row.
+        if (result.meta.changes < 1) {
           throw new ProgramConflictError('Only draft programs can be edited');
         }
-        const row = await db.select().from(programs).where(and(
-          eq(programs.merchantId, merchantId),
-          eq(programs.externalRef, externalRef),
-        )).get();
-        if (row === undefined) throw new ProgramConflictError('The program was not stored');
-        return programFromRow(row);
+        const stored = await getProgramByExternalRef(merchantId, externalRef);
+        if (stored === null) throw new ProgramConflictError('The program was not stored');
+        return stored;
       },
 
       async listReferencedVariableKeys(merchantId) {
-        const rows = await db.select().from(programs).where(
-          eq(programs.merchantId, merchantId),
-        ).all();
+        const rows = await env.DB.prepare(`${programProjection}
+          WHERE logical.merchant_id = ?1
+        `).bind(merchantId).all<StoredProgramRow>();
         const keys = new Set<string>();
-        for (const row of rows) {
+        for (const row of rows.results) {
           const program = programFromRow(row).program;
           for (const condition of program.eligibility.conditions) keys.add(condition.variable);
           for (const group of program.eligibility.groups ?? []) {
@@ -1098,6 +1512,51 @@ export function createRepositories(env: Env): Repositories {
           }
         }
         return keys;
+      },
+
+      async getRevision(merchantId, externalRef, revision) {
+        const row = await db.select({
+          programId: programRevisions.programId,
+          merchantId: programRevisions.merchantId,
+          revision: programRevisions.revision,
+          configJson: programRevisions.configJson,
+          createdAt: programRevisions.createdAt,
+          createdBy: programRevisions.createdBy,
+          publishedAt: programRevisions.publishedAt,
+          publishedBy: programRevisions.publishedBy,
+          externalRef: programs.externalRef,
+        }).from(programRevisions).innerJoin(
+          programs,
+          and(
+            eq(programRevisions.merchantId, programs.merchantId),
+            eq(programRevisions.programId, programs.id),
+          ),
+        ).where(and(
+          eq(programs.merchantId, merchantId),
+          eq(programs.externalRef, externalRef),
+          eq(programRevisions.revision, PositiveIntegerSchema.parse(revision)),
+        )).get();
+        return row === undefined ? null : programRevisionFromRow(row);
+      },
+
+      async getCounters(merchantId, externalRef) {
+        const row = await db.select({
+          programId: programCounters.programId,
+          merchantId: programCounters.merchantId,
+          maxUses: programCounters.maxUses,
+          usageCount: programCounters.usageCount,
+          budgetRemaining: programCounters.budgetRemaining,
+        }).from(programCounters).innerJoin(
+          programs,
+          and(
+            eq(programCounters.merchantId, programs.merchantId),
+            eq(programCounters.programId, programs.id),
+          ),
+        ).where(and(
+          eq(programs.merchantId, merchantId),
+          eq(programs.externalRef, externalRef),
+        )).get();
+        return row === undefined ? null : programCounterFromRow(row);
       },
     },
 
@@ -1198,7 +1657,7 @@ export function createRepositories(env: Env): Repositories {
             parsed.programId,
             parsed.merchantId,
             parsed.programRef,
-            JSON.stringify(parsed.expectedProgram),
+            storedProgramJson(parsed.expectedProgram),
             parsed.externalOrderRef ?? null,
             parsed.idempotencyKey ?? null,
             parsed.perCustomerCap ?? null,
@@ -1337,6 +1796,33 @@ export function createRepositories(env: Env): Repositories {
           if (redemption.result.programRef === parsedProgramRef) count += 1;
         }
         return count;
+      },
+    },
+
+    audit: {
+      async append(input) {
+        canonicalJson(input);
+        const entry = AuditEntrySchema.parse(input);
+        await db.insert(productAudit).values({
+          id: entry.id,
+          occurredAt: entry.occurredAt,
+          actorKind: entry.actorKind,
+          actorId: entry.actorId,
+          merchantId: entry.merchantId ?? null,
+          action: entry.action,
+          targetType: entry.targetType,
+          targetId: entry.targetId,
+          outcome: entry.outcome,
+          correlationId: entry.correlationId,
+          metadataJson: entry.metadata === undefined ? null : canonicalJson(entry.metadata),
+        }).run();
+      },
+
+      async list(merchantId) {
+        const rows = await db.select().from(productAudit).where(
+          eq(productAudit.merchantId, merchantId),
+        ).orderBy(desc(productAudit.occurredAt), desc(productAudit.id)).all();
+        return rows.map(auditFromRow);
       },
     },
   };

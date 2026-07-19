@@ -1,24 +1,48 @@
 import type {
+  ApiCredentialKind,
+  ApiCredentialScope,
+  ApiCredentialView,
+  AuditEntry,
   CustomerSnapshot,
+  DeploymentEnvironment,
   EvaluationRequest,
   IncentiveDecision,
   PromoProgram,
+  ProgramRevision,
   RedemptionResponse,
   VariableDefinition,
 } from '@incentives/contracts';
 
 export type SchemaState = 'draft' | 'published';
+export type DefinitionState = SchemaState | 'deprecated';
 
 export interface VariableDefinitionCreate {
   id: string;
   merchantId: string;
   schemaVersion: number;
-  state: SchemaState;
+  state: DefinitionState;
   definition: VariableDefinition;
   createdAt?: string;
 }
 
-export interface VariableDefinitionRecord extends Required<VariableDefinitionCreate> {}
+export interface VariableDefinitionRecord extends Required<VariableDefinitionCreate> {
+  deprecatedAt?: string;
+  deprecatedBy?: string;
+}
+
+export interface SchemaDefinitionImpact {
+  publishedVersions: number[];
+  referencedProgramRefs: string[];
+  storedCustomerCount: number;
+}
+
+export interface SchemaDefinitionDeprecation {
+  merchantId: string;
+  id: string;
+  schemaVersion: number;
+  deprecatedAt: string;
+  deprecatedBy: string;
+}
 
 export interface SchemaVersionRecord {
   merchantId: string;
@@ -58,6 +82,51 @@ export interface SchemaRepository {
     definitions: VariableDefinition[],
     publishedAt: string,
   ): Promise<SchemaVersionRecord>;
+  getDefinitionImpact(merchantId: string, key: string): Promise<SchemaDefinitionImpact>;
+  deprecateDefinition(input: SchemaDefinitionDeprecation): Promise<void>;
+}
+
+export type MerchantStatus = 'provisioning' | 'active';
+
+export interface MerchantProvision {
+  id: string;
+  name: string;
+  provisioningId: string;
+  createdAt?: string;
+}
+
+export interface MerchantRecord {
+  id: string;
+  name: string;
+  status: MerchantStatus;
+  provisioningId?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface MerchantRepository {
+  provision(input: MerchantProvision): Promise<MerchantRecord>;
+  get(id: string): Promise<MerchantRecord | null>;
+}
+
+export interface CredentialCreate {
+  id: string;
+  merchantId: string;
+  name: string;
+  environment: DeploymentEnvironment;
+  kind: ApiCredentialKind;
+  scopes: ApiCredentialScope[];
+  digest: string;
+  suffix: string;
+  expiresAt?: string;
+  createdAt?: string;
+  createdBy: string;
+}
+
+export interface CredentialRepository {
+  create(input: CredentialCreate): Promise<ApiCredentialView>;
+  findByDigest(digest: string): Promise<ApiCredentialView | null>;
+  list(merchantId: string): Promise<ApiCredentialView[]>;
 }
 
 export interface CustomerRecord {
@@ -109,12 +178,31 @@ export interface ProgramRecord {
   updatedAt: string;
 }
 
+export interface ProgramRevisionRecord extends ProgramRevision {
+  merchantId: string;
+  programId: string;
+}
+
+export interface ProgramCounterRecord {
+  programId: string;
+  merchantId: string;
+  maxUses?: number;
+  usageCount: number;
+  budgetRemaining?: number;
+}
+
 export interface ProgramRepository {
   create(input: ProgramCreate): Promise<ProgramRecord>;
   get(merchantId: string, externalRef: string): Promise<ProgramRecord | null>;
   list(merchantId: string): Promise<ProgramRecord[]>;
   updateDraft(input: ProgramUpdate): Promise<ProgramRecord>;
   listReferencedVariableKeys(merchantId: string): Promise<Set<string>>;
+  getRevision(
+    merchantId: string,
+    externalRef: string,
+    revision: number,
+  ): Promise<ProgramRevisionRecord | null>;
+  getCounters(merchantId: string, externalRef: string): Promise<ProgramCounterRecord | null>;
 }
 
 export interface EvaluationDecisionRecord {
@@ -202,11 +290,19 @@ export interface RedemptionRepository {
 }
 
 export interface Repositories {
+  merchants: MerchantRepository;
+  credentials: CredentialRepository;
   schemas: SchemaRepository;
   customers: CustomerRepository;
   programs: ProgramRepository;
   decisions: DecisionRepository;
   redemptions: RedemptionRepository;
+  audit: ProductAuditRepository;
+}
+
+export interface ProductAuditRepository {
+  append(entry: AuditEntry): Promise<void>;
+  list(merchantId: string): Promise<AuditEntry[]>;
 }
 
 export class OptimisticVersionConflictError extends Error {
