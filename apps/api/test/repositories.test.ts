@@ -279,6 +279,44 @@ describe('D1 repositories', () => {
     expect(await repositories.decisions.get('merchant-b', 'merchant-a-evaluation')).toBeNull();
   });
 
+  test.each([
+    ['missing configured usage cap', 'max_uses = NULL'],
+    ['mismatched configured usage cap', 'max_uses = 21'],
+    ['negative usage count', 'usage_count = -1'],
+    ['usage count above its configured cap', 'usage_count = 21'],
+    ['missing configured budget', 'budget_remaining = NULL'],
+    ['budget above its configured bound', 'budget_remaining = 10001'],
+    ['negative remaining budget', 'budget_remaining = -1'],
+  ])('program reads fail closed on %s', async (_name, mutation) => {
+    await seedMerchant('merchant-a');
+    const repositories = createRepositories({ DB: env.DB });
+    await repositories.programs.create({
+      merchantId: 'merchant-a', program, schema: null, createdAt,
+    });
+    await env.DB.prepare(`UPDATE programs SET ${mutation} WHERE merchant_id = 'merchant-a'`)
+      .run();
+
+    await expect(repositories.programs.get('merchant-a', program.id))
+      .rejects.toThrow(/relational|counter|budget|cap/i);
+  });
+
+  test.each([
+    ['unexpected relational usage cap', 'max_uses = 1'],
+    ['unexpected relational budget', 'budget_remaining = 1'],
+  ])('program reads fail closed on %s', async (_name, mutation) => {
+    await seedMerchant('merchant-a');
+    const repositories = createRepositories({ DB: env.DB });
+    const unlimited = { ...program, usageCap: undefined, budget: undefined } as PromoProgram;
+    await repositories.programs.create({
+      merchantId: 'merchant-a', program: unlimited, schema: null, createdAt,
+    });
+    await env.DB.prepare(`UPDATE programs SET ${mutation} WHERE merchant_id = 'merchant-a'`)
+      .run();
+
+    await expect(repositories.programs.get('merchant-a', program.id))
+      .rejects.toThrow(/relational|counter|budget|cap/i);
+  });
+
   test('decision persistence includes the evaluated facts migration column', async () => {
     const columns = await env.DB.prepare(
       "SELECT name FROM pragma_table_info('evaluation_decisions') ORDER BY cid",
@@ -680,5 +718,26 @@ describe('D1 repositories', () => {
       'merchant-b',
       'isolated-key',
     )).toBeNull();
+  });
+
+  test('identical redemption keys resolve independently across merchants', async () => {
+    await seedMerchant('merchant-a');
+    await seedMerchant('merchant-b');
+    const repositories = createRepositories({ DB: env.DB });
+    const evaluationA = await seedDecision('merchant-a');
+    const evaluationB = await seedDecision('merchant-b');
+    await repositories.redemptions.create(redemption('merchant-a', evaluationA, {
+      externalOrderRef: 'shared-order', idempotencyKey: 'shared-key',
+    }));
+    await repositories.redemptions.create(redemption('merchant-b', evaluationB, {
+      externalOrderRef: 'shared-order', idempotencyKey: 'shared-key',
+    }));
+
+    expect((await repositories.redemptions.getByExternalOrderRef(
+      'merchant-a', 'shared-order',
+    ))?.merchantId).toBe('merchant-a');
+    expect((await repositories.redemptions.getByIdempotencyKey(
+      'merchant-b', 'shared-key',
+    ))?.merchantId).toBe('merchant-b');
   });
 });

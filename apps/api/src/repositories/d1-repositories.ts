@@ -183,7 +183,16 @@ function customerFromRow(row: typeof customers.$inferSelect): CustomerRecord {
 }
 
 function programFromRow(row: typeof programs.$inferSelect): ProgramRecord {
-  const program = parseJson(row.configJson, PromoProgramSchema);
+  let program: ReturnType<typeof PromoProgramSchema.parse>;
+  try {
+    program = parseJson(row.configJson, PromoProgramSchema);
+  } catch (cause) {
+    throw new Error('Stored program config is not canonical', { cause });
+  }
+  if (!Number.isSafeInteger(row.usageCount) || row.usageCount < 0) {
+    throw new Error('Program usage counter is invalid');
+  }
+  const usageCount = row.usageCount;
   if (
     program.id !== row.externalRef
     || program.type !== row.type
@@ -193,13 +202,35 @@ function programFromRow(row: typeof programs.$inferSelect): ProgramRecord {
   ) {
     throw new Error('Program JSON does not match its relational columns');
   }
+  if (
+    (program.usageCap === undefined && row.maxUses !== null)
+    || (program.usageCap !== undefined && row.maxUses !== program.usageCap)
+    || (program.usageCap !== undefined && usageCount > program.usageCap)
+  ) {
+    throw new Error('Program usage cap does not match its relational counter columns');
+  }
+  if (
+    (program.budget === undefined && row.budgetRemaining !== null)
+    || (program.budget !== undefined && row.budgetRemaining === null)
+    || (
+      program.budget !== undefined
+      && row.budgetRemaining !== null
+      && (
+        !Number.isSafeInteger(row.budgetRemaining)
+        || row.budgetRemaining < 0
+        || row.budgetRemaining > program.budget.minorUnits
+      )
+    )
+  ) {
+    throw new Error('Program budget does not match its relational counter columns');
+  }
 
   return {
     id: row.id,
     merchantId: row.merchantId,
     externalRef: row.externalRef,
     program,
-    usageCount: z.number().int().nonnegative().parse(row.usageCount),
+    usageCount,
     ...optional('budgetRemaining', row.budgetRemaining),
     createdAt: DateTimeSchema.parse(row.createdAt),
     updatedAt: DateTimeSchema.parse(row.updatedAt),
@@ -1053,6 +1084,19 @@ export function createRepositories(env: Env): Repositories {
                 END
             WHERE id = ?2 AND merchant_id = ?3 AND external_ref = ?4
               AND status = 'active' AND config_json = ?5
+              AND (
+                (?10 IS NULL AND max_uses IS NULL)
+                OR (?10 IS NOT NULL AND max_uses = ?10)
+              )
+              AND usage_count >= 0
+              AND (?10 IS NULL OR usage_count <= ?10)
+              AND (
+                (?11 IS NULL AND budget_remaining IS NULL)
+                OR (
+                  ?11 IS NOT NULL AND budget_remaining IS NOT NULL
+                  AND budget_remaining BETWEEN 0 AND ?11
+                )
+              )
               AND (max_uses IS NULL OR usage_count < max_uses)
               AND (budget_remaining IS NULL OR budget_remaining >= ?1)
               AND (?6 IS NULL OR NOT EXISTS (
@@ -1087,6 +1131,8 @@ export function createRepositories(env: Env): Repositories {
             parsed.idempotencyKey ?? null,
             parsed.perCustomerCap ?? null,
             parsed.customerRef ?? null,
+            parsed.expectedProgram.usageCap ?? null,
+            parsed.expectedProgram.budget?.minorUnits ?? null,
           ),
           env.DB.prepare(`
             INSERT INTO redemptions (

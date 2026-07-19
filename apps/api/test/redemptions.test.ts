@@ -249,6 +249,145 @@ describe('POST /v1/redemptions', () => {
     }), 409, 'VERSION_CONFLICT');
   });
 
+  test('idempotency reuse with a different external order, evaluation, or program conflicts', async () => {
+    await seedProgram(promo('welcome'));
+    await seedProgram(promo('second-program', { priority: 9 }));
+    const first = await evaluate();
+    const second = await evaluate();
+    await redeem({
+      evaluationId: first.evaluationId,
+      programRef: 'welcome',
+      externalOrderRef: 'order-1',
+      idempotencyKey: 'shared-key',
+    });
+
+    for (const request of [
+      {
+        evaluationId: first.evaluationId, programRef: 'welcome',
+        externalOrderRef: 'different-order', idempotencyKey: 'shared-key',
+      },
+      {
+        evaluationId: second.evaluationId, programRef: 'welcome',
+        idempotencyKey: 'shared-key',
+      },
+      {
+        evaluationId: first.evaluationId, programRef: 'second-program',
+        idempotencyKey: 'shared-key',
+      },
+    ]) {
+      await expectError(await redeemRaw(request), 409, 'VERSION_CONFLICT');
+    }
+  });
+
+  test('supplying identifiers that resolve to different redemptions conflicts', async () => {
+    await seedProgram(promo('welcome'));
+    const [first, second] = await Promise.all([evaluate(), evaluate()]);
+    await redeem({
+      evaluationId: first.evaluationId,
+      programRef: 'welcome',
+      externalOrderRef: 'order-from-first',
+    });
+    await redeem({
+      evaluationId: second.evaluationId,
+      programRef: 'welcome',
+      idempotencyKey: 'key-from-second',
+    });
+
+    await expectError(await redeemRaw({
+      evaluationId: first.evaluationId,
+      programRef: 'welcome',
+      externalOrderRef: 'order-from-first',
+      idempotencyKey: 'key-from-second',
+    }), 409, 'VERSION_CONFLICT');
+  });
+
+  test.each([
+    ['usage cap changed to NULL', 'max_uses = NULL'],
+    ['usage cap changed to a different value', 'max_uses = 11'],
+    ['usage count becomes negative', 'usage_count = -1'],
+    ['usage count exceeds its configured cap', 'usage_count = 11'],
+    ['budget changed to NULL', 'budget_remaining = NULL'],
+    ['budget exceeds its configured bound', 'budget_remaining = 10001'],
+    ['budget becomes negative', 'budget_remaining = -1'],
+  ])('fails closed without mutation when program relational %s', async (_name, mutation) => {
+    await seedProgram(promo('relational-corruption'));
+    const evaluation = await evaluate();
+    await env.DB.prepare(`
+      UPDATE programs SET ${mutation} WHERE merchant_id = ?1 AND external_ref = ?2
+    `).bind(SEEDED_MERCHANT_ID, 'relational-corruption').run();
+    const counterBefore = await env.DB.prepare(`
+      SELECT usage_count, budget_remaining FROM programs
+    `).first();
+
+    await expectError(await redeemRaw({
+      evaluationId: evaluation.evaluationId,
+      programRef: 'relational-corruption',
+      externalOrderRef: `corrupt-${_name}`,
+    }), 503, 'EVALUATION_UNAVAILABLE');
+    expect(await env.DB.prepare('SELECT usage_count, budget_remaining FROM programs').first())
+      .toEqual(counterBefore);
+    expect(await env.DB.prepare('SELECT COUNT(*) AS count FROM redemptions').first())
+      .toEqual({ count: 0 });
+  });
+
+  test.each([
+    ['result program', "result_json = json_set(result_json, '$.programRef', 'other-program')"],
+    ['effects', `result_json = json_set(result_json,
+      '$.effects[0].amount.minorUnits', 500)`],
+    ['currency', "currency = 'USD'"],
+    ['discount amount', 'discount_minor_units = 999'],
+    ['decision HMAC', "integrity_hash = 'tampered'"],
+  ])('schema-valid committed retry corruption in %s fails closed', async (
+    _name,
+    mutation,
+  ) => {
+    await seedProgram(promo('retry-integrity'));
+    const evaluation = await evaluate();
+    await redeem({
+      evaluationId: evaluation.evaluationId,
+      programRef: 'retry-integrity',
+      externalOrderRef: 'retry-corruption',
+    });
+    const table = _name === 'decision HMAC' ? 'evaluation_decisions' : 'redemptions';
+    await env.DB.prepare(`UPDATE ${table} SET ${mutation} WHERE merchant_id = ?1`)
+      .bind(SEEDED_MERCHANT_ID).run();
+
+    await expectError(await redeemRaw({
+      evaluationId: evaluation.evaluationId,
+      programRef: 'retry-integrity',
+      externalOrderRef: 'retry-corruption',
+    }), 503, 'EVALUATION_UNAVAILABLE');
+    expect(await env.DB.prepare('SELECT usage_count, budget_remaining FROM programs').first())
+      .toEqual({ usage_count: 1, budget_remaining: 9_000 });
+    expect(await env.DB.prepare('SELECT COUNT(*) AS count FROM redemptions').first())
+      .toEqual({ count: 1 });
+  });
+
+  test('a valid retry stays stable after expiry and mutable program exhaustion', async () => {
+    await seedProgram(promo('stable-old-commit'));
+    const evaluation = await evaluate();
+    const original = await redeem({
+      evaluationId: evaluation.evaluationId,
+      programRef: 'stable-old-commit',
+      idempotencyKey: 'stable-old-key',
+    });
+    await resign(evaluation.evaluationId, record => {
+      record!.expiresAt = '2020-01-01T00:00:00.000Z';
+    });
+    await env.DB.prepare(`
+      UPDATE programs SET status = 'paused',
+        config_json = json_set(config_json, '$.status', 'paused'),
+        usage_count = max_uses, budget_remaining = 0
+      WHERE merchant_id = ?1 AND external_ref = 'stable-old-commit'
+    `).bind(SEEDED_MERCHANT_ID).run();
+
+    expect(await redeem({
+      evaluationId: evaluation.evaluationId,
+      programRef: 'stable-old-commit',
+      idempotencyKey: 'stable-old-key',
+    })).toEqual(original);
+  });
+
   test('rejects expired, tampered, cross-merchant, and non-qualified decisions', async () => {
     await seedProgram(promo('welcome'));
     const expired = await evaluate();

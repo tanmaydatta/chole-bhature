@@ -39,10 +39,65 @@ function matchesRetry(existing: RedemptionCreate, request: RedemptionRequest): b
       || existing.idempotencyKey === request.idempotencyKey);
 }
 
+async function verifiedDecision(
+  repositories: Repositories,
+  merchantId: string,
+  evaluationId: string,
+  signingSecret: string,
+  missingIsCorruption: boolean,
+): Promise<EvaluationDecisionRecord> {
+  const record = await repositories.decisions.get(merchantId, evaluationId);
+  if (record === null) {
+    if (missingIsCorruption) throw new Error('Committed redemption decision is missing');
+    throw new NotFoundError('Evaluation decision not found');
+  }
+  if (!(await verifyDecisionIntegrity(record, signingSecret))) {
+    throw new Error('Decision snapshot integrity verification failed');
+  }
+  return record;
+}
+
+function committedDecision(record: EvaluationDecisionRecord, programRef: string) {
+  const matches = record.decisions.filter(decision => (
+    decision.programRef === programRef
+    && decision.outcome === 'qualified'
+    && decision.commitRequired
+  ));
+  if (matches.length !== 1) {
+    throw new Error('Committed redemption has no matching qualified decision');
+  }
+  return matches[0]!;
+}
+
+async function validateCommittedRedemption(
+  repositories: Repositories,
+  merchantId: string,
+  existing: RedemptionCreate,
+  signingSecret: string,
+): Promise<void> {
+  const record = await verifiedDecision(
+    repositories,
+    merchantId,
+    existing.evaluationId,
+    signingSecret,
+    true,
+  );
+  const decision = committedDecision(record, existing.result.programRef);
+  const discountMinorUnits = projectedDiscountMinorUnits(decision.effects, record.request.cart);
+  if (
+    canonicalJson(existing.result.effects) !== canonicalJson(decision.effects)
+    || existing.currency !== record.request.cart.currency
+    || existing.discountMinorUnits !== discountMinorUnits
+  ) {
+    throw new Error('Committed redemption does not match its signed decision');
+  }
+}
+
 async function findExisting(
   repositories: Repositories,
   merchantId: string,
   request: RedemptionRequest,
+  signingSecret: string,
 ): Promise<RedemptionCreate | null> {
   const [byOrder, byKey] = await Promise.all([
     request.externalOrderRef === undefined
@@ -52,6 +107,17 @@ async function findExisting(
       ? Promise.resolve(null)
       : repositories.redemptions.getByIdempotencyKey(merchantId, request.idempotencyKey),
   ]);
+  const candidates = [byOrder, byKey].filter(
+    (candidate): candidate is RedemptionCreate => candidate !== null,
+  ).filter((candidate, index, all) => (
+    all.findIndex(other => sameRedemption(candidate, other)) === index
+  ));
+  await Promise.all(candidates.map(candidate => validateCommittedRedemption(
+    repositories,
+    merchantId,
+    candidate,
+    signingSecret,
+  )));
   if (byOrder !== null && byKey !== null && !sameRedemption(byOrder, byKey)) {
     throw new VersionConflictError();
   }
@@ -78,15 +144,17 @@ export function createRedemptionService(repositories: Repositories, env: Env) {
   return {
     async redeem(merchantId: string, input: unknown): Promise<RedemptionResponse> {
       const request = RedemptionRequestSchema.parse(input);
-      const existing = await findExisting(repositories, merchantId, request);
+      const signingSecret = SigningSecretSchema.parse(env.DECISION_SIGNING_SECRET);
+      const existing = await findExisting(repositories, merchantId, request, signingSecret);
       if (existing !== null) return existing.result;
 
-      const record = await repositories.decisions.get(merchantId, request.evaluationId);
-      if (record === null) throw new NotFoundError('Evaluation decision not found');
-      const signingSecret = SigningSecretSchema.parse(env.DECISION_SIGNING_SECRET);
-      if (!(await verifyDecisionIntegrity(record, signingSecret))) {
-        throw new Error('Decision snapshot integrity verification failed');
-      }
+      const record = await verifiedDecision(
+        repositories,
+        merchantId,
+        request.evaluationId,
+        signingSecret,
+        false,
+      );
       if (Date.parse(record.expiresAt) <= Date.now()) throw new DecisionExpiredError();
 
       const decision = selectedDecision(record, request.programRef);
@@ -161,12 +229,13 @@ export function createRedemptionService(repositories: Repositories, env: Env) {
       try {
         if (await repositories.redemptions.commitAtomically(commit)) return result;
       } catch (error) {
-        const raced = await findExisting(repositories, merchantId, request);
+        const raced = await findExisting(repositories, merchantId, request, signingSecret);
         if (raced !== null) return raced.result;
         throw error;
       }
-      const raced = await findExisting(repositories, merchantId, request);
+      const raced = await findExisting(repositories, merchantId, request, signingSecret);
       if (raced !== null) return raced.result;
+      await repositories.programs.get(merchantId, request.programRef);
       throw new ExhaustedError();
     },
   };
