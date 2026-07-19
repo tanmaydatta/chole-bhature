@@ -1,5 +1,9 @@
 # Integration Runtime API
 
+**Notion mirror:** https://app.notion.com/p/Integration-Runtime-API-3a2e5c7c2b8e812f889eeddd2d56ef70
+
+**Mirror state:** Repository and Notion copies synchronized on 2026-07-19.
+
 This is the platform-neutral HTTP boundary for the first client integration. A custom checkout, a manual backend integration, and a future Shopify adapter all follow the same sequence: define typed fields, store customer attributes, configure a Promo program, evaluate a cart, apply the selected effects, and commit the selected decision before payment capture.
 
 The generated OpenAPI document is served at `GET /v1/openapi.json`. It is produced by `@incentives/contracts`; the Worker does not keep a handwritten copy.

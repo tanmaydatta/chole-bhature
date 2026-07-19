@@ -14,6 +14,8 @@
 
 **Notion mirror:** https://app.notion.com/p/Integration-Ready-Core-Runtime-Implementation-Plan-3a1e5c7c2b8e817aa380c66100f83b5c
 
+**Implementation status:** Completed and verified on 2026-07-19. Repository and Notion copies are synchronized; the Operator UI and Simulator Plan remains next.
+
 ## Global Constraints
 
 - Execute only after the Foundation Plan completion gate passes, in the same `feat/integration-ready-core` worktree/branch.

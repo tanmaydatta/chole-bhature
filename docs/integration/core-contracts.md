@@ -1,5 +1,9 @@
 # Integration-Ready Core Contracts
 
+**Notion mirror:** https://app.notion.com/p/Integration-Ready-Core-Contracts-3a1e5c7c2b8e81e4afe0ef82709f8d13
+
+**Mirror state:** Repository and Notion copies synchronized on 2026-07-19.
+
 The foundation exposes platform-neutral TypeScript and Zod contracts for typed data, evaluation, decisions, modules, and connectors. It is deliberately independent of Shopify, a custom checkout, HTTP framework, database, and UI.
 
 ## Stored customer data is not evaluation context
@@ -137,7 +141,7 @@ Dependencies point inward: `contracts` has validation dependencies only; `engine
 
 The foundation includes canonical schemas/OpenAPI generation, typed fact assembly and conditions, deterministic conflict resolution, the module contract/conformance suite, a pure Promo module, and the connector contract/conformance suite. Promo can produce fixed/percent order or line-item discounts and free shipping from parsed configuration.
 
-The Runtime is implemented and verified locally: D1 persistence, HTTP routes, static merchant/auth boundaries, customer storage, schema publication, Promo configuration, structured signed decision snapshots, mutable caps, and atomic/idempotent redemption are available through the platform-neutral API. Commerce-platform effect application, event processing, production Shopify/manual connectors, and the Operator UI remain deferred. Wallet, points, attribution, affiliate, referral, and loyalty shapes are reserved shared semantics; their production runtimes are not implemented yet. The corresponding Notion mirrors still require external write and read-back verification before synchronization can be claimed.
+The Runtime is implemented and verified: D1 persistence, HTTP routes, static merchant/auth boundaries, customer storage, schema publication, Promo configuration, structured signed decision snapshots, mutable caps, and atomic/idempotent redemption are available through the platform-neutral API. Commerce-platform effect application, event processing, production Shopify/manual connectors, and the Operator UI remain deferred. Wallet, points, attribution, affiliate, referral, and loyalty shapes are reserved shared semantics; their production runtimes are not implemented yet.
 
 ## Executable checks
 

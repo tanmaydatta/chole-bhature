@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-18
 
-**Status:** Foundation and Runtime implemented and verified locally; Operator UI planned; Runtime Notion sync pending
+**Status:** Foundation and Runtime implemented and verified; Operator UI planned
 
 **Purpose:** Build a client-usable, platform-neutral incentives foundation before the first client's commerce platform is known.
 
@@ -10,7 +10,7 @@
 
 **Notion mirror:** https://app.notion.com/p/Integration-Ready-Incentives-Core-Design-Spec-3a1e5c7c2b8e8150bdcdde92990e114a
 
-**Mirror state:** Repository Runtime updates are authoritative locally but have not yet been written to and read back from Notion in this session.
+**Mirror state:** Repository and Notion copies synchronized on 2026-07-19.
 
 ---
 
