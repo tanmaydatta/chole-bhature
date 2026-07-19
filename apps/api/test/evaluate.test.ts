@@ -462,6 +462,100 @@ describe('POST /v1/evaluate', () => {
       .not.toContainEqual(expect.objectContaining({ effects: [higherReward] }));
   });
 
+  test('returns selected fallback and no-match semantics through HTTP', async () => {
+    await seedCustomer();
+    const impossibleRule = {
+      ...conditionalRule({ type: 'free_shipping' }, 'impossible'),
+      conditions: {
+        match: 'ALL' as const,
+        conditions: [{
+          id: 'impossible-cart',
+          variable: 'cart.subtotal',
+          operator: 'gte' as const,
+          value: 100_000,
+        }],
+      },
+    };
+    await seedProgram(promo('fallback-http', {
+      priority: 20,
+      stackable: true,
+      rewardRules: [impossibleRule],
+      fallbackReward: {
+        id: 'fallback',
+        name: 'Fallback',
+        reward: { type: 'free_shipping' },
+      },
+    }));
+    await seedProgram(promo('no-match-http', {
+      priority: 10,
+      stackable: true,
+      rewardRules: [impossibleRule],
+    }));
+
+    const result = await evaluate();
+    expect(result.decisions).toEqual([
+      expect.objectContaining({
+        programRef: 'fallback-http',
+        outcome: 'qualified',
+        rewardRuleRef: 'fallback',
+        effects: [{ type: 'free_shipping' }],
+      }),
+      expect.objectContaining({
+        programRef: 'no-match-http',
+        outcome: 'not_qualified',
+        effects: [],
+        reasonCodes: ['NO_REWARD_RULE_MATCHED'],
+        commitRequired: false,
+        eligible: false,
+      }),
+    ]);
+    expect(result.decisions[1]).not.toHaveProperty('rewardRuleRef');
+  });
+
+  test('uses only the selected rule cost for multi-rule budget exhaustion', async () => {
+    await seedCustomer();
+    const expensive = {
+      ...conditionalRule({
+        type: 'order_discount',
+        calculation: 'fixed',
+        amount: { currency: 'GBP', minorUnits: 2_000 },
+      }, 'expensive'),
+      conditions: {
+        match: 'ALL' as const,
+        conditions: [{
+          id: 'expensive-cart',
+          variable: 'cart.subtotal',
+          operator: 'gte' as const,
+          value: 10_000,
+        }],
+      },
+    };
+    const selected = conditionalRule({
+      type: 'order_discount',
+      calculation: 'fixed',
+      amount: { currency: 'GBP', minorUnits: 500 },
+    }, 'selected-cheap');
+    await seedProgram(promo('selected-budget', {
+      rewardRules: [expensive, selected],
+      budget: { currency: 'GBP', minorUnits: 500 },
+    }));
+
+    expect((await evaluate()).decisions[0]).toMatchObject({
+      outcome: 'qualified',
+      rewardRuleRef: 'selected-cheap',
+      effects: [selected.reward],
+    });
+    await env.DB.prepare(`
+      UPDATE programs SET budget_remaining = 499
+      WHERE merchant_id = ?1 AND external_ref = 'selected-budget'
+    `).bind(SEEDED_MERCHANT_ID).run();
+    expect((await evaluate()).decisions[0]).toMatchObject({
+      outcome: 'exhausted',
+      rewardRuleRef: 'selected-cheap',
+      reasonCodes: ['BUDGET_EXHAUSTED'],
+    });
+  });
+
   test('rejects any caller path that tries to override stored customer attributes', async () => {
     await seedCustomer('customer-1', { tier: 'silver' });
     await seedProgram(promo('gold-only'));
@@ -626,11 +720,13 @@ describe('POST /v1/evaluate', () => {
       expect.objectContaining({
         programRef: 'higher',
         outcome: 'qualified',
+        rewardRuleRef: 'default-reward',
         message: 'You received GBP 10.00 off.',
       }),
       expect.objectContaining({
         programRef: 'lower',
         outcome: 'conflict',
+        rewardRuleRef: 'default-reward',
         reasonCodes: ['STACKING_CONFLICT'],
         message: 'This promotion cannot be combined with another offer.',
       }),
@@ -658,6 +754,7 @@ describe('POST /v1/evaluate', () => {
     expect(result.decisions[0]).toEqual(expect.objectContaining({
       programRef: 'limited',
       outcome: 'exhausted',
+      rewardRuleRef: 'default-reward',
       effects: [],
       reasonCodes: [reasonCode],
       message: 'This promotion has been exhausted.',

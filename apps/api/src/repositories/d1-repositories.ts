@@ -1298,6 +1298,7 @@ export function createRepositories(env: Env): Repositories {
             decision.outcome === 'qualified'
             && decision.commitRequired
             && decision.programRef === redemption.result.programRef
+            && decision.rewardRuleRef === redemption.result.rewardRuleRef
             && canonicalJson(decision.effects) === canonicalJson(redemption.result.effects)
           ));
           if (

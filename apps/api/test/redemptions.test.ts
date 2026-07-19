@@ -264,6 +264,52 @@ describe('POST /v1/redemptions', () => {
     expect(stored).toEqual({ discount_minor_units: 1_000, currency: 'GBP' });
   });
 
+  test('decrements budget by only the selected rule cost', async () => {
+    const expensive = {
+      ...conditionalRule({
+        type: 'order_discount',
+        calculation: 'fixed',
+        amount: { currency: 'GBP', minorUnits: 2_000 },
+      }, 'expensive'),
+      conditions: {
+        match: 'ALL' as const,
+        conditions: [{
+          id: 'expensive-cart',
+          variable: 'cart.subtotal',
+          operator: 'gte' as const,
+          value: 10_000,
+        }],
+      },
+    };
+    const selected = conditionalRule({
+      type: 'order_discount',
+      calculation: 'fixed',
+      amount: { currency: 'GBP', minorUnits: 500 },
+    }, 'selected-cheap');
+    await seedProgram(promo('selected-cost-commit', {
+      rewardRules: [expensive, selected],
+      budget: { currency: 'GBP', minorUnits: 1_000 },
+    }));
+    const evaluation = await evaluate();
+    expect(evaluation.decisions[0]).toMatchObject({
+      rewardRuleRef: 'selected-cheap',
+      effects: [selected.reward],
+    });
+
+    await redeem({
+      evaluationId: evaluation.evaluationId,
+      programRef: 'selected-cost-commit',
+      externalOrderRef: 'selected-cost-order',
+    });
+    expect(await env.DB.prepare(`
+      SELECT usage_count, budget_remaining FROM programs
+      WHERE merchant_id = ?1 AND external_ref = 'selected-cost-commit'
+    `).bind(SEEDED_MERCHANT_ID).first()).toEqual({
+      usage_count: 1,
+      budget_remaining: 500,
+    });
+  });
+
   test('stable retries by either identifier return the original response without mutation', async () => {
     await seedProgram(promo('welcome'));
     const evaluation = await evaluate();
@@ -568,6 +614,24 @@ describe('POST /v1/redemptions', () => {
       evaluationId: evaluation.evaluationId,
       programRef: 'welcome',
       externalOrderRef: 'mismatch',
+    }), 409, 'VERSION_CONFLICT');
+  });
+
+  test('fails closed when signed selected effects differ from signed snapshot config', async () => {
+    await seedProgram(promo('signed-effect-mismatch'));
+    const evaluation = await evaluate();
+    await resign(evaluation.evaluationId, record => {
+      record!.facts.programs[0]!.config.rewardRules[0]!.reward = {
+        type: 'order_discount',
+        calculation: 'fixed',
+        amount: { currency: 'GBP', minorUnits: 500 },
+      };
+    });
+
+    await expectError(await redeemRaw({
+      evaluationId: evaluation.evaluationId,
+      programRef: 'signed-effect-mismatch',
+      externalOrderRef: 'signed-effect-mismatch-order',
     }), 409, 'VERSION_CONFLICT');
   });
 

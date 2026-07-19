@@ -375,6 +375,55 @@ describe('Promo program API', () => {
     });
   });
 
+  test.each([
+    [
+      'undefined variable',
+      {
+        id: 'undefined-variable',
+        variable: 'context.undefined',
+        operator: 'eq',
+        value: 'web',
+      },
+      'rewardRules.1.conditions.conditions.0.variable',
+      'undefined_condition_variable',
+    ],
+    [
+      'invalid operator',
+      {
+        id: 'invalid-operator',
+        variable: 'context.channel',
+        operator: 'gt',
+        value: 'web',
+      },
+      'rewardRules.1.conditions.conditions.0.operator',
+      'invalid_condition_operator',
+    ],
+  ] as const)('reports an indexed rule path for an %s', async (
+    _name,
+    condition,
+    path,
+    code,
+  ) => {
+    const source = promo('source').rewardRules[0]!;
+    const input = promo(`indexed-${_name}`, {
+      rewardRules: [source, {
+        ...source,
+        id: `indexed-${_name}`,
+        name: `Indexed ${_name}`,
+        conditions: { match: 'ALL', conditions: [condition] },
+      }],
+    } as Partial<PromoProgram>);
+
+    const error = await expectError(
+      await programRequest('POST', '', 'secret-test', input),
+      400,
+      'CONTEXT_VALIDATION_FAILED',
+    );
+    expect(error.error.fields).toEqual(expect.arrayContaining([
+      expect.objectContaining({ path, code }),
+    ]));
+  });
+
   test('validates all selectable reward currencies and fallback budget compatibility', async () => {
     await expectError(await programRequest('POST', '', 'secret-test', promo('mixed-currency', {
       rewardRules: [
@@ -413,6 +462,16 @@ describe('Promo program API', () => {
       },
     }));
     expect(created.rewardRules.map(rule => rule.id)).toEqual(['default-reward', 'higher']);
+
+    const readResponse = await programRequest('GET', '/ordered-rules');
+    expect(readResponse.status).toBe(200);
+    expect((await readResponse.json() as PromoProgram).rewardRules.map(rule => rule.id))
+      .toEqual(['default-reward', 'higher']);
+    const listResponse = await programRequest('GET');
+    expect(listResponse.status).toBe(200);
+    expect((await listResponse.json() as { programs: PromoProgram[] }).programs[0]
+      ?.rewardRules.map(rule => rule.id))
+      .toEqual(['default-reward', 'higher']);
 
     const replacement = { ...created, rewardRules: [higher, lower] };
     const response = await programRequest('PATCH', '/ordered-rules', 'secret-test', replacement);

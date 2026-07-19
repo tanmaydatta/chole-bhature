@@ -652,6 +652,29 @@ describe('D1 repositories', () => {
     )).rejects.toThrow(/qualified decision|effects/i);
   });
 
+  test('rejects a committed result whose reward rule reference differs from its decision', async () => {
+    const { evaluationId, repositories } = await seedCommittedRedemption();
+    const mismatched = {
+      ...redemptionResult(
+        `${evaluationId}-counted-order`,
+        evaluationId,
+        { externalOrderRef: 'counted-order' },
+      ),
+      rewardRuleRef: 'other-rule',
+    };
+    await env.DB.prepare(`
+      UPDATE redemptions SET result_json = ?1
+      WHERE merchant_id = 'merchant-a' AND evaluation_id = ?2
+    `).bind(JSON.stringify(mismatched), evaluationId).run();
+
+    await expect(repositories.redemptions.countCommittedForCustomerProgram(
+      'merchant-a',
+      'shared',
+      'welcome-10',
+      verifyHistoricalDecision,
+    )).rejects.toThrow(/qualified decision|rule reference|snapshot/i);
+  });
+
   test('rejects coordinated result and snapshot tampering without a valid HMAC', async () => {
     const { evaluationId, repositories } = await seedCommittedRedemption();
     const tamperedEffects = [{
