@@ -322,10 +322,16 @@ type PromoDecision = Awaited<ReturnType<typeof PromoModule.evaluate>>[number];
 
 function baseProgramDecision(program: PromoProgram): Pick<
   PromoDecision,
-  'programRef' | 'programType' | 'priority' | 'stackable' | 'stackingGroup'
+  | 'programRef'
+  | 'programRevision'
+  | 'programType'
+  | 'priority'
+  | 'stackable'
+  | 'stackingGroup'
 > {
   return {
     programRef: program.id,
+    programRevision: 1,
     programType: 'promo',
     priority: program.priority,
     stackable: program.stackable,

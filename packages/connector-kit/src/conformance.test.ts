@@ -64,6 +64,7 @@ type FakeAdjustment =
 
 const qualifiedDecision: IncentiveDecision = {
   programRef: 'promo-1',
+  programRevision: 1,
   programType: 'promo',
   outcome: 'qualified',
   rewardRuleRef: 'default-reward',

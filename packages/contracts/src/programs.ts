@@ -58,5 +58,32 @@ export const PromoProgramSchema = z.discriminatedUnion('autoApply', [
   }
 }).superRefine(validateConditionalRewardIdentitiesAndPresence);
 
+export const ProgramRevisionSchema = z.object({
+  programRef: z.string().min(1),
+  revision: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+  configuration: PromoProgramSchema,
+  createdAt: z.iso.datetime({ offset: true }),
+  createdBy: z.string().min(1),
+  publishedAt: z.iso.datetime({ offset: true }).optional(),
+  publishedBy: z.string().min(1).optional(),
+}).strict().superRefine((revision, context) => {
+  if ((revision.publishedAt === undefined) === (revision.publishedBy === undefined)) return;
+  context.addIssue({
+    code: 'custom',
+    path: [revision.publishedAt === undefined ? 'publishedAt' : 'publishedBy'],
+    message: 'publishedAt and publishedBy must be supplied together',
+  });
+});
+
+export const ProgramLifecycleSchema = z.object({
+  programRef: z.string().min(1),
+  status: ProgramStatusSchema,
+  activeRevision: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
+  draftRevision: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
+  updatedAt: z.iso.datetime({ offset: true }),
+}).strict();
+
 export type ProgramStatus = z.infer<typeof ProgramStatusSchema>;
 export type PromoProgram = z.infer<typeof PromoProgramSchema>;
+export type ProgramRevision = z.infer<typeof ProgramRevisionSchema>;
+export type ProgramLifecycle = z.infer<typeof ProgramLifecycleSchema>;

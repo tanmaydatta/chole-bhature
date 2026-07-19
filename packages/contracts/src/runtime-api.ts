@@ -1,4 +1,6 @@
 import { PromoProgramSchema } from './programs.js';
+import { EvaluationRequestSchema } from './evaluation.js';
+import { OperatorCallContextSchema } from './operator.js';
 import { VariableDefinitionSchema } from './variables.js';
 import { z } from './zod.js';
 
@@ -6,6 +8,11 @@ const UnknownObjectSchema = z.record(z.string(), z.unknown());
 
 export const HealthResponseSchema = z.object({
   status: z.literal('ok'),
+}).strict();
+
+export const OperatorEvaluationRequestSchema = z.object({
+  operatorContext: OperatorCallContextSchema,
+  request: EvaluationRequestSchema,
 }).strict();
 
 export const AccessSummarySchema = z.object({
@@ -57,3 +64,4 @@ export type CustomerPatchRequest = z.infer<typeof CustomerPatchRequestSchema>;
 export type CustomerRecord = z.infer<typeof CustomerRecordSchema>;
 export type PublishedSchemaResponse = z.infer<typeof PublishedSchemaResponseSchema>;
 export type SchemaDefinitionView = z.infer<typeof SchemaDefinitionViewSchema>;
+export type OperatorEvaluationRequest = z.infer<typeof OperatorEvaluationRequestSchema>;

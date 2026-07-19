@@ -240,6 +240,7 @@ describe('canonical contracts', () => {
       expiresAt: '2026-07-18T15:05:00Z',
       decisions: [{
         programRef: 'welcome-10',
+        programRevision: 1,
         programType: 'promo',
         outcome: 'qualified',
         rewardRuleRef: 'default-reward',
@@ -262,6 +263,7 @@ describe('canonical contracts', () => {
       expiresAt: '2026-07-18T15:05:00Z',
       decisions: [{
         programRef: 'welcome-10',
+        programRevision: 1,
         programType: 'promo',
         outcome: 'qualified',
         rewardRuleRef: '',
@@ -280,6 +282,7 @@ describe('canonical contracts', () => {
       expiresAt: '2026-07-18T15:05:00Z',
       decisions: [{
         programRef: 'referral-1',
+        programRevision: 1,
         programType: 'referral',
         outcome: 'not_qualified',
         effects: [],
@@ -332,6 +335,7 @@ describe('canonical contracts', () => {
       expiresAt: '2026-07-18T15:05:00Z',
       decisions: [{
         programRef: 'welcome-10',
+        programRevision: 1,
         programType: 'promo',
         outcome: 'qualified',
         effects: [],

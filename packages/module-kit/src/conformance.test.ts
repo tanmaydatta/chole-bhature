@@ -39,6 +39,7 @@ const fakeModule: IncentiveModule<FakeConfig> = {
   async evaluate(_context, config) {
     return [{
       programRef: config.programRef,
+      programRevision: 1,
       programType: 'promo',
       outcome: 'qualified',
       rewardRuleRef: 'default-reward',

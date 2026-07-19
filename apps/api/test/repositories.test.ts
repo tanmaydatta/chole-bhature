@@ -43,6 +43,7 @@ const request: EvaluationRequest = {
 
 const incentiveDecision: IncentiveDecision = {
   programRef: 'welcome-10',
+  programRevision: 1,
   programType: 'promo',
   outcome: 'qualified',
   rewardRuleRef: 'default-reward',

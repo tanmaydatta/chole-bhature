@@ -242,6 +242,7 @@ function isMoneyIssue(path: readonly PropertyKey[]): boolean {
 function decisionFor(effects: readonly Effect[]): IncentiveDecision {
   return IncentiveDecisionSchema.parse({
     programRef: 'connector-conformance',
+    programRevision: 1,
     programType: 'promo',
     outcome: 'qualified',
     effects,

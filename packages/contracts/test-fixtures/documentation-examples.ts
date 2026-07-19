@@ -1,15 +1,54 @@
 import type {
+  ApiCredentialView,
   ApiError,
+  AuditEntry,
   CustomerPatchRequest,
   CustomerSnapshot,
   EvaluationRequest,
   EvaluationResponse,
   IncentiveDecision,
+  OperatorCallContext,
+  OperatorPrincipal,
+  ProgramLifecycle,
+  ProgramRevision,
   PromoProgram,
   RedemptionRequest,
   RedemptionResponse,
   VariableDefinition,
 } from '../src/index.js';
+
+export const canonicalOperatorPrincipal = {
+  userId: 'user-123',
+  sessionId: 'session-123',
+  authenticationMethods: ['magic-link'],
+  authenticatedAt: '2026-07-19T09:00:00.000Z',
+  organizationId: 'organization-123',
+  merchantId: 'merchant-123',
+  membershipId: 'membership-123',
+  permissions: ['programs:read', 'programs:manage', 'programs:publish'],
+} as const satisfies OperatorPrincipal;
+
+export const canonicalOperatorCallContext = {
+  correlationId: 'correlation-123',
+  actorUserId: 'user-123',
+  actorKind: 'member',
+  merchantId: 'merchant-123',
+  permission: 'programs:publish',
+} as const satisfies OperatorCallContext;
+
+export const canonicalApiCredentialView = {
+  id: 'credential-123',
+  name: 'Production checkout',
+  merchantId: 'merchant-123',
+  environment: 'production',
+  kind: 'secret',
+  scopes: ['schema:read', 'evaluations:write', 'redemptions:write'],
+  expiresAt: '2027-07-19T09:00:00.000Z',
+  createdAt: '2026-07-19T09:00:00.000Z',
+  createdBy: 'user-123',
+  status: 'active',
+  suffix: 'A1B2C3',
+} as const satisfies ApiCredentialView;
 
 export const canonicalVariableDefinitions = [
   {
@@ -72,6 +111,7 @@ export const canonicalEvaluationRequest = {
 
 export const canonicalDecision = {
   programRef: 'welcome-10',
+  programRevision: 1,
   programType: 'promo',
   outcome: 'qualified',
   rewardRuleRef: 'default-reward',
@@ -172,6 +212,37 @@ export const canonicalTwoTierPromo = {
   autoApply: true,
 } as const satisfies PromoProgram;
 
+export const canonicalProgramRevision = {
+  programRef: 'gold-web-rewards',
+  revision: 1,
+  configuration: canonicalTwoTierPromo,
+  createdAt: '2026-07-19T09:00:00.000Z',
+  createdBy: 'user-123',
+  publishedAt: '2026-07-19T09:30:00.000Z',
+  publishedBy: 'user-123',
+} as const satisfies ProgramRevision;
+
+export const canonicalProgramLifecycle = {
+  programRef: 'gold-web-rewards',
+  status: 'active',
+  activeRevision: 1,
+  updatedAt: '2026-07-19T09:30:00.000Z',
+} as const satisfies ProgramLifecycle;
+
+export const canonicalAuditEntry = {
+  id: 'audit-123',
+  occurredAt: '2026-07-19T09:30:00.000Z',
+  actorKind: 'member',
+  actorId: 'user-123',
+  merchantId: 'merchant-123',
+  action: 'program.published',
+  targetType: 'program',
+  targetId: 'gold-web-rewards',
+  outcome: 'succeeded',
+  correlationId: 'correlation-123',
+  metadata: { programRevision: 1, status: 'active' },
+} as const satisfies AuditEntry;
+
 export const canonicalTwoTierEvaluationRequest = {
   customerRef: 'customer-123',
   cart: {
@@ -194,6 +265,7 @@ export const canonicalFirstMatchResponse = {
   ...canonicalEvaluationResponseBase,
   decisions: [{
     programRef: 'gold-web-rewards',
+    programRevision: 1,
     programType: 'promo',
     outcome: 'qualified',
     rewardRuleRef: 'large-cart-20-percent',
@@ -213,6 +285,7 @@ export const canonicalFallbackResponse = {
   ...canonicalEvaluationResponseBase,
   decisions: [{
     programRef: 'gold-web-rewards',
+    programRevision: 1,
     programType: 'promo',
     outcome: 'qualified',
     rewardRuleRef: 'fallback-5-off',
@@ -232,6 +305,7 @@ export const canonicalNoMatchResponse = {
   ...canonicalEvaluationResponseBase,
   decisions: [{
     programRef: 'gold-web-rewards-no-fallback',
+    programRevision: 1,
     programType: 'promo',
     outcome: 'not_qualified',
     effects: [],
