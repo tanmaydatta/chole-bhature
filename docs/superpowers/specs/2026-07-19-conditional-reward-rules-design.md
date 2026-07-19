@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-19
 
-**Status:** Approved in design review; written specification awaiting final review
+**Status:** Approved for implementation planning
 
 **Purpose:** Let merchants configure different rewards for different typed conditions inside one program, with deterministic first-match selection and a reusable contract shared by Promo, Affiliate, Referral, and Loyalty.
 
