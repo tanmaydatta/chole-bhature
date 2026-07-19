@@ -14,9 +14,14 @@ import type {
   EvaluationDecisionRecord,
   RedemptionCreate,
 } from '../src/repositories/types.js';
+import {
+  signDecisionSnapshot,
+  verifyDecisionIntegrity,
+} from '../src/services/evaluation-service.js';
 
 const createdAt = '2026-07-18T12:00:00.000Z';
 const expiresAt = '2026-07-18T12:05:00.000Z';
+const signingSecret = 'repository-history-signing-secret';
 
 const definition: VariableDefinition = {
   key: 'customer.tier',
@@ -143,8 +148,14 @@ async function seedDecision(merchantId: string, evaluationId?: string): Promise<
 
   await seedPublishedSchema(merchantId);
   await repositories.customers.create(merchantId, customer('shared', { tier: 'gold' }));
-  await repositories.decisions.create(decision(merchantId, id));
+  const snapshot = decision(merchantId, id);
+  snapshot.integrityHash = await signDecisionSnapshot(snapshot, signingSecret);
+  await repositories.decisions.create(snapshot);
   return id;
+}
+
+function verifyHistoricalDecision(snapshot: EvaluationDecisionRecord): Promise<boolean> {
+  return verifyDecisionIntegrity(snapshot, signingSecret);
 }
 
 async function seedCommittedRedemption() {
@@ -366,16 +377,19 @@ describe('D1 repositories', () => {
       'merchant-a',
       'shared',
       'welcome-10',
+      verifyHistoricalDecision,
     )).resolves.toBe(1);
     await expect(counter.countCommittedForCustomerProgram(
       'merchant-a',
       'other-customer',
       'welcome-10',
+      verifyHistoricalDecision,
     )).resolves.toBe(0);
     await expect(counter.countCommittedForCustomerProgram(
       'merchant-b',
       'shared',
       'welcome-10',
+      verifyHistoricalDecision,
     )).resolves.toBe(0);
 
     const otherProgramResult = {
@@ -390,25 +404,34 @@ describe('D1 repositories', () => {
       ...incentiveDecision,
       programRef: 'other-program',
     };
+    const storedSnapshot = await repositories.decisions.get('merchant-a', evaluationId);
+    expect(storedSnapshot).not.toBeNull();
+    const otherProgramSnapshot = {
+      ...storedSnapshot!,
+      decisions: [otherProgramDecision],
+    };
+    const integrityHash = await signDecisionSnapshot(otherProgramSnapshot, signingSecret);
     await env.DB.batch([
       env.DB.prepare(`
         UPDATE redemptions SET result_json = ?1
         WHERE merchant_id = 'merchant-a' AND evaluation_id = ?2
       `).bind(JSON.stringify(otherProgramResult), evaluationId),
       env.DB.prepare(`
-        UPDATE evaluation_decisions SET decisions_json = ?1
-        WHERE merchant_id = 'merchant-a' AND id = ?2
-      `).bind(JSON.stringify([otherProgramDecision]), evaluationId),
+        UPDATE evaluation_decisions SET decisions_json = ?1, integrity_hash = ?2
+        WHERE merchant_id = 'merchant-a' AND id = ?3
+      `).bind(JSON.stringify([otherProgramDecision]), integrityHash, evaluationId),
     ]);
     await expect(counter.countCommittedForCustomerProgram(
       'merchant-a',
       'shared',
       'welcome-10',
+      verifyHistoricalDecision,
     )).resolves.toBe(0);
     await expect(counter.countCommittedForCustomerProgram(
       'merchant-a',
       'shared',
       'other-program',
+      verifyHistoricalDecision,
     )).resolves.toBe(1);
   });
 
@@ -428,6 +451,7 @@ describe('D1 repositories', () => {
       'merchant-a',
       'shared',
       'welcome-10',
+      verifyHistoricalDecision,
     )).rejects.toThrow(/redemption.*match|evaluation/i);
   });
 
@@ -442,6 +466,7 @@ describe('D1 repositories', () => {
       'merchant-a',
       'shared',
       'welcome-10',
+      verifyHistoricalDecision,
     )).rejects.toThrow();
   });
 
@@ -468,7 +493,46 @@ describe('D1 repositories', () => {
       'merchant-a',
       'shared',
       'welcome-10',
+      verifyHistoricalDecision,
     )).rejects.toThrow(/qualified decision|effects/i);
+  });
+
+  test('rejects coordinated result and snapshot tampering without a valid HMAC', async () => {
+    const { evaluationId, repositories } = await seedCommittedRedemption();
+    const tamperedEffects = [{
+      type: 'order_discount' as const,
+      calculation: 'fixed' as const,
+      amount: { currency: 'GBP', minorUnits: 999 },
+    }];
+    const tamperedResult = {
+      ...redemptionResult(
+        `${evaluationId}-counted-order`,
+        evaluationId,
+        { externalOrderRef: 'counted-order' },
+      ),
+      effects: tamperedEffects,
+    };
+    const tamperedDecision = {
+      ...incentiveDecision,
+      effects: tamperedEffects,
+    };
+    await env.DB.batch([
+      env.DB.prepare(`
+        UPDATE redemptions SET result_json = ?1
+        WHERE merchant_id = 'merchant-a' AND evaluation_id = ?2
+      `).bind(JSON.stringify(tamperedResult), evaluationId),
+      env.DB.prepare(`
+        UPDATE evaluation_decisions SET decisions_json = ?1
+        WHERE merchant_id = 'merchant-a' AND id = ?2
+      `).bind(JSON.stringify([tamperedDecision]), evaluationId),
+    ]);
+
+    await expect(repositories.redemptions.countCommittedForCustomerProgram(
+      'merchant-a',
+      'shared',
+      'welcome-10',
+      verifyHistoricalDecision,
+    )).rejects.toThrow(/integrity|signature/i);
   });
 
   test('rejects a redemption when its snapshot has no matching qualified decision', async () => {
@@ -482,6 +546,7 @@ describe('D1 repositories', () => {
       'merchant-a',
       'shared',
       'welcome-10',
+      verifyHistoricalDecision,
     )).rejects.toThrow(/qualified decision|snapshot/i);
   });
 
@@ -496,6 +561,7 @@ describe('D1 repositories', () => {
       'merchant-a',
       'shared',
       'welcome-10',
+      verifyHistoricalDecision,
     )).rejects.toThrow();
   });
 
@@ -519,6 +585,7 @@ describe('D1 repositories', () => {
       'merchant-a',
       'shared',
       'welcome-10',
+      verifyHistoricalDecision,
     )).rejects.toThrow(/qualified decision|snapshot/i);
   });
 

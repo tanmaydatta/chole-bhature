@@ -157,6 +157,10 @@ export interface RedemptionCreate {
   createdAt: string;
 }
 
+export type DecisionIntegrityVerifier = (
+  record: EvaluationDecisionRecord,
+) => Promise<boolean>;
+
 export interface RedemptionRepository {
   create(input: RedemptionCreate): Promise<void>;
   getByExternalOrderRef(
@@ -171,6 +175,7 @@ export interface RedemptionRepository {
     merchantId: string,
     customerRef: string,
     programRef: string,
+    verifyIntegrity: DecisionIntegrityVerifier,
   ): Promise<number>;
 }
 

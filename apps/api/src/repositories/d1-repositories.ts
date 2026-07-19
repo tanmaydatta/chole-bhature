@@ -1030,7 +1030,12 @@ export function createRepositories(env: Env): Repositories {
         return row === undefined ? null : redemptionFromRow(row);
       },
 
-      async countCommittedForCustomerProgram(merchantId, customerRef, programRef) {
+      async countCommittedForCustomerProgram(
+        merchantId,
+        customerRef,
+        programRef,
+        verifyIntegrity,
+      ) {
         const parsedMerchantId = z.string().min(1).parse(merchantId);
         const parsedCustomerRef = z.string().min(1).parse(customerRef);
         const parsedProgramRef = z.string().min(1).parse(programRef);
@@ -1092,6 +1097,9 @@ export function createRepositories(env: Env): Repositories {
             expiresAt: candidate.expiresAt,
             createdAt: candidate.decisionCreatedAt,
           });
+          if (!(await verifyIntegrity(snapshot))) {
+            throw new Error('Decision snapshot integrity verification failed');
+          }
           const matchingDecision = snapshot.decisions.find(decision => (
             decision.outcome === 'qualified'
             && decision.commitRequired

@@ -545,28 +545,39 @@ describe('POST /v1/evaluate', () => {
     });
   });
 
-  test('returns retryable 503 when a committed result mismatches its decision snapshot', async () => {
+  test('returns retryable 503 for coordinated history tampering without a valid HMAC', async () => {
     await seedCustomer();
     const program = promo('corrupt-customer-count', { perCustomerCap: 2 });
     await seedProgram(program);
     const first = await evaluate();
     await commitDecision(first.evaluationId, program.id, [program.reward], 'corrupt-count');
+    const tamperedEffects = [{
+      type: 'order_discount' as const,
+      calculation: 'fixed' as const,
+      amount: { currency: 'GBP', minorUnits: 999 },
+    }];
     const corruptedResult = {
       redemptionId: 'redemption-corrupt-count',
       evaluationId: first.evaluationId,
       programRef: program.id,
       externalOrderRef: 'order-corrupt-count',
       status: 'committed',
-      effects: [{
-        type: 'order_discount',
-        calculation: 'fixed',
-        amount: { currency: 'GBP', minorUnits: 999 },
-      }],
+      effects: tamperedEffects,
     };
-    await env.DB.prepare(`
-      UPDATE redemptions SET result_json = ?1
-      WHERE merchant_id = ?2 AND evaluation_id = ?3
-    `).bind(JSON.stringify(corruptedResult), SEEDED_MERCHANT_ID, first.evaluationId).run();
+    const corruptedDecision = {
+      ...first.decisions[0]!,
+      effects: tamperedEffects,
+    };
+    await env.DB.batch([
+      env.DB.prepare(`
+        UPDATE redemptions SET result_json = ?1
+        WHERE merchant_id = ?2 AND evaluation_id = ?3
+      `).bind(JSON.stringify(corruptedResult), SEEDED_MERCHANT_ID, first.evaluationId),
+      env.DB.prepare(`
+        UPDATE evaluation_decisions SET decisions_json = ?1
+        WHERE merchant_id = ?2 AND id = ?3
+      `).bind(JSON.stringify([corruptedDecision]), SEEDED_MERCHANT_ID, first.evaluationId),
+    ]);
 
     const error = await expectError(
       await evaluateRaw(baseRequest),
@@ -595,6 +606,64 @@ describe('POST /v1/evaluate', () => {
       eligible: false,
     }));
   });
+
+  test.each([
+    [
+      'paused availability',
+      {
+        status: 'paused',
+        eligibility: { match: 'ALL', conditions: [] },
+        perCustomerCap: 1,
+      },
+      'unavailable',
+      'PROGRAM_UNAVAILABLE',
+    ],
+    [
+      'missing manual code',
+      {
+        eligibility: { match: 'ALL', conditions: [] },
+        perCustomerCap: 1,
+        autoApply: false,
+        code: 'REQUIRED',
+      },
+      'invalid_code',
+      'INVALID_PROMO_CODE',
+    ],
+    [
+      'independent condition failure',
+      {
+        eligibility: {
+          match: 'ALL',
+          conditions: [{
+            id: 'mobile-only',
+            variable: 'context.channel',
+            operator: 'eq',
+            value: 'mobile',
+          }],
+        },
+        perCustomerCap: 1,
+      },
+      'not_qualified',
+      'CONDITION_NOT_MET',
+    ],
+  ] as const)(
+    'preserves %s before applying anonymous per-customer requirements',
+    async (_name, overrides, outcome, reasonCode) => {
+      await seedProgram(promo(`anonymous-${outcome}`, overrides as Partial<PromoProgram>));
+
+      const result = await evaluate({
+        cart: baseRequest.cart,
+        context: baseRequest.context,
+      });
+      expect(result.decisions[0]).toEqual(expect.objectContaining({
+        outcome,
+        effects: [],
+        reasonCodes: [reasonCode],
+        commitRequired: false,
+        eligible: false,
+      }));
+    },
+  );
 
   test.each([
     [

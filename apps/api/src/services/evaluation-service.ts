@@ -421,6 +421,10 @@ export function createEvaluationService(repositories: Repositories, env: Env) {
         if (request.customerRef !== undefined && customer === null) {
           throw new NotFoundError('Customer not found', 'CUSTOMER_NOT_FOUND');
         }
+        const signingSecret = SigningSecretSchema.parse(env.DECISION_SIGNING_SECRET);
+        const verifyHistoricalDecision = (snapshot: EvaluationDecisionRecord) => (
+          verifyDecisionIntegrity(snapshot, signingSecret)
+        );
 
         const programs = await repositories.programs.list(merchantId);
         const now = new Date();
@@ -449,6 +453,7 @@ export function createEvaluationService(repositories: Repositories, env: Env) {
               merchantId,
               customer.externalRef,
               record.externalRef,
+              verifyHistoricalDecision,
             );
           const system = {
             ...(record.budgetRemaining === undefined
@@ -465,10 +470,8 @@ export function createEvaluationService(repositories: Repositories, env: Env) {
             ...liveFacts,
             system,
           });
-          const evaluated = hasCurrencyMismatch(record.program, request.cart.currency)
+          const moduleEvaluated = hasCurrencyMismatch(record.program, request.cart.currency)
             ? [currencyMismatchDecision(record.program)]
-            : customer === null && record.program.perCustomerCap !== undefined
-              ? [customerRequiredDecision(record.program)]
             : await PromoModule.evaluate({
               merchantId,
               evaluationId,
@@ -477,6 +480,11 @@ export function createEvaluationService(repositories: Repositories, env: Env) {
               facts: programFacts,
               definitions,
             }, record.program);
+          const evaluated = customer === null && record.program.perCustomerCap !== undefined
+            ? moduleEvaluated.map(decision => decision.outcome === 'qualified'
+              ? customerRequiredDecision(record.program)
+              : decision)
+            : moduleEvaluated;
           for (const decision of evaluated) {
             if (decision.outcome !== 'qualified') {
               moduleDecisions.push(decision);
@@ -521,7 +529,7 @@ export function createEvaluationService(repositories: Repositories, env: Env) {
           ...unsigned,
           integrityHash: await signDecisionSnapshot(
             unsigned,
-            SigningSecretSchema.parse(env.DECISION_SIGNING_SECRET),
+            signingSecret,
           ),
           createdAt,
         };
