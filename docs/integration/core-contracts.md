@@ -2,7 +2,7 @@
 
 **Notion mirror:** https://app.notion.com/p/Integration-Ready-Core-Contracts-3a1e5c7c2b8e81e4afe0ef82709f8d13
 
-**Mirror state:** Repository and Notion copies synchronized on 2026-07-19.
+**Mirror state:** Repository copy updated on 2026-07-19; Notion synchronization is deferred.
 
 The foundation exposes platform-neutral TypeScript and Zod contracts for typed data, evaluation, decisions, modules, and connectors. It is deliberately independent of Shopify, a custom checkout, HTTP framework, database, and UI.
 
@@ -113,6 +113,7 @@ export const canonicalDecision = {
   programRef: 'welcome-10',
   programType: 'promo',
   outcome: 'qualified',
+  rewardRuleRef: 'default-reward',
   effects: [{
     type: 'order_discount',
     calculation: 'fixed',
@@ -124,6 +125,14 @@ export const canonicalDecision = {
   eligible: true,
 } as const satisfies IncentiveDecision;
 ```
+
+## Global eligibility and ordered rewards
+
+A Promo has one global `eligibility` condition group and an ordered `rewardRules` array. Global eligibility answers whether the customer and transaction may enter the program at all. Only after it passes does the Promo module evaluate each reward rule's own `conditions` in array order. The first matching rule wins; later matching rules are not combined or considered. If no rule matches, `fallbackReward` is selected when present. Without a fallback, the decision is `not_qualified`, has no effects or `rewardRuleRef`, and carries `NO_REWARD_RULE_MATCHED`.
+
+Each selected rule or fallback has a stable `id`. Qualified evaluation and committed redemption responses expose that identifier as `rewardRuleRef`, binding the returned effects to the selected configured reward. At evaluation and again during redemption, caps and remaining monetary budget are checked against the selected reward. The projected charge is the selected fixed or percent discount applied to the evaluated cart, capped by the applicable order or line value; a successful commit consumes one use and that projected amount atomically. Retries return the original redemption without consuming either again.
+
+The schema-validated `canonicalTwoTierPromo` fixture demonstrates two ordered rules plus a fallback. The runtime guide reproduces that fixture and validated first-match, fallback, no-match, and committed-redemption examples.
 
 ## Redemption idempotency identifiers
 
@@ -141,7 +150,9 @@ Dependencies point inward: `contracts` has validation dependencies only; `engine
 
 The foundation includes canonical schemas/OpenAPI generation, typed fact assembly and conditions, deterministic conflict resolution, the module contract/conformance suite, a pure Promo module, and the connector contract/conformance suite. Promo can produce fixed/percent order or line-item discounts and free shipping from parsed configuration.
 
-The Runtime is implemented and verified: D1 persistence, HTTP routes, static merchant/auth boundaries, customer storage, schema publication, Promo configuration, structured signed decision snapshots, mutable caps, and atomic/idempotent redemption are available through the platform-neutral API. Commerce-platform effect application, event processing, production Shopify/manual connectors, and the Operator UI remain deferred. Wallet, points, attribution, affiliate, referral, and loyalty shapes are reserved shared semantics; their production runtimes are not implemented yet.
+The Runtime is implemented and verified: D1 persistence, HTTP routes, static merchant/auth boundaries, customer storage, schema publication, Promo configuration, structured signed decision snapshots, mutable caps, and atomic/idempotent redemption are available through the platform-neutral API. Commerce-platform effect application, event processing, production Shopify/manual connectors, and the Operator UI remain deferred.
+
+`AffiliateProgram`, `ReferralProgram`, and `LoyaltyProgram` are concrete future configuration contracts published in OpenAPI for integration planning only. They are not accepted by the live `/v1/programs` routes and have no evaluation, persistence, or redemption runtime. Wallet, points, attribution, affiliate, referral, and loyalty shapes likewise reserve shared semantics without claiming runtime support. In Loyalty configuration, `assetRef` is an opaque identifier that must be preserved exactly; the Wallet Asset Catalog that will define and resolve those identifiers is explicitly deferred.
 
 ## Executable checks
 

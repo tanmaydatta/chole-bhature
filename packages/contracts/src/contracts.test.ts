@@ -764,4 +764,97 @@ describe('canonical contracts', () => {
     expect((automaticVariant as { required?: string[] } | undefined)?.required)
       .not.toContain('code');
   });
+
+  test('publishes conditional reward and future program components without widening Promo routes', () => {
+    const document = buildOpenApiDocument();
+    const schemas = document.components?.schemas;
+
+    expect(schemas).toMatchObject({
+      RewardRule: {},
+      CommerceReward: {},
+      PromoProgram: {},
+      AffiliateProgram: {
+        description: expect.stringMatching(/future configuration contract/i),
+      },
+      ReferralProgram: {
+        description: expect.stringMatching(/future configuration contract/i),
+      },
+      LoyaltyProgram: {
+        description: expect.stringMatching(/future configuration contract/i),
+      },
+    });
+
+    const promoSchema = schemas?.PromoProgram as {
+      anyOf?: Array<{ properties?: Record<string, unknown> }>;
+      oneOf?: Array<{ properties?: Record<string, unknown> }>;
+    } | undefined;
+    const promoVariants = promoSchema?.oneOf ?? promoSchema?.anyOf ?? [];
+    expect(promoVariants).toHaveLength(2);
+    for (const variant of promoVariants) {
+      expect(variant.properties).toHaveProperty('rewardRules');
+      expect(variant.properties).not.toHaveProperty('reward');
+    }
+
+    const evaluationResponse = schemas?.EvaluationResponse as {
+      properties?: {
+        decisions?: { items?: { properties?: Record<string, unknown> } };
+      };
+    } | undefined;
+    expect(evaluationResponse?.properties?.decisions?.items?.properties)
+      .toHaveProperty('rewardRuleRef');
+
+    const redemptionResponse = schemas?.RedemptionResponse as {
+      anyOf?: Array<{ properties?: Record<string, unknown> }>;
+    } | undefined;
+    for (const variant of redemptionResponse?.anyOf ?? []) {
+      expect(variant.properties).toHaveProperty('rewardRuleRef');
+    }
+
+    type Operation = {
+      requestBody?: {
+        content?: { 'application/json'?: { schema?: { $ref?: string } } };
+      };
+      responses?: Record<string, {
+        content?: { 'application/json'?: { schema?: { $ref?: string } } };
+      }>;
+    };
+    const paths = document.paths as Record<string, Record<string, Operation>>;
+    expect(paths['/v1/programs']?.post?.requestBody?.content?.['application/json']?.schema)
+      .toEqual({ $ref: '#/components/schemas/PromoProgram' });
+    expect(paths['/v1/programs']?.post?.responses?.['201']?.content?.['application/json']?.schema)
+      .toEqual({ $ref: '#/components/schemas/PromoProgram' });
+    expect(paths['/v1/programs/{externalRef}']?.patch?.requestBody
+      ?.content?.['application/json']?.schema)
+      .toEqual({ $ref: '#/components/schemas/PromoProgram' });
+    expect(paths['/v1/programs/{externalRef}']?.patch?.responses?.['200']
+      ?.content?.['application/json']?.schema)
+      .toEqual({ $ref: '#/components/schemas/PromoProgram' });
+    expect(paths['/v1/programs']?.get?.responses?.['200']?.content?.['application/json']?.schema)
+      .toEqual({ $ref: '#/components/schemas/ProgramListResponse' });
+
+    const programList = schemas?.ProgramListResponse as {
+      properties?: {
+        programs?: {
+          items?: {
+            anyOf?: Array<{ properties?: { type?: { enum?: string[] } } }>;
+            oneOf?: Array<{ properties?: { type?: { enum?: string[] } } }>;
+          };
+        };
+      };
+    } | undefined;
+    const listedProgramSchema = programList?.properties?.programs?.items;
+    const listedProgramVariants = listedProgramSchema?.oneOf ?? listedProgramSchema?.anyOf ?? [];
+    expect(listedProgramVariants).toHaveLength(2);
+    expect(listedProgramVariants.map(variant => variant.properties?.type?.enum))
+      .toEqual([['promo'], ['promo']]);
+
+    const liveProgramOperations = JSON.stringify({
+      list: paths['/v1/programs']?.get,
+      create: paths['/v1/programs']?.post,
+      read: paths['/v1/programs/{externalRef}']?.get,
+      replace: paths['/v1/programs/{externalRef}']?.patch,
+      listSchema: programList,
+    });
+    expect(liveProgramOperations).not.toMatch(/AffiliateProgram|ReferralProgram|LoyaltyProgram/);
+  });
 });

@@ -4,6 +4,7 @@ import {
 } from '@asteasolutions/zod-to-openapi';
 
 import { ApiErrorSchema } from './errors.js';
+import { AffiliateProgramSchema } from './affiliate-program.js';
 import {
   EffectSchema,
   EvaluationRequestSchema,
@@ -11,8 +12,14 @@ import {
   RedemptionRequestSchema,
   RedemptionResponseSchema,
 } from './evaluation.js';
+import { LoyaltyProgramSchema } from './loyalty-program.js';
 import { MoneySchema } from './money.js';
 import { PromoProgramSchema } from './programs.js';
+import { ReferralProgramSchema } from './referral-program.js';
+import {
+  CommerceRewardSchema,
+  PromoRewardRuleSchema,
+} from './reward-rules.js';
 import {
   AccessSummarySchema,
   CustomerPatchRequestSchema,
@@ -74,12 +81,17 @@ export function buildOpenApiDocument(): OpenApiDocument {
   registry.register('Money', MoneySchema);
   const variableDefinition = registry.register('VariableDefinition', VariableDefinitionSchema);
   registry.register('Effect', EffectSchema);
+  registry.register('CommerceReward', CommerceRewardSchema);
+  registry.register('RewardRule', PromoRewardRuleSchema);
   const evaluationRequest = registry.register('EvaluationRequest', EvaluationRequestSchema);
   const evaluationResponse = registry.register('EvaluationResponse', EvaluationResponseSchema);
   const redemptionRequest = registry.register('RedemptionRequest', RedemptionRequestSchema);
   const redemptionResponse = registry.register('RedemptionResponse', RedemptionResponseSchema);
   const apiError = registry.register('ApiError', ApiErrorSchema);
   const promoProgram = registry.register('PromoProgram', PromoProgramSchema);
+  registry.register('AffiliateProgram', AffiliateProgramSchema);
+  registry.register('ReferralProgram', ReferralProgramSchema);
+  registry.register('LoyaltyProgram', LoyaltyProgramSchema);
   const healthResponse = registry.register('HealthResponse', HealthResponseSchema);
   const accessSummary = registry.register('AccessSummary', AccessSummarySchema);
   const definitionView = registry.register('SchemaDefinitionView', SchemaDefinitionViewSchema);
