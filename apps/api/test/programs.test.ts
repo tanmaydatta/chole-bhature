@@ -85,11 +85,12 @@ async function expectError(
   response: Response,
   status: number,
   code: string,
-): Promise<void> {
+): Promise<ReturnType<typeof ApiErrorSchema.parse>> {
   expect(response.status).toBe(status);
   const body = ApiErrorSchema.parse(await response.json());
   expect(body.error.code).toBe(code);
   expect(response.headers.get('x-correlation-id')).toBe(body.error.correlationId);
+  return body;
 }
 
 async function createProgram(program: PromoProgram): Promise<PromoProgram> {
@@ -269,6 +270,22 @@ describe('Promo program API', () => {
     const update = await programRequest('PATCH', path, 'secret-test', replacement);
     expect(update.status).toBe(200);
     expect(await update.json()).toEqual(replacement);
+  });
+
+  test('maps persisted program row deserialization corruption to generic retryable 503', async () => {
+    await createProgram(promo('corrupt-read'));
+    await env.DB.prepare(`
+      UPDATE programs SET created_at = 'not-a-timestamp'
+      WHERE merchant_id = ?1 AND external_ref = 'corrupt-read'
+    `).bind(SEEDED_MERCHANT_ID).run();
+
+    const error = await expectError(
+      await programRequest('GET', '/corrupt-read'),
+      503,
+      'EVALUATION_UNAVAILABLE',
+    );
+    expect(error.error.retryable).toBe(true);
+    expect(JSON.stringify(error)).not.toContain('not-a-timestamp');
   });
 
   test.each([

@@ -343,7 +343,7 @@ describe('D1 repositories', () => {
       .run();
 
     await expect(repositories.programs.get('merchant-a', program.id))
-      .rejects.toThrow(/relational|counter|budget|cap/i);
+      .rejects.toThrow('Stored program is not canonical');
   });
 
   test.each([
@@ -364,7 +364,7 @@ describe('D1 repositories', () => {
       .run();
 
     await expect(repositories.programs.get('merchant-a', program.id))
-      .rejects.toThrow(/relational|counter|budget|cap/i);
+      .rejects.toThrow('Stored program is not canonical');
   });
 
   test('decision persistence includes the evaluated facts migration column', async () => {
@@ -540,7 +540,7 @@ describe('D1 repositories', () => {
       'shared',
       'welcome-10',
       verifyHistoricalDecision,
-    )).rejects.toThrow(/redemption.*match|evaluation/i);
+    )).rejects.toThrow('Stored redemption is not canonical');
   });
 
   test('rejects committed candidates with a non-canonical result schema', async () => {

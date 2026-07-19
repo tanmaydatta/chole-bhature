@@ -48,10 +48,15 @@ async function createDefinition(
   return await response.json() as DefinitionView;
 }
 
-async function expectError(response: Response, status: number, code?: string): Promise<void> {
+async function expectError(
+  response: Response,
+  status: number,
+  code?: string,
+): Promise<ReturnType<typeof ApiErrorSchema.parse>> {
   expect(response.status).toBe(status);
   const body = ApiErrorSchema.parse(await response.json());
   if (code !== undefined) expect(body.error.code).toBe(code);
+  return body;
 }
 
 async function resetSchemaData(): Promise<void> {
@@ -262,21 +267,64 @@ describe('schema registry API', () => {
     expect(body.definitions.some(definition => definition.id === created.id)).toBe(false);
   });
 
-  test('refuses to publish a draft containing invalid persisted definition data', async () => {
+  test('fails closed when publishing a draft containing corrupt persisted definition data', async () => {
     const created = await createDefinition(channelDefinition);
     await env.DB.prepare(
       'UPDATE variable_definitions SET source = ?1 WHERE id = ?2',
     ).bind('unknown', created.id).run();
 
-    await expectError(
+    const error = await expectError(
       await schemaRequest('POST', '/v1/schema/publish'),
-      400,
-      'CONTEXT_VALIDATION_FAILED',
+      503,
+      'EVALUATION_UNAVAILABLE',
     );
+    expect(error.error.retryable).toBe(true);
     await expect(createRepositories({ DB: env.DB }).schemas.getLatestVersion(
       SEEDED_MERCHANT_ID,
       'published',
     )).resolves.toBeNull();
+  });
+
+  test.each([
+    ['schema-invalid row field', "source = 'unknown'"],
+    ['malformed enum JSON', "enum_values_json = '{'"],
+  ])('maps a persisted definition with %s to a generic retryable 503', async (
+    _name,
+    mutation,
+  ) => {
+    const created = await createDefinition(channelDefinition);
+    await env.DB.prepare(`UPDATE variable_definitions SET ${mutation} WHERE id = ?1`)
+      .bind(created.id).run();
+
+    const error = await expectError(
+      await schemaRequest('GET', '/v1/schema/definitions'),
+      503,
+      'EVALUATION_UNAVAILABLE',
+    );
+    expect(error.error.retryable).toBe(true);
+    expect(JSON.stringify(error)).not.toContain('unknown');
+  });
+
+  test.each([
+    ['schema-invalid definitions JSON', '[{"key":"incomplete"}]'],
+    ['malformed definitions JSON', '{"private-schema-marker":'],
+  ])('maps a persisted published schema with %s to a generic retryable 503', async (
+    _name,
+    definitionsJson,
+  ) => {
+    await seedPublishedVersion(SEEDED_MERCHANT_ID, 1, [channelDefinition]);
+    await env.DB.prepare(`
+      UPDATE schema_versions SET definitions_json = ?1
+      WHERE merchant_id = ?2 AND version = 1
+    `).bind(definitionsJson, SEEDED_MERCHANT_ID).run();
+
+    const error = await expectError(
+      await schemaRequest('GET', '/v1/schema/published', 'publishable-test'),
+      503,
+      'EVALUATION_UNAVAILABLE',
+    );
+    expect(error.error.retryable).toBe(true);
+    expect(JSON.stringify(error)).not.toContain(definitionsJson);
   });
 
   test('does not expose or mutate another merchant schema by definition id', async () => {

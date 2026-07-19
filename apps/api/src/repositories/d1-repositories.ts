@@ -73,6 +73,14 @@ function parseJson<T>(value: string, schema: z.ZodType<T>): T {
   return schema.parse(JSON.parse(value) as unknown);
 }
 
+function persistedRecord<T>(kind: string, deserialize: () => T): T {
+  try {
+    return deserialize();
+  } catch (cause) {
+    throw new Error(`Stored ${kind} is not canonical`, { cause });
+  }
+}
+
 function optional<T, K extends string>(key: K, value: T | null | undefined): { [P in K]?: T } {
   return value === null || value === undefined
     ? {}
@@ -90,7 +98,7 @@ function parseDefinitionCreate(input: VariableDefinitionCreate): VariableDefinit
   };
 }
 
-function definitionFromRow(row: typeof variableDefinitions.$inferSelect): VariableDefinitionRecord {
+function parseDefinitionRow(row: typeof variableDefinitions.$inferSelect): VariableDefinitionRecord {
   const enumValues = row.enumValuesJson === null
     ? undefined
     : parseJson(row.enumValuesJson, z.array(z.string().min(1)).min(1));
@@ -113,6 +121,10 @@ function definitionFromRow(row: typeof variableDefinitions.$inferSelect): Variab
     definition,
     createdAt: DateTimeSchema.parse(row.createdAt),
   };
+}
+
+function definitionFromRow(row: typeof variableDefinitions.$inferSelect): VariableDefinitionRecord {
+  return persistedRecord('schema definition', () => parseDefinitionRow(row));
 }
 
 function parseSchemaVersion(input: SchemaVersionRecord): SchemaVersionRecord {
@@ -156,7 +168,7 @@ function nextProgramTimestamp(expectedUpdatedAt: string, candidate: string): str
   return new Date(Math.max(candidateMillis, expectedMillis + 1)).toISOString();
 }
 
-function schemaVersionFromRow(row: typeof schemaVersions.$inferSelect): SchemaVersionRecord {
+function parseSchemaVersionRow(row: typeof schemaVersions.$inferSelect): SchemaVersionRecord {
   return {
     merchantId: row.merchantId,
     version: PositiveIntegerSchema.parse(row.version),
@@ -169,7 +181,11 @@ function schemaVersionFromRow(row: typeof schemaVersions.$inferSelect): SchemaVe
   };
 }
 
-function customerFromRow(row: typeof customers.$inferSelect): CustomerRecord {
+function schemaVersionFromRow(row: typeof schemaVersions.$inferSelect): SchemaVersionRecord {
+  return persistedRecord('schema version', () => parseSchemaVersionRow(row));
+}
+
+function parseCustomerRow(row: typeof customers.$inferSelect): CustomerRecord {
   const snapshot = CustomerSnapshotSchema.parse({
     externalRef: row.externalRef,
     attributes: parseJson(row.attributesJson, AttributesSchema),
@@ -182,7 +198,11 @@ function customerFromRow(row: typeof customers.$inferSelect): CustomerRecord {
   };
 }
 
-function programFromRow(row: typeof programs.$inferSelect): ProgramRecord {
+function customerFromRow(row: typeof customers.$inferSelect): CustomerRecord {
+  return persistedRecord('customer', () => parseCustomerRow(row));
+}
+
+function parseProgramRow(row: typeof programs.$inferSelect): ProgramRecord {
   let program: ReturnType<typeof PromoProgramSchema.parse>;
   try {
     program = parseJson(row.configJson, PromoProgramSchema);
@@ -237,6 +257,10 @@ function programFromRow(row: typeof programs.$inferSelect): ProgramRecord {
   };
 }
 
+function programFromRow(row: typeof programs.$inferSelect): ProgramRecord {
+  return persistedRecord('program', () => parseProgramRow(row));
+}
+
 function parseDecision(input: EvaluationDecisionRecord): EvaluationDecisionRecord {
   canonicalJson(input.request);
   canonicalJson(input.facts);
@@ -278,7 +302,7 @@ function parseDecision(input: EvaluationDecisionRecord): EvaluationDecisionRecor
   };
 }
 
-function decisionFromRow(row: typeof evaluationDecisions.$inferSelect): EvaluationDecisionRecord {
+function parseDecisionRow(row: typeof evaluationDecisions.$inferSelect): EvaluationDecisionRecord {
   return parseDecision({
     evaluationId: row.id,
     merchantId: row.merchantId,
@@ -292,6 +316,10 @@ function decisionFromRow(row: typeof evaluationDecisions.$inferSelect): Evaluati
     expiresAt: row.expiresAt,
     createdAt: row.createdAt,
   });
+}
+
+function decisionFromRow(row: typeof evaluationDecisions.$inferSelect): EvaluationDecisionRecord {
+  return persistedRecord('evaluation decision', () => parseDecisionRow(row));
 }
 
 function parseRedemption(input: RedemptionCreate): RedemptionCreate {
@@ -329,7 +357,7 @@ function parseRedemption(input: RedemptionCreate): RedemptionCreate {
   };
 }
 
-function redemptionFromRow(row: typeof redemptions.$inferSelect): RedemptionCreate {
+function parseRedemptionRow(row: typeof redemptions.$inferSelect): RedemptionCreate {
   return parseRedemption({
     redemptionId: row.id,
     merchantId: row.merchantId,
@@ -341,6 +369,10 @@ function redemptionFromRow(row: typeof redemptions.$inferSelect): RedemptionCrea
     currency: row.currency,
     createdAt: row.createdAt,
   });
+}
+
+function redemptionFromRow(row: typeof redemptions.$inferSelect): RedemptionCreate {
+  return persistedRecord('redemption', () => parseRedemptionRow(row));
 }
 
 function parseAtomicRedemption(input: AtomicRedemptionCommit): AtomicRedemptionCommit {

@@ -100,11 +100,12 @@ async function expectError(
   response: Response,
   status: number,
   code: string,
-): Promise<void> {
+): Promise<ReturnType<typeof ApiErrorSchema.parse>> {
   expect(response.status).toBe(status);
   const body = ApiErrorSchema.parse(await response.json());
   expect(body.error.code).toBe(code);
   expect(response.headers.get('x-correlation-id')).toBe(body.error.correlationId);
+  return body;
 }
 
 async function seedPublishedSchema(
@@ -272,6 +273,41 @@ describe('customer profile API', () => {
 
     expect(stored.externalRef).toBe(externalRef);
     expect(await (await customerRequest('GET', encoded)).json()).toEqual(stored);
+  });
+
+  test.each([
+    ['malformed JSON', '{"private-customer-marker":'],
+    ['schema-invalid JSON', '[]'],
+  ])('maps persisted customer attributes with %s to a generic retryable 503', async (
+    _name,
+    attributesJson,
+  ) => {
+    await patchCustomer('corrupt-profile', { attributes: validAttributes });
+    await env.DB.prepare(`
+      UPDATE customers SET attributes_json = ?1
+      WHERE merchant_id = ?2 AND external_ref = 'corrupt-profile'
+    `).bind(attributesJson, SEEDED_MERCHANT_ID).run();
+
+    const error = await expectError(
+      await customerRequest('GET', 'corrupt-profile'),
+      503,
+      'EVALUATION_UNAVAILABLE',
+    );
+    expect(error.error.retryable).toBe(true);
+    expect(JSON.stringify(error)).not.toContain(attributesJson);
+  });
+
+  test('keeps malformed inbound customer JSON as canonical non-retryable 400', async () => {
+    const response = await SELF.fetch('https://example.test/v1/customers/inbound-malformed', {
+      method: 'PATCH',
+      headers: {
+        authorization: 'Bearer secret-test',
+        'content-type': 'application/json',
+      },
+      body: '{',
+    });
+    const error = await expectError(response, 400, 'CONTEXT_VALIDATION_FAILED');
+    expect(error.error.retryable).toBe(false);
   });
 
   test('does not expose a customer from another merchant', async () => {
