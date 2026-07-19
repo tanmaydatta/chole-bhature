@@ -326,6 +326,9 @@ describe('schema registry API', () => {
         priority: 1,
         autoApply: true,
       };
+      if (status === 'active') {
+        expect((await schemaRequest('POST', '/v1/schema/publish')).status).toBe(201);
+      }
       await createRepositories({ DB: env.DB }).programs.create({
         merchantId: SEEDED_MERCHANT_ID,
         program,
@@ -353,6 +356,7 @@ describe('schema registry API', () => {
       type: 'string',
       required: false,
     });
+    expect((await schemaRequest('POST', '/v1/schema/publish')).status).toBe(201);
     await createRepositories({ DB: env.DB }).programs.create({
       merchantId: SEEDED_MERCHANT_ID,
       program: programReferencing('metadata-update', 'active', created.definition.key),
@@ -523,7 +527,7 @@ describe('schema registry API', () => {
     });
     await createRepositories({ DB: env.DB }).programs.create({
       merchantId: otherMerchant,
-      program: programReferencing('other-ref', 'active', 'customer.tier'),
+      program: programReferencing('other-ref', 'draft', 'customer.tier'),
       schema: null,
     });
     const response = await schemaRequest(
@@ -596,13 +600,25 @@ async function referencedDefinitionFixture(status: 'draft' | 'active') {
     type: 'string',
     required: false,
   });
-  const draft = await repositories.schemas.getLatestVersion(SEEDED_MERCHANT_ID, 'draft');
+  let draft = await repositories.schemas.getLatestVersion(SEEDED_MERCHANT_ID, 'draft');
+  let programSchema = draft;
+  let mutableDefinition = created;
+  if (status === 'active') {
+    await service.publish(SEEDED_MERCHANT_ID);
+    programSchema = await repositories.schemas.getLatestVersion(SEEDED_MERCHANT_ID, 'published');
+    draft = await repositories.schemas.createNextDraft(SEEDED_MERCHANT_ID);
+    const cloned = await repositories.schemas.listDefinitions(
+      SEEDED_MERCHANT_ID,
+      draft.version,
+    );
+    mutableDefinition = cloned.find(record => record.definition.key === created.definition.key)!;
+  }
   await repositories.programs.create({
     merchantId: SEEDED_MERCHANT_ID,
     program: programReferencing(`repository-${status}-reference`, status, created.definition.key),
-    schema: draft,
+    schema: programSchema,
   });
-  return { repositories, created, draft: draft! };
+  return { repositories, created: mutableDefinition, draft: draft! };
 }
 
 describe('atomic schema repository', () => {

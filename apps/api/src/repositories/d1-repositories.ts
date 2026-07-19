@@ -879,7 +879,7 @@ export function createRepositories(env: Env): Repositories {
             )
             SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 0, ?10, ?11, ?11
             WHERE (
-              ?12 IS NULL AND NOT EXISTS (
+              ?12 IS NULL AND ?15 = 'draft' AND NOT EXISTS (
                 SELECT 1 FROM schema_versions
                 WHERE merchant_id = ?2 AND state IN ('draft', 'published')
               )
@@ -889,6 +889,7 @@ export function createRepositories(env: Env): Repositories {
                 WHERE merchant_id = ?2 AND version = ?12
                   AND state = ?13 AND definitions_json = ?14
               )
+              AND (?15 = 'draft' OR ?13 = 'published')
               AND NOT EXISTS (
                 SELECT 1 FROM schema_versions
                 WHERE merchant_id = ?2 AND state = ?13 AND version > ?12
@@ -970,7 +971,7 @@ export function createRepositories(env: Env): Repositories {
           WHERE merchant_id = ?9 AND external_ref = ?10 AND status = 'draft'
             AND config_json = ?11 AND updated_at = ?12
             AND (
-              ?13 IS NULL AND NOT EXISTS (
+              ?13 IS NULL AND ?16 = 'draft' AND NOT EXISTS (
                 SELECT 1 FROM schema_versions
                 WHERE merchant_id = ?9 AND state IN ('draft', 'published')
               )
@@ -980,6 +981,7 @@ export function createRepositories(env: Env): Repositories {
                 WHERE merchant_id = ?9 AND version = ?13
                   AND state = ?14 AND definitions_json = ?15
               )
+              AND (?16 = 'draft' OR ?14 = 'published')
               AND NOT EXISTS (
                 SELECT 1 FROM schema_versions
                 WHERE merchant_id = ?9 AND state = ?14 AND version > ?13

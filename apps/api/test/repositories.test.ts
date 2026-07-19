@@ -295,15 +295,15 @@ describe('D1 repositories', () => {
   test('programs and decisions round-trip without crossing merchant scope', async () => {
     await seedMerchant('merchant-a');
     await seedMerchant('merchant-b');
+    await seedPublishedSchema('merchant-a');
     const repositories = createRepositories({ DB: env.DB });
 
     await repositories.programs.create({
       merchantId: 'merchant-a',
       program,
-      schema: null,
+      schema: await repositories.schemas.getLatestVersion('merchant-a', 'published'),
       createdAt,
     });
-    await seedPublishedSchema('merchant-a');
     await repositories.customers.create('merchant-a', customer('shared', { tier: 'gold' }));
     await repositories.decisions.create(decision('merchant-a'));
 
@@ -331,9 +331,13 @@ describe('D1 repositories', () => {
     ['negative remaining budget', 'budget_remaining = -1'],
   ])('program reads fail closed on %s', async (_name, mutation) => {
     await seedMerchant('merchant-a');
+    await seedPublishedSchema('merchant-a');
     const repositories = createRepositories({ DB: env.DB });
     await repositories.programs.create({
-      merchantId: 'merchant-a', program, schema: null, createdAt,
+      merchantId: 'merchant-a',
+      program,
+      schema: await repositories.schemas.getLatestVersion('merchant-a', 'published'),
+      createdAt,
     });
     await env.DB.prepare(`UPDATE programs SET ${mutation} WHERE merchant_id = 'merchant-a'`)
       .run();
@@ -347,10 +351,14 @@ describe('D1 repositories', () => {
     ['unexpected relational budget', 'budget_remaining = 1'],
   ])('program reads fail closed on %s', async (_name, mutation) => {
     await seedMerchant('merchant-a');
+    await seedPublishedSchema('merchant-a');
     const repositories = createRepositories({ DB: env.DB });
     const unlimited = { ...program, usageCap: undefined, budget: undefined } as PromoProgram;
     await repositories.programs.create({
-      merchantId: 'merchant-a', program: unlimited, schema: null, createdAt,
+      merchantId: 'merchant-a',
+      program: unlimited,
+      schema: await repositories.schemas.getLatestVersion('merchant-a', 'published'),
+      createdAt,
     });
     await env.DB.prepare(`UPDATE programs SET ${mutation} WHERE merchant_id = 'merchant-a'`)
       .run();

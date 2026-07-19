@@ -383,6 +383,67 @@ describe('Promo program API', () => {
     expect(await createProgram(publishedProgram)).toEqual(publishedProgram);
   });
 
+  test('repository create rejects a non-draft target paired with a draft schema snapshot', async () => {
+    const repositories = createRepositories({ DB: env.DB });
+    const draft = await repositories.schemas.createNextDraft(SEEDED_MERCHANT_ID);
+
+    await expect(repositories.programs.create({
+      merchantId: SEEDED_MERCHANT_ID,
+      program: promo('active-with-draft-snapshot', { status: 'active' }),
+      schema: draft,
+    })).rejects.toMatchObject({ name: 'ProgramConflictError' });
+
+    await expect(repositories.programs.create({
+      merchantId: SEEDED_MERCHANT_ID,
+      program: promo('draft-with-latest-draft'),
+      schema: draft,
+    })).resolves.toMatchObject({
+      program: { id: 'draft-with-latest-draft', status: 'draft' },
+    });
+  });
+
+  test('repository update rejects a non-draft target paired with a draft schema snapshot', async () => {
+    const repositories = createRepositories({ DB: env.DB });
+    const draft = await repositories.schemas.createNextDraft(SEEDED_MERCHANT_ID);
+    const existing = await repositories.programs.create({
+      merchantId: SEEDED_MERCHANT_ID,
+      program: promo('activate-with-draft-snapshot'),
+      schema: draft,
+    });
+
+    await expect(repositories.programs.updateDraft({
+      merchantId: SEEDED_MERCHANT_ID,
+      externalRef: existing.externalRef,
+      program: { ...existing.program, status: 'active' },
+      expectedProgram: existing.program,
+      expectedUpdatedAt: existing.updatedAt,
+      schema: draft,
+    })).rejects.toMatchObject({ name: 'ProgramConflictError' });
+    await expect(repositories.programs.get(
+      SEEDED_MERCHANT_ID,
+      existing.externalRef,
+    )).resolves.toMatchObject({ program: { status: 'draft' } });
+  });
+
+  test('repository no-schema bootstrap permits drafts but rejects non-draft targets', async () => {
+    const merchantId = 'no-schema-program-merchant';
+    await env.DB.prepare(
+      'INSERT INTO merchants (id, name, created_at) VALUES (?1, ?2, ?3)',
+    ).bind(merchantId, 'No schema merchant', publishedAt).run();
+    const repositories = createRepositories({ DB: env.DB });
+
+    await expect(repositories.programs.create({
+      merchantId,
+      program: promo('no-schema-draft'),
+      schema: null,
+    })).resolves.toMatchObject({ program: { status: 'draft' } });
+    await expect(repositories.programs.create({
+      merchantId,
+      program: promo('no-schema-active', { status: 'active' }),
+      schema: null,
+    })).rejects.toMatchObject({ name: 'ProgramConflictError' });
+  });
+
   test('draft to active transition rejects fields that are only in the draft schema', async () => {
     const repositories = createRepositories({ DB: env.DB });
     const draft = await repositories.schemas.createNextDraft(SEEDED_MERCHANT_ID);
