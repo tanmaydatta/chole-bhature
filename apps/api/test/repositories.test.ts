@@ -984,7 +984,7 @@ describe('D1 repositories', () => {
     await seedMerchant('merchant-b');
     const repositories = createRepositories({ DB: env.DB });
     const digest = 'b'.repeat(64);
-    const view = await repositories.credentials.create({
+    const view = await repositories.credentials.createWithAudit({
       id: 'credential-a',
       merchantId: 'merchant-a',
       name: 'Storefront publishable',
@@ -995,6 +995,18 @@ describe('D1 repositories', () => {
       suffix: 'abc123',
       createdAt,
       createdBy: 'user-123',
+    }, {
+      id: 'credential-a-created-audit',
+      occurredAt: createdAt,
+      actorKind: 'member',
+      actorId: 'user-123',
+      merchantId: 'merchant-a',
+      action: 'credential.created',
+      targetType: 'credential',
+      targetId: 'credential-a',
+      outcome: 'succeeded',
+      correlationId: 'credential-a-created-correlation',
+      metadata: { kind: 'publishable', suffix: 'abc123' },
     });
 
     expect(view).toEqual({

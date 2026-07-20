@@ -78,8 +78,11 @@ export async function createCredential(
 
   const material = tokenMaterial();
   const token = `${parsed.kind === 'publishable' ? 'pk' : 'sk'}_${material}`;
-  const credential = await repositories.credentials.create({
-    id: crypto.randomUUID(),
+  const credentialId = crypto.randomUUID();
+  const suffix = token.slice(-8);
+  const createdAt = new Date().toISOString();
+  const credential = await repositories.credentials.createWithAudit({
+    id: credentialId,
     merchantId: operator.merchantId,
     name: parsed.name,
     environment: parsed.environment,
@@ -87,22 +90,22 @@ export async function createCredential(
     scopes: parsed.scopes,
     allowedOrigins,
     digest: await digest(token),
-    suffix: token.slice(-8),
+    suffix,
     ...(parsed.expiresAt === undefined ? {} : { expiresAt: parsed.expiresAt }),
+    createdAt,
     createdBy: operator.actorUserId,
-  });
-  await repositories.audit.append({
+  }, {
     id: crypto.randomUUID(),
-    occurredAt: new Date().toISOString(),
+    occurredAt: createdAt,
     actorKind: operator.actorKind,
     actorId: operator.actorUserId,
     merchantId: operator.merchantId,
     action: 'credential.created',
     targetType: 'credential',
-    targetId: credential.id,
+    targetId: credentialId,
     outcome: 'succeeded',
     correlationId: operator.correlationId,
-    metadata: { kind: credential.kind, suffix: credential.suffix },
+    metadata: { kind: parsed.kind, suffix },
   });
   return { credential, token };
 }
@@ -119,25 +122,29 @@ export async function revokeCredential(
 ) {
   const operator = requireOperatorContext(operatorInput, 'credentials:manage');
   const repositories = createRepositories(env);
-  const revoked = await repositories.credentials.revoke(
+  const revokedAt = new Date().toISOString();
+  const existing = (await repositories.credentials.list(operator.merchantId))
+    .find(credential => credential.id === credentialId);
+  if (existing === undefined) throw new NotFoundError('Credential not found');
+  const revoked = await repositories.credentials.revokeWithAudit(
     operator.merchantId,
     z.string().min(1).parse(credentialId),
-    new Date().toISOString(),
+    revokedAt,
     operator.actorUserId,
+    {
+      id: crypto.randomUUID(),
+      occurredAt: revokedAt,
+      actorKind: operator.actorKind,
+      actorId: operator.actorUserId,
+      merchantId: operator.merchantId,
+      action: 'credential.revoked',
+      targetType: 'credential',
+      targetId: credentialId,
+      outcome: 'succeeded',
+      correlationId: operator.correlationId,
+      metadata: { kind: existing.kind, suffix: existing.suffix },
+    },
   );
   if (revoked === null) throw new NotFoundError('Credential not found');
-  await repositories.audit.append({
-    id: crypto.randomUUID(),
-    occurredAt: new Date().toISOString(),
-    actorKind: operator.actorKind,
-    actorId: operator.actorUserId,
-    merchantId: operator.merchantId,
-    action: 'credential.revoked',
-    targetType: 'credential',
-    targetId: revoked.id,
-    outcome: 'succeeded',
-    correlationId: operator.correlationId,
-    metadata: { kind: revoked.kind, suffix: revoked.suffix },
-  });
   return revoked;
 }

@@ -45,12 +45,12 @@ export function buildOpenApiDocument(): OpenApiDocument {
   registry.registerComponent('securitySchemes', 'publishableBearer', {
     type: 'http',
     scheme: 'bearer',
-    description: 'Publishable static token. Secret tokens are also accepted on publishable routes.',
+    description: 'Merchant publishable credential. Scoped secret credentials are also accepted.',
   });
   registry.registerComponent('securitySchemes', 'secretBearer', {
     type: 'http',
     scheme: 'bearer',
-    description: 'Secret static token for configuration, customer writes, and redemptions.',
+    description: 'Merchant secret credential for scoped customer, evaluation, and redemption access.',
   });
   registry.registerComponent('headers', 'CorrelationId', {
     description: 'Request correlation identifier returned by the runtime',
@@ -178,80 +178,6 @@ export function buildOpenApiDocument(): OpenApiDocument {
 
   registry.registerPath({
     method: 'get',
-    path: '/v1/schema/definitions',
-    summary: 'List editable and built-in typed fields',
-    security: secretSecurity,
-    responses: {
-      200: { description: 'Schema definitions and revision versions', content: jsonContent(definitionsResponse) },
-      401: errors[401],
-      403: errors[403],
-      503: errors[503],
-    },
-  });
-  registry.registerPath({
-    method: 'post',
-    path: '/v1/schema/definitions',
-    summary: 'Create a typed field in the current draft',
-    security: secretSecurity,
-    request: { body: { required: true, content: jsonContent(variableDefinition) } },
-    responses: {
-      201: { description: 'Draft field created', content: jsonContent(definitionView) },
-      400: errors[400],
-      401: errors[401],
-      403: errors[403],
-      409: errors[409],
-      503: errors[503],
-    },
-  });
-  registry.registerPath({
-    method: 'patch',
-    path: '/v1/schema/definitions/{id}',
-    summary: 'Replace a typed draft field definition',
-    security: secretSecurity,
-    request: {
-      body: { required: true, content: jsonContent(variableDefinition) },
-    },
-    parameters: [schemaDefinitionId],
-    responses: {
-      200: { description: 'Draft field replaced', content: jsonContent(definitionView) },
-      400: errors[400],
-      401: errors[401],
-      403: errors[403],
-      404: errors[404],
-      409: errors[409],
-      503: errors[503],
-    },
-  });
-  registry.registerPath({
-    method: 'delete',
-    path: '/v1/schema/definitions/{id}',
-    summary: 'Delete an unreferenced typed draft field',
-    security: secretSecurity,
-    parameters: [schemaDefinitionId],
-    responses: {
-      204: { description: 'Draft field deleted' },
-      401: errors[401],
-      403: errors[403],
-      404: errors[404],
-      409: errors[409],
-      503: errors[503],
-    },
-  });
-  registry.registerPath({
-    method: 'post',
-    path: '/v1/schema/publish',
-    summary: 'Publish the current immutable schema version',
-    security: secretSecurity,
-    responses: {
-      201: { description: 'Schema version published', content: jsonContent(publishedSchema) },
-      401: errors[401],
-      403: errors[403],
-      409: errors[409],
-      503: errors[503],
-    },
-  });
-  registry.registerPath({
-    method: 'get',
     path: '/v1/schema/published',
     summary: 'Fetch the active typed schema, JSON Schema, and sample',
     security: publishableSecurity,
@@ -286,65 +212,6 @@ export function buildOpenApiDocument(): OpenApiDocument {
     request: { body: { required: true, content: jsonContent(customerPatch) } },
     responses: {
       200: { description: 'Created or replaced customer record', content: jsonContent(customerRecord) },
-      400: errors[400],
-      401: errors[401],
-      403: errors[403],
-      404: errors[404],
-      409: errors[409],
-      503: errors[503],
-    },
-  });
-
-  registry.registerPath({
-    method: 'get',
-    path: '/v1/programs',
-    summary: 'List Promo programs',
-    security: secretSecurity,
-    responses: {
-      200: { description: 'Merchant Promo programs', content: jsonContent(programList) },
-      401: errors[401],
-      403: errors[403],
-      503: errors[503],
-    },
-  });
-  registry.registerPath({
-    method: 'post',
-    path: '/v1/programs',
-    summary: 'Create a validated Promo program',
-    security: secretSecurity,
-    request: { body: { required: true, content: jsonContent(promoProgram) } },
-    responses: {
-      201: { description: 'Promo program created', content: jsonContent(promoProgram) },
-      400: errors[400],
-      401: errors[401],
-      403: errors[403],
-      409: errors[409],
-      503: errors[503],
-    },
-  });
-  registry.registerPath({
-    method: 'get',
-    path: '/v1/programs/{externalRef}',
-    summary: 'Fetch a Promo program',
-    security: secretSecurity,
-    parameters: [programExternalRef],
-    responses: {
-      200: { description: 'Promo program', content: jsonContent(promoProgram) },
-      401: errors[401],
-      403: errors[403],
-      404: errors[404],
-      503: errors[503],
-    },
-  });
-  registry.registerPath({
-    method: 'patch',
-    path: '/v1/programs/{externalRef}',
-    summary: 'Replace an editable draft Promo program',
-    security: secretSecurity,
-    parameters: [programExternalRef],
-    request: { body: { required: true, content: jsonContent(promoProgram) } },
-    responses: {
-      200: { description: 'Promo program replaced', content: jsonContent(promoProgram) },
       400: errors[400],
       401: errors[401],
       403: errors[403],

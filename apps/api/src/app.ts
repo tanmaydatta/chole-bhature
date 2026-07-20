@@ -13,7 +13,6 @@ import {
 } from './errors.js';
 import { createRepositories } from './repositories/d1-repositories.js';
 import { createCustomerRoutes } from './routes/customers.js';
-import { createProgramRoutes } from './routes/programs.js';
 import { createEvaluationRoutes } from './routes/evaluate.js';
 import { createOpenApiRoutes } from './routes/openapi.js';
 import { createRedemptionRoutes } from './routes/redemptions.js';
@@ -58,7 +57,6 @@ export function createApp(): Hono<AppEnvironment> {
   app.get('/v1/test-publishable', requirePublishableScope('schema:read'), contextSummary);
   app.get('/v1/test-secret', requireSecretScope('customers:write'), contextSummary);
   app.route('/v1/customers', createCustomerRoutes());
-  app.route('/v1/programs', createProgramRoutes());
   app.route('/v1/schema', createSchemaRoutes());
   app.route('/v1/evaluate', createEvaluationRoutes());
   app.route('/v1/redemptions', createRedemptionRoutes());

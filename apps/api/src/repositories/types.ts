@@ -133,15 +133,21 @@ export interface CredentialAuthenticationRecord {
 }
 
 export interface CredentialRepository {
-  create(input: CredentialCreate): Promise<ApiCredentialView>;
+  createWithAudit(input: CredentialCreate, audit: AuditEntry): Promise<ApiCredentialView>;
   findByDigest(digest: string): Promise<ApiCredentialView | null>;
   authenticateByDigest(digest: string): Promise<CredentialAuthenticationRecord | null>;
+  hasAllowedPublishableOrigin(
+    origin: string,
+    scope: ApiCredentialScope,
+    checkedAt: string,
+  ): Promise<boolean>;
   list(merchantId: string): Promise<ApiCredentialView[]>;
-  revoke(
+  revokeWithAudit(
     merchantId: string,
     id: string,
     revokedAt: string,
     revokedBy: string,
+    audit: AuditEntry,
   ): Promise<ApiCredentialView | null>;
   markUsed(id: string, usedAt: string): Promise<void>;
 }

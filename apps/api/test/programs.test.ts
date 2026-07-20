@@ -10,6 +10,7 @@ import { beforeEach, describe, expect, test } from 'vitest';
 import { SEEDED_MERCHANT_ID } from './test-credentials.js';
 import { createRepositories } from '../src/repositories/d1-repositories.js';
 import { createProgramService } from '../src/services/program-service.js';
+import { operatorAuthoringRequest } from './operator-authoring-app.js';
 
 const publishedAt = '2026-07-18T12:00:00.000Z';
 
@@ -88,14 +89,14 @@ function programRequest(
   token = 'sk_test_secret_credential_material_000000000001',
   body?: unknown,
 ): Promise<Response> {
-  return SELF.fetch(`https://example.test/v1/programs${path}`, {
+  return operatorAuthoringRequest(new Request(`https://operator.test/v1/programs${path}`, {
     method,
     headers: {
       authorization: `Bearer ${token}`,
       ...(body === undefined ? {} : { 'content-type': 'application/json' }),
     },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  }), env);
 }
 
 async function expectError(
@@ -739,7 +740,8 @@ describe('Promo program API', () => {
   });
 
   test('a merchant field referenced by a draft program is protected by schema edits', async () => {
-    const definitionResponse = await SELF.fetch('https://example.test/v1/schema/definitions', {
+    const definitionResponse = await operatorAuthoringRequest(new Request(
+      'https://operator.test/v1/schema/definitions', {
       method: 'POST',
       headers: {
         authorization: 'Bearer sk_test_secret_credential_material_000000000001',
@@ -752,7 +754,7 @@ describe('Promo program API', () => {
         type: 'string',
         required: false,
       }),
-    });
+    }), env);
     expect(definitionResponse.status).toBe(201);
     const definition = await definitionResponse.json() as { id: string; definition: VariableDefinition };
 
@@ -768,8 +770,8 @@ describe('Promo program API', () => {
       },
     }));
 
-    const edit = await SELF.fetch(
-      `https://example.test/v1/schema/definitions/${definition.id}`,
+    const edit = await operatorAuthoringRequest(new Request(
+      `https://operator.test/v1/schema/definitions/${definition.id}`,
       {
         method: 'PATCH',
         headers: {
@@ -777,8 +779,7 @@ describe('Promo program API', () => {
           'content-type': 'application/json',
         },
         body: JSON.stringify({ ...definition.definition, type: 'number' }),
-      },
-    );
+      }), env);
     await expectError(edit, 409, 'SCHEMA_CONFLICT');
   });
 
@@ -1013,15 +1014,22 @@ describe('Promo program API', () => {
     }), 400, 'CONTEXT_VALIDATION_FAILED');
   });
 
-  test.each(['GET', 'POST', 'PATCH'] as const)('requires a secret credential for %s', async (method) => {
+  test.each(['GET', 'POST', 'PATCH'] as const)(
+    'does not expose %s program authoring on public fetch',
+    async (method) => {
     const path = method === 'GET' ? '' : method === 'PATCH' ? '/secret-only' : '';
     const body = method === 'GET' ? undefined : method === 'POST'
       ? promo('secret-only')
       : { name: 'No access' };
-    await expectError(
-      await programRequest(method, path, 'pk_test_publishable_credential_material_00000001', body),
-      403,
-      'FORBIDDEN',
-    );
-  });
+      const response = await SELF.fetch(`https://example.test/v1/programs${path}`, {
+        method,
+        headers: {
+          authorization: 'Bearer sk_test_secret_credential_material_000000000001',
+          ...(body === undefined ? {} : { 'content-type': 'application/json' }),
+        },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
+      await expectError(response, 404, 'NOT_FOUND');
+    },
+  );
 });

@@ -1,4 +1,5 @@
 import {
+  ApiCredentialScopeSchema,
   ApiCredentialViewSchema,
   AuditEntrySchema,
   CustomerSnapshotSchema,
@@ -463,6 +464,50 @@ function parseCredentialCreate(input: CredentialCreate) {
   };
 }
 
+function parseCredentialAudit(
+  input: unknown,
+  expected: {
+    action: 'credential.created' | 'credential.revoked';
+    merchantId: string;
+    targetId: string;
+    actorId: string;
+  },
+) {
+  const audit = AuditEntrySchema.parse(input);
+  if (
+    audit.action !== expected.action
+    || audit.targetType !== 'credential'
+    || audit.merchantId !== expected.merchantId
+    || audit.targetId !== expected.targetId
+    || audit.actorId !== expected.actorId
+    || audit.outcome !== 'succeeded'
+  ) {
+    throw new Error('Credential audit does not match its mutation');
+  }
+  return audit;
+}
+
+function auditInsertStatement(env: Env, entry: ReturnType<typeof AuditEntrySchema.parse>) {
+  return env.DB.prepare(`
+    INSERT INTO product_audit (
+      id, occurred_at, actor_kind, actor_id, merchant_id, action,
+      target_type, target_id, outcome, correlation_id, metadata_json
+    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+  `).bind(
+    entry.id,
+    entry.occurredAt,
+    entry.actorKind,
+    entry.actorId,
+    entry.merchantId ?? null,
+    entry.action,
+    entry.targetType,
+    entry.targetId,
+    entry.outcome,
+    entry.correlationId,
+    entry.metadata === undefined ? null : canonicalJson(entry.metadata),
+  );
+}
+
 function parseDecision(input: EvaluationDecisionRecord): EvaluationDecisionRecord {
   canonicalJson(input.request);
   canonicalJson(input.facts);
@@ -846,23 +891,42 @@ export function createRepositories(env: Env): Repositories {
     },
 
     credentials: {
-      async create(input) {
+      async createWithAudit(input, auditInput) {
         const parsed = parseCredentialCreate(input);
-        const row = await db.insert(apiCredentials).values({
-          id: parsed.view.id,
+        const audit = parseCredentialAudit(auditInput, {
+          action: 'credential.created',
           merchantId: parsed.view.merchantId,
-          name: parsed.view.name,
-          environment: parsed.view.environment,
-          kind: parsed.view.kind,
-          scopesJson: canonicalJson(parsed.view.scopes),
-          allowedOriginsJson: canonicalJson(parsed.allowedOrigins),
-          digest: parsed.digest,
-          suffix: parsed.view.suffix,
-          status: parsed.view.status,
-          expiresAt: parsed.view.expiresAt ?? null,
-          createdAt: parsed.view.createdAt,
-          createdBy: parsed.view.createdBy,
-        }).returning().get();
+          targetId: parsed.view.id,
+          actorId: parsed.view.createdBy,
+        });
+        await env.DB.batch([
+          env.DB.prepare(`
+            INSERT INTO api_credentials (
+              id, merchant_id, name, environment, kind, scopes_json,
+              allowed_origins_json, digest, suffix, status, expires_at,
+              created_at, created_by
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+          `).bind(
+            parsed.view.id,
+            parsed.view.merchantId,
+            parsed.view.name,
+            parsed.view.environment,
+            parsed.view.kind,
+            canonicalJson(parsed.view.scopes),
+            canonicalJson(parsed.allowedOrigins),
+            parsed.digest,
+            parsed.view.suffix,
+            parsed.view.status,
+            parsed.view.expiresAt ?? null,
+            parsed.view.createdAt,
+            parsed.view.createdBy,
+          ),
+          auditInsertStatement(env, audit),
+        ]);
+        const row = await db.select().from(apiCredentials).where(
+          eq(apiCredentials.id, parsed.view.id),
+        ).get();
+        if (row === undefined) throw new Error('Credential creation did not persist');
         return credentialFromRow(row);
       },
 
@@ -886,6 +950,31 @@ export function createRepositories(env: Env): Repositories {
         };
       },
 
+      async hasAllowedPublishableOrigin(origin, scope, checkedAt) {
+        const parsedOrigin = ExactOriginSchema.parse(origin);
+        const parsedScope = ApiCredentialScopeSchema.parse(scope);
+        const parsedCheckedAt = DateTimeSchema.parse(checkedAt);
+        const row = await env.DB.prepare(`
+          SELECT credential.id
+          FROM api_credentials AS credential
+          INNER JOIN merchants AS merchant ON merchant.id = credential.merchant_id
+          WHERE credential.kind = 'publishable'
+            AND credential.status = 'active'
+            AND merchant.status = 'active'
+            AND (credential.expires_at IS NULL OR credential.expires_at > ?1)
+            AND EXISTS (
+              SELECT 1 FROM json_each(credential.scopes_json)
+              WHERE json_each.value = ?2
+            )
+            AND EXISTS (
+              SELECT 1 FROM json_each(credential.allowed_origins_json)
+              WHERE json_each.value = ?3
+            )
+          LIMIT 1
+        `).bind(parsedCheckedAt, parsedScope, parsedOrigin).first<{ id: string }>();
+        return row !== null;
+      },
+
       async list(merchantId) {
         const rows = await db.select().from(apiCredentials).where(
           eq(apiCredentials.merchantId, merchantId),
@@ -893,16 +982,57 @@ export function createRepositories(env: Env): Repositories {
         return rows.map(credentialFromRow);
       },
 
-      async revoke(merchantId, id, revokedAt, revokedBy) {
+      async revokeWithAudit(merchantId, id, revokedAt, revokedBy, auditInput) {
         const parsedMerchantId = z.string().min(1).parse(merchantId);
         const parsedId = z.string().min(1).parse(id);
         const parsedRevokedAt = DateTimeSchema.parse(revokedAt);
         const parsedRevokedBy = z.string().min(1).parse(revokedBy);
-        await env.DB.prepare(`
-          UPDATE api_credentials
-          SET status = 'revoked', revoked_at = ?1, revoked_by = ?2
-          WHERE merchant_id = ?3 AND id = ?4 AND status = 'active'
-        `).bind(parsedRevokedAt, parsedRevokedBy, parsedMerchantId, parsedId).run();
+        const audit = parseCredentialAudit(auditInput, {
+          action: 'credential.revoked',
+          merchantId: parsedMerchantId,
+          targetId: parsedId,
+          actorId: parsedRevokedBy,
+        });
+        await env.DB.batch([
+          env.DB.prepare(`
+            UPDATE api_credentials
+            SET status = 'revoked', revoked_at = ?1, revoked_by = ?2
+            WHERE merchant_id = ?3 AND id = ?4 AND status = 'active'
+          `).bind(parsedRevokedAt, parsedRevokedBy, parsedMerchantId, parsedId),
+          env.DB.prepare(`
+            INSERT INTO product_audit (
+              id, occurred_at, actor_kind, actor_id, merchant_id, action,
+              target_type, target_id, outcome, correlation_id, metadata_json
+            )
+            SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11
+            WHERE EXISTS (
+              SELECT 1 FROM api_credentials
+              WHERE merchant_id = ?12 AND id = ?13 AND status = 'revoked'
+                AND revoked_at = ?14 AND revoked_by = ?15
+            )
+              AND NOT EXISTS (
+                SELECT 1 FROM product_audit
+                WHERE merchant_id = ?12 AND target_type = 'credential'
+                  AND target_id = ?13 AND action = 'credential.revoked'
+              )
+          `).bind(
+            audit.id,
+            audit.occurredAt,
+            audit.actorKind,
+            audit.actorId,
+            audit.merchantId ?? null,
+            audit.action,
+            audit.targetType,
+            audit.targetId,
+            audit.outcome,
+            audit.correlationId,
+            audit.metadata === undefined ? null : canonicalJson(audit.metadata),
+            parsedMerchantId,
+            parsedId,
+            parsedRevokedAt,
+            parsedRevokedBy,
+          ),
+        ]);
         const row = await db.select().from(apiCredentials).where(and(
           eq(apiCredentials.merchantId, parsedMerchantId),
           eq(apiCredentials.id, parsedId),

@@ -15,10 +15,11 @@ const futureExpiry = '2099-01-01T00:00:00.000Z';
 function operatorContext(
   merchantId: string,
   permission: PermissionKey = 'credentials:manage',
+  actorUserId = 'root-user',
 ): OperatorCallContext {
   return {
-    correlationId: `corr-${merchantId}-${permission}`,
-    actorUserId: 'root-user',
+    correlationId: `corr-${merchantId}-${permission}-${actorUserId}`,
+    actorUserId,
     actorKind: 'root',
     merchantId,
     permission,
@@ -63,6 +64,8 @@ async function createCredential(
 describe('private Core operator credential service', () => {
   beforeEach(async () => {
     await env.DB.batch([
+      env.DB.prepare('DROP TRIGGER IF EXISTS fail_credential_created_audit'),
+      env.DB.prepare('DROP TRIGGER IF EXISTS fail_credential_revoked_audit'),
       env.DB.prepare('DELETE FROM product_audit'),
       env.DB.prepare('DELETE FROM api_credentials'),
       env.DB.prepare('DELETE FROM redemptions'),
@@ -201,5 +204,86 @@ describe('private Core operator credential service', () => {
     expect(serialized).not.toContain(created.token);
     expect(serialized).not.toMatch(/[a-f0-9]{64}/u);
     expect(serialized).toContain(created.credential.suffix);
+  });
+
+  test('rolls back credential creation when the matching audit append fails', async () => {
+    await provisionMerchant('merchant-a');
+    await env.DB.prepare(`
+      CREATE TRIGGER fail_credential_created_audit
+      BEFORE INSERT ON product_audit
+      WHEN NEW.action = 'credential.created'
+      BEGIN
+        SELECT RAISE(ABORT, 'forced credential create audit failure');
+      END
+    `).run();
+
+    await expect(createCredential('merchant-a', {
+      name: 'Must roll back',
+    })).rejects.toThrow(/forced credential create audit failure/u);
+
+    expect(await env.DB.prepare(`
+      SELECT COUNT(*) AS count FROM api_credentials WHERE merchant_id = 'merchant-a'
+    `).first()).toEqual({ count: 0 });
+    expect(await env.DB.prepare(`
+      SELECT COUNT(*) AS count FROM product_audit
+      WHERE merchant_id = 'merchant-a' AND action = 'credential.created'
+    `).first()).toEqual({ count: 0 });
+  });
+
+  test('rolls back revocation when the matching audit append fails', async () => {
+    await provisionMerchant('merchant-a');
+    const created = await createCredential('merchant-a', { name: 'Remain active' });
+    await env.DB.prepare(`
+      CREATE TRIGGER fail_credential_revoked_audit
+      BEFORE INSERT ON product_audit
+      WHEN NEW.action = 'credential.revoked'
+      BEGIN
+        SELECT RAISE(ABORT, 'forced credential revoke audit failure');
+      END
+    `).run();
+
+    await expect(operatorService().revokeCredential(
+      operatorContext('merchant-a'),
+      created.credential.id,
+    )).rejects.toThrow(/forced credential revoke audit failure/u);
+
+    expect(await env.DB.prepare(`
+      SELECT status, revoked_at AS revokedAt, revoked_by AS revokedBy
+      FROM api_credentials WHERE id = ?1
+    `).bind(created.credential.id).first()).toEqual({
+      status: 'active',
+      revokedAt: null,
+      revokedBy: null,
+    });
+    expect(await env.DB.prepare(`
+      SELECT COUNT(*) AS count FROM product_audit
+      WHERE target_id = ?1 AND action = 'credential.revoked'
+    `).bind(created.credential.id).first()).toEqual({ count: 0 });
+  });
+
+  test('treats repeated revocation as idempotent and preserves the first actor history', async () => {
+    await provisionMerchant('merchant-a');
+    const created = await createCredential('merchant-a', { name: 'Rotate once' });
+
+    const first = await operatorService().revokeCredential(
+      operatorContext('merchant-a', 'credentials:manage', 'first-admin'),
+      created.credential.id,
+    );
+    const replay = await operatorService().revokeCredential(
+      operatorContext('merchant-a', 'credentials:manage', 'second-admin'),
+      created.credential.id,
+    );
+
+    expect(replay).toEqual(first);
+    const revocationAudit = await env.DB.prepare(`
+      SELECT actor_id AS actorId, correlation_id AS correlationId
+      FROM product_audit
+      WHERE target_id = ?1 AND action = 'credential.revoked'
+      ORDER BY occurred_at, id
+    `).bind(created.credential.id).all<{ actorId: string; correlationId: string }>();
+    expect(revocationAudit.results).toEqual([{
+      actorId: 'first-admin',
+      correlationId: 'corr-merchant-a-credentials:manage-first-admin',
+    }]);
   });
 });

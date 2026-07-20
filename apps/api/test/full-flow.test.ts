@@ -9,6 +9,8 @@ import { SELF } from 'cloudflare:test';
 import { env } from 'cloudflare:workers';
 import { beforeEach, describe, expect, test } from 'vitest';
 
+import { operatorAuthoringRequest } from './operator-authoring-app.js';
+
 const secretHeaders = {
   authorization: 'Bearer sk_test_secret_credential_material_000000000001',
   'content-type': 'application/json',
@@ -156,7 +158,7 @@ async function jsonRequest(
   body: unknown,
   token = 'sk_test_secret_credential_material_000000000001',
 ): Promise<Response> {
-  return SELF.fetch(`https://example.test${path}`, {
+  const request = new Request(`https://example.test${path}`, {
     method,
     headers: {
       authorization: `Bearer ${token}`,
@@ -164,6 +166,9 @@ async function jsonRequest(
     },
     body: JSON.stringify(body),
   });
+  return path.startsWith('/v1/schema/definitions') || path.startsWith('/v1/programs')
+    ? operatorAuthoringRequest(request, env)
+    : SELF.fetch(request);
 }
 
 describe('integration-ready runtime', () => {
@@ -175,10 +180,11 @@ describe('integration-ready runtime', () => {
       expect(response.status).toBe(201);
     }
 
-    const publication = await SELF.fetch('https://example.test/v1/schema/publish', {
+    const publication = await operatorAuthoringRequest(new Request(
+      'https://operator.test/v1/schema/publish', {
       method: 'POST',
       headers: secretHeaders,
-    });
+    }), env);
     expect(publication.status).toBe(201);
     expect(await publication.json()).toMatchObject({
       version: 1,
@@ -347,27 +353,6 @@ describe('integration-ready runtime', () => {
       'GET /v1/test-secret': {
         security: 'secret', success: ['200', 'AccessSummary'], errors: ['401', '403', '503'],
       },
-      'GET /v1/schema/definitions': {
-        security: 'secret', success: ['200', 'SchemaDefinitionsResponse'],
-        errors: ['401', '403', '503'],
-      },
-      'POST /v1/schema/definitions': {
-        security: 'secret', success: ['201', 'SchemaDefinitionView'],
-        requestBody: 'VariableDefinition', errors: ['400', '401', '403', '409', '503'],
-      },
-      'PATCH /v1/schema/definitions/{id}': {
-        security: 'secret', success: ['200', 'SchemaDefinitionView'],
-        requestBody: 'VariableDefinition', parameters: ['SchemaDefinitionId'],
-        errors: ['400', '401', '403', '404', '409', '503'],
-      },
-      'DELETE /v1/schema/definitions/{id}': {
-        security: 'secret', success: ['204', null], parameters: ['SchemaDefinitionId'],
-        errors: ['401', '403', '404', '409', '503'],
-      },
-      'POST /v1/schema/publish': {
-        security: 'secret', success: ['201', 'PublishedSchemaResponse'],
-        errors: ['401', '403', '409', '503'],
-      },
       'GET /v1/schema/published': {
         security: 'publishable', success: ['200', 'PublishedSchemaResponse'],
         errors: ['401', '404', '503'],
@@ -380,22 +365,6 @@ describe('integration-ready runtime', () => {
         security: 'secret', success: ['200', 'CustomerRecord'],
         requestBody: 'CustomerPatchRequest', parameters: ['CustomerRef'],
         errors: ['400', '401', '403', '404', '409', '503'],
-      },
-      'GET /v1/programs': {
-        security: 'secret', success: ['200', 'ProgramListResponse'],
-        errors: ['401', '403', '503'],
-      },
-      'POST /v1/programs': {
-        security: 'secret', success: ['201', 'PromoProgram'], requestBody: 'PromoProgram',
-        errors: ['400', '401', '403', '409', '503'],
-      },
-      'GET /v1/programs/{externalRef}': {
-        security: 'secret', success: ['200', 'PromoProgram'],
-        parameters: ['ProgramExternalRef'], errors: ['401', '403', '404', '503'],
-      },
-      'PATCH /v1/programs/{externalRef}': {
-        security: 'secret', success: ['200', 'PromoProgram'], requestBody: 'PromoProgram',
-        parameters: ['ProgramExternalRef'], errors: ['400', '401', '403', '404', '409', '503'],
       },
       'POST /v1/evaluate': {
         security: 'publishable', success: ['200', 'EvaluationResponse'],

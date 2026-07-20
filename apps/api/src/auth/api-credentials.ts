@@ -67,3 +67,43 @@ export function requirePublishableScope(scope: ApiCredentialScope): MiddlewareHa
 export function requireSecretScope(scope: ApiCredentialScope): MiddlewareHandler<AppEnvironment> {
   return requireCredential('secret', scope);
 }
+
+export function publishablePreflight(
+  scope: ApiCredentialScope,
+  method: 'GET' | 'POST',
+  allowedHeaders: readonly ('Authorization' | 'Content-Type')[],
+): MiddlewareHandler<AppEnvironment> {
+  return async (context) => {
+    const origin = context.req.header('origin');
+    const requestedMethod = context.req.header('access-control-request-method');
+    const requestedHeaders = new Set(
+      (context.req.header('access-control-request-headers') ?? '')
+        .split(',')
+        .map(header => header.trim().toLowerCase())
+        .filter(header => header.length > 0),
+    );
+    const requiredHeaders = allowedHeaders.map(header => header.toLowerCase());
+    if (
+      origin === undefined
+      || requestedMethod !== method
+      || requiredHeaders.some(header => !requestedHeaders.has(header))
+      || requestedHeaders.size !== requiredHeaders.length
+      || !await context.get('repositories').credentials.hasAllowedPublishableOrigin(
+        origin,
+        scope,
+        new Date().toISOString(),
+      )
+    ) {
+      throw new ForbiddenError();
+    }
+
+    context.header('Access-Control-Allow-Origin', origin);
+    context.header('Access-Control-Allow-Methods', method);
+    context.header('Access-Control-Allow-Headers', allowedHeaders.join(', '));
+    context.header(
+      'Vary',
+      'Origin, Access-Control-Request-Method, Access-Control-Request-Headers',
+    );
+    return context.body(null, 204);
+  };
+}

@@ -7,6 +7,7 @@ import { SEEDED_MERCHANT_ID } from './test-credentials.js';
 import { createRepositories } from '../src/repositories/d1-repositories.js';
 import type { SchemaRepository, SchemaVersionRecord } from '../src/repositories/types.js';
 import { createSchemaService } from '../src/services/schema-service.js';
+import { operatorAuthoringRequest } from './operator-authoring-app.js';
 
 type DefinitionView = {
   id: string;
@@ -30,7 +31,7 @@ function schemaRequest(
   token = 'sk_test_secret_credential_material_000000000001',
   body?: unknown,
 ): Promise<Response> {
-  return SELF.fetch(`https://example.test${path}`, {
+  const request = new Request(`https://example.test${path}`, {
     method,
     headers: {
       authorization: `Bearer ${token}`,
@@ -38,6 +39,9 @@ function schemaRequest(
     },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
+  return path === '/v1/schema/published'
+    ? SELF.fetch(request)
+    : operatorAuthoringRequest(request, env);
 }
 
 async function createDefinition(
@@ -443,14 +447,15 @@ describe('schema registry API', () => {
   });
 
   test('malformed JSON returns a stable canonical client error', async () => {
-    const response = await SELF.fetch('https://example.test/v1/schema/definitions', {
+    const response = await operatorAuthoringRequest(new Request(
+      'https://operator.test/v1/schema/definitions', {
       method: 'POST',
       headers: {
         authorization: 'Bearer sk_test_secret_credential_material_000000000001',
         'content-type': 'application/json',
       },
       body: '{"key":',
-    });
+    }), env);
     await expectError(response, 400, 'CONTEXT_VALIDATION_FAILED');
   });
 
