@@ -241,7 +241,7 @@
 - [x] Run focused tests; expect demo-store behavior to fail network assertions.
 - [x] Replace store access only on live surfaces; keep future modules visibly demo-only and make nested `ALL`/`ANY` controls functional.
 - [x] Run dashboard and workspace tests/build/lint; expect exit 0.
-- [ ] Commit with `git commit -m "feat: wire live schema customer and promo operations"`.
+- [x] Commit with `git commit -m "feat: wire live schema customer and promo operations"`.
 
 **Gate C review:** Manually verify role-specific navigation, root context banner, refresh persistence, no browser secrets, real BFF errors, and live/demo separation.
 
