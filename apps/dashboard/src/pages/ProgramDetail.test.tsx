@@ -150,8 +150,10 @@ test('affiliate detail Download CSV downloads codes-only', () => {
   renderAt('/affiliates/aff-codes-60', '/affiliates/:id');
   fireEvent.click(screen.getByRole('button', { name: /download csv/i }));
   const csv = (downloadCSV as Mock).mock.calls[0][1] as string;
-  expect(csv.split('\n')[0]).toBe('code');
-  expect(csv).not.toMatch(/status|uses/i);
+  const [header, ...rows] = csv.trimEnd().split('\n');
+  expect(header).toBe('code');
+  expect(rows).toHaveLength(60);
+  expect(rows.every(row => !row.includes(','))).toBe(true);
 });
 
 test('affiliate detail single-use codes show — in Uses column', () => {
