@@ -26,7 +26,6 @@ async function clearAuthData() {
     testEnv.AUTH_DB.prepare('DELETE FROM local_email_capture'),
     testEnv.AUTH_DB.prepare('DELETE FROM identity_audit'),
     testEnv.AUTH_DB.prepare('DELETE FROM recovery_rate_limit'),
-    testEnv.AUTH_DB.prepare('DELETE FROM session_context'),
     testEnv.AUTH_DB.prepare('DELETE FROM root_recovery_code'),
     testEnv.AUTH_DB.prepare('DELETE FROM recovery_flow'),
     testEnv.AUTH_DB.prepare('DELETE FROM rateLimit'),
@@ -221,8 +220,11 @@ describe('magic-link hardening', () => {
     expect(unknown.status).toBe(202);
     await expect(known.json()).resolves.toEqual({ ok: true });
     await expect(unknown.json()).resolves.toEqual({ ok: true });
+    for (let attempt = 0; attempt < 50 && send.mock.calls.length === 0; attempt += 1) {
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
     expect(send).toHaveBeenCalledTimes(1);
-    expect(pending).toHaveLength(1);
+    expect(pending).toHaveLength(2);
     await expect(testEnv.AUTH_DB.prepare(`
       SELECT COUNT(*) AS count FROM identity_audit WHERE action = 'magic_link.requested'
     `).first('count')).resolves.toBe(2);
@@ -283,7 +285,7 @@ describe('magic-link hardening', () => {
       body: '{}',
     });
     expect(signout.status).toBe(200);
-    await expect(testEnv.AUTH_DB.prepare('SELECT COUNT(*) AS count FROM session_context').first('count'))
+    await expect(testEnv.AUTH_DB.prepare('SELECT COUNT(*) AS count FROM session').first('count'))
       .resolves.toBe(0);
     await expect(testEnv.AUTH_DB.prepare(`
       SELECT COUNT(*) AS count FROM identity_audit

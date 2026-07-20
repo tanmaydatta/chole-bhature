@@ -12,7 +12,6 @@ async function clearAuthData() {
     testEnv.AUTH_DB.prepare('DELETE FROM local_email_capture'),
     testEnv.AUTH_DB.prepare('DELETE FROM identity_audit'),
     testEnv.AUTH_DB.prepare('DELETE FROM recovery_rate_limit'),
-    testEnv.AUTH_DB.prepare('DELETE FROM session_context'),
     testEnv.AUTH_DB.prepare('DELETE FROM root_recovery_code'),
     testEnv.AUTH_DB.prepare('DELETE FROM recovery_flow'),
     testEnv.AUTH_DB.prepare('DELETE FROM rateLimit'),
@@ -65,12 +64,17 @@ function requestMagicLink(email: string, ip = '203.0.113.10') {
 }
 
 async function capturedMessages() {
-  const result = await testEnv.AUTH_DB.prepare(`
-    SELECT recipient, subject, text_body AS textBody
-    FROM local_email_capture
-    ORDER BY created_at, id
-  `).all<{ recipient: string; subject: string; textBody: string }>();
-  return result.results;
+  let messages: Array<{ recipient: string; subject: string; textBody: string }> = [];
+  for (let attempt = 0; attempt < 20 && messages.length === 0; attempt += 1) {
+    await new Promise(resolve => setTimeout(resolve, 0));
+    const result = await testEnv.AUTH_DB.prepare(`
+      SELECT recipient, subject, text_body AS textBody
+      FROM local_email_capture
+      ORDER BY created_at, id
+    `).all<{ recipient: string; subject: string; textBody: string }>();
+    messages = result.results;
+  }
+  return messages;
 }
 
 function linkFrom(text: string) {

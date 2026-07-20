@@ -30,6 +30,12 @@ export interface IdentityAuth {
 
 export interface IdentityAuthDependencies {
   emailAdapter?: EmailAdapter;
+  afterPasskeyAuthorization?: (
+    input: { credentialId: string; userId: string },
+  ) => Promise<void>;
+  beforeMagicLinkBackgroundWork?: (
+    input: { kind: 'known' | 'unknown' },
+  ) => Promise<void>;
 }
 
 interface RateLimitRow {
@@ -44,6 +50,13 @@ interface SessionAccess {
   authenticationMethod: AuthenticationMethod;
   authenticatedAt: number;
   recoveryOnly: number;
+}
+
+interface PasskeyAuthorization {
+  credentialId: string;
+  userId: string;
+  recoveryGeneration: string;
+  recoveryFence: number;
 }
 
 type CurrentSession = Awaited<ReturnType<IdentityAuth['getSession']>>;
@@ -205,11 +218,12 @@ async function handleMagicLinkRequest(
   env: Env,
   authHandler: (
     request: Request,
-    delivery: { executionContext?: ExecutionContext; correlationId: string; userId: string | null },
+    delivery: { correlationId: string; userId: string | null },
   ) => Promise<Response>,
   executionContext: ExecutionContext | undefined,
   windowSeconds: number,
   max: number,
+  beforeBackgroundWork?: IdentityAuthDependencies['beforeMagicLinkBackgroundWork'],
 ): Promise<Response> {
   const rateLimitResponse = await consumeEmailRateLimit(env, request, windowSeconds, max);
   if (rateLimitResponse) {
@@ -243,29 +257,37 @@ async function handleMagicLinkRequest(
     actorKind: 'anonymous', actorId: 'anonymous', action: 'magic_link.requested',
     targetType: 'authentication', targetId: 'magic-link', outcome: 'succeeded',
   });
-  if (employee) {
-    const headers = new Headers(request.headers);
-    headers.delete('content-length');
-    const canonicalRequest = new Request(request, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ ...parsedBody, email }),
-    });
+  const backgroundWork = async () => {
     try {
-      await authHandler(canonicalRequest, {
-        ...(executionContext ? { executionContext } : {}),
-        correlationId: requestCorrelationId,
-        userId: employee.id,
-      });
+      await beforeBackgroundWork?.({ kind: employee ? 'known' : 'unknown' });
+      if (employee) {
+        const headers = new Headers(request.headers);
+        headers.delete('content-length');
+        const canonicalRequest = new Request(request, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ ...parsedBody, email }),
+        });
+        await authHandler(canonicalRequest, {
+          correlationId: requestCorrelationId,
+          userId: employee.id,
+        });
+      } else {
+        await crypto.subtle.digest('SHA-256', new TextEncoder().encode(email));
+        await env.AUTH_DB.prepare('SELECT COUNT(*) AS count FROM verification WHERE 0').first();
+      }
     } catch {
       await writeAudit(env, requestCorrelationId, {
         actorKind: 'system', actorId: 'identity', action: 'magic_link.delivery',
-        targetType: 'user', targetId: employee.id, outcome: 'failed',
+        targetType: employee ? 'user' : 'authentication',
+        targetId: employee?.id ?? 'magic-link', outcome: 'failed',
       });
     }
+  };
+  if (executionContext) {
+    executionContext.waitUntil(backgroundWork());
   } else {
-    await crypto.subtle.digest('SHA-256', new TextEncoder().encode(email));
-    await env.AUTH_DB.prepare('SELECT COUNT(*) AS count FROM verification WHERE 0').first();
+    await backgroundWork();
   }
   return genericMagicLinkResponse(request);
 }
@@ -291,6 +313,36 @@ async function isSessionCreationAllowed(env: Env, userId: string, method: string
     `).bind(userId).first() !== null;
   }
   return false;
+}
+
+async function isPasskeyAuthorizationCurrent(
+  env: Env,
+  authorization: PasskeyAuthorization | null,
+  userId: string,
+): Promise<boolean> {
+  if (!authorization || authorization.userId !== userId) return false;
+  return await env.AUTH_DB.prepare(`
+    SELECT passkey.id
+    FROM passkey
+    INNER JOIN auth_profile ON auth_profile.user_id = passkey.userId
+    WHERE passkey.credentialID = ?1 AND passkey.userId = ?2
+      AND auth_profile.subject_kind = 'root' AND auth_profile.status = 'active'
+      AND NOT EXISTS (
+        SELECT 1 FROM recovery_flow
+        WHERE recovery_flow.user_id = passkey.userId
+          AND recovery_flow.completed_at IS NULL
+          AND recovery_flow.cancelled_at IS NULL
+      )
+      AND COALESCE((
+        SELECT recovery_flow.id FROM recovery_flow
+        WHERE recovery_flow.user_id = passkey.userId
+        ORDER BY recovery_flow.rowid DESC LIMIT 1
+      ), '') = ?3
+  `).bind(
+    authorization.credentialId,
+    authorization.userId,
+    authorization.recoveryGeneration,
+  ).first() !== null;
 }
 
 async function getSessionAccess(env: Env, sessionId: string): Promise<SessionAccess | null> {
@@ -322,6 +374,12 @@ async function getSessionAccess(env: Env, sessionId: string): Promise<SessionAcc
             WHERE recovery_flow.user_id = session.userId
               AND recovery_flow.completed_at IS NULL
               AND recovery_flow.cancelled_at IS NULL
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM recovery_flow AS completed_recovery
+            WHERE completed_recovery.user_id = session.userId
+              AND completed_recovery.completed_at IS NOT NULL
+              AND session.authenticatedAt <= completed_recovery.completed_at
           )
         )
         OR (
@@ -439,12 +497,11 @@ export function createIdentityAuth(
     ...(env.RESEND_API_KEY === undefined ? {} : { resendApiKey: env.RESEND_API_KEY }),
     ...(env.RESEND_FROM === undefined ? {} : { resendFrom: env.RESEND_FROM }),
   });
-  const scheduleDelivery = dependencies.emailAdapter !== undefined || env.EMAIL_MODE === 'resend';
   let deliveryState: {
-    executionContext?: ExecutionContext;
     correlationId: string;
     userId: string | null;
   } | null = null;
+  let passkeyAuthorization: PasskeyAuthorization | null = null;
   const auth = betterAuth({
     appName: 'Incentives Operator',
     database: env.AUTH_DB,
@@ -496,14 +553,19 @@ export function createIdentityAuth(
         create: {
           before: async (session, context) => {
             const method = authenticationMethodForPath(context?.path ?? '');
-            if (!method || !await isSessionCreationAllowed(env, session.userId, method)) {
+            const allowed = method === 'passkey'
+              ? await isPasskeyAuthorizationCurrent(env, passkeyAuthorization, session.userId)
+              : method !== null && await isSessionCreationAllowed(env, session.userId, method);
+            if (!method || !allowed) {
               return false;
             }
             return {
               data: {
                 ...session,
                 authenticationMethod: method,
-                authenticatedAt: Date.now(),
+                authenticatedAt: method === 'passkey'
+                  ? Math.max(Date.now(), (passkeyAuthorization?.recoveryFence ?? 0) + 1)
+                  : Date.now(),
                 recoveryOnly: false,
               },
             };
@@ -512,6 +574,18 @@ export function createIdentityAuth(
             const method = authenticationMethodForPath(context?.path ?? '');
             if (!method) return;
             const id = context?.headers?.get('x-correlation-id') ?? crypto.randomUUID();
+            if (
+              method === 'passkey'
+              && !await isPasskeyAuthorizationCurrent(env, passkeyAuthorization, session.userId)
+            ) {
+              await env.AUTH_DB.prepare('DELETE FROM session WHERE id = ?1').bind(session.id).run();
+              await writeAudit(env, id, {
+                actorKind: 'root', actorId: session.userId,
+                action: 'session.creation_denied', targetType: 'session',
+                targetId: session.id, outcome: 'denied',
+              });
+              throw new Error('PASSKEY_SESSION_AUTHORIZATION_STALE');
+            }
             await writeAudit(env, id, {
               actorKind: method === 'passkey' ? 'root' : 'employee',
               actorId: session.userId,
@@ -561,8 +635,7 @@ export function createIdentityAuth(
               targetType: 'user', targetId: userId, outcome: 'failed',
             });
           });
-          if (scheduleDelivery && state.executionContext) state.executionContext.waitUntil(delivery);
-          else await delivery;
+          await delivery;
         },
       }),
       passkey({
@@ -583,7 +656,16 @@ export function createIdentityAuth(
           async afterVerification({ clientData, verification }) {
             assertPasskeyUserVerified(verification.authenticationInfo.userVerified);
             const profile = await env.AUTH_DB.prepare(`
-              SELECT auth_profile.user_id
+              SELECT auth_profile.user_id,
+                COALESCE((
+                  SELECT recovery_flow.id FROM recovery_flow
+                  WHERE recovery_flow.user_id = auth_profile.user_id
+                  ORDER BY recovery_flow.rowid DESC LIMIT 1
+                ), '') AS recovery_generation,
+                COALESCE((
+                  SELECT MAX(recovery_flow.completed_at) FROM recovery_flow
+                  WHERE recovery_flow.user_id = auth_profile.user_id
+                ), 0) AS recovery_fence
               FROM passkey
               INNER JOIN auth_profile ON auth_profile.user_id = passkey.userId
               WHERE passkey.credentialID = ?1
@@ -595,8 +677,22 @@ export function createIdentityAuth(
                     AND recovery_flow.completed_at IS NULL
                     AND recovery_flow.cancelled_at IS NULL
                 )
-            `).bind(clientData.id).first<{ user_id: string }>();
+            `).bind(clientData.id).first<{
+              user_id: string;
+              recovery_generation: string;
+              recovery_fence: number;
+            }>();
             if (!profile) throw new Error('Passkey authentication is not permitted');
+            passkeyAuthorization = {
+              credentialId: clientData.id,
+              userId: profile.user_id,
+              recoveryGeneration: profile.recovery_generation,
+              recoveryFence: profile.recovery_fence,
+            };
+            await dependencies.afterPasskeyAuthorization?.({
+              credentialId: clientData.id,
+              userId: profile.user_id,
+            });
           },
         },
       }),
@@ -654,7 +750,12 @@ export function createIdentityAuth(
           executionContext,
           emailRateLimitWindow,
           emailRateLimitMax,
+          dependencies.beforeMagicLinkBackgroundWork,
         );
+      }
+
+      if (pathname === '/auth/passkey/verify-authentication') {
+        passkeyAuthorization = null;
       }
 
       const presentedSessionCookie = hasSessionCookie(request.headers, env);

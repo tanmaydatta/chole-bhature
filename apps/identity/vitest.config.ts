@@ -14,6 +14,7 @@ export default defineConfig(async () => {
     path.join(__dirname, 'migrations/0002_identity_hardening.sql'),
     'utf8',
   );
+  const schemaSource = await readFile(path.join(__dirname, 'src/db/schema.ts'), 'utf8');
 
   return {
     plugins: [
@@ -27,6 +28,7 @@ export default defineConfig(async () => {
             PASSKEY_RP_ID: 'operator.example.test',
             WRANGLER_CONFIG_TEXT: wranglerConfig,
             HARDENING_MIGRATION_TEXT: hardeningMigration,
+            IDENTITY_SCHEMA_TEXT: schemaSource,
           },
         },
       }),

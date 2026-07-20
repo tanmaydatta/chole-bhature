@@ -4,6 +4,7 @@ import { makeSignature } from 'better-auth/crypto';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
 import * as authModule from '../src/auth.js';
+import { authTableNames } from '../src/db/schema.js';
 import identityWorker, { type Env } from '../src/worker.js';
 import {
   authenticationResponse,
@@ -14,6 +15,7 @@ import {
 
 const testEnv = env as Env & {
   HARDENING_MIGRATION_TEXT: string;
+  IDENTITY_SCHEMA_TEXT: string;
 };
 const publicOrigin = 'https://operator.example.test';
 const triggerNames = ['test_fail_recovery_mark', 'test_fail_recovery_completion'] as const;
@@ -50,7 +52,6 @@ async function clearAuthData() {
     testEnv.AUTH_DB.prepare('DELETE FROM local_email_capture'),
     testEnv.AUTH_DB.prepare('DELETE FROM identity_audit'),
     testEnv.AUTH_DB.prepare('DELETE FROM recovery_rate_limit'),
-    testEnv.AUTH_DB.prepare('DELETE FROM session_context'),
     testEnv.AUTH_DB.prepare('DELETE FROM root_recovery_code'),
     testEnv.AUTH_DB.prepare('DELETE FROM recovery_flow'),
     testEnv.AUTH_DB.prepare('DELETE FROM rateLimit'),
@@ -193,18 +194,39 @@ async function authenticate(credential: TestCredential, counter: number) {
 }
 
 async function capturedMagicLink() {
-  const row = await testEnv.AUTH_DB.prepare(`
-    SELECT text_body AS textBody FROM local_email_capture ORDER BY created_at DESC LIMIT 1
-  `).first<{ textBody: string }>();
-  const link = row?.textBody.match(/https?:\/\/\S+/)?.[0];
-  if (!link) throw new Error('Expected captured magic link');
-  return link;
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const row = await testEnv.AUTH_DB.prepare(`
+      SELECT text_body AS textBody FROM local_email_capture ORDER BY created_at DESC LIMIT 1
+    `).first<{ textBody: string }>();
+    const link = row?.textBody.match(/https?:\/\/\S+/)?.[0];
+    if (link) return link;
+    await new Promise(resolve => setTimeout(resolve, 0));
+  }
+  throw new Error('Expected captured magic link');
 }
 
 async function signedSessionCookie(token: string): Promise<string> {
   const signature = await makeSignature(token, testEnv.AUTH_SECRET);
   return `__Secure-${testEnv.COOKIE_PREFIX}.session_token=`
     + encodeURIComponent(`${token}.${signature}`);
+}
+
+function deferred<T = void>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
+function directRequest(path: string, init: RequestInit = {}) {
+  const headers = new Headers(init.headers);
+  headers.set('origin', publicOrigin);
+  headers.set('content-type', 'application/json');
+  headers.set('cf-connecting-ip', headers.get('cf-connecting-ip') ?? '203.0.113.200');
+  return new Request(`${publicOrigin}${path}`, { ...init, headers });
 }
 
 beforeEach(clearAuthData);
@@ -686,5 +708,223 @@ describe('minor boundary hardening', () => {
     await expect(testEnv.AUTH_DB.prepare(`
       SELECT COUNT(*) AS count FROM recovery_rate_limit
     `).first('count')).resolves.toBe(0);
+  });
+});
+
+describe('recovery generation race fencing', () => {
+  test('rejects an old passkey authentication paused before session creation across recovery', async () => {
+    const codes = [recoveryCode(60), recoveryCode(61)];
+    await seedUser({
+      id: 'root-1', email: 'root@example.test', kind: 'root', emailLoginEnabled: false,
+    });
+    await seedRecoveryMaterial('root-1', codes);
+    const oldCredential = await createTestCredential();
+    await seedPasskey('root-1', oldCredential, 'old-passkey');
+
+    const authorizationReached = deferred();
+    const releaseAuthorization = deferred();
+    type RaceDependencies = authModule.IdentityAuthDependencies & {
+      afterPasskeyAuthorization(input: { credentialId: string; userId: string }): Promise<void>;
+    };
+    const identity = authModule.createIdentityAuth(testEnv, {
+      async afterPasskeyAuthorization(input) {
+        expect(input).toEqual({ credentialId: oldCredential.id, userId: 'root-1' });
+        authorizationReached.resolve();
+        await releaseAuthorization.promise;
+      },
+    } as RaceDependencies);
+    const optionsResponse = await identity.handler(
+      directRequest('/auth/passkey/generate-authenticate-options'),
+    );
+    const optionsCookie = cookieFrom(optionsResponse);
+    const options = await optionsResponse.json<{ challenge: string; rpId: string }>();
+    const oldAuthentication = identity.handler(directRequest(
+      '/auth/passkey/verify-authentication',
+      {
+        method: 'POST',
+        headers: { cookie: optionsCookie },
+        body: JSON.stringify({
+          response: await authenticationResponse(
+            options, oldCredential, publicOrigin, 1, true,
+          ),
+        }),
+      },
+    ));
+
+    await expect(Promise.race([
+      authorizationReached.promise.then(() => true),
+      new Promise<false>(resolve => setTimeout(() => resolve(false), 100)),
+    ])).resolves.toBe(true);
+    const begun = await beginRecovery('root-1', codes[0] as string, '203.0.113.201');
+    expect(begun.status).toBe(200);
+    const { grant } = await begun.json<{ grant: string }>();
+    releaseAuthorization.resolve();
+
+    const oldResponse = await oldAuthentication;
+    await expectSafeError(oldResponse, 401, 'AUTHENTICATION_FAILED');
+    expect(oldResponse.headers.get('set-cookie')).toBeNull();
+    await expect(testEnv.AUTH_DB.prepare(`
+      SELECT COUNT(*) AS count FROM session WHERE userId = 'root-1'
+    `).first('count')).resolves.toBe(0);
+
+    const exchanged = await exchangeRecovery(grant);
+    const recoveryCookie = cookieFrom(exchanged);
+    const replacement = await registerReplacement(recoveryCookie);
+    expect(replacement.response.status).toBe(200);
+    const rotated = await authRequest('/auth/root/recovery/rotate-codes', {
+      method: 'POST', headers: { cookie: recoveryCookie }, body: '{}',
+    });
+    expect(rotated.status).toBe(200);
+
+    await expect(testEnv.AUTH_DB.prepare(`
+      SELECT COUNT(*) AS count FROM session WHERE userId = 'root-1'
+    `).first('count')).resolves.toBe(0);
+    await expect(testEnv.AUTH_DB.prepare(`
+      SELECT COUNT(*) AS count FROM passkey WHERE id = 'old-passkey'
+    `).first('count')).resolves.toBe(0);
+  });
+
+  test('recovery completion deletes every root session, including a raced hidden session', async () => {
+    const code = recoveryCode(62);
+    await seedUser({
+      id: 'root-1', email: 'root@example.test', kind: 'root', emailLoginEnabled: false,
+    });
+    await seedRecoveryMaterial('root-1', [code, recoveryCode(63)]);
+    const recovery = await startRecovery('root-1', code);
+    const replacement = await registerReplacement(recovery.cookie);
+    expect(replacement.response.status).toBe(200);
+    const now = Date.now();
+    await testEnv.AUTH_DB.prepare(`
+      INSERT INTO session (
+        id, expiresAt, token, createdAt, updatedAt, userId,
+        authenticationMethod, authenticatedAt, recoveryOnly
+      ) VALUES ('raced-session', ?1, 'raced-token', ?2, ?2, 'root-1', 'passkey', ?2, 0)
+    `).bind(now + 60_000, now).run();
+
+    const rotation = await authRequest('/auth/root/recovery/rotate-codes', {
+      method: 'POST', headers: { cookie: recovery.cookie }, body: '{}',
+    });
+
+    expect(rotation.status).toBe(200);
+    await expect(testEnv.AUTH_DB.prepare(`
+      SELECT COUNT(*) AS count FROM session WHERE userId = 'root-1'
+    `).first('count')).resolves.toBe(0);
+  });
+
+  test('rejects a passkey session authenticated at the latest completed recovery fence', async () => {
+    const code = recoveryCode(64);
+    await seedUser({
+      id: 'root-1', email: 'root@example.test', kind: 'root', emailLoginEnabled: false,
+    });
+    await seedRecoveryMaterial('root-1', [code, recoveryCode(65)]);
+    const recovery = await startRecovery('root-1', code);
+    const replacement = await registerReplacement(recovery.cookie);
+    expect(replacement.response.status).toBe(200);
+    const rotation = await authRequest('/auth/root/recovery/rotate-codes', {
+      method: 'POST', headers: { cookie: recovery.cookie }, body: '{}',
+    });
+    expect(rotation.status).toBe(200);
+    const completedAt = await testEnv.AUTH_DB.prepare(`
+      SELECT completed_at AS completedAt FROM recovery_flow WHERE user_id = 'root-1'
+    `).first<number>('completedAt');
+    expect(completedAt).toBeTypeOf('number');
+    await testEnv.AUTH_DB.prepare(`
+      INSERT INTO session (
+        id, expiresAt, token, createdAt, updatedAt, userId,
+        authenticationMethod, authenticatedAt, recoveryOnly
+      ) VALUES ('fenced-session', ?1, 'fenced-token', ?2, ?2, 'root-1', 'passkey', ?3, 0)
+    `).bind(Date.now() + 60_000, Date.now(), completedAt).run();
+
+    const response = await authRequest('/auth/get-session', {
+      headers: { cookie: await signedSessionCookie('fenced-token') },
+    });
+
+    await expectSafeError(response, 401, 'SESSION_INVALID');
+    await expect(testEnv.AUTH_DB.prepare(`
+      SELECT COUNT(*) AS count FROM session WHERE id = 'fenced-session'
+    `).first('count')).resolves.toBe(0);
+  });
+});
+
+describe('background magic-link issuance parity', () => {
+  test.each([
+    ['known', 'known@example.test'],
+    ['unknown', 'unknown@example.test'],
+  ] as const)('returns for %s email before delayed issuance and delivery work', async (kind, email) => {
+    await seedUser({ id: 'employee-1', email: 'known@example.test' });
+    const releaseIssuance = deferred();
+    const issuanceReached = deferred();
+    const releaseDelivery = deferred();
+    const send = vi.fn(async () => releaseDelivery.promise);
+    const pending: Promise<unknown>[] = [];
+    const executionContext = {
+      waitUntil(promise: Promise<unknown>) { pending.push(promise); },
+      passThroughOnException() {},
+    } as ExecutionContext;
+    type BackgroundDependencies = authModule.IdentityAuthDependencies & {
+      beforeMagicLinkBackgroundWork(input: { kind: 'known' | 'unknown' }): Promise<void>;
+    };
+    const identity = authModule.createIdentityAuth(testEnv, {
+      emailAdapter: { send },
+      async beforeMagicLinkBackgroundWork(input) {
+        expect(input.kind).toBe(kind);
+        issuanceReached.resolve();
+        await releaseIssuance.promise;
+      },
+    } as BackgroundDependencies);
+
+    let responseSettled = false;
+    const responsePromise = identity.handler(directRequest('/auth/sign-in/magic-link', {
+        method: 'POST',
+        headers: { 'cf-connecting-ip': kind === 'known' ? '203.0.113.210' : '203.0.113.211' },
+        body: JSON.stringify({ email, callbackURL: '/signed-in' }),
+      }), executionContext).then(response => {
+        responseSettled = true;
+        return response;
+      });
+    await new Promise(resolve => setTimeout(resolve, 100));
+    const settledBeforeRelease = responseSettled;
+    let issuanceStartedBeforeRelease = false;
+    void issuanceReached.promise.then(() => { issuanceStartedBeforeRelease = true; });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    const pendingBeforeRelease = pending.length;
+    const sendCallsBeforeRelease = send.mock.calls.length;
+    const verificationBeforeRelease = await testEnv.AUTH_DB.prepare(`
+      SELECT COUNT(*) AS count FROM verification
+    `).first<number>('count');
+
+    releaseIssuance.resolve();
+    releaseDelivery.resolve();
+    const response = await responsePromise;
+    expect(response.status).toBe(202);
+    if (kind === 'known') {
+      for (let attempt = 0; attempt < 20 && send.mock.calls.length === 0; attempt += 1) {
+        await new Promise(resolve => setTimeout(resolve, 0));
+      }
+      expect(send).toHaveBeenCalledTimes(1);
+    }
+    await Promise.all(pending);
+    expect(settledBeforeRelease).toBe(true);
+    expect(issuanceStartedBeforeRelease).toBe(true);
+    expect(pendingBeforeRelease).toBe(1);
+    expect(sendCallsBeforeRelease).toBe(0);
+    expect(verificationBeforeRelease).toBe(0);
+    await expect(testEnv.AUTH_DB.prepare(`
+      SELECT COUNT(*) AS count FROM verification
+    `).first('count')).resolves.toBe(kind === 'known' ? 1 : 0);
+  });
+});
+
+describe('identity schema source parity', () => {
+  test('removes obsolete session context and models session and recovery persistence', () => {
+    expect(testEnv.HARDENING_MIGRATION_TEXT).not.toMatch(/CREATE\s+TABLE\s+session_context/i);
+    expect(authTableNames).toEqual(expect.arrayContaining([
+      'recovery_flow', 'recovery_rate_limit',
+    ]));
+    expect(testEnv.IDENTITY_SCHEMA_TEXT).toMatch(/authenticationMethod:\s*AuthenticationMethod/);
+    expect(testEnv.IDENTITY_SCHEMA_TEXT).toMatch(/authenticatedAt:\s*number/);
+    expect(testEnv.IDENTITY_SCHEMA_TEXT).toMatch(/recoveryOnly:\s*boolean/);
+    expect(testEnv.IDENTITY_SCHEMA_TEXT).toMatch(/interface\s+RecoveryFlowRow/);
+    expect(testEnv.IDENTITY_SCHEMA_TEXT).toMatch(/interface\s+RecoveryRateLimitRow/);
   });
 });

@@ -657,10 +657,10 @@ export async function rotateRecoveryCodes(
       FROM recovery_flow WHERE id = ?4 AND rotation_id = ?5
     `).bind(crypto.randomUUID(), now, correlationId, flow.id, rotationId),
     env.AUTH_DB.prepare(`
-      DELETE FROM session WHERE id = ?1 AND EXISTS (
+      DELETE FROM session WHERE userId = ?1 AND EXISTS (
         SELECT 1 FROM recovery_flow WHERE id = ?2 AND rotation_id = ?3
       )
-    `).bind(sessionId, flow.id, rotationId),
+    `).bind(flow.userId, flow.id, rotationId),
   ]);
   const completed = await env.AUTH_DB.prepare(`
     SELECT id FROM recovery_flow WHERE id = ?1 AND rotation_id = ?2

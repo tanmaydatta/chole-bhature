@@ -33,15 +33,6 @@ CREATE UNIQUE INDEX recovery_flow_session_unique
   ON recovery_flow (session_id)
   WHERE session_id IS NOT NULL;
 
-CREATE TABLE session_context (
-  session_id TEXT PRIMARY KEY NOT NULL REFERENCES session(id) ON DELETE CASCADE,
-  authentication_method TEXT NOT NULL
-    CHECK (authentication_method IN ('magic-link', 'passkey', 'recovery')),
-  authenticated_at INTEGER NOT NULL,
-  recovery_only INTEGER NOT NULL DEFAULT 0 CHECK (recovery_only IN (0, 1)),
-  CHECK ((authentication_method = 'recovery') = (recovery_only = 1))
-);
-
 CREATE TABLE recovery_rate_limit (
   key_hash TEXT PRIMARY KEY NOT NULL,
   window_started_at INTEGER NOT NULL,
