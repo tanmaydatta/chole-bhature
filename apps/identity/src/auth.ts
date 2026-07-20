@@ -33,9 +33,7 @@ export interface IdentityAuthDependencies {
   afterPasskeyAuthorization?: (
     input: { credentialId: string; userId: string },
   ) => Promise<void>;
-  beforeMagicLinkBackgroundWork?: (
-    input: { kind: 'known' | 'unknown' },
-  ) => Promise<void>;
+  beforeMagicLinkEmployeeLookup?: () => Promise<void>;
 }
 
 interface RateLimitRow {
@@ -223,7 +221,7 @@ async function handleMagicLinkRequest(
   executionContext: ExecutionContext | undefined,
   windowSeconds: number,
   max: number,
-  beforeBackgroundWork?: IdentityAuthDependencies['beforeMagicLinkBackgroundWork'],
+  beforeEmployeeLookup?: IdentityAuthDependencies['beforeMagicLinkEmployeeLookup'],
 ): Promise<Response> {
   const rateLimitResponse = await consumeEmailRateLimit(env, request, windowSeconds, max);
   if (rateLimitResponse) {
@@ -252,14 +250,15 @@ async function handleMagicLinkRequest(
     );
   }
 
-  const employee = await findKnownEmployee(env, email);
   await writeAudit(env, requestCorrelationId, {
     actorKind: 'anonymous', actorId: 'anonymous', action: 'magic_link.requested',
     targetType: 'authentication', targetId: 'magic-link', outcome: 'succeeded',
   });
   const backgroundWork = async () => {
+    let employee: { id: string } | null = null;
     try {
-      await beforeBackgroundWork?.({ kind: employee ? 'known' : 'unknown' });
+      await beforeEmployeeLookup?.();
+      employee = await findKnownEmployee(env, email);
       if (employee) {
         const headers = new Headers(request.headers);
         headers.delete('content-length');
@@ -750,7 +749,7 @@ export function createIdentityAuth(
           executionContext,
           emailRateLimitWindow,
           emailRateLimitMax,
-          dependencies.beforeMagicLinkBackgroundWork,
+          dependencies.beforeMagicLinkEmployeeLookup,
         );
       }
 

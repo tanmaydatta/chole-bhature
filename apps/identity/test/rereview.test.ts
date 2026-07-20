@@ -850,10 +850,10 @@ describe('background magic-link issuance parity', () => {
   test.each([
     ['known', 'known@example.test'],
     ['unknown', 'unknown@example.test'],
-  ] as const)('returns for %s email before delayed issuance and delivery work', async (kind, email) => {
+  ] as const)('returns for %s email before delayed employee lookup and issuance', async (kind, email) => {
     await seedUser({ id: 'employee-1', email: 'known@example.test' });
-    const releaseIssuance = deferred();
-    const issuanceReached = deferred();
+    const releaseLookup = deferred();
+    const lookupReached = deferred();
     const releaseDelivery = deferred();
     const send = vi.fn(async () => releaseDelivery.promise);
     const pending: Promise<unknown>[] = [];
@@ -862,14 +862,13 @@ describe('background magic-link issuance parity', () => {
       passThroughOnException() {},
     } as ExecutionContext;
     type BackgroundDependencies = authModule.IdentityAuthDependencies & {
-      beforeMagicLinkBackgroundWork(input: { kind: 'known' | 'unknown' }): Promise<void>;
+      beforeMagicLinkEmployeeLookup(): Promise<void>;
     };
     const identity = authModule.createIdentityAuth(testEnv, {
       emailAdapter: { send },
-      async beforeMagicLinkBackgroundWork(input) {
-        expect(input.kind).toBe(kind);
-        issuanceReached.resolve();
-        await releaseIssuance.promise;
+      async beforeMagicLinkEmployeeLookup() {
+        lookupReached.resolve();
+        await releaseLookup.promise;
       },
     } as BackgroundDependencies);
 
@@ -884,16 +883,19 @@ describe('background magic-link issuance parity', () => {
       });
     await new Promise(resolve => setTimeout(resolve, 100));
     const settledBeforeRelease = responseSettled;
-    let issuanceStartedBeforeRelease = false;
-    void issuanceReached.promise.then(() => { issuanceStartedBeforeRelease = true; });
+    let lookupStartedBeforeRelease = false;
+    void lookupReached.promise.then(() => { lookupStartedBeforeRelease = true; });
     await new Promise(resolve => setTimeout(resolve, 0));
     const pendingBeforeRelease = pending.length;
     const sendCallsBeforeRelease = send.mock.calls.length;
     const verificationBeforeRelease = await testEnv.AUTH_DB.prepare(`
       SELECT COUNT(*) AS count FROM verification
     `).first<number>('count');
+    const requestedAuditsBeforeRelease = await testEnv.AUTH_DB.prepare(`
+      SELECT COUNT(*) AS count FROM identity_audit WHERE action = 'magic_link.requested'
+    `).first<number>('count');
 
-    releaseIssuance.resolve();
+    releaseLookup.resolve();
     releaseDelivery.resolve();
     const response = await responsePromise;
     expect(response.status).toBe(202);
@@ -905,10 +907,11 @@ describe('background magic-link issuance parity', () => {
     }
     await Promise.all(pending);
     expect(settledBeforeRelease).toBe(true);
-    expect(issuanceStartedBeforeRelease).toBe(true);
+    expect(lookupStartedBeforeRelease).toBe(true);
     expect(pendingBeforeRelease).toBe(1);
     expect(sendCallsBeforeRelease).toBe(0);
     expect(verificationBeforeRelease).toBe(0);
+    expect(requestedAuditsBeforeRelease).toBe(1);
     await expect(testEnv.AUTH_DB.prepare(`
       SELECT COUNT(*) AS count FROM verification
     `).first('count')).resolves.toBe(kind === 'known' ? 1 : 0);
