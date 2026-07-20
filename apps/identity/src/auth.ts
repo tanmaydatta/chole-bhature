@@ -90,6 +90,37 @@ async function requirePasskeyUserVerification(response: Response): Promise<Respo
   });
 }
 
+export async function normalizePasskeyAuthenticationOptionsResponse(
+  response: Response,
+  correlationId: string,
+): Promise<Response> {
+  if (!response.ok) {
+    return normalizedAuthResponse(
+      response,
+      correlationId,
+      '/auth/passkey/generate-authenticate-options',
+    );
+  }
+  return requirePasskeyUserVerification(response);
+}
+
+export async function classifyPasskeyAuthenticationInfrastructureFailure(
+  response: Response,
+  capturedAuthorizationCurrent: boolean,
+): Promise<boolean> {
+  if (!capturedAuthorizationCurrent) return false;
+  if (response.status >= 500) return true;
+  if (response.status !== 400) return false;
+  try {
+    const body: unknown = await response.clone().json();
+    return body !== null
+      && typeof body === 'object'
+      && (body as { code?: unknown }).code === 'AUTHENTICATION_FAILED';
+  } catch {
+    return false;
+  }
+}
+
 function positiveInteger(value: string, name: string): number {
   const parsed = Number(value);
   if (!Number.isSafeInteger(parsed) || parsed <= 0) {
@@ -434,11 +465,24 @@ async function normalizedAuthResponse(
   response: Response,
   id: string,
   pathname: string,
+  verifiedInfrastructureFailure = false,
 ): Promise<Response> {
   if (response.status < 400) return response;
-  if (pathname === '/auth/passkey/verify-authentication') {
+  if (verifiedInfrastructureFailure) {
+    return errorResponse(
+      id, 503, 'IDENTITY_UNAVAILABLE', 'Identity is temporarily unavailable.', true,
+    );
+  }
+  if (
+    pathname === '/auth/passkey/verify-authentication'
+  ) {
     return errorResponse(
       id, 401, 'AUTHENTICATION_FAILED', 'Passkey authentication failed.',
+    );
+  }
+  if (response.status >= 500) {
+    return errorResponse(
+      id, 503, 'IDENTITY_UNAVAILABLE', 'Identity is temporarily unavailable.', true,
     );
   }
   if (pathname === '/auth/passkey/verify-registration') {
@@ -598,14 +642,6 @@ export function createIdentityAuth(
               });
               throw new Error('PASSKEY_SESSION_AUTHORIZATION_STALE');
             }
-            await writeAudit(env, id, {
-              actorKind: method === 'passkey' ? 'root' : 'member',
-              actorId: session.userId,
-              action: 'session.created',
-              targetType: 'session',
-              targetId: session.id,
-              outcome: 'succeeded',
-            });
           },
         },
         delete: {
@@ -791,7 +827,7 @@ export function createIdentityAuth(
         pathname === '/auth/passkey/generate-authenticate-options'
         && request.method === 'GET'
       ) {
-        return requirePasskeyUserVerification(await auth.handler(request));
+        return normalizePasskeyAuthenticationOptionsResponse(await auth.handler(request), id);
       }
 
       if (
@@ -810,6 +846,21 @@ export function createIdentityAuth(
       }
 
       const response = await auth.handler(request);
+      const passkeyAuthorizationCurrent =
+        pathname === '/auth/passkey/verify-authentication'
+        && !response.ok
+        && passkeyAuthorization !== null
+        && await isPasskeyAuthorizationCurrent(
+          env, passkeyAuthorization, passkeyAuthorization.userId,
+        );
+      const passkeyAuthenticationInfrastructureFailure =
+        pathname === '/auth/passkey/verify-authentication'
+        && !response.ok
+        && passkeyAuthorization !== null
+        && await classifyPasskeyAuthenticationInfrastructureFailure(
+          response,
+          passkeyAuthorizationCurrent,
+        );
       if (pathname === '/auth/passkey/verify-registration') {
         if (response.ok && access?.recoveryOnly === 1) {
           const passkeyId = await responsePasskeyId(response);
@@ -826,24 +877,32 @@ export function createIdentityAuth(
             throw error;
           }
         }
-        await writeAudit(env, id, {
-          actorKind: access?.subjectKind === 'root' ? 'root' : 'anonymous',
-          actorId: access?.userId ?? 'anonymous',
-          action: 'passkey.registration',
-          targetType: 'authentication',
-          targetId: 'passkey',
-          outcome: response.ok ? 'succeeded' : 'denied',
-        });
+        if (!response.ok) {
+          await writeAudit(env, id, {
+            actorKind: access?.subjectKind === 'root' ? 'root' : 'anonymous',
+            actorId: access?.userId ?? 'anonymous',
+            action: 'passkey.registration',
+            targetType: 'authentication',
+            targetId: 'passkey',
+            outcome: response.status >= 500 ? 'failed' : 'denied',
+          });
+        }
       }
       if (pathname === '/auth/passkey/verify-authentication') {
-        const actorId = await responseUserId(response);
+        const actorId = passkeyAuthenticationInfrastructureFailure
+          ? passkeyAuthorization?.userId ?? null
+          : await responseUserId(response);
         await writeAudit(env, id, {
-          actorKind: response.ok ? 'root' : 'anonymous',
+          actorKind: response.ok || passkeyAuthenticationInfrastructureFailure
+            ? 'root'
+            : 'anonymous',
           actorId: actorId ?? 'anonymous',
           action: 'passkey.authentication',
           targetType: 'authentication',
           targetId: 'passkey',
-          outcome: response.ok ? 'succeeded' : 'denied',
+          outcome: response.ok
+            ? 'succeeded'
+            : passkeyAuthenticationInfrastructureFailure ? 'failed' : 'denied',
         });
       }
       if (pathname.includes('/magic-link/verify')) {
@@ -854,10 +913,15 @@ export function createIdentityAuth(
           actorId: await responseUserId(response) ?? 'anonymous',
           action: 'magic_link.verification',
           targetType: 'authentication', targetId: 'magic-link',
-          outcome: denied ? 'denied' : 'succeeded',
+          outcome: response.status >= 500 ? 'failed' : denied ? 'denied' : 'succeeded',
         });
       }
-      return normalizedAuthResponse(response, id, pathname);
+      return normalizedAuthResponse(
+        response,
+        id,
+        pathname,
+        passkeyAuthenticationInfrastructureFailure,
+      );
     },
   };
 }

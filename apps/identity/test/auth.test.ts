@@ -1,3 +1,4 @@
+import { ApiErrorSchema } from '@incentives/contracts';
 import { env } from 'cloudflare:workers';
 import { SELF } from 'cloudflare:test';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
@@ -99,13 +100,14 @@ describe('invite-only passwordless authentication', () => {
 
     expect(response.status).toBe(404);
     expect(response.headers.get('x-correlation-id')).toMatch(/^[0-9a-f-]{36}$/);
-    await expect(response.json()).resolves.toEqual({
+    const body: unknown = await response.json();
+    expect(ApiErrorSchema.parse(body)).toEqual({
       error: {
         code: 'SIGNUP_DISABLED',
         message: 'Self-service signup is unavailable.',
+        correlationId: response.headers.get('x-correlation-id'),
         retryable: false,
       },
-      correlationId: response.headers.get('x-correlation-id'),
     });
     await expect(testEnv.AUTH_DB.prepare('SELECT COUNT(*) AS count FROM user').first('count'))
       .resolves.toBe(0);

@@ -1,3 +1,4 @@
+import { ApiErrorSchema } from '@incentives/contracts';
 import { env } from 'cloudflare:workers';
 import { SELF } from 'cloudflare:test';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
@@ -15,11 +16,6 @@ const testEnv = env as typeof env & {
   WRANGLER_CONFIG_TEXT: string;
 };
 const publicOrigin = 'https://operator.example.test';
-
-interface ErrorEnvelope {
-  error: { code: string; message: string; retryable: boolean };
-  correlationId: string;
-}
 
 async function clearAuthData() {
   await testEnv.AUTH_DB.batch([
@@ -153,12 +149,15 @@ async function expectSafeError(response: Response, status: number, code: string)
   expect(response.status).toBe(status);
   const correlationId = response.headers.get('x-correlation-id');
   expect(correlationId).toMatch(/^[0-9a-f-]{36}$/);
-  const body = await response.json<ErrorEnvelope>();
-  expect(body).toEqual({
-    error: { code, message: expect.any(String), retryable: expect.any(Boolean) },
+  const body: unknown = await response.json();
+  const parsed = ApiErrorSchema.parse(body);
+  expect(parsed.error).toEqual({
+    code,
+    message: expect.any(String),
     correlationId,
+    retryable: expect.any(Boolean),
   });
-  return body;
+  return parsed;
 }
 
 beforeEach(clearAuthData);

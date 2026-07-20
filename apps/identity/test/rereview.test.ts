@@ -1,3 +1,4 @@
+import { ApiErrorSchema } from '@incentives/contracts';
 import { env } from 'cloudflare:workers';
 import { SELF } from 'cloudflare:test';
 import { makeSignature } from 'better-auth/crypto';
@@ -18,12 +19,12 @@ const testEnv = env as Env & {
   IDENTITY_SCHEMA_TEXT: string;
 };
 const publicOrigin = 'https://operator.example.test';
-const triggerNames = ['test_fail_recovery_mark', 'test_fail_recovery_completion'] as const;
-
-interface ErrorEnvelope {
-  error: { code: string; message: string; retryable: boolean };
-  correlationId: string;
-}
+const triggerNames = [
+  'test_fail_recovery_mark',
+  'test_fail_recovery_completion',
+  'test_fail_auth_persistence_audit',
+  'test_fail_passkey_options',
+] as const;
 
 function base64Url(bytes: Uint8Array): string {
   let binary = '';
@@ -111,6 +112,13 @@ function authRequest(path: string, init: RequestInit = {}) {
   return SELF.fetch(`${publicOrigin}${path}`, { ...init, headers });
 }
 
+function requestMagicLink(email: string) {
+  return authRequest('/auth/sign-in/magic-link', {
+    method: 'POST',
+    body: JSON.stringify({ email, callbackURL: '/signed-in' }),
+  });
+}
+
 function beginRecovery(userId: string, code: string, ip = '203.0.113.100') {
   return authRequest('/auth/root/recovery', {
     method: 'POST',
@@ -140,10 +148,24 @@ async function expectSafeError(response: Response, status: number, code: string)
   expect(response.status).toBe(status);
   const correlationId = response.headers.get('x-correlation-id');
   expect(correlationId).toMatch(/^[0-9a-f-]{36}$/);
-  await expect(response.json<ErrorEnvelope>()).resolves.toEqual({
-    error: { code, message: expect.any(String), retryable: expect.any(Boolean) },
+  const body: unknown = await response.json();
+  expect(ApiErrorSchema.parse(body).error).toEqual({
+    code,
+    message: expect.any(String),
     correlationId,
+    retryable: expect.any(Boolean),
   });
+}
+
+async function failAuthenticationPersistenceAudit(
+  action: 'session.created' | 'passkey.created',
+) {
+  await testEnv.AUTH_DB.prepare(`
+    CREATE TRIGGER test_fail_auth_persistence_audit
+    BEFORE INSERT ON identity_audit
+    WHEN NEW.action = '${action}'
+    BEGIN SELECT RAISE(ABORT, 'forced authentication audit failure'); END
+  `).run();
 }
 
 async function startRecovery(userId: string, code: string) {
@@ -531,6 +553,157 @@ describe('atomic session authorization context', () => {
     await expect(testEnv.AUTH_DB.prepare(`
       SELECT COUNT(*) AS count FROM session WHERE userId = 'employee-1'
     `).first('count')).resolves.toBe(0);
+  });
+});
+
+describe('audited authentication persistence', () => {
+  test.each([
+    [true, 500, 'DATABASE_UNAVAILABLE', true],
+    [true, 400, 'AUTHENTICATION_FAILED', true],
+    [false, 500, 'DATABASE_UNAVAILABLE', false],
+    [false, 400, 'AUTHENTICATION_FAILED', false],
+    [true, 400, 'UNRELATED_BAD_REQUEST', false],
+    [true, 401, 'AUTHENTICATION_FAILED', false],
+    [true, 403, 'AUTHENTICATION_FAILED', false],
+    [true, 429, 'AUTHENTICATION_FAILED', false],
+  ])(
+    'classifies captured-current=%s status=%s code=%s as infrastructure=%s',
+    async (capturedAuthorizationCurrent, status, code, expected) => {
+      const classify = (authModule as unknown as {
+        classifyPasskeyAuthenticationInfrastructureFailure(
+          response: Response,
+          capturedAuthorizationCurrent: boolean,
+        ): Promise<boolean>;
+      }).classifyPasskeyAuthenticationInfrastructureFailure;
+
+      const result = await classify(
+        Response.json({ message: 'Native response', code }, { status }),
+        capturedAuthorizationCurrent,
+      );
+
+      expect(result).toBe(expected);
+    },
+  );
+
+  test('normalizes a non-OK passkey-options response to the canonical envelope', async () => {
+    const normalize = (authModule as unknown as {
+      normalizePasskeyAuthenticationOptionsResponse(
+        response: Response,
+        correlationId: string,
+      ): Promise<Response>;
+    }).normalizePasskeyAuthenticationOptionsResponse;
+    const correlationId = crypto.randomUUID();
+
+    const response = await normalize(
+      new Response('{"native":"failure"}', { status: 500 }),
+      correlationId,
+    );
+
+    await expectSafeError(response, 503, 'IDENTITY_UNAVAILABLE');
+  });
+
+  test('commits a successful magic-link session with exactly one persistence audit', async () => {
+    await seedUser({ id: 'employee-1', email: 'known@example.test' });
+    const requested = await requestMagicLink('known@example.test');
+    expect(requested.status).toBe(202);
+
+    const response = await SELF.fetch(await capturedMagicLink(), { redirect: 'manual' });
+
+    expect(response.status).toBe(302);
+    await expect(testEnv.AUTH_DB.prepare(`
+      SELECT COUNT(*) AS count FROM identity_audit
+      WHERE action = 'session.created' AND outcome = 'succeeded'
+    `).first('count')).resolves.toBe(1);
+  });
+
+  test('rolls back a real magic-link session when its persistence audit fails', async () => {
+    await seedUser({ id: 'employee-1', email: 'known@example.test' });
+    const requested = await requestMagicLink('known@example.test');
+    expect(requested.status).toBe(202);
+    const link = await capturedMagicLink();
+    await failAuthenticationPersistenceAudit('session.created');
+
+    const response = await SELF.fetch(link, { redirect: 'manual' });
+
+    await expectSafeError(response, 503, 'IDENTITY_UNAVAILABLE');
+    await expect(testEnv.AUTH_DB.prepare('SELECT COUNT(*) AS count FROM session').first('count'))
+      .resolves.toBe(0);
+    await expect(testEnv.AUTH_DB.prepare(`
+      SELECT COUNT(*) AS count FROM identity_audit
+      WHERE action = 'magic_link.verification' AND outcome = 'failed'
+    `).first('count')).resolves.toBe(1);
+  });
+
+  test('commits a successful passkey with only its canonical persistence audit', async () => {
+    const code = recoveryCode(70);
+    await seedUser({
+      id: 'root-1', email: 'root@example.test', kind: 'root', emailLoginEnabled: false,
+    });
+    await seedRecoveryMaterial('root-1', [code, recoveryCode(71)]);
+    const recovery = await startRecovery('root-1', code);
+
+    const registration = await registerReplacement(recovery.cookie);
+
+    expect(registration.response.status).toBe(200);
+    await expect(testEnv.AUTH_DB.prepare(`
+      SELECT COUNT(*) AS count FROM identity_audit
+      WHERE action = 'passkey.created' AND outcome = 'succeeded'
+    `).first('count')).resolves.toBe(1);
+    await expect(testEnv.AUTH_DB.prepare(`
+      SELECT COUNT(*) AS count FROM identity_audit
+      WHERE action = 'passkey.registration' AND outcome = 'succeeded'
+    `).first('count')).resolves.toBe(0);
+  });
+
+  test('rolls back a real passkey when its persistence audit fails', async () => {
+    const code = recoveryCode(72);
+    await seedUser({
+      id: 'root-1', email: 'root@example.test', kind: 'root', emailLoginEnabled: false,
+    });
+    await seedRecoveryMaterial('root-1', [code, recoveryCode(73)]);
+    const recovery = await startRecovery('root-1', code);
+    await failAuthenticationPersistenceAudit('passkey.created');
+
+    const registration = await registerReplacement(recovery.cookie);
+
+    await expectSafeError(registration.response, 503, 'IDENTITY_UNAVAILABLE');
+    await expect(testEnv.AUTH_DB.prepare('SELECT COUNT(*) AS count FROM passkey').first('count'))
+      .resolves.toBe(0);
+    await expect(testEnv.AUTH_DB.prepare(`
+      SELECT COUNT(*) AS count FROM identity_audit
+      WHERE action = 'passkey.registration' AND outcome = 'failed'
+    `).first('count')).resolves.toBe(1);
+  });
+
+  test('rolls back a passkey-authenticated session and reports an infrastructure failure', async () => {
+    await seedUser({
+      id: 'root-1', email: 'root@example.test', kind: 'root', emailLoginEnabled: false,
+    });
+    const credential = await createTestCredential();
+    await seedPasskey('root-1', credential);
+    await failAuthenticationPersistenceAudit('session.created');
+
+    const response = await authenticate(credential, 1);
+
+    await expectSafeError(response, 503, 'IDENTITY_UNAVAILABLE');
+    await expect(testEnv.AUTH_DB.prepare('SELECT COUNT(*) AS count FROM session').first('count'))
+      .resolves.toBe(0);
+    await expect(testEnv.AUTH_DB.prepare(`
+      SELECT COUNT(*) AS count FROM identity_audit
+      WHERE action = 'passkey.authentication' AND outcome = 'failed'
+    `).first('count')).resolves.toBe(1);
+  });
+
+  test('normalizes passkey-options infrastructure failures to the canonical envelope', async () => {
+    await testEnv.AUTH_DB.prepare(`
+      CREATE TRIGGER test_fail_passkey_options
+      BEFORE INSERT ON rateLimit
+      BEGIN SELECT RAISE(ABORT, 'forced passkey options failure'); END
+    `).run();
+
+    const response = await authRequest('/auth/passkey/generate-authenticate-options');
+
+    await expectSafeError(response, 503, 'IDENTITY_UNAVAILABLE');
   });
 });
 

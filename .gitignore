@@ -12,6 +12,8 @@ build/
 # Env / local
 .env
 .env.local
+.env.*
+!.env.staging.example
 *.local
 
 # OS / editor

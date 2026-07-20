@@ -100,8 +100,7 @@ export function errorResponse(
   headers?: HeadersInit,
 ): Response {
   return Response.json({
-    error: { code, message, retryable },
-    correlationId,
+    error: { code, message, correlationId, retryable },
   }, {
     status,
     headers: { ...Object.fromEntries(new Headers(headers)), 'x-correlation-id': correlationId },
