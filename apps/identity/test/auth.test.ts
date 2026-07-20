@@ -2,7 +2,6 @@ import { env } from 'cloudflare:workers';
 import { SELF } from 'cloudflare:test';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 
-import { assertPasskeyUserVerified } from '../src/auth.js';
 import { createResendEmailAdapter } from '../src/email.js';
 
 const testEnv = env as typeof env & { AUTH_DB: D1Database };
@@ -12,7 +11,10 @@ async function clearAuthData() {
   await testEnv.AUTH_DB.batch([
     testEnv.AUTH_DB.prepare('DELETE FROM local_email_capture'),
     testEnv.AUTH_DB.prepare('DELETE FROM identity_audit'),
+    testEnv.AUTH_DB.prepare('DELETE FROM recovery_rate_limit'),
+    testEnv.AUTH_DB.prepare('DELETE FROM session_context'),
     testEnv.AUTH_DB.prepare('DELETE FROM root_recovery_code'),
+    testEnv.AUTH_DB.prepare('DELETE FROM recovery_flow'),
     testEnv.AUTH_DB.prepare('DELETE FROM rateLimit'),
     testEnv.AUTH_DB.prepare('DELETE FROM passkey'),
     testEnv.AUTH_DB.prepare('DELETE FROM verification'),
@@ -77,11 +79,6 @@ function linkFrom(text: string) {
   return link;
 }
 
-async function sha256(value: string) {
-  const bytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
-  return [...new Uint8Array(bytes)].map(byte => byte.toString(16).padStart(2, '0')).join('');
-}
-
 beforeEach(clearAuthData);
 
 describe('invite-only passwordless authentication', () => {
@@ -96,9 +93,14 @@ describe('invite-only passwordless authentication', () => {
     });
 
     expect(response.status).toBe(404);
+    expect(response.headers.get('x-correlation-id')).toMatch(/^[0-9a-f-]{36}$/);
     await expect(response.json()).resolves.toEqual({
-      code: 'SIGNUP_DISABLED',
-      message: 'Self-service signup is unavailable.',
+      error: {
+        code: 'SIGNUP_DISABLED',
+        message: 'Self-service signup is unavailable.',
+        retryable: false,
+      },
+      correlationId: response.headers.get('x-correlation-id'),
     });
     await expect(testEnv.AUTH_DB.prepare('SELECT COUNT(*) AS count FROM user').first('count'))
       .resolves.toBe(0);
@@ -172,25 +174,13 @@ describe('invite-only passwordless authentication', () => {
     expect(await after.json()).toBeNull();
   });
 
-  test('requires passkey for root sign-in and keeps recovery independent of email', async () => {
-    const recoveryCode = 'correct-horse-battery-staple';
+  test('requires passkey for root sign-in and keeps it independent of email', async () => {
     await seedUser({
       id: 'root-1',
       email: 'root@example.test',
       kind: 'root',
       emailLoginEnabled: false,
     });
-    await testEnv.AUTH_DB.batch([
-      testEnv.AUTH_DB.prepare(`
-        INSERT INTO session (id, expiresAt, token, createdAt, updatedAt, userId)
-        VALUES ('old-root-session', ?1, 'old-root-token', ?2, ?2, 'root-1')
-      `).bind(Date.now() + 60_000, Date.now()),
-      testEnv.AUTH_DB.prepare(`
-        INSERT INTO root_recovery_code (id, user_id, code_hash, created_at)
-        VALUES ('recovery-1', 'root-1', ?1, ?2)
-      `).bind(await sha256(recoveryCode), Date.now()),
-    ]);
-
     const emailAttempt = await requestMagicLink('root@example.test');
     expect(emailAttempt.status).toBe(202);
     expect(await capturedMessages()).toEqual([]);
@@ -202,25 +192,7 @@ describe('invite-only passwordless authentication', () => {
       userVerification: 'required',
     });
 
-    const recovery = await authRequest('/auth/root/recovery', {
-      method: 'POST',
-      body: JSON.stringify({ userId: 'root-1', code: recoveryCode }),
-    });
-    expect(recovery.status).toBe(204);
-    await expect(testEnv.AUTH_DB.prepare('SELECT COUNT(*) AS count FROM session').first('count'))
-      .resolves.toBe(0);
     expect(await capturedMessages()).toEqual([]);
-
-    const replay = await authRequest('/auth/root/recovery', {
-      method: 'POST',
-      body: JSON.stringify({ userId: 'root-1', code: recoveryCode }),
-    });
-    expect(replay.status).toBe(401);
-  });
-
-  test('accepts verified user-presence ceremonies and rejects passkeys without user verification', () => {
-    expect(() => assertPasskeyUserVerified(true)).not.toThrow();
-    expect(() => assertPasskeyUserVerified(false)).toThrow('PASSKEY_USER_VERIFICATION_REQUIRED');
   });
 
   test('rate-limits passwordless email requests using Auth D1', async () => {
@@ -233,7 +205,7 @@ describe('invite-only passwordless authentication', () => {
     }
 
     expect(responses.map(response => response.status)).toEqual([202, 202, 202, 429]);
-    expect(responses[3]?.headers.get('x-retry-after')).toMatch(/^\d+$/);
+    expect(responses[3]?.headers.get('retry-after')).toMatch(/^\d+$/);
     expect(await capturedMessages()).toHaveLength(3);
     await expect(testEnv.AUTH_DB.prepare('SELECT COUNT(*) AS count FROM rateLimit').first('count'))
       .resolves.toBeGreaterThan(0);

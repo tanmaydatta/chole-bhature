@@ -2,6 +2,8 @@ name = "incentives-identity-local"
 main = "src/worker.ts"
 compatibility_date = "2026-07-20"
 compatibility_flags = ["nodejs_compat"]
+workers_dev = false
+preview_urls = false
 
 [vars]
 APP_ENV = "local"

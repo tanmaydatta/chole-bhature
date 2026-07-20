@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { readFile } from 'node:fs/promises';
 
 import {
   cloudflareTest,
@@ -8,6 +9,7 @@ import { defineConfig } from 'vitest/config';
 
 export default defineConfig(async () => {
   const migrations = await readD1Migrations(path.join(__dirname, 'migrations'));
+  const wranglerConfig = await readFile(path.join(__dirname, 'wrangler.toml'), 'utf8');
 
   return {
     plugins: [
@@ -19,11 +21,13 @@ export default defineConfig(async () => {
             AUTH_SECRET: 'identity-test-secret-at-least-thirty-two-characters',
             PUBLIC_APP_ORIGIN: 'https://operator.example.test',
             PASSKEY_RP_ID: 'operator.example.test',
+            WRANGLER_CONFIG_TEXT: wranglerConfig,
           },
         },
       }),
     ],
     test: {
+      fileParallelism: false,
       setupFiles: ['./test/apply-migrations.ts'],
     },
   };
