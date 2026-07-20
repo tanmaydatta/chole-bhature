@@ -4,6 +4,8 @@
 
 **Notion parent:** [Referral Discount Targeting Platform](https://app.notion.com/p/Referral-Discount-Targeting-Platform-Cashback-API-first-2fce5c7c2b8e8070b865daaa741e7370)
 
+**Notion mirror:** https://app.notion.com/p/3a3e5c7c2b8e8154a874f172136feae1
+
 ## Goal
 
 Create a reusable, human-readable Gate C manual test procedure, then execute that exact procedure against the real local three-Worker/two-D1 stack using Playwright-controlled Chromium. Record expected versus actual behavior without adding a committed end-to-end test suite.
