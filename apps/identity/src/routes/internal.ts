@@ -341,9 +341,10 @@ export function createIdentityOperatorService(options: IdentityOperatorServiceOp
       if (denied) return denied;
       const rows = await options.database.prepare(`
         SELECT memberships.id, memberships.organization_id AS organizationId,
-          memberships.user_id AS userId, memberships.role, memberships.status
+          memberships.user_id AS userId, user.email, memberships.role, memberships.status
         FROM memberships
         INNER JOIN organizations ON organizations.id = memberships.organization_id
+        INNER JOIN user ON user.id = memberships.user_id
         WHERE organizations.merchant_id = ?1 AND organizations.status = 'active'
         ORDER BY memberships.id
       `).bind(parsed.data.selectedMerchantId).all();

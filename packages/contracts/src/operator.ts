@@ -137,6 +137,10 @@ export const MembershipViewSchema = z.object({
   status: z.enum(['active', 'removed']),
 }).strict();
 
+export const OperatorMemberViewSchema = MembershipViewSchema.extend({
+  email: z.email(),
+}).strict();
+
 const SessionAuthenticatedRequestSchema = z.object({
   sessionId: z.string().min(1),
   selectedMerchantId: z.string().min(1),
@@ -231,6 +235,7 @@ export type CreateInvitationInput = z.infer<typeof CreateInvitationInputSchema>;
 export type InvitationView = z.infer<typeof InvitationViewSchema>;
 export type AcceptInvitationInput = z.infer<typeof AcceptInvitationInputSchema>;
 export type MembershipView = z.infer<typeof MembershipViewSchema>;
+export type OperatorMemberView = z.infer<typeof OperatorMemberViewSchema>;
 export type IdentityResolvePrincipalRequest = z.infer<typeof IdentityResolvePrincipalRequestSchema>;
 export type IdentityRootBrowserRequest = z.infer<typeof IdentityRootBrowserRequestSchema>;
 export type IdentityRootProvisioningRequest = z.infer<

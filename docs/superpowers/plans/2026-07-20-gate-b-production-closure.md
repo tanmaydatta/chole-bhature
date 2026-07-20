@@ -1,5 +1,11 @@
 # Gate B Production Closure Implementation Plan
 
+**Status:** Done
+
+**Notion parent:** [Plans](https://app.notion.com/p/Plans-390e5c7c2b8e8165b7f7d77392eab088)
+
+**Notion mirror:** https://app.notion.com/p/3a3e5c7c2b8e81b49fd3c046d513aef5
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Close the reviewed production-readiness gaps in Identity HTTP failures, authentication persistence auditing, and real staging configuration without committing external resource placeholders.

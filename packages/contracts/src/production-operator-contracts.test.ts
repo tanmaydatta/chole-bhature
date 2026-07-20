@@ -248,6 +248,7 @@ describe('production operator contracts', () => {
         ...canonicalApiCredentialView,
         kind: 'publishable',
         scopes: ['schema:read'],
+        allowedOrigins: ['https://shop.example'],
         requestsPerMinute: 120,
       },
       token: 'pk_abcdefghijklmnopqrstuvwxyzABCDEFGH12345678',

@@ -473,7 +473,8 @@ describe('root recovery hardening', () => {
       method: 'POST', headers: { cookie: recoveryCookie }, body: '{}',
     });
     expect(rotation.status).toBe(200);
-    const { codes } = await rotation.json<{ codes: string[] }>();
+    const { userId, codes } = await rotation.json<{ userId: string; codes: string[] }>();
+    expect(userId).toBe('root-1');
     expect(codes).toHaveLength(8);
     expect(new Set(codes).size).toBe(8);
     expect(codes.every(code => decodeBase64Url(code).length === 32)).toBe(true);

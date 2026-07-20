@@ -354,6 +354,29 @@ describe('private Core operator credential service', () => {
     expect(columns.results.map(({ name }) => name)).not.toContain('token');
   });
 
+  test('returns an effective expired status while preserving a stored revocation', async () => {
+    await provisionActiveMerchant('merchant-a');
+    const created = await createCredential('merchant-a', {
+      name: 'Already expired', expiresAt: '2000-01-01T00:00:00.000Z',
+    });
+
+    expect(created.credential.status).toBe('expired');
+    expect(await env.DB.prepare(
+      'SELECT status FROM api_credentials WHERE id = ?1',
+    ).bind(created.credential.id).first()).toEqual({ status: 'active' });
+    await env.DB.prepare(
+      `UPDATE api_credentials
+       SET status = 'revoked', revoked_at = '2026-07-20T00:00:00.000Z', revoked_by = 'root-user'
+       WHERE id = ?1`,
+    ).bind(created.credential.id).run();
+
+    await expect(operatorService().listCredentials(
+      operatorContext('merchant-a', 'credentials:read'),
+    )).resolves.toEqual([
+      expect.objectContaining({ id: created.credential.id, status: 'revoked' }),
+    ]);
+  });
+
   test('defaults and persists configurable publishable quotas while leaving secrets unthrottled', async () => {
     await provisionActiveMerchant('merchant-a');
     const defaulted = await createCredential('merchant-a', {
@@ -375,9 +398,24 @@ describe('private Core operator credential service', () => {
       scopes: ['schema:read'],
     });
 
-    expect(defaulted.credential).toMatchObject({ requestsPerMinute: 60 });
-    expect(configured.credential).toMatchObject({ requestsPerMinute: 500 });
+    expect(defaulted.credential).toMatchObject({
+      allowedOrigins: ['https://shop.example'], requestsPerMinute: 60,
+    });
+    expect(configured.credential).toMatchObject({
+      allowedOrigins: ['https://shop.example'], requestsPerMinute: 500,
+    });
     expect(secret.credential).not.toHaveProperty('requestsPerMinute');
+    const listed = await operatorService().listCredentials(
+      operatorContext('merchant-a', 'credentials:read'),
+    );
+    expect(listed.find(item => item.id === configured.credential.id)).toMatchObject({
+      allowedOrigins: ['https://shop.example'],
+    });
+    await expect(operatorService().revokeCredential(
+      operatorContext('merchant-a'), configured.credential.id,
+    )).resolves.toMatchObject({
+      status: 'revoked', allowedOrigins: ['https://shop.example'],
+    });
     expect((await env.DB.prepare(`
       SELECT name, requests_per_minute AS requestsPerMinute
       FROM api_credentials WHERE merchant_id = 'merchant-a' ORDER BY name

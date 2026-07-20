@@ -1390,7 +1390,8 @@ describe('operations-only root bootstrap', () => {
       body: '{}',
     });
     expect(rotated.status).toBe(200);
-    const body = await rotated.json<{ codes: string[] }>();
+    const body = await rotated.json<{ userId: string; codes: string[] }>();
+    expect(body.userId).toBe(bootstrapped.userId);
     expect(body.codes).toHaveLength(8);
     expect(body.codes.every(code => /^[A-Za-z0-9_-]{43}$/u.test(code))).toBe(true);
     await expect(testEnv.AUTH_DB.prepare(`
@@ -1784,8 +1785,8 @@ describe('private Identity operator service boundary', () => {
     });
     expect(members).toMatchObject({
       members: expect.arrayContaining([
-        expect.objectContaining({ id: 'membership-admin' }),
-        expect.objectContaining({ id: 'membership-viewer' }),
+        expect.objectContaining({ id: 'membership-admin', email: 'admin@example.test' }),
+        expect.objectContaining({ id: 'membership-viewer', email: 'viewer@example.test' }),
       ]),
     });
     expect(invitations).toMatchObject({

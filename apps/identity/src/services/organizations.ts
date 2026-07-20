@@ -240,13 +240,22 @@ export function createOrganizationService(options: OrganizationServiceOptions) {
         authenticatedAt: number;
       }>();
       if (root) {
+        const selectedOrganization = selectedMerchantId
+          ? await database.prepare(`
+              SELECT id AS organizationId FROM organizations
+              WHERE merchant_id = ?1 AND status = 'active'
+            `).bind(selectedMerchantId).first<{ organizationId: string }>()
+          : null;
         return {
           userId: root.userId,
           sessionId: root.sessionId,
           authenticationMethods: [root.authenticationMethod],
           authenticatedAt: new Date(root.authenticatedAt).toISOString(),
           platformRole: 'root',
-          ...(selectedMerchantId ? { merchantId: selectedMerchantId } : {}),
+          ...(selectedMerchantId ? {
+            merchantId: selectedMerchantId,
+            organizationId: selectedOrganization?.organizationId,
+          } : {}),
           permissions: [],
         };
       }

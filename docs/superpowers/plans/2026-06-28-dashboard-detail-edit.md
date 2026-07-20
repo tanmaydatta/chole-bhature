@@ -1,5 +1,11 @@
 # Dashboard Detail & Edit — Implementation Plan
 
+**Status:** Done
+
+**Notion parent:** [Plans](https://app.notion.com/p/Plans-390e5c7c2b8e8165b7f7d77392eab088)
+
+**Notion mirror:** https://app.notion.com/p/390e5c7c2b8e814da60ec327352b1d8f
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Make every dashboard entry clickable → a read-only detail view; allow editing programs only when `status==='draft'` (reusing the create flows pre-filled), make Variables/Events always-editable (system vars read-only), and fix the PageHeader button misalignment.

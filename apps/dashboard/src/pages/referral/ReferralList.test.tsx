@@ -3,6 +3,7 @@ import { MemoryRouter, Routes, Route, useLocation } from 'react-router-dom';
 import ReferralList from './ReferralList';
 import { useProgramStore } from '../../data/store';
 import { PROGRAMS } from '../../data/programs';
+import { TestAuth } from '../../test/TestAuth';
 
 beforeEach(() => {
   useProgramStore.setState({ programs: PROGRAMS.map(p => ({ ...p })) });
@@ -16,9 +17,9 @@ function LocationProbe({ onLocation }: { onLocation: (path: string) => void }) {
 
 function renderPage() {
   return render(
-    <MemoryRouter>
+    <TestAuth><MemoryRouter>
       <ReferralList />
-    </MemoryRouter>
+    </MemoryRouter></TestAuth>
   );
 }
 
@@ -26,12 +27,12 @@ function renderPageWithLocationCapture() {
   let currentPath = '/';
   const setPath = (p: string) => { currentPath = p; };
   render(
-    <MemoryRouter initialEntries={['/referrals']}>
+    <TestAuth><MemoryRouter initialEntries={['/referrals']}>
       <Routes>
         <Route path="/referrals" element={<ReferralList />} />
         <Route path="*" element={<LocationProbe onLocation={setPath} />} />
       </Routes>
-    </MemoryRouter>
+    </MemoryRouter></TestAuth>
   );
   return { getPath: () => currentPath };
 }

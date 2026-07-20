@@ -45,6 +45,7 @@ const ApiCredentialViewBaseSchema = z.object({
 export const ApiCredentialViewSchema = z.discriminatedUnion('kind', [
   ApiCredentialViewBaseSchema.extend({
     kind: z.literal('publishable'),
+    allowedOrigins: z.array(ExactOriginSchema).max(100),
     requestsPerMinute: PublishableRequestsPerMinuteSchema,
   }).strict(),
   ApiCredentialViewBaseSchema.extend({

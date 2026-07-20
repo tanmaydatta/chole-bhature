@@ -2,8 +2,10 @@ import { useState } from 'react';
 import { useEventsStore } from '../../data/eventsStore';
 import { PageHeader } from '../../components/common/PageHeader';
 import type { EventField } from '../../lib/types';
+import { usePermission } from '../../auth/AuthContext';
 
 export default function Events() {
+  const canManage = usePermission('schemas:manage');
   const events = useEventsStore(s => s.events);
   const addEvent = useEventsStore(s => s.addEvent);
   const updateEvent = useEventsStore(s => s.updateEvent);
@@ -81,14 +83,14 @@ export default function Events() {
       <div className="mb-4">
         <PageHeader
           title="Events"
-          action={
+          action={canManage ? (
             <button
               onClick={handleNewEvent}
               className="border-none px-[14px] py-[8px] rounded-[8px] font-semibold text-[13px] cursor-pointer bg-[var(--accent)] text-white"
             >
               ＋ New event
             </button>
-          }
+          ) : undefined}
         />
       </div>
 
@@ -263,12 +265,14 @@ export default function Events() {
               {/* Header */}
               <div className="flex items-center justify-between mb-1">
                 <h2 className="m-0 text-[18px] font-mono">{event.name}</h2>
-                <button
-                  onClick={() => enterEditMode(event)}
-                  className="border-none px-[12px] py-[6px] rounded-[8px] font-semibold text-[13px] cursor-pointer bg-[var(--hover)] text-[var(--ink)]"
-                >
-                  Edit
-                </button>
+                {canManage && (
+                  <button
+                    onClick={() => enterEditMode(event)}
+                    className="border-none px-[12px] py-[6px] rounded-[8px] font-semibold text-[13px] cursor-pointer bg-[var(--hover)] text-[var(--ink)]"
+                  >
+                    Edit
+                  </button>
+                )}
               </div>
 
               {/* Subtitle */}

@@ -59,6 +59,9 @@ importers:
       '@incentives/engine':
         specifier: workspace:*
         version: link:../../packages/engine
+      '@simplewebauthn/browser':
+        specifier: 13.3.0
+        version: 13.3.0
       react:
         specifier: ^19.2.7
         version: 19.2.7

@@ -1,6 +1,10 @@
 # Integration-Ready Core Operator UI and Simulator Implementation Plan
 
-> **Status: superseded; do not execute.** The approved 2026-07-19 design expands Plan 3 to authenticated multi-tenancy, separate Operator/Identity/Core Workers, separate Auth/Product D1 databases, merchant credentials, immutable program revisions, a dashboard Playground, deployment, and operations. Read `docs/superpowers/specs/2026-07-19-production-operator-platform-design.md` and execute the replacement `docs/superpowers/plans/2026-07-19-production-operator-platform.md`.
+**Status:** Killed — superseded; do not execute.
+
+**Notion parent:** [Plans](https://app.notion.com/p/Plans-390e5c7c2b8e8165b7f7d77392eab088)
+
+> The approved 2026-07-19 design expands Plan 3 to authenticated multi-tenancy, separate Operator/Identity/Core Workers, separate Auth/Product D1 databases, merchant credentials, immutable program revisions, a dashboard Playground, deployment, and operations. Read `docs/superpowers/specs/2026-07-19-production-operator-platform-design.md` and execute the replacement `docs/superpowers/plans/2026-07-19-production-operator-platform.md`.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 

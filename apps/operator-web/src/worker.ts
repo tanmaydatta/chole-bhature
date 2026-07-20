@@ -48,6 +48,7 @@ function responseHeaders(id: string): Headers {
   return new Headers({
     'content-type': 'application/json',
     'x-correlation-id': id,
+    'cache-control': 'no-store',
   });
 }
 
@@ -66,6 +67,16 @@ function notFound(id: string): Response {
 
 function invalidRequest(id: string): Response {
   return errorResponse(apiError(id, 'INVALID_REQUEST', 'Request validation failed'));
+}
+
+function unsafeOperatorRequest(request: Request, env: OperatorWebEnv): boolean {
+  if (!new URL(request.url).pathname.startsWith('/operator/v1/')) return false;
+  if (['GET', 'HEAD', 'OPTIONS'].includes(request.method)) return false;
+  return request.headers.get('origin') !== env.PUBLIC_APP_ORIGIN
+    || (
+      request.headers.has('sec-fetch-site')
+      && request.headers.get('sec-fetch-site') !== 'same-origin'
+    );
 }
 
 async function requestBody(request: Request): Promise<unknown> {
@@ -195,6 +206,7 @@ async function handleSelection(
   ) return errorResponse(apiError(id, 'FORBIDDEN', 'Operation is not permitted'));
   const headers = new Headers({
     'x-correlation-id': id,
+    'cache-control': 'no-store',
     'set-cookie': await selectionCookie(env, base, body.merchantId),
   });
   return new Response(null, { status: 204, headers });
@@ -284,6 +296,79 @@ async function handleRootPlatformRead(
   }
 }
 
+async function handleProvisioningRetry(
+  request: Request,
+  env: OperatorWebEnv,
+  id: string,
+  provisioningId: string,
+): Promise<Response> {
+  if ([...new URL(request.url).searchParams].length > 0) return invalidRequest(id);
+  try {
+    const body = await requestBody(request);
+    if (
+      body !== undefined
+      && (typeof body !== 'object' || body === null || Object.keys(body).length > 0)
+    ) return invalidRequest(id);
+  } catch {
+    return invalidRequest(id);
+  }
+  const cookieHeader = request.headers.get('cookie') ?? '';
+  const principal = await resolveBrowserPrincipal(env, cookieHeader, id);
+  if ('error' in principal) return errorResponse(principal);
+  if (principal.platformRole !== 'root') {
+    return errorResponse(apiError(id, 'FORBIDDEN', 'Operation is not permitted'));
+  }
+  try {
+    const rawCurrent = await env.IDENTITY.getProvisioningForRoot({
+      cookieHeader, provisioningId, correlationId: id,
+    });
+    const currentFailure = ApiErrorSchema.safeParse(rawCurrent);
+    if (currentFailure.success) {
+      if (currentFailure.data.error.correlationId !== id) {
+        throw new Error('Identity returned an invalid correlation id');
+      }
+      return errorResponse(currentFailure.data);
+    }
+    const current = ClientProvisioningViewSchema.parse(rawCurrent);
+    if (current.provisioningId !== provisioningId) {
+      throw new Error('Identity provisioning response did not match the request');
+    }
+    if (current.status !== 'failed' || !current.retryable) {
+      return errorResponse(apiError(
+        id, 'OPERATION_FAILED', 'Provisioning cannot be retried',
+      ));
+    }
+    const rawRetried = await env.IDENTITY.provisionClient({
+      sessionId: principal.sessionId,
+      selectedMerchantId: current.merchantId,
+      input: {
+        provisioningId: current.provisioningId,
+        merchantId: current.merchantId,
+        name: current.name,
+        correlationId: id,
+      },
+    });
+    const retryFailure = ApiErrorSchema.safeParse(rawRetried);
+    if (retryFailure.success) {
+      if (retryFailure.data.error.correlationId !== id) {
+        throw new Error('Identity returned an invalid correlation id');
+      }
+      return errorResponse(retryFailure.data);
+    }
+    const retried = ClientProvisioningViewSchema.parse(rawRetried);
+    if (
+      retried.provisioningId !== current.provisioningId
+      || retried.merchantId !== current.merchantId
+      || retried.name !== current.name
+    ) throw new Error('Identity provisioning response did not match the request');
+    return new Response(JSON.stringify(retried), {
+      status: 200, headers: responseHeaders(id),
+    });
+  } catch (error) {
+    return errorResponse(downstreamError(id, 'identity', error));
+  }
+}
+
 async function handleInvitationAcceptance(
   request: Request,
   env: OperatorWebEnv,
@@ -363,6 +448,9 @@ export function createOperatorWebWorker(): ExportedHandler<OperatorWebEnv> {
       const id = correlationId(request);
       const url = new URL(request.url);
       try {
+        if (unsafeOperatorRequest(request, env)) {
+          return errorResponse(apiError(id, 'FORBIDDEN', 'Operation is not permitted'));
+        }
         if (url.pathname.startsWith('/auth/') || url.pathname.startsWith('/internal/')) {
           return await proxyAuth(request, env, id);
         }
@@ -385,6 +473,15 @@ export function createOperatorWebWorker(): ExportedHandler<OperatorWebEnv> {
           const provisioningId = provisioningMatch[1];
           if (provisioningId === undefined) return notFound(id);
           return handleRootPlatformRead(request, env, id, decodeURIComponent(provisioningId));
+        }
+        const provisioningRetryMatch =
+          /^\/operator\/v1\/platform\/provisionings\/([^/]+)\/retry$/u.exec(url.pathname);
+        if (provisioningRetryMatch && request.method === 'POST') {
+          const provisioningId = provisioningRetryMatch[1];
+          if (provisioningId === undefined) return notFound(id);
+          return handleProvisioningRetry(
+            request, env, id, decodeURIComponent(provisioningId),
+          );
         }
         if (
           url.pathname === '/operator/v1/invitations/accept'

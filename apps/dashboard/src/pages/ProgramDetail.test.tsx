@@ -8,6 +8,7 @@ import { useEventsStore } from '../data/eventsStore';
 import { PROGRAMS } from '../data/programs';
 import { VARIABLES } from '../data/variables';
 import { EVENTS } from '../data/events';
+import { TestAuth } from '../test/TestAuth';
 
 vi.mock('../lib/codes', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../lib/codes')>();
@@ -21,12 +22,12 @@ import { downloadCSV } from '../lib/codes';
 
 function renderAt(path: string, routePattern: string) {
   return render(
-    <MemoryRouter initialEntries={[path]}>
+    <TestAuth><MemoryRouter initialEntries={[path]}>
       <Routes>
         <Route path={routePattern} element={<ProgramDetail />} />
         <Route path="/promo" element={<div data-testid="promo-list">Promo List</div>} />
       </Routes>
-    </MemoryRouter>
+    </MemoryRouter></TestAuth>
   );
 }
 

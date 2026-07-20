@@ -7,6 +7,7 @@ import { TypePill } from '../components/common/TypePill';
 import { StatusBadge } from '../components/common/StatusBadge';
 import { PageHeader } from '../components/common/PageHeader';
 import { typeToSegment } from '../lib/routes';
+import { usePermission } from '../auth/AuthContext';
 
 const TYPE_CHOICES = [
   { label: 'Promo', route: '/promo/new' },
@@ -16,6 +17,7 @@ const TYPE_CHOICES = [
 ] as const;
 
 export default function Overview() {
+  const canManage = usePermission('programs:manage');
   const navigate = useNavigate();
   const [chooserOpen, setChooserOpen] = useState(false);
   const chooserRef = useRef<HTMLDivElement>(null);
@@ -83,7 +85,7 @@ export default function Overview() {
       <div className="flex flex-col gap-[12px]">
         <PageHeader
           title="All programs"
-          action={
+          action={canManage ? (
             <div ref={chooserRef} style={{ position: 'relative', display: 'inline-block' }}>
               <button
                 className="inline-flex items-center gap-[6px] text-[13px] font-semibold px-[14px] py-[7px] rounded-[8px] bg-[var(--accent)] text-white border-none cursor-pointer"
@@ -139,7 +141,7 @@ export default function Overview() {
                 </div>
               )}
             </div>
-          }
+          ) : undefined}
         />
         <DataTable
           columns={columns}

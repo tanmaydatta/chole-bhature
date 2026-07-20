@@ -307,6 +307,11 @@ function merchantFromRow(row: typeof merchants.$inferSelect): MerchantRecord {
 }
 
 function credentialFromRow(row: typeof apiCredentials.$inferSelect) {
+  const status = row.status === 'active'
+    && row.expiresAt !== null
+    && Date.parse(row.expiresAt) <= Date.now()
+    ? 'expired'
+    : row.status;
   return persistedRecord('API credential', () => ApiCredentialViewSchema.parse({
     id: row.id,
     name: row.name,
@@ -318,10 +323,13 @@ function credentialFromRow(row: typeof apiCredentials.$inferSelect) {
     createdAt: row.createdAt,
     createdBy: row.createdBy,
     ...optional('lastUsedAt', row.lastUsedAt),
-    status: row.status,
+    status,
     suffix: row.suffix,
     ...(row.kind === 'publishable'
-      ? { requestsPerMinute: row.requestsPerMinute }
+      ? {
+        allowedOrigins: parseJson(row.allowedOriginsJson, AllowedOriginsSchema),
+        requestsPerMinute: row.requestsPerMinute,
+      }
       : {}),
   }));
 }
@@ -515,7 +523,7 @@ function parseCredentialCreate(input: CredentialCreate) {
     status: 'active',
     suffix: input.suffix,
     ...(input.kind === 'publishable'
-      ? { requestsPerMinute: input.requestsPerMinute }
+      ? { allowedOrigins: input.allowedOrigins ?? [], requestsPerMinute: input.requestsPerMinute }
       : {}),
   });
   return {

@@ -4,7 +4,9 @@
 
 **Goal:** Replace Promo's single reward with deterministic ordered conditional rewards, expose reusable validated configuration contracts for Affiliate, Referral, and Loyalty, and carry the selected rule identity safely through evaluation and redemption.
 
-**Status:** Runtime implemented, verified, and synchronized; Operator UI deferred.
+**Status:** Done — runtime implemented, verified, and synchronized; Operator UI continues in the production operator platform plan.
+
+**Notion parent:** [Plans](https://app.notion.com/p/Plans-390e5c7c2b8e8165b7f7d77392eab088)
 
 **Architecture:** Shared contract factories define ordered rules independently of reward payloads; each module exports a concrete strict schema. Only Promo is connected to persistence and runtime execution. Promo evaluates global eligibility once, selects the first matching rule or fallback, and signs `rewardRuleRef` with the selected effect. Configuration, evaluation, and redemption each independently fail closed on invalid or mismatched rule state.
 

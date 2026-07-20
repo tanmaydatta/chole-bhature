@@ -104,6 +104,7 @@ const root: Principal = {
 const rootForMerchant: Principal = {
   ...root,
   merchantId: 'merchant-a',
+  organizationId: 'org-a',
 };
 
 const apiError = (
@@ -343,6 +344,60 @@ describe('canonical Operator Web contracts', () => {
 });
 
 describe('live session and tenant boundary', () => {
+  test.each([
+    ['POST', '/operator/v1/invitations/accept'],
+    ['POST', '/operator/v1/platform/merchant-selection'],
+    ['POST', '/operator/v1/platform/clients'],
+    ['POST', '/operator/v1/platform/provisionings/provisioning-a/retry'],
+    ['POST', '/operator/v1/team/invitations'],
+    ['PATCH', '/operator/v1/team/members/membership-a'],
+    ['DELETE', '/operator/v1/credentials/credential-a'],
+    ['POST', '/operator/v1/schema/definitions'],
+    ['PUT', '/operator/v1/customers/customer-a'],
+    ['POST', '/operator/v1/programs'],
+  ])('rejects %s %s without exact same-origin browser provenance before auth or parsing', async (
+    method,
+    pathname,
+  ) => {
+    const handler = await worker();
+    const env = createEnv(admin);
+    const response = await handler?.fetch(request(pathname, {
+      method,
+      headers: {
+        origin: 'https://same-site-attacker.example.test',
+        'sec-fetch-site': 'same-origin',
+      },
+      body: '{}',
+    }), env);
+
+    expect(response?.status).toBe(403);
+    expect(await json(response)).toEqual(apiError('FORBIDDEN', 'Operation is not permitted'));
+    expect(env.IDENTITY.resolveBrowserPrincipal).not.toHaveBeenCalled();
+    expect(Object.values(env.CORE).every(mock => mock.mock.calls.length === 0)).toBe(true);
+  });
+
+  test('rejects an operator mutation whose fetch metadata says cross-site', async () => {
+    const handler = await worker();
+    const env = createEnv(admin);
+    const response = await handler?.fetch(request('/operator/v1/team/invitations', {
+      method: 'POST',
+      headers: { origin: env.PUBLIC_APP_ORIGIN, 'sec-fetch-site': 'cross-site' },
+      body: '{}',
+    }), env);
+    expect(response?.status).toBe(403);
+    expect(env.IDENTITY.resolveBrowserPrincipal).not.toHaveBeenCalled();
+  });
+
+  test('requires Origin on every unsafe operator request', async () => {
+    const handler = await worker();
+    const env = createEnv(admin);
+    const response = await handler?.fetch(request('/operator/v1/team/invitations', {
+      method: 'POST', headers: { origin: '' }, body: '{}',
+    }), env);
+    expect(response?.status).toBe(403);
+    expect(env.IDENTITY.resolveBrowserPrincipal).not.toHaveBeenCalled();
+  });
+
   test('returns an exact canonical 401 when no live session exists', async () => {
     const handler = await worker();
     const env = createEnv(apiError('UNAUTHORIZED', 'Authentication is required'));
@@ -386,6 +441,24 @@ describe('live session and tenant boundary', () => {
     expect(env.CORE.listCredentials).toHaveBeenCalledTimes(1);
   });
 
+  test('passes through effective expired credential status from Core', async () => {
+    const handler = await worker();
+    const env = createEnv(admin);
+    env.CORE.listCredentials.mockResolvedValue([{
+      id: 'credential-expired', name: 'Expired key', merchantId: 'merchant-a',
+      environment: 'local', scopes: ['schema:read'],
+      expiresAt: '2000-01-01T00:00:00.000Z', createdAt: authenticatedAt,
+      createdBy: 'user-admin', status: 'expired', suffix: 'deadbeef', kind: 'secret',
+    }]);
+
+    const response = await handler?.fetch(request('/operator/v1/credentials'), env);
+
+    expect(response?.status).toBe(200);
+    expect(await json(response)).toEqual([
+      expect.objectContaining({ id: 'credential-expired', status: 'expired' }),
+    ]);
+  });
+
   test('requires an explicit active merchant selection for root operations', async () => {
     const handler = await worker();
     const env = createEnv(root);
@@ -410,6 +483,38 @@ describe('live session and tenant boundary', () => {
       merchantId: 'merchant-a',
       permission: 'credentials:read',
     });
+  });
+
+  test('lets selected root manage the client team with server-resolved organization authority', async () => {
+    const handler = await worker();
+    const env = createEnv(root);
+    const cookie = await selectMerchant(handler, env);
+    env.IDENTITY.resolveBrowserPrincipal.mockResolvedValue(rootForMerchant);
+    env.IDENTITY.listMembers.mockResolvedValue({ members: [{
+      id: 'membership-admin', organizationId: 'org-a', userId: 'user-admin',
+      email: 'admin@example.test', role: 'admin', status: 'active',
+    }] });
+
+    const listed = await handler?.fetch(request('/operator/v1/team', {}, cookie), env);
+    expect(listed?.status).toBe(200);
+    expect(await json(listed)).toMatchObject({
+      members: [expect.objectContaining({ email: 'admin@example.test' })],
+    });
+
+    const created = await handler?.fetch(request('/operator/v1/team/invitations', {
+      method: 'POST', body: JSON.stringify({ email: 'new@example.test', role: 'admin' }),
+    }, cookie), env);
+    expect(created?.status).toBe(201);
+    expect(env.IDENTITY.createInvitation).toHaveBeenCalledWith(expect.objectContaining({
+      selectedMerchantId: 'merchant-a',
+      input: expect.objectContaining({
+        organizationId: 'org-a', email: 'new@example.test', role: 'admin',
+      }),
+    }));
+    const browserBody = JSON.parse(String((await request('/operator/v1/team/invitations', {
+      method: 'POST', body: JSON.stringify({ email: 'new@example.test', role: 'admin' }),
+    }).text()))) as Record<string, unknown>;
+    expect(browserBody).not.toHaveProperty('organizationId');
   });
 
   test('binds the signed selection cookie to the live root session', async () => {
@@ -572,6 +677,71 @@ describe('live session and tenant boundary', () => {
     expect(env.IDENTITY.resolveBrowserPrincipal).toHaveBeenCalledTimes(1);
   });
 
+  test('retries a root-visible failed provisioning from its durable server-side identity', async () => {
+    const handler = await worker();
+    const env = createEnv(root);
+    const failed = {
+      provisioningId: 'provisioning-failed', merchantId: 'merchant-failed',
+      organizationId: null, name: 'Failed client', status: 'failed',
+      failedStep: 'identity_organization', retryable: true,
+    };
+    const active = {
+      ...failed, organizationId: 'org-failed', status: 'active',
+      failedStep: null, retryable: false,
+    };
+    env.IDENTITY.getProvisioningForRoot.mockResolvedValue(failed);
+    env.IDENTITY.provisionClient.mockResolvedValue(active);
+
+    const response = await handler?.fetch(request(
+      '/operator/v1/platform/provisionings/provisioning-failed/retry',
+      { method: 'POST', body: JSON.stringify({}) },
+    ), env);
+
+    expect(response?.status).toBe(200);
+    expect(await json(response)).toEqual(active);
+    expect(env.IDENTITY.getProvisioningForRoot).toHaveBeenCalledWith({
+      cookieHeader: sessionCookie,
+      provisioningId: 'provisioning-failed',
+      correlationId,
+    });
+    expect(env.IDENTITY.provisionClient).toHaveBeenCalledWith({
+      sessionId: root.sessionId,
+      selectedMerchantId: 'merchant-failed',
+      input: {
+        provisioningId: 'provisioning-failed',
+        merchantId: 'merchant-failed',
+        name: 'Failed client',
+        correlationId,
+      },
+    });
+  });
+
+  test.each([
+    { status: 'active', retryable: false },
+    { status: 'failed', retryable: false },
+    { status: 'provisioning', retryable: false },
+  ] as const)('rejects a provisioning that cannot be retried: $status', async state => {
+    const handler = await worker();
+    const env = createEnv(root);
+    env.IDENTITY.getProvisioningForRoot.mockResolvedValue({
+      provisioningId: 'provisioning-a', merchantId: 'merchant-a',
+      organizationId: state.status === 'active' ? 'org-a' : null,
+      name: 'Client A', failedStep: state.status === 'failed' ? 'core_provision' : null,
+      ...state,
+    });
+
+    const response = await handler?.fetch(request(
+      '/operator/v1/platform/provisionings/provisioning-a/retry',
+      { method: 'POST', body: JSON.stringify({}) },
+    ), env);
+
+    expect(response?.status).toBe(409);
+    expect(await json(response)).toEqual(apiError(
+      'OPERATION_FAILED', 'Provisioning cannot be retried', false,
+    ));
+    expect(env.IDENTITY.provisionClient).not.toHaveBeenCalled();
+  });
+
   test.each([
     '/operator/v1/platform/clients',
     '/operator/v1/platform/provisionings/provisioning-a',
@@ -634,6 +804,19 @@ describe('live session and tenant boundary', () => {
 });
 
 describe('correlation and safe downstream failures', () => {
+  test('marks authenticated and show-once credential responses as non-cacheable', async () => {
+    const handler = await worker();
+    const env = createEnv(admin);
+    const session = await handler?.fetch(request('/operator/v1/session'), env);
+    const created = await handler?.fetch(request('/operator/v1/credentials', {
+      method: 'POST', body: JSON.stringify({
+        name: 'Server key', environment: 'local', kind: 'secret', scopes: ['schema:read'],
+      }),
+    }), env);
+    expect(session?.headers.get('cache-control')).toBe('no-store');
+    expect(created?.headers.get('cache-control')).toBe('no-store');
+  });
+
   test('uses one correlation id through Browser, BFF, Identity and Core', async () => {
     const handler = await worker();
     const env = createEnv(admin);
@@ -826,7 +1009,7 @@ describe('semantic downstream validation', () => {
   test.each([
     ['member', { members: [{
       id: 'membership-b', organizationId: 'org-b', userId: 'user-b',
-      role: 'viewer', status: 'active',
+      email: 'other@example.com', role: 'viewer', status: 'active',
     }] }, { invitations: [] }],
     ['invitation', { members: [] }, { invitations: [{
       id: 'invitation-b', organizationId: 'org-b', email: 'other@example.com',
@@ -902,6 +1085,33 @@ describe('semantic downstream validation', () => {
 });
 
 describe('exact auth proxy', () => {
+  test.each([
+    ['/auth/passkey/verify-authentication', {
+      session: { id: 'session-a', token: 'must-not-reach-dashboard' },
+      user: { id: 'root-a', email: 'root@example.test' },
+    }],
+    ['/auth/passkey/verify-registration', {
+      id: 'passkey-a', publicKey: 'must-not-reach-dashboard', userId: 'root-a',
+    }],
+  ] as const)('reduces successful passkey verification to a neutral response: %s', async (
+    pathname,
+    upstreamBody,
+  ) => {
+    const handler = await worker();
+    const env = createEnv(root);
+    env.IDENTITY_AUTH.fetch.mockResolvedValue(Response.json(upstreamBody, {
+      headers: { 'set-cookie': 'session=opaque; HttpOnly; SameSite=Strict' },
+    }));
+
+    const response = await handler?.fetch(request(pathname, {
+      method: 'POST', body: JSON.stringify({ response: {} }),
+    }), env);
+
+    expect(response?.status).toBe(200);
+    expect(await json(response)).toEqual({ ok: true });
+    expect(response?.headers.get('set-cookie')).toContain('HttpOnly');
+  });
+
   test('maps an Identity auth binding exception to a correlated canonical 503', async () => {
     const handler = await worker();
     const env = createEnv(admin);
@@ -942,6 +1152,7 @@ describe('exact auth proxy', () => {
     expect(await forwarded.json()).toEqual({ email: 'admin@example.com' });
     expect(response?.headers.get('set-cookie')).toContain('HttpOnly');
     expect(response?.headers.get('x-correlation-id')).toBe(correlationId);
+    expect(response?.headers.get('cache-control')).toBe('no-store');
   });
 
   test('preserves multiple Identity Set-Cookie headers separately', async () => {

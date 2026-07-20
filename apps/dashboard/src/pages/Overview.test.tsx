@@ -3,6 +3,7 @@ import { MemoryRouter, Routes, Route, useLocation } from 'react-router-dom';
 import Overview from './Overview';
 import { useProgramStore } from '../data/store';
 import { PROGRAMS } from '../data/programs';
+import { TestAuth } from '../test/TestAuth';
 
 beforeEach(() => {
   useProgramStore.setState({ programs: PROGRAMS.map(p => ({ ...p })) });
@@ -15,19 +16,19 @@ function LocationProbe({ onLocation }: { onLocation: (path: string) => void }) {
 }
 
 function renderWithRouter(ui: React.ReactElement) {
-  return render(<MemoryRouter>{ui}</MemoryRouter>);
+  return render(<TestAuth><MemoryRouter>{ui}</MemoryRouter></TestAuth>);
 }
 
 function renderWithLocationCapture() {
   let currentPath = '/';
   const setPath = (p: string) => { currentPath = p; };
   render(
-    <MemoryRouter initialEntries={['/']}>
+    <TestAuth><MemoryRouter initialEntries={['/']}>
       <Routes>
         <Route path="/" element={<Overview />} />
         <Route path="*" element={<LocationProbe onLocation={setPath} />} />
       </Routes>
-    </MemoryRouter>
+    </MemoryRouter></TestAuth>
   );
   return { getPath: () => currentPath };
 }

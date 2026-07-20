@@ -680,7 +680,7 @@ export async function rotateRecoveryCodes(
     SELECT id FROM recovery_flow WHERE id = ?1 AND rotation_id = ?2
   `).bind(flow.id, rotationId).first<{ id: string }>();
   if (!completed) throw new Error('RECOVERY_COMPLETION_FAILED');
-  return Response.json({ codes }, {
+  return Response.json({ userId: flow.userId, codes }, {
     status: 200,
     headers: {
       'set-cookie': expiredSessionCookieHeader(env),

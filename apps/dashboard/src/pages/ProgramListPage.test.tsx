@@ -3,6 +3,7 @@ import { MemoryRouter, Routes, Route, useLocation } from 'react-router-dom';
 import ProgramListPage from './_ProgramListPage';
 import { useProgramStore } from '../data/store';
 import { PROGRAMS } from '../data/programs';
+import { TestAuth } from '../test/TestAuth';
 
 beforeEach(() => {
   // Reset store to seed so tests stay independent.
@@ -17,9 +18,9 @@ function LocationProbe({ onLocation }: { onLocation: (path: string) => void }) {
 
 function renderPage() {
   return render(
-    <MemoryRouter>
+    <TestAuth><MemoryRouter>
       <ProgramListPage type="promo" title="Promo Codes" newLabel="New promo" />
-    </MemoryRouter>
+    </MemoryRouter></TestAuth>
   );
 }
 
@@ -27,12 +28,12 @@ function renderPageWithLocationCapture() {
   let currentPath = '/';
   const setPath = (p: string) => { currentPath = p; };
   render(
-    <MemoryRouter initialEntries={['/promo']}>
+    <TestAuth><MemoryRouter initialEntries={['/promo']}>
       <Routes>
         <Route path="/promo" element={<ProgramListPage type="promo" title="Promo Codes" newLabel="New promo" />} />
         <Route path="*" element={<LocationProbe onLocation={setPath} />} />
       </Routes>
-    </MemoryRouter>
+    </MemoryRouter></TestAuth>
   );
   return { getPath: () => currentPath };
 }

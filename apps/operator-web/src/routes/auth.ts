@@ -22,7 +22,9 @@ function notFound(correlationId: string): Response {
       code: 'NOT_FOUND', message: 'The requested resource is unavailable',
       correlationId, retryable: false,
     },
-  }), { status: 404, headers: { 'x-correlation-id': correlationId } });
+  }), { status: 404, headers: {
+    'x-correlation-id': correlationId, 'cache-control': 'no-store',
+  } });
 }
 
 function authError(
@@ -34,7 +36,9 @@ function authError(
 ): Response {
   return Response.json(ApiErrorSchema.parse({
     error: { code, message, correlationId, retryable },
-  }), { status, headers: { 'x-correlation-id': correlationId } });
+  }), { status, headers: {
+    'x-correlation-id': correlationId, 'cache-control': 'no-store',
+  } });
 }
 
 function splitSetCookie(value: string): string[] {
@@ -96,7 +100,9 @@ export async function proxyAuth(
           code: 'INVALID_REQUEST', message: 'Request validation failed',
           correlationId, retryable: false,
         },
-      }), { status: 400, headers: { 'x-correlation-id': correlationId } });
+      }), { status: 400, headers: {
+        'x-correlation-id': correlationId, 'cache-control': 'no-store',
+      } });
     }
   }
   let upstream: Response;
@@ -113,7 +119,10 @@ export async function proxyAuth(
       'Identity is temporarily unavailable', true,
     );
   }
-  const responseHeaders = new Headers({ 'x-correlation-id': correlationId });
+  const responseHeaders = new Headers({
+    'x-correlation-id': correlationId,
+    'cache-control': 'no-store',
+  });
   for (const name of ['content-type', 'retry-after'] as const) {
     const value = upstream.headers.get(name);
     if (value !== null) responseHeaders.set(name, value);
@@ -139,6 +148,20 @@ export async function proxyAuth(
       );
     }
     responseHeaders.set('location', location);
+  }
+  if (
+    upstream.ok
+    && (
+      url.pathname === '/auth/passkey/verify-authentication'
+      || url.pathname === '/auth/passkey/verify-registration'
+    )
+  ) {
+    responseHeaders.set('content-type', 'application/json');
+    return new Response(JSON.stringify({ ok: true }), {
+      status: upstream.status,
+      statusText: upstream.statusText,
+      headers: responseHeaders,
+    });
   }
   return new Response(upstream.body, {
     status: upstream.status,

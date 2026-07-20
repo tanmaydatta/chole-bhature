@@ -4,7 +4,7 @@ import {
   ClientProvisioningViewSchema,
   FixedOperatorRoleSchema,
   InvitationViewSchema,
-  MembershipViewSchema,
+  OperatorMemberViewSchema,
   OperatorPrincipalSchema,
 } from './operator.js';
 import { PromoProgramSchema } from './programs.js';
@@ -47,7 +47,7 @@ export const OperatorCustomerPatchRequestSchema = CustomerPatchRequestSchema;
 export const OperatorProgramDraftRequestSchema = PromoProgramSchema;
 
 export const IdentityMembersResponseSchema = z.object({
-  members: z.array(MembershipViewSchema),
+  members: z.array(OperatorMemberViewSchema),
 }).strict();
 
 export const IdentityInvitationsResponseSchema = z.object({
@@ -59,7 +59,7 @@ export const IdentityClientsResponseSchema = z.object({
 }).strict();
 
 export const OperatorTeamResponseSchema = z.object({
-  members: z.array(MembershipViewSchema),
+  members: z.array(OperatorMemberViewSchema),
   invitations: z.array(InvitationViewSchema),
 }).strict();
 

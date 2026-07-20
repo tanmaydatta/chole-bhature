@@ -1,38 +1,60 @@
 import { NavLink } from 'react-router-dom';
+import type { OperatorSessionView, PermissionKey } from '@incentives/contracts';
 
-type NavItem = { label: string; to: string; icon: string; color?: string };
+type NavItem = { label: string; to: string; icon: string; color?: string; permission?: PermissionKey; rootOnly?: boolean; merchantRequired?: boolean };
 
 const groups: { label?: string; items: NavItem[] }[] = [
   {
     items: [
-      { label: 'Overview', to: '/', icon: '▦' },
+      { label: 'Overview', to: '/', icon: '▦', permission: 'programs:read', merchantRequired: true },
     ],
   },
   {
     label: 'Incentives',
     items: [
-      { label: 'Promo Codes', to: '/promo', icon: '◷', color: 'var(--promo)' },
-      { label: 'Affiliates', to: '/affiliates', icon: '⊞', color: 'var(--aff)' },
-      { label: 'Referrals', to: '/referrals', icon: '⇄', color: 'var(--ref)' },
-      { label: 'Loyalty', to: '/loyalty', icon: '★', color: 'var(--loy)' },
+      { label: 'Promo Codes', to: '/promo', icon: '◷', color: 'var(--promo)', permission: 'programs:read', merchantRequired: true },
+      { label: 'Affiliates', to: '/affiliates', icon: '⊞', color: 'var(--aff)', permission: 'programs:read', merchantRequired: true },
+      { label: 'Referrals', to: '/referrals', icon: '⇄', color: 'var(--ref)', permission: 'programs:read', merchantRequired: true },
+      { label: 'Loyalty', to: '/loyalty', icon: '★', color: 'var(--loy)', permission: 'programs:read', merchantRequired: true },
     ],
   },
   {
     label: 'Setup',
     items: [
-      { label: 'Variables', to: '/variables', icon: '{x}' },
-      { label: 'Events', to: '/events', icon: '⚡' },
+      { label: 'Variables', to: '/variables', icon: '{x}', permission: 'schemas:read', merchantRequired: true },
+      { label: 'Events', to: '/events', icon: '⚡', permission: 'schemas:read', merchantRequired: true },
     ],
   },
   {
     label: 'Insights',
     items: [
-      { label: 'Analytics', to: '/analytics', icon: '📈' },
+      { label: 'Analytics', to: '/analytics', icon: '📈', permission: 'programs:read', merchantRequired: true },
+    ],
+  },
+  {
+    label: 'Administration',
+    items: [
+      { label: 'Clients', to: '/platform/clients', icon: '◇', rootOnly: true },
+      { label: 'Team', to: '/settings/team', icon: '♙', permission: 'members:read', merchantRequired: true },
+      { label: 'Credentials', to: '/settings/credentials', icon: '⌁', permission: 'credentials:read', merchantRequired: true },
     ],
   },
 ];
 
-export function Sidebar() {
+function canSee(item: NavItem, session?: OperatorSessionView): boolean {
+  if (!session) return !item.rootOnly && item.permission === undefined;
+  const root = session.platformRole === 'root';
+  if (item.rootOnly) return root;
+  if (
+    root
+    && item.merchantRequired
+    && (session.merchantSelectionRequired || !session.merchantId)
+  ) return false;
+  if (item.permission) return root || session.permissions.includes(item.permission);
+  return !root || !session.merchantSelectionRequired;
+}
+
+export function Sidebar({ session }: { session?: OperatorSessionView }) {
   return (
     <aside className="w-[228px] bg-[var(--panel)] border-r border-[var(--border)] px-3 py-4 flex-shrink-0 sticky top-0 h-screen overflow-y-auto">
       {/* Logo */}
@@ -49,7 +71,7 @@ export function Sidebar() {
               {group.label}
             </div>
           )}
-          {group.items.map(item => (
+          {group.items.filter(item => canSee(item, session)).map(item => (
             <NavLink
               key={item.to}
               to={item.to}
@@ -62,7 +84,7 @@ export function Sidebar() {
                 }`
               }
             >
-              <span className="w-4 text-center opacity-90" style={item.color ? { color: item.color } : {}}>
+              <span aria-hidden="true" className="w-4 text-center opacity-90" style={item.color ? { color: item.color } : {}}>
                 {item.icon}
               </span>
               {item.label}

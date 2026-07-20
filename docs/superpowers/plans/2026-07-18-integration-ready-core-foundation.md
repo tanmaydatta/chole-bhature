@@ -1,5 +1,9 @@
 # Integration-Ready Core Foundation Implementation Plan
 
+**Status:** Done
+
+**Notion parent:** [Plans](https://app.notion.com/p/Plans-390e5c7c2b8e8165b7f7d77392eab088)
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Establish the monorepo, canonical contracts, pure evaluation engine, incentive-module extension point, and commerce-connector conformance kit without implementing a client platform or persistent runtime.

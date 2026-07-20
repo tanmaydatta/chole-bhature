@@ -1,5 +1,9 @@
 # Integration-Ready Core Runtime Implementation Plan
 
+**Status:** Done
+
+**Notion parent:** [Plans](https://app.notion.com/p/Plans-390e5c7c2b8e8165b7f7d77392eab088)
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Turn the approved contracts and Promo module into a persistent Cloudflare/D1 API for schema publication, stored customers, promo configuration, structured evaluation decisions, and atomic idempotent redemption.

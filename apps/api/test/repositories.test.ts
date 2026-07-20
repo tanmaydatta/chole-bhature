@@ -991,6 +991,7 @@ describe('D1 repositories', () => {
       environment: 'production',
       kind: 'publishable',
       scopes: ['schema:read', 'evaluations:write'],
+      allowedOrigins: [],
       requestsPerMinute: 240,
       digest,
       suffix: 'abc123',
@@ -1017,6 +1018,7 @@ describe('D1 repositories', () => {
       environment: 'production',
       kind: 'publishable',
       scopes: ['schema:read', 'evaluations:write'],
+      allowedOrigins: [],
       requestsPerMinute: 240,
       suffix: 'abc123',
       createdAt,
@@ -1027,6 +1029,26 @@ describe('D1 repositories', () => {
     expect(view).not.toHaveProperty('token');
     expect(await repositories.credentials.findByDigest(digest)).toEqual(view);
     expect(await repositories.credentials.list('merchant-b')).toEqual([]);
+
+    await env.DB.prepare(`
+      UPDATE api_credentials SET expires_at = '2000-01-01T00:00:00.000Z'
+      WHERE id = 'credential-a'
+    `).run();
+    expect(await repositories.credentials.findByDigest(digest)).toMatchObject({
+      id: 'credential-a', status: 'expired',
+    });
+    expect(await repositories.credentials.list('merchant-a')).toEqual([
+      expect.objectContaining({ id: 'credential-a', status: 'expired' }),
+    ]);
+
+    await env.DB.prepare(`
+      UPDATE api_credentials
+      SET status = 'revoked', revoked_at = '2026-07-20T00:00:00.000Z', revoked_by = 'user-123'
+      WHERE id = 'credential-a'
+    `).run();
+    expect(await repositories.credentials.findByDigest(digest)).toMatchObject({
+      id: 'credential-a', status: 'revoked',
+    });
 
     const columns = await env.DB.prepare(
       "SELECT name FROM pragma_table_info('api_credentials') ORDER BY cid",
