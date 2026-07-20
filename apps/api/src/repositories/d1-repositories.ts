@@ -1605,12 +1605,21 @@ export function createRepositories(env: Env): Repositories {
         const schemaVersion = PositiveIntegerSchema.parse(input.schemaVersion);
         const deprecatedAt = DateTimeSchema.parse(input.deprecatedAt);
         const deprecatedBy = z.string().min(1).parse(input.deprecatedBy);
-        const published = await getSchemaDefinition(merchantId, id);
+        const addressed = await getSchemaDefinition(merchantId, id);
         if (
-          published === null
-          || published.schemaVersion !== schemaVersion
-          || published.state !== 'published'
+          addressed === null
+          || addressed.schemaVersion !== schemaVersion
+          || addressed.state === 'deprecated'
         ) throw new SchemaRevisionConflictError();
+        const published = addressed.state === 'published'
+          ? addressed
+          : await db.select().from(variableDefinitions).where(and(
+              eq(variableDefinitions.merchantId, merchantId),
+              eq(variableDefinitions.key, addressed.definition.key),
+              eq(variableDefinitions.state, 'published'),
+            )).orderBy(desc(variableDefinitions.schemaVersion)).get()
+            .then(row => row === undefined ? null : definitionFromRow(row));
+        if (published === null) throw new SchemaRevisionConflictError();
         const draft = await getLatestSchemaVersion(merchantId, 'draft');
         const draftRecords = draft === null
           ? null
@@ -1652,8 +1661,8 @@ export function createRepositories(env: Env): Repositories {
               deprecatedAt,
               deprecatedBy,
               merchantId,
-              id,
-              schemaVersion,
+              published.id,
+              published.schemaVersion,
               draft.version,
               expectedJson,
             ),
@@ -1957,35 +1966,57 @@ export function createRepositories(env: Env): Repositories {
               throw new ProgramConflictError('The program draft changed before it was stored');
             }
           } else {
-            const [revisionResult, logicalResult] = await env.DB.batch([
-              env.DB.prepare(`
-                UPDATE program_revisions SET config_json = ?1
-                WHERE merchant_id = ?2 AND program_id = ?3 AND revision = ?4
-                  AND published_at IS NULL AND config_json = ?5
-              `).bind(
-                configJson,
-                merchantId,
-                logical.id,
-                logical.draftRevision,
-                storedProgramJson(expectedProgram),
-              ),
-              env.DB.prepare(`
-                UPDATE programs SET type = ?1, name = ?2, config_json = ?3,
-                  priority = ?4, updated_at = ?5
-                WHERE merchant_id = ?6 AND external_ref = ?7
-                  AND draft_revision = ?8 AND updated_at = ?9
-              `).bind(
-                parsedProgram.type,
-                parsedProgram.name,
-                configJson,
-                parsedProgram.priority,
-                updatedAt,
-                merchantId,
-                externalRef,
-                logical.draftRevision,
-                expectedUpdatedAt,
-              ),
-            ]);
+            let results: D1Result[];
+            try {
+              results = await env.DB.batch([
+                env.DB.prepare(`
+                  UPDATE program_revisions SET config_json = ?1
+                  WHERE merchant_id = ?2 AND program_id = ?3 AND revision = ?4
+                    AND published_at IS NULL AND config_json = ?5
+                    AND EXISTS (
+                      SELECT 1 FROM programs
+                      WHERE merchant_id = ?2 AND id = ?3 AND draft_revision = ?4
+                        AND updated_at = ?6
+                    )
+                `).bind(
+                  configJson,
+                  merchantId,
+                  logical.id,
+                  logical.draftRevision,
+                  storedProgramJson(expectedProgram),
+                  expectedUpdatedAt,
+                ),
+                env.DB.prepare(`
+                  UPDATE programs SET type = ?1, name = ?2, config_json = ?3,
+                    priority = ?4, updated_at = ?5
+                  WHERE merchant_id = ?6 AND external_ref = ?7
+                    AND changes() = 1
+                    AND draft_revision = ?8 AND updated_at = ?9
+                `).bind(
+                  parsedProgram.type,
+                  parsedProgram.name,
+                  configJson,
+                  parsedProgram.priority,
+                  updatedAt,
+                  merchantId,
+                  externalRef,
+                  logical.draftRevision,
+                  expectedUpdatedAt,
+                ),
+                env.DB.prepare(`
+                  SELECT json_extract(
+                    CASE WHEN changes() = 1 THEN 'null' ELSE 'draft-save-cas-miss' END,
+                    '$'
+                  )
+                `),
+              ]);
+            } catch (error) {
+              if (error instanceof Error && /malformed JSON/u.test(error.message)) {
+                throw new ProgramConflictError('The program draft changed before it was stored');
+              }
+              throw error;
+            }
+            const [revisionResult, logicalResult] = results;
             if (
               (revisionResult?.meta.changes ?? 0) < 1
               || (logicalResult?.meta.changes ?? 0) < 1

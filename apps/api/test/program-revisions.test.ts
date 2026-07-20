@@ -321,6 +321,77 @@ describe('immutable Promo revisions and lifecycle', () => {
     });
   });
 
+  test('rolls back revision JSON when lifecycle CAS misses during an existing-draft save', async () => {
+    const service = operatorService();
+    const first = draftProgram('draft-save-lifecycle-cas');
+    await service.createProgramDraft(operatorContext('programs:manage'), first);
+    await service.publishProgram(operatorContext('programs:publish'), first.id);
+    const originalDraft = draftProgram(first.id, { name: 'Original replacement draft' });
+    await service.updateProgramDraft(
+      operatorContext('programs:manage'),
+      first.id,
+      originalDraft,
+    );
+    const existing = await createRepositories(env).programs.get(
+      SEEDED_MERCHANT_ID,
+      first.id,
+    );
+    expect(existing).not.toBeNull();
+    const nextDraft = draftProgram(first.id, { name: 'Racing replacement draft' });
+
+    let injectLifecycleRace = true;
+    const racingDb = new Proxy(env.DB, {
+      get(target, property) {
+        if (property === 'batch') {
+          return async (statements: D1PreparedStatement[]) => {
+            if (injectLifecycleRace) {
+              injectLifecycleRace = false;
+              await target.prepare(`
+                UPDATE programs SET status = 'paused', updated_at = ?1
+                WHERE merchant_id = ?2 AND external_ref = ?3
+              `).bind(
+                '2099-01-01T00:00:00.000Z',
+                SEEDED_MERCHANT_ID,
+                first.id,
+              ).run();
+            }
+            return target.batch(statements);
+          };
+        }
+        const value = Reflect.get(target, property) as unknown;
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    }) as D1Database;
+    const repositories = createRepositories({ DB: racingDb });
+    await expect(repositories.programs.updateDraft({
+      merchantId: SEEDED_MERCHANT_ID,
+      externalRef: first.id,
+      program: nextDraft,
+      expectedProgram: existing!.program,
+      expectedUpdatedAt: existing!.updatedAt,
+      schema: await repositories.schemas.getLatestVersion(SEEDED_MERCHANT_ID, 'published'),
+    })).rejects.toMatchObject({ name: 'ProgramConflictError' });
+
+    const stored = await env.DB.prepare(`
+      SELECT logical.status, logical.config_json AS shadowConfigJson,
+        revision.config_json AS revisionConfigJson
+      FROM programs AS logical
+      INNER JOIN program_revisions AS revision
+        ON revision.merchant_id = logical.merchant_id
+        AND revision.program_id = logical.id
+        AND revision.revision = logical.draft_revision
+      WHERE logical.merchant_id = ?1 AND logical.external_ref = ?2
+    `).bind(SEEDED_MERCHANT_ID, first.id).first<{
+      status: string;
+      shadowConfigJson: string;
+      revisionConfigJson: string;
+    }>();
+    expect(stored).not.toBeNull();
+    expect(stored!.status).toBe('paused');
+    expect(JSON.parse(stored!.shadowConfigJson)).toEqual(originalDraft);
+    expect(JSON.parse(stored!.revisionConfigJson)).toEqual(originalDraft);
+  });
+
   test('enforces scheduled start/end boundaries as time advances without weakening pause', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-08-01T12:00:00.000Z'));
@@ -362,6 +433,34 @@ describe('immutable Promo revisions and lifecycle', () => {
     vi.setSystemTime(new Date('2026-08-04T00:00:00.000Z'));
     await expect(evaluate(scheduled.id)).resolves.toMatchObject({ outcome: 'unavailable' });
     await expect(evaluate(paused.id)).resolves.toMatchObject({ outcome: 'unavailable' });
+  });
+
+  test('keeps natural end irreversible when a replacement revision is published later', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-01T12:00:00.000Z'));
+    const service = operatorService();
+    const ending = draftProgram('naturally-ended-offer', { endDate: '2026-08-02' });
+    await service.createProgramDraft(operatorContext('programs:manage'), ending);
+    await service.publishProgram(operatorContext('programs:publish'), ending.id);
+    await service.updateProgramDraft(
+      operatorContext('programs:manage'),
+      ending.id,
+      draftProgram(ending.id, {
+        name: 'Replacement after natural end',
+        endDate: '2026-08-10',
+      }),
+    );
+
+    vi.setSystemTime(new Date('2026-08-03T00:00:00.000Z'));
+    await expect(service.publishProgram(
+      operatorContext('programs:publish'),
+      ending.id,
+    )).resolves.toMatchObject({ status: 'ended', activeRevision: 2 });
+    await expect(evaluate(ending.id)).resolves.toMatchObject({ outcome: 'unavailable' });
+    await expect(service.resumeProgram(
+      operatorContext('programs:manage'),
+      ending.id,
+    )).rejects.toMatchObject({ name: 'ProgramConflictError' });
   });
 
   test('pauses and resumes an active Promo, then makes end irreversible', async () => {

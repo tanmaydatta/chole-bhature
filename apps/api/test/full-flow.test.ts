@@ -575,6 +575,63 @@ describe('integration-ready runtime', () => {
     });
   });
 
+  test.each([
+    ['higher', 2_000],
+    ['lower', 600],
+  ] as const)(
+    'redeems against the active budget while an unpublished %s-budget draft exists',
+    async (label, draftBudget) => {
+      const service = lifecycleOperatorService();
+      await service.createSchemaDefinition(
+        operatorContext('schemas:manage'),
+        contextChannelDefinition,
+      );
+      await service.publishSchema(operatorContext('schemas:publish'));
+      const first = lifecyclePromo(`active-budget-${label}-draft`);
+      await service.createProgramDraft(operatorContext('programs:manage'), first);
+      await service.publishProgram(operatorContext('programs:publish'), first.id);
+      await service.updateProgramDraft(
+        operatorContext('programs:manage'),
+        first.id,
+        lifecyclePromo(first.id, {
+          name: `${label} budget replacement`,
+          budget: { currency: 'GBP', minorUnits: draftBudget },
+        }),
+      );
+
+      const evaluationResponse = await jsonRequest('POST', '/v1/evaluate', {
+        cart: { currency: 'GBP', subtotal: 4_000, items: [] },
+        context: { channel: 'web' },
+      }, 'pk_test_publishable_credential_material_00000001');
+      const evaluation = EvaluationResponseSchema.parse(await evaluationResponse.json());
+      expect((await jsonRequest('POST', '/v1/redemptions', {
+        evaluationId: evaluation.evaluationId,
+        programRef: first.id,
+        externalOrderRef: `active-budget-${label}-order`,
+        idempotencyKey: `active-budget-${label}-attempt`,
+      })).status).toBe(200);
+
+      expect(await env.DB.prepare(`
+        SELECT counter.usage_count AS usageCount,
+          counter.budget_remaining AS budgetRemaining,
+          counter.committed_spend AS committedSpend,
+          logical.active_revision AS activeRevision,
+          logical.draft_revision AS draftRevision
+        FROM program_counters AS counter
+        INNER JOIN programs AS logical
+          ON logical.merchant_id = counter.merchant_id
+          AND logical.id = counter.program_id
+        WHERE logical.merchant_id = ?1 AND logical.external_ref = ?2
+      `).bind(SEEDED_MERCHANT_ID, first.id).first()).toEqual({
+        usageCount: 1,
+        budgetRemaining: 500,
+        committedSpend: 500,
+        activeRevision: 1,
+        draftRevision: 2,
+      });
+    },
+  );
+
   test('reconciles rolled-back Worker spend committed during an unlimited revision', async () => {
     const service = lifecycleOperatorService();
     await service.createSchemaDefinition(

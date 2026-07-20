@@ -414,8 +414,8 @@ export function createSchemaService(repositories: Repositories) {
     async deprecate(merchantId: string, id: string, actorUserId: string): Promise<void> {
       const record = await repositories.schemas.getDefinition(merchantId, id);
       if (record === null) throw new NotFoundError('Definition not found', 'SCHEMA_DEFINITION_NOT_FOUND');
-      if (record.state !== 'published') {
-        throw new SchemaConflictError('Only published definitions can be deprecated');
+      if (record.state === 'deprecated') {
+        throw new SchemaConflictError('The definition is already deprecated');
       }
       await repositories.schemas.deprecateDefinition({
         merchantId,

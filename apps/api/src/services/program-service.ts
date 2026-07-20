@@ -12,6 +12,7 @@ import {
   type Repositories,
 } from '../repositories/types.js';
 import { validateProgramConditions } from './program-condition-validation.js';
+import { effectiveProgramStatus } from './program-runtime.js';
 import { BUILTIN_VARIABLE_DEFINITIONS } from './schema-service.js';
 
 function selectableRewards(program: PromoProgram): Array<{
@@ -281,15 +282,19 @@ export function createProgramService(repositories: Repositories) {
       }
       await validateForPublishedSchema(merchantId, draft.program);
       const previous = await repositories.programs.getActive(merchantId, externalRef);
-      const status = previous?.program.status === 'paused' || previous?.program.status === 'ended'
-        ? previous.program.status
+      const now = new Date();
+      const priorStatus = previous === null
+        ? undefined
+        : effectiveProgramStatus(previous.program, now);
+      const status = priorStatus === 'paused' || priorStatus === 'ended'
+        ? priorStatus
         : effectiveStatus(draft.program);
       const published = await repositories.programs.publishDraft({
         merchantId,
         externalRef,
         expectedDraftRevision: draft.draftRevision,
         status,
-        publishedAt: new Date().toISOString(),
+        publishedAt: now.toISOString(),
         publishedBy: actorUserId,
       });
       return {

@@ -43,8 +43,16 @@ WHEN NEW.usage_count >= 0
 BEGIN
   SELECT RAISE(ABORT, 'replacement budget is below committed spend')
   WHERE NEW.budget_remaining IS NOT NULL
-    AND json_extract(NEW.config_json, '$.budget.minorUnits') IS NOT NULL
-    AND json_extract(NEW.config_json, '$.budget.minorUnits') < MAX(
+    AND json_extract((
+      SELECT config_json FROM program_revisions
+      WHERE merchant_id = NEW.merchant_id AND program_id = NEW.id
+        AND revision = NEW.active_revision
+    ), '$.budget.minorUnits') IS NOT NULL
+    AND json_extract((
+      SELECT config_json FROM program_revisions
+      WHERE merchant_id = NEW.merchant_id AND program_id = NEW.id
+        AND revision = NEW.active_revision
+    ), '$.budget.minorUnits') < MAX(
       COALESCE((
         SELECT committed_spend FROM program_counters
         WHERE merchant_id = NEW.merchant_id AND program_id = NEW.id
@@ -64,9 +72,17 @@ BEGIN
         committed_spend,
         CASE
           WHEN NEW.budget_remaining IS NOT NULL
-            AND json_extract(NEW.config_json, '$.budget.minorUnits') IS NOT NULL
+            AND json_extract((
+              SELECT config_json FROM program_revisions
+              WHERE merchant_id = NEW.merchant_id AND program_id = NEW.id
+                AND revision = NEW.active_revision
+            ), '$.budget.minorUnits') IS NOT NULL
           THEN MAX(
-            json_extract(NEW.config_json, '$.budget.minorUnits')
+            json_extract((
+              SELECT config_json FROM program_revisions
+              WHERE merchant_id = NEW.merchant_id AND program_id = NEW.id
+                AND revision = NEW.active_revision
+            ), '$.budget.minorUnits')
               - NEW.budget_remaining,
             0
           )
@@ -88,10 +104,18 @@ BEGIN
   UPDATE program_counters
   SET budget_remaining = CASE
         WHEN NEW.budget_remaining IS NOT NULL
-          AND json_extract(NEW.config_json, '$.budget.minorUnits') IS NOT NULL
+          AND json_extract((
+            SELECT config_json FROM program_revisions
+            WHERE merchant_id = NEW.merchant_id AND program_id = NEW.id
+              AND revision = NEW.active_revision
+          ), '$.budget.minorUnits') IS NOT NULL
         THEN MIN(
           NEW.budget_remaining,
-          json_extract(NEW.config_json, '$.budget.minorUnits') - committed_spend
+          json_extract((
+            SELECT config_json FROM program_revisions
+            WHERE merchant_id = NEW.merchant_id AND program_id = NEW.id
+              AND revision = NEW.active_revision
+          ), '$.budget.minorUnits') - committed_spend
         )
         ELSE NEW.budget_remaining
       END

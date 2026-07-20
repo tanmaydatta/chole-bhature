@@ -442,6 +442,42 @@ describe('private schema lifecycle service', () => {
     ))).toBe(false);
   });
 
+  test('lets a fresh operator deprecate a post-clone definition by its visible draft id', async () => {
+    const firstOperator = operatorService();
+    await firstOperator.createSchemaDefinition(
+      operatorContext('schemas:manage'),
+      customerTierDefinition,
+    );
+    await firstOperator.publishSchema(operatorContext('schemas:publish'));
+    await firstOperator.createSchemaDefinition(operatorContext('schemas:manage'), {
+      key: 'context.note',
+      label: 'Note',
+      source: 'context',
+      type: 'string',
+      required: false,
+    });
+
+    const freshOperator = operatorService();
+    const listed = await freshOperator.listSchemaDefinitions(
+      operatorContext('schemas:read'),
+    );
+    const visibleTier = listed.definitions.find(({ definition }) => (
+      definition.key === customerTierDefinition.key
+    ));
+    expect(visibleTier).toBeDefined();
+    await expect(freshOperator.deprecateSchemaDefinition(
+      operatorContext('schemas:manage'),
+      visibleTier!.id,
+    )).resolves.toBeUndefined();
+
+    const after = await freshOperator.listSchemaDefinitions(
+      operatorContext('schemas:read'),
+    );
+    expect(after.definitions.some(({ definition }) => (
+      definition.key === customerTierDefinition.key
+    ))).toBe(false);
+  });
+
   test('requires canonical operator permissions and exposes no merchant authoring routes', async () => {
     const service = operatorService();
     await expect(service.createSchemaDefinition(
