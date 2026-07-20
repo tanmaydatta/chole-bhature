@@ -1,0 +1,43 @@
+name = "incentives-identity-local"
+main = "src/worker.ts"
+compatibility_date = "2026-07-20"
+compatibility_flags = ["nodejs_compat"]
+
+[vars]
+APP_ENV = "local"
+PUBLIC_APP_ORIGIN = "http://localhost:5173"
+COOKIE_PREFIX = "incentives-local"
+EMAIL_MODE = "local-capture"
+MAGIC_LINK_TTL_SECONDS = "300"
+EMAIL_RATE_LIMIT_MAX = "3"
+EMAIL_RATE_LIMIT_WINDOW_SECONDS = "60"
+STAGING_ALLOWED_RECIPIENTS = "[]"
+PASSKEY_RP_ID = "localhost"
+PASSKEY_RP_NAME = "Incentives Operator (Local)"
+
+[[d1_databases]]
+binding = "AUTH_DB"
+database_name = "incentives-auth-local"
+database_id = "10000000-0000-0000-0000-000000000001"
+migrations_dir = "migrations"
+
+[env.staging]
+name = "incentives-identity-staging"
+
+[env.staging.vars]
+APP_ENV = "staging"
+PUBLIC_APP_ORIGIN = "https://operator-staging.example.invalid"
+COOKIE_PREFIX = "incentives-staging"
+EMAIL_MODE = "resend"
+MAGIC_LINK_TTL_SECONDS = "300"
+EMAIL_RATE_LIMIT_MAX = "3"
+EMAIL_RATE_LIMIT_WINDOW_SECONDS = "60"
+STAGING_ALLOWED_RECIPIENTS = "[\"identity-smoke@example.invalid\"]"
+PASSKEY_RP_ID = "operator-staging.example.invalid"
+PASSKEY_RP_NAME = "Incentives Operator (Staging)"
+
+[[env.staging.d1_databases]]
+binding = "AUTH_DB"
+database_name = "incentives-auth-staging"
+database_id = "20000000-0000-0000-0000-000000000002"
+migrations_dir = "migrations"
