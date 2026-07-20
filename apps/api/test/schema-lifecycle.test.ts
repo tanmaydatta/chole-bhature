@@ -1,7 +1,12 @@
 import {
+  SchemaDefinitionImpactPreviewSchema,
+  SchemaPublicationResultSchema,
   type OperatorCallContext,
   type PermissionKey,
   type PromoProgram,
+  type SchemaDefinitionImpactPreview,
+  type SchemaDefinitionView,
+  type SchemaPublicationResult,
   type VariableDefinition,
 } from '@incentives/contracts';
 import { createExecutionContext, SELF } from 'cloudflare:test';
@@ -9,37 +14,24 @@ import { env } from 'cloudflare:workers';
 import { beforeEach, describe, expect, test } from 'vitest';
 
 import type { Env } from '../src/env.js';
-import type { SchemaDefinitionImpact } from '../src/repositories/types.js';
 import { CoreOperatorService } from '../src/worker.js';
 import { SEEDED_MERCHANT_ID, SECRET_TEST_TOKEN } from './test-credentials.js';
 
-interface DefinitionView {
-  id: string;
-  definition: VariableDefinition;
-  readOnly: boolean;
-  referenced: boolean;
-}
-
-interface ImpactPreview extends SchemaDefinitionImpact {
-  incompatibleCustomerCount: number;
-  warnings: Array<{ code: string; message: string }>;
-}
-
 interface SchemaLifecycleOperatorService extends CoreOperatorService {
   listSchemaDefinitions(context: OperatorCallContext): Promise<{
-    definitions: DefinitionView[];
+    definitions: SchemaDefinitionView[];
     draftVersion?: number;
     publishedVersion?: number;
   }>;
   createSchemaDefinition(
     context: OperatorCallContext,
     input: unknown,
-  ): Promise<DefinitionView>;
+  ): Promise<SchemaDefinitionView>;
   updateSchemaDefinition(
     context: OperatorCallContext,
     definitionId: string,
     input: unknown,
-  ): Promise<DefinitionView>;
+  ): Promise<SchemaDefinitionView>;
   deleteSchemaDefinition(
     context: OperatorCallContext,
     definitionId: string,
@@ -47,16 +39,12 @@ interface SchemaLifecycleOperatorService extends CoreOperatorService {
   previewSchemaDefinitionImpact(
     context: OperatorCallContext,
     definitionId: string,
-  ): Promise<ImpactPreview>;
+  ): Promise<SchemaDefinitionImpactPreview>;
   deprecateSchemaDefinition(
     context: OperatorCallContext,
     definitionId: string,
   ): Promise<void>;
-  publishSchema(context: OperatorCallContext): Promise<{
-    version: number;
-    definitions: VariableDefinition[];
-    warnings: Array<{ code: string; message: string }>;
-  }>;
+  publishSchema(context: OperatorCallContext): Promise<SchemaPublicationResult>;
   createProgramDraft(
     context: OperatorCallContext,
     input: unknown,
@@ -230,19 +218,25 @@ describe('private schema lifecycle service', () => {
       { ...contextChannelDefinition, required: true },
     );
 
-    await expect(service.previewSchemaDefinitionImpact(
+    const tierImpact = SchemaDefinitionImpactPreviewSchema.parse(
+      await service.previewSchemaDefinitionImpact(
       operatorContext('schemas:read'),
       requiredTier.id,
-    )).resolves.toMatchObject({
+      ),
+    );
+    expect(tierImpact).toMatchObject({
       publishedVersions: [1],
       storedCustomerCount: 1,
       incompatibleCustomerCount: 1,
       warnings: [],
     });
-    await expect(service.previewSchemaDefinitionImpact(
+    const channelImpact = SchemaDefinitionImpactPreviewSchema.parse(
+      await service.previewSchemaDefinitionImpact(
       operatorContext('schemas:read'),
       requiredChannel.id,
-    )).resolves.toMatchObject({
+      ),
+    );
+    expect(channelImpact).toMatchObject({
       publishedVersions: [1],
       storedCustomerCount: 0,
       incompatibleCustomerCount: 0,
@@ -258,9 +252,10 @@ describe('private schema lifecycle service', () => {
       { tier: 'silver' },
       1,
     )).status).toBe(200);
-    await expect(service.publishSchema(
+    const publication = SchemaPublicationResultSchema.parse(await service.publishSchema(
       operatorContext('schemas:publish'),
-    )).resolves.toMatchObject({
+    ));
+    expect(publication).toMatchObject({
       version: 2,
       warnings: [expect.objectContaining({ code: 'REQUIRED_LIVE_FIELD' })],
     });
@@ -348,6 +343,103 @@ describe('private schema lifecycle service', () => {
     `).bind(SEEDED_MERCHANT_ID).first()).toMatchObject({
       publishedAt: expect.any(String),
     });
+  });
+
+  test('warns for enum additions and blocks removals that break existing programs', async () => {
+    const service = operatorService();
+    const channel = await service.createSchemaDefinition(
+      operatorContext('schemas:manage'),
+      {
+        key: 'context.channel',
+        label: 'Sales channel',
+        source: 'context',
+        type: 'enum',
+        required: false,
+        enumValues: ['web', 'mobile'],
+      },
+    );
+    await service.publishSchema(operatorContext('schemas:publish'));
+    const mobileProgram = draftProgram('mobile-program', 'context.channel');
+    mobileProgram.eligibility.conditions[0]!.value = 'mobile';
+    await service.createProgramDraft(operatorContext('programs:manage'), mobileProgram);
+    await service.publishProgram(operatorContext('programs:publish'), mobileProgram.id);
+
+    const added = await service.updateSchemaDefinition(
+      operatorContext('schemas:manage'),
+      channel.id,
+      {
+        key: 'context.channel',
+        label: 'Sales channel',
+        source: 'context',
+        type: 'enum',
+        required: false,
+        enumValues: ['web', 'mobile', 'store'],
+      },
+    );
+    const additivePublication = SchemaPublicationResultSchema.parse(
+      await service.publishSchema(operatorContext('schemas:publish')),
+    );
+    expect(additivePublication).toMatchObject({
+      version: 2,
+      warnings: [expect.objectContaining({ code: 'ENUM_VALUE_ADDED' })],
+    });
+
+    await service.updateSchemaDefinition(
+      operatorContext('schemas:manage'),
+      added.id,
+      {
+        key: 'context.channel',
+        label: 'Sales channel',
+        source: 'context',
+        type: 'enum',
+        required: false,
+        enumValues: ['web', 'store'],
+      },
+    );
+    await expect(service.publishSchema(
+      operatorContext('schemas:publish'),
+    )).rejects.toMatchObject({ name: 'SchemaConflictError' });
+    expect(await env.DB.prepare(`
+      SELECT MAX(version) AS version FROM schema_versions
+      WHERE merchant_id = ?1 AND state = 'published'
+    `).bind(SEEDED_MERCHANT_ID).first()).toEqual({ version: 2 });
+  });
+
+  test('keeps deprecated fields hidden through draft cloning and later publication', async () => {
+    const service = operatorService();
+    const tier = await service.createSchemaDefinition(
+      operatorContext('schemas:manage'),
+      customerTierDefinition,
+    );
+    await service.publishSchema(operatorContext('schemas:publish'));
+    await service.createSchemaDefinition(operatorContext('schemas:manage'), {
+      key: 'context.note',
+      label: 'Note',
+      source: 'context',
+      type: 'string',
+      required: false,
+    });
+    await service.deprecateSchemaDefinition(
+      operatorContext('schemas:manage'),
+      tier.id,
+    );
+    let listed = await service.listSchemaDefinitions(operatorContext('schemas:read'));
+    expect(listed.definitions.some(({ definition }) => (
+      definition.key === customerTierDefinition.key
+    ))).toBe(false);
+
+    await service.publishSchema(operatorContext('schemas:publish'));
+    await service.createSchemaDefinition(operatorContext('schemas:manage'), {
+      key: 'context.flag',
+      label: 'Flag',
+      source: 'context',
+      type: 'boolean',
+      required: false,
+    });
+    listed = await service.listSchemaDefinitions(operatorContext('schemas:read'));
+    expect(listed.definitions.some(({ definition }) => (
+      definition.key === customerTierDefinition.key
+    ))).toBe(false);
   });
 
   test('requires canonical operator permissions and exposes no merchant authoring routes', async () => {

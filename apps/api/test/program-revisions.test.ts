@@ -1,16 +1,19 @@
 import {
   EvaluationResponseSchema,
+  ProgramPublicationResultSchema,
   type OperatorCallContext,
   type PermissionKey,
   type ProgramLifecycle,
+  type ProgramPublicationResult,
   type PromoProgram,
   type VariableDefinition,
 } from '@incentives/contracts';
 import { createExecutionContext, SELF } from 'cloudflare:test';
 import { env } from 'cloudflare:workers';
-import { afterEach, beforeEach, describe, expect, test } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
 import type { Env } from '../src/env.js';
+import { createRepositories } from '../src/repositories/d1-repositories.js';
 import { CoreOperatorService } from '../src/worker.js';
 import { PUBLISHABLE_TEST_TOKEN, SEEDED_MERCHANT_ID } from './test-credentials.js';
 
@@ -26,7 +29,7 @@ interface ProgramLifecycleOperatorService extends CoreOperatorService {
   publishProgram(
     context: OperatorCallContext,
     externalRef: string,
-  ): Promise<ProgramLifecycle & { warnings: Array<{ code: string; message: string }> }>;
+  ): Promise<ProgramPublicationResult>;
   pauseProgram(context: OperatorCallContext, externalRef: string): Promise<ProgramLifecycle>;
   resumeProgram(context: OperatorCallContext, externalRef: string): Promise<ProgramLifecycle>;
   endProgram(context: OperatorCallContext, externalRef: string): Promise<ProgramLifecycle>;
@@ -149,6 +152,7 @@ async function resetLifecycleData(): Promise<void> {
 describe('immutable Promo revisions and lifecycle', () => {
   beforeEach(resetLifecycleData);
   afterEach(async () => {
+    vi.useRealTimers();
     await env.DB.prepare('DROP TRIGGER IF EXISTS fail_program_revision_swap').run();
   });
 
@@ -219,10 +223,10 @@ describe('immutable Promo revisions and lifecycle', () => {
     `).bind(SEEDED_MERCHANT_ID).first()).toEqual({ publishedAt: null });
 
     await env.DB.prepare('DROP TRIGGER fail_program_revision_swap').run();
-    const publication = await service.publishProgram(
+    const publication = ProgramPublicationResultSchema.parse(await service.publishProgram(
       operatorContext('programs:publish'),
       first.id,
-    );
+    ));
     expect(publication).toMatchObject({
       programRef: first.id,
       status: 'active',
@@ -260,9 +264,71 @@ describe('immutable Promo revisions and lifecycle', () => {
     });
   });
 
-  test('publishes future revisions as scheduled and resumes them according to effective time', async () => {
+  test('leaves a draft unpublished when an ordinary counter CAS updates zero rows', async () => {
     const service = operatorService();
-    const scheduled = draftProgram('scheduled-offer', { startDate: '2099-01-01' });
+    const first = draftProgram('ordinary-cas-miss');
+    await service.createProgramDraft(operatorContext('programs:manage'), first);
+    await service.publishProgram(operatorContext('programs:publish'), first.id);
+    await service.updateProgramDraft(
+      operatorContext('programs:manage'),
+      first.id,
+      draftProgram(first.id, { name: 'CAS replacement' }),
+    );
+
+    let injectRace = true;
+    const racingDb = new Proxy(env.DB, {
+      get(target, property) {
+        if (property === 'batch') {
+          return async (statements: D1PreparedStatement[]) => {
+            if (injectRace) {
+              injectRace = false;
+              await target.prepare(`
+                UPDATE program_counters SET usage_count = usage_count + 1
+                WHERE merchant_id = ?1
+              `).bind(SEEDED_MERCHANT_ID).run();
+            }
+            return target.batch(statements);
+          };
+        }
+        const value = Reflect.get(target, property) as unknown;
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    }) as D1Database;
+    const repositories = createRepositories({ DB: racingDb });
+
+    await expect(repositories.programs.publishDraft({
+      merchantId: SEEDED_MERCHANT_ID,
+      externalRef: first.id,
+      expectedDraftRevision: 2,
+      status: 'active',
+      publishedAt: '2026-07-20T12:00:00.000Z',
+      publishedBy: 'program-operator',
+    })).rejects.toMatchObject({ name: 'ProgramConflictError' });
+
+    expect(await env.DB.prepare(`
+      SELECT active_revision AS activeRevision, draft_revision AS draftRevision
+      FROM programs WHERE merchant_id = ?1 AND external_ref = ?2
+    `).bind(SEEDED_MERCHANT_ID, first.id).first()).toEqual({
+      activeRevision: 1,
+      draftRevision: 2,
+    });
+    expect(await env.DB.prepare(`
+      SELECT published_at AS publishedAt, published_by AS publishedBy
+      FROM program_revisions WHERE merchant_id = ?1 AND revision = 2
+    `).bind(SEEDED_MERCHANT_ID).first()).toEqual({
+      publishedAt: null,
+      publishedBy: null,
+    });
+  });
+
+  test('enforces scheduled start/end boundaries as time advances without weakening pause', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-01T12:00:00.000Z'));
+    const service = operatorService();
+    const scheduled = draftProgram('scheduled-offer', {
+      startDate: '2026-08-02',
+      endDate: '2026-08-03',
+    });
     await service.createProgramDraft(operatorContext('programs:manage'), scheduled);
 
     await expect(service.publishProgram(
@@ -274,14 +340,28 @@ describe('immutable Promo revisions and lifecycle', () => {
       outcome: 'unavailable',
       reasonCodes: ['PROGRAM_UNAVAILABLE'],
     });
+
+    const paused = draftProgram('paused-scheduled-offer', {
+      startDate: '2026-08-02',
+      endDate: '2026-08-03',
+    });
+    await service.createProgramDraft(operatorContext('programs:manage'), paused);
+    await service.publishProgram(operatorContext('programs:publish'), paused.id);
     await expect(service.pauseProgram(
       operatorContext('programs:manage'),
-      scheduled.id,
+      paused.id,
     )).resolves.toMatchObject({ status: 'paused' });
-    await expect(service.resumeProgram(
-      operatorContext('programs:manage'),
-      scheduled.id,
-    )).resolves.toMatchObject({ status: 'scheduled', activeRevision: 1 });
+
+    vi.setSystemTime(new Date('2026-08-02T00:00:00.000Z'));
+    await expect(evaluate(scheduled.id)).resolves.toMatchObject({ outcome: 'qualified' });
+    await expect(evaluate(paused.id)).resolves.toMatchObject({ outcome: 'unavailable' });
+
+    vi.setSystemTime(new Date('2026-08-03T23:59:59.000Z'));
+    await expect(evaluate(scheduled.id)).resolves.toMatchObject({ outcome: 'qualified' });
+
+    vi.setSystemTime(new Date('2026-08-04T00:00:00.000Z'));
+    await expect(evaluate(scheduled.id)).resolves.toMatchObject({ outcome: 'unavailable' });
+    await expect(evaluate(paused.id)).resolves.toMatchObject({ outcome: 'unavailable' });
   });
 
   test('pauses and resumes an active Promo, then makes end irreversible', async () => {

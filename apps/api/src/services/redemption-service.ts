@@ -30,6 +30,7 @@ import {
   signRedemptionReceipt,
   verifyRedemptionReceipt,
 } from './redemption-receipt.js';
+import { effectiveProgramStatus, programCurrency } from './program-runtime.js';
 
 const SigningSecretSchema = z.string().min(16).max(4_096);
 
@@ -221,7 +222,12 @@ export function createRedemptionService(repositories: Repositories, env: Env) {
             decision.programRevision,
           ),
         ]);
-        if (program === null || program.program.status !== 'active') throw new ExhaustedError();
+        const redemptionNow = new Date();
+        if (
+          program === null
+          || program.activeRevision === undefined
+          || effectiveProgramStatus(program.program, redemptionNow) !== 'active'
+        ) throw new ExhaustedError();
         if (revision?.publishedAt === undefined) {
           throw new VersionConflictError('The evaluated program revision is not published');
         }
@@ -233,8 +239,8 @@ export function createRedemptionService(repositories: Repositories, env: Env) {
         if (
           ('amount' in revisionReward
             && revisionReward.amount.currency !== cartCurrency)
-          || (revision.configuration.budget !== undefined
-            && revision.configuration.budget.currency !== cartCurrency)
+          || (programCurrency(program.program) !== undefined
+            && programCurrency(program.program) !== cartCurrency)
         ) {
           throw new VersionConflictError('The program currency changed after evaluation');
         }
@@ -243,7 +249,7 @@ export function createRedemptionService(repositories: Repositories, env: Env) {
           record.request.cart,
         );
 
-        if (revision.configuration.perCustomerCap !== undefined) {
+        if (program.program.perCustomerCap !== undefined) {
           if (record.customerRef === undefined) {
             throw new VersionConflictError('A customer is required for this redemption');
           }
@@ -253,7 +259,7 @@ export function createRedemptionService(repositories: Repositories, env: Env) {
             request.programRef,
             verifyIntegrity,
           );
-          if (count >= revision.configuration.perCustomerCap) throw new ExhaustedError();
+          if (count >= program.program.perCustomerCap) throw new ExhaustedError();
         }
 
         const result = RedemptionResponseSchema.parse({
@@ -283,14 +289,15 @@ export function createRedemptionService(repositories: Repositories, env: Env) {
           result,
           discountMinorUnits,
           currency: cartCurrency,
-          createdAt: new Date().toISOString(),
-          programId: revision.programId,
+          createdAt: redemptionNow.toISOString(),
+          programId: program.id,
           programRef: request.programRef,
-          expectedProgram: revision.configuration,
+          expectedActiveRevision: program.activeRevision,
+          expectedProgram: program.program,
           ...(record.customerRef === undefined ? {} : { customerRef: record.customerRef }),
-          ...(revision.configuration.perCustomerCap === undefined
+          ...(program.program.perCustomerCap === undefined
             ? {}
-            : { perCustomerCap: revision.configuration.perCustomerCap }),
+            : { perCustomerCap: program.program.perCustomerCap }),
         } satisfies Omit<AtomicRedemptionCommit, 'receiptIntegrityHash'>;
         const commit: AtomicRedemptionCommit = {
           ...unsignedCommit,

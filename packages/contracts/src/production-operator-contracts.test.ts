@@ -10,7 +10,10 @@ import {
   OperatorPrincipalSchema,
   PermissionKeySchema,
   ProgramLifecycleSchema,
+  ProgramPublicationResultSchema,
   ProgramRevisionSchema,
+  SchemaDefinitionImpactPreviewSchema,
+  SchemaPublicationResultSchema,
 } from './index.js';
 import {
   canonicalApiCredentialView,
@@ -99,6 +102,54 @@ describe('production operator contracts', () => {
     expect(ProgramRevisionSchema.safeParse({
       ...canonicalProgramRevision,
       programRef: 'another-program',
+    }).success).toBe(false);
+  });
+
+  test('defines strict private schema and program lifecycle response contracts', () => {
+    const impact = {
+      publishedVersions: [1],
+      referencedProgramRefs: ['welcome-10'],
+      storedCustomerCount: 4,
+      incompatibleCustomerCount: 1,
+      warnings: [{
+        code: 'REQUIRED_LIVE_FIELD',
+        message: 'Required live field context.channel may break existing integrations',
+      }],
+    } as const;
+    expect(SchemaDefinitionImpactPreviewSchema.parse(impact)).toEqual(impact);
+    expect(SchemaDefinitionImpactPreviewSchema.safeParse({
+      ...impact,
+      browserAuthority: true,
+    }).success).toBe(false);
+
+    const schemaPublication = {
+      version: 2,
+      publishedAt: '2026-07-20T12:00:00.000Z',
+      definitions: [],
+      jsonSchema: {},
+      sample: {},
+      warnings: [{
+        code: 'ENUM_VALUE_ADDED',
+        message: 'Enum field context.channel added values: store',
+      }],
+    } as const;
+    expect(SchemaPublicationResultSchema.parse(schemaPublication)).toEqual(schemaPublication);
+    expect(SchemaPublicationResultSchema.safeParse({
+      ...schemaPublication,
+      unsafeDraft: {},
+    }).success).toBe(false);
+
+    const programPublication = {
+      ...canonicalProgramLifecycle,
+      warnings: [{
+        code: 'OVERLAPPING_REWARD_RULES',
+        message: 'Reward rule fallback overlaps an earlier rule',
+      }],
+    } as const;
+    expect(ProgramPublicationResultSchema.parse(programPublication)).toEqual(programPublication);
+    expect(ProgramPublicationResultSchema.safeParse({
+      ...programPublication,
+      credential: 'sk_forbidden',
     }).success).toBe(false);
   });
 });

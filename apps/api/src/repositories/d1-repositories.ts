@@ -102,6 +102,15 @@ function storedProgramJson(program: z.infer<typeof PromoProgramSchema>): string 
   return serialized;
 }
 
+function programCurrency(program: z.infer<typeof PromoProgramSchema>): string | undefined {
+  if (program.budget !== undefined) return program.budget.currency;
+  const rewards = [
+    ...program.rewardRules.map(rule => rule.reward),
+    ...(program.fallbackReward === undefined ? [] : [program.fallbackReward.reward]),
+  ];
+  return rewards.find(reward => 'amount' in reward)?.amount.currency;
+}
+
 function validStoredCustomerValue(definition: VariableDefinition, value: unknown): boolean {
   switch (definition.type) {
     case 'string':
@@ -324,6 +333,7 @@ interface StoredProgramRow {
   maxUses: number | null;
   usageCount: number;
   budgetRemaining: number | null;
+  committedSpend: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -344,6 +354,9 @@ function parseProgramRow(row: StoredProgramRow): ProgramRecord {
     throw new Error('Program usage counter is invalid');
   }
   const usageCount = row.usageCount;
+  if (!Number.isSafeInteger(row.committedSpend) || row.committedSpend < 0) {
+    throw new Error('Program committed spend counter is invalid');
+  }
   if (
     program.id !== row.externalRef
     || program.type !== row.type
@@ -394,6 +407,7 @@ function parseProgramRow(row: StoredProgramRow): ProgramRecord {
     ...optional('draftRevision', row.draftRevision),
     usageCount,
     ...optional('budgetRemaining', row.budgetRemaining),
+    committedSpend: row.committedSpend,
     createdAt: DateTimeSchema.parse(row.createdAt),
     updatedAt: DateTimeSchema.parse(row.updatedAt),
   };
@@ -435,6 +449,7 @@ function parseProgramCounterRow(row: typeof programCounters.$inferSelect): Progr
     ...optional('maxUses', row.maxUses),
     usageCount: NonnegativeIntegerSchema.parse(row.usageCount),
     ...optional('budgetRemaining', row.budgetRemaining),
+    committedSpend: NonnegativeIntegerSchema.parse(row.committedSpend),
   };
 }
 
@@ -697,6 +712,7 @@ function parseAtomicRedemption(input: AtomicRedemptionCommit): AtomicRedemptionC
     ...parsed,
     programId: z.string().min(1).parse(input.programId),
     programRef,
+    expectedActiveRevision: PositiveIntegerSchema.parse(input.expectedActiveRevision),
     expectedProgram,
     ...optional('customerRef', customerRef),
     ...optional('perCustomerCap', perCustomerCap),
@@ -726,6 +742,7 @@ export function createRepositories(env: Env): Repositories {
       counter.max_uses AS maxUses,
       counter.usage_count AS usageCount,
       counter.budget_remaining AS budgetRemaining,
+      counter.committed_spend AS committedSpend,
       logical.created_at AS createdAt,
       logical.updated_at AS updatedAt
     FROM programs AS logical
@@ -1119,7 +1136,16 @@ export function createRepositories(env: Env): Repositories {
 
           const published = await getLatestSchemaVersion(merchantId, 'published');
           const version = (published?.version ?? 0) + 1;
-          const definitions = normalizedDefinitions(published?.definitions ?? []);
+          const deprecatedRows = await env.DB.prepare(`
+            SELECT DISTINCT key FROM variable_definitions
+            WHERE merchant_id = ?1 AND state = 'deprecated'
+          `).bind(merchantId).all<{ key: string }>();
+          const deprecatedKeys = new Set(deprecatedRows.results.map(row => row.key));
+          const definitions = normalizedDefinitions(
+            (published?.definitions ?? []).filter(definition => (
+              !deprecatedKeys.has(definition.key)
+            )),
+          );
           const createdAt = now();
           const statements = [
             env.DB.prepare(`
@@ -1579,13 +1605,92 @@ export function createRepositories(env: Env): Repositories {
         const schemaVersion = PositiveIntegerSchema.parse(input.schemaVersion);
         const deprecatedAt = DateTimeSchema.parse(input.deprecatedAt);
         const deprecatedBy = z.string().min(1).parse(input.deprecatedBy);
-        const result = await env.DB.prepare(`
-          UPDATE variable_definitions
-          SET state = 'deprecated', deprecated_at = ?1, deprecated_by = ?2
-          WHERE merchant_id = ?3 AND id = ?4 AND schema_version = ?5
-            AND state = 'published'
-        `).bind(deprecatedAt, deprecatedBy, merchantId, id, schemaVersion).run();
-        if (result.meta.changes !== 1) throw new SchemaRevisionConflictError();
+        const published = await getSchemaDefinition(merchantId, id);
+        if (
+          published === null
+          || published.schemaVersion !== schemaVersion
+          || published.state !== 'published'
+        ) throw new SchemaRevisionConflictError();
+        const draft = await getLatestSchemaVersion(merchantId, 'draft');
+        const draftRecords = draft === null
+          ? null
+          : await env.DB.prepare(`
+              SELECT id, key FROM variable_definitions
+              WHERE merchant_id = ?1 AND schema_version = ?2 AND state = 'draft'
+                AND key = ?3
+            `).bind(merchantId, draft.version, published.definition.key).all<{
+              id: string;
+              key: string;
+            }>();
+        if (draft === null || draftRecords === null || draftRecords.results.length === 0) {
+          const result = await env.DB.prepare(`
+            UPDATE variable_definitions
+            SET state = 'deprecated', deprecated_at = ?1, deprecated_by = ?2
+            WHERE merchant_id = ?3 AND id = ?4 AND schema_version = ?5
+              AND state = 'published'
+          `).bind(deprecatedAt, deprecatedBy, merchantId, id, schemaVersion).run();
+          if (result.meta.changes !== 1) throw new SchemaRevisionConflictError();
+          return;
+        }
+        const expectedJson = definitionsJson(draft.definitions);
+        const nextDefinitions = draft.definitions.filter(definition => (
+          definition.key !== published.definition.key
+        ));
+        try {
+          await env.DB.batch([
+            env.DB.prepare(`
+              UPDATE variable_definitions
+              SET state = 'deprecated', deprecated_at = ?1, deprecated_by = ?2
+              WHERE merchant_id = ?3 AND id = ?4 AND schema_version = ?5
+                AND state = 'published'
+                AND EXISTS (
+                  SELECT 1 FROM schema_versions
+                  WHERE merchant_id = ?3 AND version = ?6 AND state = 'draft'
+                    AND definitions_json = ?7
+                )
+            `).bind(
+              deprecatedAt,
+              deprecatedBy,
+              merchantId,
+              id,
+              schemaVersion,
+              draft.version,
+              expectedJson,
+            ),
+            env.DB.prepare(`
+              DELETE FROM variable_definitions
+              WHERE merchant_id = ?1 AND schema_version = ?2 AND state = 'draft'
+                AND key = ?3 AND changes() = 1
+            `).bind(merchantId, draft.version, published.definition.key),
+            env.DB.prepare(`
+              UPDATE schema_versions SET definitions_json = ?1
+              WHERE merchant_id = ?2 AND version = ?3 AND state = 'draft'
+                AND definitions_json = ?4 AND changes() = 1
+                AND NOT EXISTS (
+                  SELECT 1 FROM variable_definitions
+                  WHERE merchant_id = ?2 AND schema_version = ?3 AND key = ?5
+                    AND state = 'draft'
+                )
+            `).bind(
+              definitionsJson(nextDefinitions),
+              merchantId,
+              draft.version,
+              expectedJson,
+              published.definition.key,
+            ),
+            env.DB.prepare(`
+              SELECT json_extract(
+                CASE WHEN changes() = 1 THEN 'null' ELSE 'deprecation-cas-miss' END,
+                '$'
+              )
+            `),
+          ]);
+        } catch (error) {
+          if (error instanceof Error && /malformed JSON/u.test(error.message)) {
+            throw new SchemaRevisionConflictError();
+          }
+          throw error;
+        }
       },
     },
 
@@ -1710,9 +1815,10 @@ export function createRepositories(env: Env): Repositories {
             ),
             env.DB.prepare(`
               INSERT INTO program_counters (
-                program_id, merchant_id, max_uses, usage_count, budget_remaining
+                program_id, merchant_id, max_uses, usage_count, budget_remaining,
+                committed_spend
               )
-              SELECT ?1, ?2, ?3, 0, ?4 WHERE changes() = 1
+              SELECT ?1, ?2, ?3, 0, ?4, 0 WHERE changes() = 1
             `).bind(
               id,
               merchantId,
@@ -1963,7 +2069,16 @@ export function createRepositories(env: Env): Repositories {
             active.config_json AS activeConfigJson,
             counter.max_uses AS maxUses,
             counter.usage_count AS usageCount,
-            counter.budget_remaining AS budgetRemaining
+            counter.budget_remaining AS budgetRemaining,
+            counter.committed_spend AS committedSpend,
+            COALESCE((
+              SELECT SUM(redemption.discount_minor_units)
+              FROM redemptions AS redemption
+              WHERE redemption.merchant_id = logical.merchant_id
+                AND json_valid(redemption.result_json)
+                AND json_extract(redemption.result_json, '$.result.programRef')
+                  = logical.external_ref
+            ), 0) AS ledgerCommittedSpend
           FROM programs AS logical
           INNER JOIN program_revisions AS draft
             ON draft.merchant_id = logical.merchant_id
@@ -1987,6 +2102,8 @@ export function createRepositories(env: Env): Repositories {
           maxUses: number | null;
           usageCount: number;
           budgetRemaining: number | null;
+          committedSpend: number;
+          ledgerCommittedSpend: number;
         }>();
         if (current === null) throw new ProgramConflictError('There is no draft revision to publish');
         const draft = parseJson(current.draftConfigJson, PromoProgramSchema);
@@ -1997,16 +2114,12 @@ export function createRepositories(env: Env): Repositories {
         if (nextMaxUses !== null && current.usageCount > nextMaxUses) {
           throw new ProgramConflictError('The replacement usage cap is below current usage');
         }
-        const oldBudget = active?.budget;
         const nextBudget = draft.budget;
-        const spent = oldBudget === undefined
-          ? 0
-          : oldBudget.minorUnits - (current.budgetRemaining ?? 0);
+        const spent = Math.max(current.committedSpend, current.ledgerCommittedSpend);
         if (
-          oldBudget !== undefined
-          && nextBudget !== undefined
-          && oldBudget.currency !== nextBudget.currency
+          active !== null
           && spent > 0
+          && programCurrency(active) !== programCurrency(draft)
         ) {
           throw new ProgramConflictError('A spent program budget cannot change currency');
         }
@@ -2017,81 +2130,109 @@ export function createRepositories(env: Env): Repositories {
           throw new ProgramConflictError('The replacement budget is below committed spend');
         }
         const updatedAt = nextProgramTimestamp(current.updatedAt, publishedAt);
-        const [revisionResult, counterResult, logicalResult] = await env.DB.batch([
-          env.DB.prepare(`
-            UPDATE program_revisions
-            SET published_at = ?1, published_by = ?2
-            WHERE merchant_id = ?3 AND revision = ?4
-              AND published_at IS NULL AND published_by IS NULL
-              AND program_id = (
-                SELECT id FROM programs
-                WHERE merchant_id = ?3 AND external_ref = ?5
-                  AND draft_revision = ?4
+        let results: D1Result[];
+        try {
+          results = await env.DB.batch([
+            env.DB.prepare(`
+              UPDATE program_revisions
+              SET published_at = ?1, published_by = ?2
+              WHERE merchant_id = ?3 AND revision = ?4
+                AND published_at IS NULL AND published_by IS NULL
+                AND program_id = (
+                  SELECT logical.id FROM programs AS logical
+                  INNER JOIN program_counters AS counter
+                    ON counter.merchant_id = logical.merchant_id
+                    AND counter.program_id = logical.id
+                  WHERE logical.merchant_id = ?3 AND logical.external_ref = ?5
+                    AND logical.draft_revision = ?4 AND logical.updated_at = ?6
+                    AND counter.usage_count = ?7
+                    AND ((?8 IS NULL AND counter.max_uses IS NULL)
+                      OR counter.max_uses = ?8)
+                    AND ((?9 IS NULL AND counter.budget_remaining IS NULL)
+                      OR counter.budget_remaining = ?9)
+                    AND counter.committed_spend = ?10
+                )
+            `).bind(
+              publishedAt,
+              publishedBy,
+              merchantId,
+              expectedDraftRevision,
+              externalRef,
+              current.updatedAt,
+              current.usageCount,
+              current.maxUses,
+              current.budgetRemaining,
+              current.committedSpend,
+            ),
+            env.DB.prepare(`
+              UPDATE program_counters
+              SET max_uses = ?1, budget_remaining = ?2, committed_spend = ?9
+              WHERE merchant_id = ?3 AND program_id = ?4
+                AND changes() = 1
+                AND usage_count = ?5
+                AND ((?6 IS NULL AND max_uses IS NULL) OR max_uses = ?6)
+                AND ((?7 IS NULL AND budget_remaining IS NULL) OR budget_remaining = ?7)
+                AND committed_spend = ?8
+            `).bind(
+              nextMaxUses,
+              nextBudgetRemaining,
+              merchantId,
+              current.programId,
+              current.usageCount,
+              current.maxUses,
+              current.budgetRemaining,
+              current.committedSpend,
+              spent,
+            ),
+            env.DB.prepare(`
+              UPDATE programs
+              SET active_revision = draft_revision, draft_revision = NULL,
+                status = ?1, max_uses = ?2, budget_remaining = ?3, updated_at = ?4
+              WHERE merchant_id = ?5 AND external_ref = ?6
+                AND changes() = 1
+                AND draft_revision = ?7 AND updated_at = ?8
+                AND usage_count = ?9
+                AND EXISTS (
+                  SELECT 1 FROM program_revisions
+                  WHERE merchant_id = ?5 AND program_id = programs.id
+                    AND revision = ?7 AND published_at = ?10 AND published_by = ?11
+                )
+                AND EXISTS (
+                  SELECT 1 FROM program_counters
+                  WHERE merchant_id = ?5 AND program_id = programs.id
+                    AND usage_count = ?9
+                    AND ((?2 IS NULL AND max_uses IS NULL) OR max_uses = ?2)
+                    AND ((?3 IS NULL AND budget_remaining IS NULL) OR budget_remaining = ?3)
+                    AND committed_spend = ?12
+                )
+            `).bind(
+              status,
+              nextMaxUses,
+              nextBudgetRemaining,
+              updatedAt,
+              merchantId,
+              externalRef,
+              expectedDraftRevision,
+              current.updatedAt,
+              current.usageCount,
+              publishedAt,
+              publishedBy,
+              spent,
+            ),
+            env.DB.prepare(`
+              SELECT json_extract(
+                CASE WHEN changes() = 1 THEN 'null' ELSE 'publication-cas-miss' END,
+                '$'
               )
-          `).bind(publishedAt, publishedBy, merchantId, expectedDraftRevision, externalRef),
-          env.DB.prepare(`
-            UPDATE program_counters
-            SET max_uses = ?1, budget_remaining = ?2
-            WHERE merchant_id = ?3 AND program_id = ?4
-              AND usage_count = ?5
-              AND (
-                (?6 IS NULL AND max_uses IS NULL)
-                OR max_uses = ?6
-              )
-              AND (
-                (?7 IS NULL AND budget_remaining IS NULL)
-                OR budget_remaining = ?7
-              )
-              AND EXISTS (
-                SELECT 1 FROM program_revisions
-                WHERE merchant_id = ?3 AND program_id = ?4
-                  AND revision = ?8 AND published_at = ?9 AND published_by = ?10
-              )
-          `).bind(
-            nextMaxUses,
-            nextBudgetRemaining,
-            merchantId,
-            current.programId,
-            current.usageCount,
-            current.maxUses,
-            current.budgetRemaining,
-            expectedDraftRevision,
-            publishedAt,
-            publishedBy,
-          ),
-          env.DB.prepare(`
-            UPDATE programs
-            SET active_revision = draft_revision, draft_revision = NULL,
-              status = ?1, max_uses = ?2, budget_remaining = ?3, updated_at = ?4
-            WHERE merchant_id = ?5 AND external_ref = ?6
-              AND draft_revision = ?7 AND updated_at = ?8
-              AND usage_count = ?9
-              AND EXISTS (
-                SELECT 1 FROM program_revisions
-                WHERE merchant_id = ?5 AND program_id = programs.id
-                  AND revision = ?7 AND published_at = ?10 AND published_by = ?11
-              )
-              AND EXISTS (
-                SELECT 1 FROM program_counters
-                WHERE merchant_id = ?5 AND program_id = programs.id
-                  AND usage_count = ?9
-                  AND ((?2 IS NULL AND max_uses IS NULL) OR max_uses = ?2)
-                  AND ((?3 IS NULL AND budget_remaining IS NULL) OR budget_remaining = ?3)
-              )
-          `).bind(
-            status,
-            nextMaxUses,
-            nextBudgetRemaining,
-            updatedAt,
-            merchantId,
-            externalRef,
-            expectedDraftRevision,
-            current.updatedAt,
-            current.usageCount,
-            publishedAt,
-            publishedBy,
-          ),
-        ]);
+            `),
+          ]);
+        } catch (error) {
+          if (error instanceof Error && /malformed JSON/u.test(error.message)) {
+            throw new ProgramConflictError('The program draft changed before publication');
+          }
+          throw error;
+        }
+        const [revisionResult, counterResult, logicalResult] = results;
         if (
           revisionResult?.meta.changes !== 1
           || counterResult?.meta.changes !== 1
@@ -2199,6 +2340,7 @@ export function createRepositories(env: Env): Repositories {
           maxUses: programCounters.maxUses,
           usageCount: programCounters.usageCount,
           budgetRemaining: programCounters.budgetRemaining,
+          committedSpend: programCounters.committedSpend,
         }).from(programCounters).innerJoin(
           programs,
           and(
@@ -2262,15 +2404,30 @@ export function createRepositories(env: Env): Repositories {
           env.DB.prepare(`
             UPDATE program_counters
             SET usage_count = usage_count + 1,
+                committed_spend = committed_spend + ?1,
                 budget_remaining = CASE
                   WHEN budget_remaining IS NULL THEN NULL
                   ELSE budget_remaining - ?1
                 END
             WHERE program_id = ?2 AND merchant_id = ?3
               AND EXISTS (
-                SELECT 1 FROM programs
-                WHERE id = ?2 AND merchant_id = ?3 AND external_ref = ?4
-                  AND status = 'active' AND active_revision IS NOT NULL
+                SELECT 1 FROM programs AS logical
+                INNER JOIN program_revisions AS active
+                  ON active.merchant_id = logical.merchant_id
+                  AND active.program_id = logical.id
+                  AND active.revision = logical.active_revision
+                WHERE logical.id = ?2 AND logical.merchant_id = ?3
+                  AND logical.external_ref = ?4
+                  AND logical.active_revision = ?11
+                  AND logical.status IN ('active', 'scheduled')
+                  AND (
+                    json_extract(active.config_json, '$.startDate') IS NULL
+                    OR json_extract(active.config_json, '$.startDate') <= substr(?12, 1, 10)
+                  )
+                  AND (
+                    json_extract(active.config_json, '$.endDate') IS NULL
+                    OR json_extract(active.config_json, '$.endDate') >= substr(?12, 1, 10)
+                  )
               )
               AND (
                 (?9 IS NULL AND max_uses IS NULL)
@@ -2282,9 +2439,11 @@ export function createRepositories(env: Env): Repositories {
                 (?10 IS NULL AND budget_remaining IS NULL)
                 OR (
                   ?10 IS NOT NULL AND budget_remaining IS NOT NULL
-                  AND budget_remaining BETWEEN 0 AND ?10
+                  AND budget_remaining >= 0
+                  AND budget_remaining + committed_spend = ?10
                 )
               )
+              AND committed_spend >= 0
               AND (max_uses IS NULL OR usage_count < max_uses)
               AND (budget_remaining IS NULL OR budget_remaining >= ?1)
               AND (?5 IS NULL OR NOT EXISTS (
@@ -2320,6 +2479,8 @@ export function createRepositories(env: Env): Repositories {
             parsed.customerRef ?? null,
             parsed.expectedProgram.usageCap ?? null,
             parsed.expectedProgram.budget?.minorUnits ?? null,
+            parsed.expectedActiveRevision,
+            parsed.createdAt,
           ),
           env.DB.prepare(`
             UPDATE programs

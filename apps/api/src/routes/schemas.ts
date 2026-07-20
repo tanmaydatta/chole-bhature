@@ -1,5 +1,9 @@
 import { Hono } from 'hono';
-import type { OperatorCallContext } from '@incentives/contracts';
+import {
+  SchemaDefinitionImpactPreviewSchema,
+  SchemaPublicationResultSchema,
+  type OperatorCallContext,
+} from '@incentives/contracts';
 
 import { requireOperatorContext } from '../auth/operator-context.js';
 import {
@@ -77,7 +81,9 @@ export async function previewSchemaDefinitionImpact(
   definitionId: string,
 ) {
   const { operator, service } = operatorSchemaService(env, context, 'schemas:read');
-  return service.impact(operator.merchantId, definitionId);
+  return SchemaDefinitionImpactPreviewSchema.parse(
+    await service.impact(operator.merchantId, definitionId),
+  );
 }
 
 export async function deprecateSchemaDefinition(
@@ -91,5 +97,7 @@ export async function deprecateSchemaDefinition(
 
 export async function publishSchema(env: Env, context: OperatorCallContext) {
   const { operator, service } = operatorSchemaService(env, context, 'schemas:publish');
-  return service.publishForOperator(operator.merchantId);
+  return SchemaPublicationResultSchema.parse(
+    await service.publishForOperator(operator.merchantId),
+  );
 }

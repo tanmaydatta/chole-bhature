@@ -1,6 +1,9 @@
 import { Hono } from 'hono';
 import type { Context } from 'hono';
-import type { OperatorCallContext } from '@incentives/contracts';
+import {
+  ProgramPublicationResultSchema,
+  type OperatorCallContext,
+} from '@incentives/contracts';
 
 import { requireSecret } from '../auth/api-credentials.js';
 import { requireOperatorContext } from '../auth/operator-context.js';
@@ -104,7 +107,9 @@ export async function publishProgram(
   externalRef: string,
 ) {
   const { operator, service } = operatorProgramService(env, context, 'programs:publish');
-  return service.publish(operator.merchantId, externalRef, operator.actorUserId);
+  return ProgramPublicationResultSchema.parse(
+    await service.publish(operator.merchantId, externalRef, operator.actorUserId),
+  );
 }
 
 export async function pauseProgram(

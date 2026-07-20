@@ -317,3 +317,57 @@ test('upgrades a populated Plan 2 database without breaking ownership or history
     ) VALUES ('legacy-program-row', 'other-merchant', 10, 0, 5000)
   `).run()).rejects.toThrow();
 });
+
+test('forward-migrates logical committed spend from populated Task 2 counters', async () => {
+  const productionMigration = await resetToMigrationOne();
+  await seedRepresentativePlanTwoData();
+  await applyD1Migrations(testEnv.DB, [productionMigration]);
+  const spendMigration = testEnv.TEST_MIGRATIONS.find(migration => (
+    migration.name === '0004_program_committed_spend.sql'
+  ));
+  expect(spendMigration, 'the committed-spend forward migration must exist').toBeDefined();
+
+  await applyD1Migrations(testEnv.DB, [spendMigration!]);
+
+  expect((await testEnv.DB.prepare(`
+    SELECT program_id AS programId, committed_spend AS committedSpend
+    FROM program_counters WHERE merchant_id = 'phase-0-merchant'
+    ORDER BY program_id
+  `).all()).results).toEqual([
+    { programId: 'legacy-draft-row', committedSpend: 250 },
+    { programId: 'legacy-program-row', committedSpend: 500 },
+  ]);
+});
+
+test('recovers spend from a rolled-back counter-first Worker update sequence', async () => {
+  const productionMigration = await resetToMigrationOne();
+  await seedRepresentativePlanTwoData();
+  await applyD1Migrations(testEnv.DB, [productionMigration]);
+  const spendMigration = testEnv.TEST_MIGRATIONS.find(migration => (
+    migration.name === '0004_program_committed_spend.sql'
+  ));
+  expect(spendMigration).toBeDefined();
+  await applyD1Migrations(testEnv.DB, [spendMigration!]);
+
+  await testEnv.DB.prepare(`
+    UPDATE program_counters
+    SET usage_count = 4, budget_remaining = 4_250
+    WHERE merchant_id = 'phase-0-merchant' AND program_id = 'legacy-program-row'
+  `).run();
+  await testEnv.DB.prepare(`
+    UPDATE programs
+    SET usage_count = 4, budget_remaining = 4_250
+    WHERE merchant_id = 'phase-0-merchant' AND id = 'legacy-program-row'
+  `).run();
+
+  expect(await testEnv.DB.prepare(`
+    SELECT usage_count AS usageCount, budget_remaining AS budgetRemaining,
+      committed_spend AS committedSpend
+    FROM program_counters
+    WHERE merchant_id = 'phase-0-merchant' AND program_id = 'legacy-program-row'
+  `).first()).toEqual({
+    usageCount: 4,
+    budgetRemaining: 4_250,
+    committedSpend: 750,
+  });
+});

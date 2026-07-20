@@ -144,6 +144,7 @@ export const programCounters = sqliteTable('program_counters', {
   maxUses: integer('max_uses'),
   usageCount: integer('usage_count').notNull().default(0),
   budgetRemaining: integer('budget_remaining'),
+  committedSpend: integer('committed_spend').notNull().default(0),
 }, table => [
   primaryKey({ columns: [table.merchantId, table.programId] }),
   foreignKey({
@@ -152,6 +153,7 @@ export const programCounters = sqliteTable('program_counters', {
   }).onDelete('cascade'),
   check('program_counters_max_uses_positive', sql`${table.maxUses} IS NULL OR ${table.maxUses} > 0`),
   check('program_counters_usage_nonnegative', sql`${table.usageCount} >= 0`),
+  check('program_counters_committed_spend_nonnegative', sql`${table.committedSpend} >= 0`),
   check(
     'program_counters_usage_within_cap',
     sql`${table.maxUses} IS NULL OR ${table.usageCount} <= ${table.maxUses}`,

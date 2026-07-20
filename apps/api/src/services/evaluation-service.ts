@@ -24,6 +24,7 @@ import type {
 } from '../repositories/types.js';
 import { BUILTIN_VARIABLE_DEFINITIONS } from './schema-service.js';
 import { validateCustomerAttributes } from './customer-service.js';
+import { effectiveProgram } from './program-runtime.js';
 import { verifyRedemptionReceipt } from './redemption-receipt.js';
 
 const DEFAULT_TTL_SECONDS = 300;
@@ -472,6 +473,7 @@ export function createEvaluationService(repositories: Repositories, env: Env) {
         const moduleDecisions = [];
 
         for (const record of programs) {
+          const runtimeProgram = effectiveProgram(record.program, now);
           const customerUsesCount = customer === null
             ? 0
             : await repositories.redemptions.countCommittedForCustomerProgram(
@@ -491,7 +493,7 @@ export function createEvaluationService(repositories: Repositories, env: Env) {
           facts.programs.push({
             programRef: record.externalRef,
             system,
-            config: record.program,
+            config: runtimeProgram,
           });
           const programFacts = assembleFacts({
             ...(customer === null ? {} : { customer: customer.attributes }),
@@ -506,19 +508,19 @@ export function createEvaluationService(repositories: Repositories, env: Env) {
             request,
             facts: programFacts,
             definitions,
-          }, record.program)).map(decision => ({
+          }, runtimeProgram)).map(decision => ({
             ...decision,
             programRevision: record.revision,
           }));
           const currencyChecked = moduleEvaluated.map(decision => (
             decision.outcome === 'qualified'
-            && selectedCurrencyMismatch(record.program, decision, request.cart.currency)
+            && selectedCurrencyMismatch(runtimeProgram, decision, request.cart.currency)
               ? currencyMismatchDecision(decision)
               : decision
           ));
-          const evaluated = customer === null && record.program.perCustomerCap !== undefined
+          const evaluated = customer === null && runtimeProgram.perCustomerCap !== undefined
             ? currencyChecked.map(decision => decision.outcome === 'qualified'
-              ? customerRequiredDecision(record.program, record.revision)
+              ? customerRequiredDecision(runtimeProgram, record.revision)
               : decision)
             : currencyChecked;
           for (const decision of evaluated) {
@@ -528,12 +530,12 @@ export function createEvaluationService(repositories: Repositories, env: Env) {
             }
             const projectedCost = projectedDiscountMinorUnits(decision.effects, request.cart);
             const exhaustionReasons = [
-              ...(record.program.usageCap !== undefined
-                && record.usageCount >= record.program.usageCap
+              ...(runtimeProgram.usageCap !== undefined
+                && record.usageCount >= runtimeProgram.usageCap
                 ? ['USAGE_CAP_EXHAUSTED']
                 : []),
-              ...(record.program.perCustomerCap !== undefined
-                && customerUsesCount >= record.program.perCustomerCap
+              ...(runtimeProgram.perCustomerCap !== undefined
+                && customerUsesCount >= runtimeProgram.perCustomerCap
                 ? ['PER_CUSTOMER_CAP_EXHAUSTED']
                 : []),
               ...(record.budgetRemaining !== undefined

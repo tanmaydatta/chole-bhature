@@ -1065,6 +1065,7 @@ describe('D1 repositories', () => {
       maxUses: program.usageCap,
       usageCount: 0,
       budgetRemaining: program.budget?.minorUnits,
+      committedSpend: 0,
     });
     expect(await repositories.programs.getRevision('merchant-b', program.id, 1)).toBeNull();
     expect(await repositories.programs.getCounters('merchant-b', program.id)).toBeNull();

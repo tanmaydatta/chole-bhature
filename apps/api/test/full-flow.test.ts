@@ -1,4 +1,5 @@
 import {
+  ApiErrorSchema,
   EvaluationResponseSchema,
   RedemptionResponseSchema,
   buildOpenApiDocument,
@@ -9,7 +10,7 @@ import {
 } from '@incentives/contracts';
 import { createExecutionContext, SELF } from 'cloudflare:test';
 import { env } from 'cloudflare:workers';
-import { beforeEach, describe, expect, test } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
 import type { Env } from '../src/env.js';
 import { CoreOperatorService } from '../src/worker.js';
@@ -158,6 +159,51 @@ const noFallbackPromo = {
   priority: 5,
 } as const satisfies PromoProgram;
 
+function lifecyclePromo(
+  id: string,
+  overrides: Partial<PromoProgram> = {},
+): PromoProgram {
+  return {
+    id,
+    type: 'promo',
+    name: 'Lifecycle review offer',
+    status: 'draft',
+    eligibility: {
+      match: 'ALL',
+      conditions: [{
+        id: 'web-channel',
+        variable: 'context.channel',
+        operator: 'eq',
+        value: 'web',
+      }],
+    },
+    rewardRules: [{
+      id: 'stable-rule',
+      name: 'Stable rule',
+      conditions: {
+        match: 'ALL',
+        conditions: [{
+          id: 'positive-cart',
+          variable: 'cart.subtotal',
+          operator: 'gte',
+          value: 0,
+        }],
+      },
+      reward: {
+        type: 'order_discount',
+        calculation: 'fixed',
+        amount: { currency: 'GBP', minorUnits: 500 },
+      },
+    }],
+    budget: { currency: 'GBP', minorUnits: 1_000 },
+    usageCap: 10,
+    stackable: false,
+    priority: 1,
+    autoApply: true,
+    ...overrides,
+  } as PromoProgram;
+}
+
 async function resetData(): Promise<void> {
   await env.DB.batch([
     env.DB.prepare('DELETE FROM redemptions'),
@@ -207,6 +253,7 @@ async function jsonRequest(
 
 describe('integration-ready runtime', () => {
   beforeEach(resetData);
+  afterEach(() => vi.useRealTimers());
 
   test('redeems a signed old revision after atomic replacement and keeps logical counters', async () => {
     const service = lifecycleOperatorService();
@@ -215,6 +262,9 @@ describe('integration-ready runtime', () => {
       contextChannelDefinition,
     );
     await service.publishSchema(operatorContext('schemas:publish'));
+    expect((await jsonRequest('PATCH', '/v1/customers/revision-customer', {
+      attributes: {},
+    })).status).toBe(200);
 
     const firstRevision = {
       id: 'revision-redemption',
@@ -248,8 +298,9 @@ describe('integration-ready runtime', () => {
           amount: { currency: 'GBP', minorUnits: 500 },
         },
       }],
-      budget: { currency: 'GBP', minorUnits: 5_000 },
-      usageCap: 5,
+      budget: { currency: 'GBP', minorUnits: 1_000 },
+      usageCap: 1,
+      perCustomerCap: 1,
       stackable: false,
       priority: 20,
       autoApply: true,
@@ -258,6 +309,7 @@ describe('integration-ready runtime', () => {
     await service.publishProgram(operatorContext('programs:publish'), firstRevision.id);
 
     const oldEvaluationResponse = await jsonRequest('POST', '/v1/evaluate', {
+      customerRef: 'revision-customer',
       cart: { currency: 'GBP', subtotal: 4_000, items: [] },
       context: { channel: 'web' },
     }, 'pk_test_publishable_credential_material_00000001');
@@ -270,10 +322,29 @@ describe('integration-ready runtime', () => {
       effects: [firstRevision.rewardRules[0].reward],
       outcome: 'qualified',
     }));
+    const secondOldEvaluationResponse = await jsonRequest('POST', '/v1/evaluate', {
+      customerRef: 'revision-customer',
+      cart: { currency: 'GBP', subtotal: 4_000, items: [] },
+      context: { channel: 'web' },
+    }, 'pk_test_publishable_credential_material_00000001');
+    const secondOldEvaluation = EvaluationResponseSchema.parse(
+      await secondOldEvaluationResponse.json(),
+    );
+
+    const firstRedemption = await jsonRequest('POST', '/v1/redemptions', {
+      evaluationId: oldEvaluation.evaluationId,
+      programRef: firstRevision.id,
+      externalOrderRef: 'first-old-revision-order',
+      idempotencyKey: 'first-old-revision-attempt',
+    });
+    expect(firstRedemption.status).toBe(200);
 
     const secondRevision = {
       ...firstRevision,
       name: 'Replacement reward revision',
+      budget: { currency: 'GBP', minorUnits: 2_500 },
+      usageCap: 3,
+      perCustomerCap: 3,
       rewardRules: [{
         ...firstRevision.rewardRules[0],
         reward: {
@@ -291,7 +362,7 @@ describe('integration-ready runtime', () => {
     await service.publishProgram(operatorContext('programs:publish'), firstRevision.id);
 
     const redemptionResponse = await jsonRequest('POST', '/v1/redemptions', {
-      evaluationId: oldEvaluation.evaluationId,
+      evaluationId: secondOldEvaluation.evaluationId,
       programRef: firstRevision.id,
       externalOrderRef: 'old-revision-order',
       idempotencyKey: 'old-revision-attempt',
@@ -307,11 +378,12 @@ describe('integration-ready runtime', () => {
       SELECT usage_count AS usageCount, budget_remaining AS budgetRemaining
       FROM program_counters WHERE merchant_id = ?1
     `).bind(SEEDED_MERCHANT_ID).first()).toEqual({
-      usageCount: 1,
-      budgetRemaining: 4_500,
+      usageCount: 2,
+      budgetRemaining: 1_500,
     });
 
     const currentEvaluationResponse = await jsonRequest('POST', '/v1/evaluate', {
+      customerRef: 'revision-customer',
       cart: { currency: 'GBP', subtotal: 4_000, items: [] },
       context: { channel: 'web' },
     }, 'pk_test_publishable_credential_material_00000001');
@@ -332,10 +404,340 @@ describe('integration-ready runtime', () => {
     expect(JSON.parse(snapshot!.factsJson).programs).toContainEqual(expect.objectContaining({
       programRef: firstRevision.id,
       system: expect.objectContaining({
-        redemptions_total: 1,
-        budget_remaining: 4_500,
+        redemptions_total: 2,
+        customer_uses_count: 2,
+        budget_remaining: 1_500,
       }),
     }));
+  });
+
+  test('rejects an old-currency decision after a zero-spend logical currency change', async () => {
+    const service = lifecycleOperatorService();
+    await service.createSchemaDefinition(
+      operatorContext('schemas:manage'),
+      contextChannelDefinition,
+    );
+    await service.publishSchema(operatorContext('schemas:publish'));
+    const first = lifecyclePromo('currency-replacement');
+    await service.createProgramDraft(operatorContext('programs:manage'), first);
+    await service.publishProgram(operatorContext('programs:publish'), first.id);
+    const evaluationResponse = await jsonRequest('POST', '/v1/evaluate', {
+      cart: { currency: 'GBP', subtotal: 4_000, items: [] },
+      context: { channel: 'web' },
+    }, 'pk_test_publishable_credential_material_00000001');
+    const evaluation = EvaluationResponseSchema.parse(await evaluationResponse.json());
+
+    const usd = lifecyclePromo(first.id, {
+      rewardRules: [{
+        ...first.rewardRules[0]!,
+        reward: {
+          type: 'order_discount',
+          calculation: 'fixed',
+          amount: { currency: 'USD', minorUnits: 500 },
+        },
+      }],
+      budget: { currency: 'USD', minorUnits: 1_000 },
+    });
+    await service.updateProgramDraft(operatorContext('programs:manage'), first.id, usd);
+    await service.publishProgram(operatorContext('programs:publish'), first.id);
+
+    const redemption = await jsonRequest('POST', '/v1/redemptions', {
+      evaluationId: evaluation.evaluationId,
+      programRef: first.id,
+      externalOrderRef: 'currency-order',
+      idempotencyKey: 'currency-attempt',
+    });
+    expect(redemption.status).toBe(409);
+    expect(ApiErrorSchema.parse(await redemption.json()).error.code).toBe('VERSION_CONFLICT');
+    expect(await env.DB.prepare(`
+      SELECT usage_count AS usageCount, budget_remaining AS budgetRemaining
+      FROM program_counters WHERE merchant_id = ?1
+    `).bind(SEEDED_MERCHANT_ID).first()).toEqual({
+      usageCount: 0,
+      budgetRemaining: 1_000,
+    });
+  });
+
+  test('preserves committed spend when a budget is removed and later reintroduced', async () => {
+    const service = lifecycleOperatorService();
+    await service.createSchemaDefinition(
+      operatorContext('schemas:manage'),
+      contextChannelDefinition,
+    );
+    await service.publishSchema(operatorContext('schemas:publish'));
+    const first = lifecyclePromo('budget-reintroduced');
+    await service.createProgramDraft(operatorContext('programs:manage'), first);
+    await service.publishProgram(operatorContext('programs:publish'), first.id);
+    const evaluationResponse = await jsonRequest('POST', '/v1/evaluate', {
+      cart: { currency: 'GBP', subtotal: 4_000, items: [] },
+      context: { channel: 'web' },
+    }, 'pk_test_publishable_credential_material_00000001');
+    const evaluation = EvaluationResponseSchema.parse(await evaluationResponse.json());
+    expect((await jsonRequest('POST', '/v1/redemptions', {
+      evaluationId: evaluation.evaluationId,
+      programRef: first.id,
+      externalOrderRef: 'budget-order',
+      idempotencyKey: 'budget-attempt',
+    })).status).toBe(200);
+
+    await service.updateProgramDraft(
+      operatorContext('programs:manage'),
+      first.id,
+      lifecyclePromo(first.id, { budget: undefined }),
+    );
+    await service.publishProgram(operatorContext('programs:publish'), first.id);
+    await service.updateProgramDraft(
+      operatorContext('programs:manage'),
+      first.id,
+      lifecyclePromo(first.id, { budget: { currency: 'GBP', minorUnits: 1_200 } }),
+    );
+    await service.publishProgram(operatorContext('programs:publish'), first.id);
+
+    expect(await env.DB.prepare(`
+      SELECT usage_count AS usageCount, budget_remaining AS budgetRemaining
+      FROM program_counters WHERE merchant_id = ?1
+    `).bind(SEEDED_MERCHANT_ID).first()).toEqual({
+      usageCount: 1,
+      budgetRemaining: 700,
+    });
+  });
+
+  test('does not count a valid lower replacement budget as newly committed spend', async () => {
+    const service = lifecycleOperatorService();
+    await service.createSchemaDefinition(
+      operatorContext('schemas:manage'),
+      contextChannelDefinition,
+    );
+    await service.publishSchema(operatorContext('schemas:publish'));
+    const first = lifecyclePromo('lower-budget-replacement');
+    await service.createProgramDraft(operatorContext('programs:manage'), first);
+    await service.publishProgram(operatorContext('programs:publish'), first.id);
+    const firstEvaluationResponse = await jsonRequest('POST', '/v1/evaluate', {
+      cart: { currency: 'GBP', subtotal: 4_000, items: [] },
+      context: { channel: 'web' },
+    }, 'pk_test_publishable_credential_material_00000001');
+    const firstEvaluation = EvaluationResponseSchema.parse(
+      await firstEvaluationResponse.json(),
+    );
+    expect((await jsonRequest('POST', '/v1/redemptions', {
+      evaluationId: firstEvaluation.evaluationId,
+      programRef: first.id,
+      externalOrderRef: 'lower-budget-first-order',
+      idempotencyKey: 'lower-budget-first-attempt',
+    })).status).toBe(200);
+
+    const replacement = lifecyclePromo(first.id, {
+      budget: { currency: 'GBP', minorUnits: 800 },
+      rewardRules: [{
+        ...first.rewardRules[0]!,
+        reward: {
+          type: 'order_discount',
+          calculation: 'fixed',
+          amount: { currency: 'GBP', minorUnits: 100 },
+        },
+      }],
+    });
+    await service.updateProgramDraft(
+      operatorContext('programs:manage'),
+      first.id,
+      replacement,
+    );
+    await service.publishProgram(operatorContext('programs:publish'), first.id);
+    expect(await env.DB.prepare(`
+      SELECT usage_count AS usageCount, budget_remaining AS budgetRemaining,
+        committed_spend AS committedSpend
+      FROM program_counters WHERE merchant_id = ?1
+    `).bind(SEEDED_MERCHANT_ID).first()).toEqual({
+      usageCount: 1,
+      budgetRemaining: 300,
+      committedSpend: 500,
+    });
+
+    const nextEvaluationResponse = await jsonRequest('POST', '/v1/evaluate', {
+      cart: { currency: 'GBP', subtotal: 4_000, items: [] },
+      context: { channel: 'web' },
+    }, 'pk_test_publishable_credential_material_00000001');
+    const nextEvaluation = EvaluationResponseSchema.parse(await nextEvaluationResponse.json());
+    expect((await jsonRequest('POST', '/v1/redemptions', {
+      evaluationId: nextEvaluation.evaluationId,
+      programRef: first.id,
+      externalOrderRef: 'lower-budget-second-order',
+      idempotencyKey: 'lower-budget-second-attempt',
+    })).status).toBe(200);
+    expect(await env.DB.prepare(`
+      SELECT usage_count AS usageCount, budget_remaining AS budgetRemaining,
+        committed_spend AS committedSpend
+      FROM program_counters WHERE merchant_id = ?1
+    `).bind(SEEDED_MERCHANT_ID).first()).toEqual({
+      usageCount: 2,
+      budgetRemaining: 200,
+      committedSpend: 600,
+    });
+  });
+
+  test('reconciles rolled-back Worker spend committed during an unlimited revision', async () => {
+    const service = lifecycleOperatorService();
+    await service.createSchemaDefinition(
+      operatorContext('schemas:manage'),
+      contextChannelDefinition,
+    );
+    await service.publishSchema(operatorContext('schemas:publish'));
+    const first = lifecyclePromo('rollback-unlimited-spend');
+    await service.createProgramDraft(operatorContext('programs:manage'), first);
+    await service.publishProgram(operatorContext('programs:publish'), first.id);
+    const firstEvaluationResponse = await jsonRequest('POST', '/v1/evaluate', {
+      cart: { currency: 'GBP', subtotal: 4_000, items: [] },
+      context: { channel: 'web' },
+    }, 'pk_test_publishable_credential_material_00000001');
+    const firstEvaluation = EvaluationResponseSchema.parse(
+      await firstEvaluationResponse.json(),
+    );
+    expect((await jsonRequest('POST', '/v1/redemptions', {
+      evaluationId: firstEvaluation.evaluationId,
+      programRef: first.id,
+      externalOrderRef: 'rollback-unlimited-first-order',
+      idempotencyKey: 'rollback-unlimited-first-attempt',
+    })).status).toBe(200);
+
+    await service.updateProgramDraft(
+      operatorContext('programs:manage'),
+      first.id,
+      lifecyclePromo(first.id, { budget: undefined }),
+    );
+    await service.publishProgram(operatorContext('programs:publish'), first.id);
+    const rollbackEvaluationResponse = await jsonRequest('POST', '/v1/evaluate', {
+      cart: { currency: 'GBP', subtotal: 4_000, items: [] },
+      context: { channel: 'web' },
+    }, 'pk_test_publishable_credential_material_00000001');
+    const rollbackEvaluation = EvaluationResponseSchema.parse(
+      await rollbackEvaluationResponse.json(),
+    );
+
+    await env.DB.batch([
+      env.DB.prepare(`
+        UPDATE program_counters SET usage_count = usage_count + 1
+        WHERE merchant_id = ?1
+      `).bind(SEEDED_MERCHANT_ID),
+      env.DB.prepare(`
+        UPDATE programs SET usage_count = usage_count + 1
+        WHERE merchant_id = ?1 AND external_ref = ?2
+      `).bind(SEEDED_MERCHANT_ID, first.id),
+      env.DB.prepare(`
+        INSERT INTO redemptions (
+          id, merchant_id, external_order_ref, evaluation_id, result_json,
+          discount_minor_units, currency, created_at
+        ) VALUES (?1, ?2, ?3, ?4, ?5, 500, 'GBP', ?6)
+      `).bind(
+        crypto.randomUUID(),
+        SEEDED_MERCHANT_ID,
+        'rollback-unlimited-order',
+        rollbackEvaluation.evaluationId,
+        JSON.stringify({ result: { programRef: first.id } }),
+        new Date().toISOString(),
+      ),
+    ]);
+
+    await service.updateProgramDraft(
+      operatorContext('programs:manage'),
+      first.id,
+      lifecyclePromo(first.id, { budget: { currency: 'GBP', minorUnits: 2_000 } }),
+    );
+    const logical = await env.DB.prepare(`
+      SELECT id, draft_revision AS draftRevision FROM programs
+      WHERE merchant_id = ?1 AND external_ref = ?2
+    `).bind(SEEDED_MERCHANT_ID, first.id).first<{
+      id: string;
+      draftRevision: number;
+    }>();
+    expect(logical).not.toBeNull();
+    const rollbackPublishedAt = new Date().toISOString();
+    await env.DB.batch([
+      env.DB.prepare(`
+        UPDATE program_revisions SET published_at = ?1, published_by = 'rollback-operator'
+        WHERE merchant_id = ?2 AND program_id = ?3 AND revision = ?4
+      `).bind(
+        rollbackPublishedAt,
+        SEEDED_MERCHANT_ID,
+        logical!.id,
+        logical!.draftRevision,
+      ),
+      env.DB.prepare(`
+        UPDATE program_counters SET max_uses = 10, budget_remaining = 2_000
+        WHERE merchant_id = ?1 AND program_id = ?2
+      `).bind(SEEDED_MERCHANT_ID, logical!.id),
+      env.DB.prepare(`
+        UPDATE programs SET active_revision = draft_revision, draft_revision = NULL,
+          status = 'active', max_uses = 10, budget_remaining = 2_000,
+          updated_at = ?1
+        WHERE merchant_id = ?2 AND id = ?3
+      `).bind(rollbackPublishedAt, SEEDED_MERCHANT_ID, logical!.id),
+    ]);
+    expect(await env.DB.prepare(`
+      SELECT usage_count AS usageCount, budget_remaining AS budgetRemaining,
+        committed_spend AS committedSpend
+      FROM program_counters WHERE merchant_id = ?1
+    `).bind(SEEDED_MERCHANT_ID).first()).toEqual({
+      usageCount: 2,
+      budgetRemaining: 1_000,
+      committedSpend: 1_000,
+    });
+
+    const rollForwardEvaluationResponse = await jsonRequest('POST', '/v1/evaluate', {
+      cart: { currency: 'GBP', subtotal: 4_000, items: [] },
+      context: { channel: 'web' },
+    }, 'pk_test_publishable_credential_material_00000001');
+    const rollForwardEvaluation = EvaluationResponseSchema.parse(
+      await rollForwardEvaluationResponse.json(),
+    );
+    expect((await jsonRequest('POST', '/v1/redemptions', {
+      evaluationId: rollForwardEvaluation.evaluationId,
+      programRef: first.id,
+      externalOrderRef: 'roll-forward-order',
+      idempotencyKey: 'roll-forward-attempt',
+    })).status).toBe(200);
+    expect(await env.DB.prepare(`
+      SELECT usage_count AS usageCount, budget_remaining AS budgetRemaining,
+        committed_spend AS committedSpend
+      FROM program_counters WHERE merchant_id = ?1
+    `).bind(SEEDED_MERCHANT_ID).first()).toEqual({
+      usageCount: 3,
+      budgetRemaining: 500,
+      committedSpend: 1_500,
+    });
+  });
+
+  test('rejects redemption after the active revision effective end boundary', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-03T23:58:00.000Z'));
+    const service = lifecycleOperatorService();
+    await service.createSchemaDefinition(
+      operatorContext('schemas:manage'),
+      contextChannelDefinition,
+    );
+    await service.publishSchema(operatorContext('schemas:publish'));
+    const ending = lifecyclePromo('ending-offer', { endDate: '2026-08-03' });
+    await service.createProgramDraft(operatorContext('programs:manage'), ending);
+    await service.publishProgram(operatorContext('programs:publish'), ending.id);
+    vi.setSystemTime(new Date('2026-08-03T23:59:00.000Z'));
+    const evaluationResponse = await jsonRequest('POST', '/v1/evaluate', {
+      cart: { currency: 'GBP', subtotal: 4_000, items: [] },
+      context: { channel: 'web' },
+    }, 'pk_test_publishable_credential_material_00000001');
+    const evaluation = EvaluationResponseSchema.parse(await evaluationResponse.json());
+    expect(evaluation.decisions).toContainEqual(expect.objectContaining({
+      programRef: ending.id,
+      outcome: 'qualified',
+    }));
+
+    vi.setSystemTime(new Date('2026-08-04T00:00:00.000Z'));
+    const redemption = await jsonRequest('POST', '/v1/redemptions', {
+      evaluationId: evaluation.evaluationId,
+      programRef: ending.id,
+      externalOrderRef: 'ended-order',
+      idempotencyKey: 'ended-attempt',
+    });
+    expect(redemption.status).toBe(409);
+    expect(ApiErrorSchema.parse(await redemption.json()).error.code).toBe('EXHAUSTED');
   });
 
   test('proves tiered rewards, selected-rule integrity, and program-wide exhaustion', async () => {

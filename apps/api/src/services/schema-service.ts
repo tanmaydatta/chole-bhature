@@ -1,6 +1,8 @@
 import {
   buildPublishedEvaluationJsonSchema,
   VariableDefinitionSchema,
+  type SchemaDefinitionView,
+  type SchemaLifecycleWarning,
   type VariableDefinition,
 } from '@incentives/contracts';
 
@@ -11,13 +13,7 @@ import {
   type SchemaVersionRecord,
   type VariableDefinitionRecord,
 } from '../repositories/types.js';
-
-export interface SchemaDefinitionView {
-  id: string;
-  definition: VariableDefinition;
-  readOnly: boolean;
-  referenced: boolean;
-}
+import { validateProgramConditions } from './program-condition-validation.js';
 
 export interface PublishedSchema {
   version: number;
@@ -25,11 +21,6 @@ export interface PublishedSchema {
   definitions: VariableDefinition[];
   jsonSchema: Record<string, unknown>;
   sample: Record<string, unknown>;
-}
-
-export interface SchemaLifecycleWarning {
-  code: 'REQUIRED_LIVE_FIELD';
-  message: string;
 }
 
 export const BUILTIN_VARIABLE_DEFINITIONS = [
@@ -146,6 +137,68 @@ export function createSchemaService(repositories: Repositories) {
       : [];
   }
 
+  function enumChangeWarnings(
+    previous: readonly VariableDefinition[],
+    next: readonly VariableDefinition[],
+  ): SchemaLifecycleWarning[] {
+    const previousByKey = new Map(previous.map(definition => [definition.key, definition]));
+    const warnings: SchemaLifecycleWarning[] = [];
+    for (const definition of next) {
+      const prior = previousByKey.get(definition.key);
+      if (prior?.type !== 'enum' || definition.type !== 'enum') continue;
+      const priorValues = new Set(prior.enumValues ?? []);
+      const nextValues = new Set(definition.enumValues ?? []);
+      const removed = [...priorValues].filter(value => !nextValues.has(value));
+      if (removed.length > 0) {
+        throw new SchemaConflictError(
+          `Enum field ${definition.key} removes published values: ${removed.join(', ')}`,
+        );
+      }
+      const added = [...nextValues].filter(value => !priorValues.has(value));
+      if (added.length > 0) {
+        warnings.push({
+          code: 'ENUM_VALUE_ADDED',
+          message: `Enum field ${definition.key} added values: ${added.join(', ')}`,
+        });
+      }
+    }
+    return warnings;
+  }
+
+  async function assertExistingProgramsCompatible(
+    merchantId: string,
+    definitions: readonly VariableDefinition[],
+  ): Promise<void> {
+    const records = await repositories.programs.list(merchantId);
+    const seen = new Set<string>();
+    for (const record of records) {
+      for (const revisionNumber of [record.activeRevision, record.draftRevision]) {
+        if (revisionNumber === undefined) continue;
+        const identity = `${record.id}:${revisionNumber}`;
+        if (seen.has(identity)) continue;
+        seen.add(identity);
+        const revision = await repositories.programs.getRevision(
+          merchantId,
+          record.externalRef,
+          revisionNumber,
+        );
+        if (revision === null) {
+          throw new SchemaConflictError(`Program revision is missing: ${record.externalRef}`);
+        }
+        try {
+          validateProgramConditions(revision.configuration, [
+            ...BUILTIN_VARIABLE_DEFINITIONS,
+            ...definitions,
+          ]);
+        } catch {
+          throw new SchemaConflictError(
+            `Published schema is incompatible with program ${record.externalRef}`,
+          );
+        }
+      }
+    }
+  }
+
   async function workingDefinitions(merchantId: string): Promise<VariableDefinitionRecord[]> {
     const version = await repositories.schemas.getLatestVersion(merchantId, 'draft')
       ?? await latestPublished(merchantId);
@@ -177,6 +230,9 @@ export function createSchemaService(repositories: Repositories) {
     }
     const records = await repositories.schemas.listDefinitions(merchantId, draft.version);
     const definitions = assertDraftSnapshot(draft, records);
+    const previous = await latestPublished(merchantId);
+    const enumWarnings = enumChangeWarnings(previous?.definitions ?? [], definitions);
+    await assertExistingProgramsCompatible(merchantId, definitions);
     for (const definition of definitions) {
       assertMerchantDefinition(definition);
       if (definition.required && definition.source === 'customer') {
@@ -201,7 +257,7 @@ export function createSchemaService(repositories: Repositories) {
     );
     return {
       ...publishedPayload(published),
-      warnings: definitions.flatMap(warningsFor),
+      warnings: [...definitions.flatMap(warningsFor), ...enumWarnings],
     };
   }
 

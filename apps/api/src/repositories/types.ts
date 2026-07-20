@@ -207,6 +207,7 @@ export interface ProgramRecord {
   draftRevision?: number;
   usageCount: number;
   budgetRemaining?: number;
+  committedSpend: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -222,6 +223,7 @@ export interface ProgramCounterRecord {
   maxUses?: number;
   usageCount: number;
   budgetRemaining?: number;
+  committedSpend: number;
 }
 
 export interface ProgramRepository {
@@ -300,6 +302,7 @@ export interface RedemptionCreate {
 export interface AtomicRedemptionCommit extends RedemptionCreate {
   programId: string;
   programRef: string;
+  expectedActiveRevision: number;
   expectedProgram: PromoProgram;
   customerRef?: string;
   perCustomerCap?: number;
