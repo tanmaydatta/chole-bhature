@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import type { Context } from 'hono';
 
-import { requireSecret } from '../auth/static-token.js';
+import { requireSecret } from '../auth/api-credentials.js';
 import type { AppEnvironment } from '../env.js';
 import { ContextValidationError } from '../errors.js';
 import { createProgramService } from '../services/program-service.js';

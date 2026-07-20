@@ -11,7 +11,7 @@ import { env } from 'cloudflare:workers';
 import { beforeEach, describe, expect, test } from 'vitest';
 
 import { createApp } from '../src/app.js';
-import { SEEDED_MERCHANT_ID } from '../src/auth/static-token.js';
+import { SEEDED_MERCHANT_ID } from './test-credentials.js';
 import { createRepositories } from '../src/repositories/d1-repositories.js';
 import {
   formatMinorUnits,
@@ -134,7 +134,7 @@ async function seedProgram(
 
 function evaluateRaw(
   body: unknown,
-  token = 'publishable-test',
+  token = 'pk_test_publishable_credential_material_00000001',
 ): Promise<Response> {
   return SELF.fetch('https://example.test/v1/evaluate', {
     method: 'POST',
@@ -148,7 +148,7 @@ function evaluateRaw(
 
 async function evaluate(
   body: unknown = baseRequest,
-  token = 'publishable-test',
+  token = 'pk_test_publishable_credential_material_00000001',
 ) {
   const response = await evaluateRaw(body, token);
   expect(response.status).toBe(200);
@@ -300,7 +300,7 @@ describe('POST /v1/evaluate', () => {
     })).toBe(maximum);
   });
 
-  test.each(['publishable-test', 'secret-test'])(
+  test.each(['pk_test_publishable_credential_material_00000001', 'sk_test_secret_credential_material_000000000001'])(
     'accepts a %s credential',
     async (token) => {
       await seedProgram(promo('automatic'));
@@ -1243,14 +1243,12 @@ describe('POST /v1/evaluate', () => {
     const customResponse = await app.request('https://example.test/v1/evaluate', {
       method: 'POST',
       headers: {
-        authorization: 'Bearer publishable-test',
+        authorization: 'Bearer pk_test_publishable_credential_material_00000001',
         'content-type': 'application/json',
       },
       body: JSON.stringify(baseRequest),
     }, {
       DB: env.DB,
-      PUBLISHABLE_TOKEN: 'publishable-test',
-      SECRET_TOKEN: 'secret-test',
       DECISION_SIGNING_SECRET: signingSecret,
       EVALUATION_TTL_SECONDS: '42',
     });
@@ -1277,14 +1275,12 @@ describe('POST /v1/evaluate', () => {
     const response = await createApp().request('https://example.test/v1/evaluate', {
       method: 'POST',
       headers: {
-        authorization: 'Bearer publishable-test',
+        authorization: 'Bearer pk_test_publishable_credential_material_00000001',
         'content-type': 'application/json',
       },
       body: JSON.stringify(baseRequest),
     }, {
       DB: env.DB,
-      PUBLISHABLE_TOKEN: 'publishable-test',
-      SECRET_TOKEN: 'secret-test',
       ...(secret === undefined ? {} : { DECISION_SIGNING_SECRET: secret }),
       ...(ttl === undefined ? {} : { EVALUATION_TTL_SECONDS: ttl }),
     });

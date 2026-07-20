@@ -10,7 +10,7 @@ import { env } from 'cloudflare:workers';
 import { beforeEach, describe, expect, test } from 'vitest';
 
 const secretHeaders = {
-  authorization: 'Bearer secret-test',
+  authorization: 'Bearer sk_test_secret_credential_material_000000000001',
   'content-type': 'application/json',
 };
 
@@ -154,7 +154,7 @@ async function jsonRequest(
   method: string,
   path: string,
   body: unknown,
-  token = 'secret-test',
+  token = 'sk_test_secret_credential_material_000000000001',
 ): Promise<Response> {
   return SELF.fetch(`https://example.test${path}`, {
     method,
@@ -207,7 +207,7 @@ describe('integration-ready runtime', () => {
       customerRef: 'customer-1',
       cart: { currency: 'GBP', subtotal: 6_500, items: [] },
       context: { channel: 'web' },
-    }, 'publishable-test');
+    }, 'pk_test_publishable_credential_material_00000001');
     expect(lowerEvaluationResponse.status).toBe(200);
     const lowerEvaluation = EvaluationResponseSchema.parse(
       await lowerEvaluationResponse.json(),
@@ -241,7 +241,7 @@ describe('integration-ready runtime', () => {
       customerRef: 'customer-1',
       cart: { currency: 'GBP', subtotal: 12_500, items: [] },
       context: { channel: 'web' },
-    }, 'publishable-test');
+    }, 'pk_test_publishable_credential_material_00000001');
     expect(higherEvaluationResponse.status).toBe(200);
     const higherEvaluation = EvaluationResponseSchema.parse(
       await higherEvaluationResponse.json(),
@@ -308,7 +308,7 @@ describe('integration-ready runtime', () => {
       customerRef: 'customer-1',
       cart: { currency: 'GBP', subtotal: 12_500, items: [] },
       context: { channel: 'web' },
-    }, 'publishable-test');
+    }, 'pk_test_publishable_credential_material_00000001');
     expect(exhaustedResponse.status).toBe(200);
     const exhausted = EvaluationResponseSchema.parse(await exhaustedResponse.json());
     expect(exhausted).toMatchObject({ customerVersion: 1, schemaVersion: 1 });

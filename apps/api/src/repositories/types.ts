@@ -109,6 +109,7 @@ export interface MerchantRecord {
 export interface MerchantRepository {
   provision(input: MerchantProvision): Promise<MerchantRecord>;
   get(id: string): Promise<MerchantRecord | null>;
+  activate(id: string, updatedAt: string): Promise<MerchantRecord | null>;
 }
 
 export interface CredentialCreate {
@@ -118,6 +119,7 @@ export interface CredentialCreate {
   environment: DeploymentEnvironment;
   kind: ApiCredentialKind;
   scopes: ApiCredentialScope[];
+  allowedOrigins?: string[];
   digest: string;
   suffix: string;
   expiresAt?: string;
@@ -125,10 +127,23 @@ export interface CredentialCreate {
   createdBy: string;
 }
 
+export interface CredentialAuthenticationRecord {
+  credential: ApiCredentialView;
+  allowedOrigins: string[];
+}
+
 export interface CredentialRepository {
   create(input: CredentialCreate): Promise<ApiCredentialView>;
   findByDigest(digest: string): Promise<ApiCredentialView | null>;
+  authenticateByDigest(digest: string): Promise<CredentialAuthenticationRecord | null>;
   list(merchantId: string): Promise<ApiCredentialView[]>;
+  revoke(
+    merchantId: string,
+    id: string,
+    revokedAt: string,
+    revokedBy: string,
+  ): Promise<ApiCredentialView | null>;
+  markUsed(id: string, usedAt: string): Promise<void>;
 }
 
 export interface CustomerRecord {

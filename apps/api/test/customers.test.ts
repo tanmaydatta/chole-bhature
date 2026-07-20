@@ -3,7 +3,7 @@ import { SELF } from 'cloudflare:test';
 import { env } from 'cloudflare:workers';
 import { beforeEach, describe, expect, test } from 'vitest';
 
-import { SEEDED_MERCHANT_ID } from '../src/auth/static-token.js';
+import { SEEDED_MERCHANT_ID } from './test-credentials.js';
 import { createRepositories } from '../src/repositories/d1-repositories.js';
 import type { CustomerRecord } from '../src/repositories/types.js';
 
@@ -74,7 +74,7 @@ const validAttributes = {
 function customerRequest(
   method: 'GET' | 'PATCH',
   customerRef: string,
-  token = 'secret-test',
+  token = 'sk_test_secret_credential_material_000000000001',
   body?: unknown,
 ): Promise<Response> {
   return SELF.fetch(`https://example.test/v1/customers/${customerRef}`, {
@@ -91,7 +91,7 @@ async function patchCustomer(
   customerRef: string,
   body: unknown,
 ): Promise<CustomerRecord> {
-  const response = await customerRequest('PATCH', customerRef, 'secret-test', body);
+  const response = await customerRequest('PATCH', customerRef, 'sk_test_secret_credential_material_000000000001', body);
   expect(response.status).toBe(200);
   return await response.json() as CustomerRecord;
 }
@@ -154,11 +154,11 @@ describe('customer profile API', () => {
   });
 
   test('rejects fields not published as customer definitions', async () => {
-    await expectError(await customerRequest('PATCH', 'unknown-field', 'secret-test', {
+    await expectError(await customerRequest('PATCH', 'unknown-field', 'sk_test_secret_credential_material_000000000001', {
       attributes: { ...validAttributes, channel: 'web' },
     }), 400, 'CONTEXT_VALIDATION_FAILED');
 
-    await expectError(await customerRequest('PATCH', 'unknown-envelope', 'secret-test', {
+    await expectError(await customerRequest('PATCH', 'unknown-envelope', 'sk_test_secret_credential_material_000000000001', {
       attributes: validAttributes,
       ignored: true,
     }), 400, 'CONTEXT_VALIDATION_FAILED');
@@ -172,14 +172,14 @@ describe('customer profile API', () => {
     ['ISO date', { joined_on: '18/07/2026' }],
     ['ISO calendar date', { joined_on: '2026-02-30' }],
   ])('rejects an invalid %s customer value', async (_type, invalid) => {
-    await expectError(await customerRequest('PATCH', `invalid-${_type}`, 'secret-test', {
+    await expectError(await customerRequest('PATCH', `invalid-${_type}`, 'sk_test_secret_credential_material_000000000001', {
       attributes: { ...validAttributes, ...invalid },
     }), 400, 'CONTEXT_VALIDATION_FAILED');
   });
 
   test('requires every required published customer field', async () => {
     const { tier: _tier, ...missingTier } = validAttributes;
-    await expectError(await customerRequest('PATCH', 'missing-required', 'secret-test', {
+    await expectError(await customerRequest('PATCH', 'missing-required', 'sk_test_secret_credential_material_000000000001', {
       attributes: missingTier,
     }), 400, 'CONTEXT_VALIDATION_FAILED');
   });
@@ -200,10 +200,10 @@ describe('customer profile API', () => {
   test('requires an exact expectedVersion after the first write', async () => {
     const first = await patchCustomer('versioned', { attributes: validAttributes });
 
-    await expectError(await customerRequest('PATCH', 'versioned', 'secret-test', {
+    await expectError(await customerRequest('PATCH', 'versioned', 'sk_test_secret_credential_material_000000000001', {
       attributes: { ...validAttributes, tier: 'silver' },
     }), 409, 'VERSION_CONFLICT');
-    await expectError(await customerRequest('PATCH', 'versioned', 'secret-test', {
+    await expectError(await customerRequest('PATCH', 'versioned', 'sk_test_secret_credential_material_000000000001', {
       attributes: { ...validAttributes, tier: 'silver' },
       expectedVersion: first.version + 1,
     }), 409, 'VERSION_CONFLICT');
@@ -212,11 +212,11 @@ describe('customer profile API', () => {
   test('allows exactly one of two concurrent writes with the same expected version', async () => {
     const first = await patchCustomer('concurrent', { attributes: validAttributes });
     const writes = await Promise.all([
-      customerRequest('PATCH', 'concurrent', 'secret-test', {
+      customerRequest('PATCH', 'concurrent', 'sk_test_secret_credential_material_000000000001', {
         attributes: { ...validAttributes, tier: 'silver', note: 'first' },
         expectedVersion: first.version,
       }),
-      customerRequest('PATCH', 'concurrent', 'secret-test', {
+      customerRequest('PATCH', 'concurrent', 'sk_test_secret_credential_material_000000000001', {
         attributes: { ...validAttributes, tier: 'silver', note: 'second' },
         expectedVersion: first.version,
       }),
@@ -233,7 +233,7 @@ describe('customer profile API', () => {
       { ...validAttributes, note: 'second initial writer' },
     ];
     const writes = await Promise.all(candidates.map(attributes => (
-      customerRequest('PATCH', 'initial-race', 'secret-test', { attributes })
+      customerRequest('PATCH', 'initial-race', 'sk_test_secret_credential_material_000000000001', { attributes })
     )));
     expect(writes.map(response => response.status).sort()).toEqual([200, 409]);
     const success = writes.find(response => response.status === 200)!;
@@ -301,7 +301,7 @@ describe('customer profile API', () => {
     const response = await SELF.fetch('https://example.test/v1/customers/inbound-malformed', {
       method: 'PATCH',
       headers: {
-        authorization: 'Bearer secret-test',
+        authorization: 'Bearer sk_test_secret_credential_material_000000000001',
         'content-type': 'application/json',
       },
       body: '{',
@@ -331,7 +331,7 @@ describe('customer profile API', () => {
   test.each(['GET', 'PATCH'] as const)('requires a secret credential for %s', async (method) => {
     const body = method === 'PATCH' ? { attributes: validAttributes } : undefined;
     await expectError(
-      await customerRequest(method, 'secret-only', 'publishable-test', body),
+      await customerRequest(method, 'secret-only', 'pk_test_publishable_credential_material_00000001', body),
       403,
       'FORBIDDEN',
     );

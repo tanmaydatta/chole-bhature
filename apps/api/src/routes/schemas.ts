@@ -1,7 +1,10 @@
 import { Hono } from 'hono';
 import type { Context } from 'hono';
 
-import { requirePublishable, requireSecret } from '../auth/static-token.js';
+import {
+  requirePublishableScope,
+  requireSecret,
+} from '../auth/api-credentials.js';
 import type { AppEnvironment } from '../env.js';
 import { ContextValidationError } from '../errors.js';
 import { createSchemaService } from '../services/schema-service.js';
@@ -50,7 +53,7 @@ export function createSchemaRoutes(): Hono<AppEnvironment> {
     return context.json(await service.publish(context.get('merchantId')), 201);
   });
 
-  routes.get('/published', requirePublishable, async (context) => {
+  routes.get('/published', requirePublishableScope('schema:read'), async (context) => {
     const service = createSchemaService(context.get('repositories'));
     return context.json(await service.published(context.get('merchantId')));
   });

@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import type { Context } from 'hono';
 
-import { requirePublishable } from '../auth/static-token.js';
+import { requirePublishableScope } from '../auth/api-credentials.js';
 import type { AppEnvironment } from '../env.js';
 import { ContextValidationError } from '../errors.js';
 import { createEvaluationService } from '../services/evaluation-service.js';
@@ -17,7 +17,7 @@ async function requestJson(context: Context<AppEnvironment>): Promise<unknown> {
 export function createEvaluationRoutes(): Hono<AppEnvironment> {
   const routes = new Hono<AppEnvironment>();
 
-  routes.post('/', requirePublishable, async (context) => {
+  routes.post('/', requirePublishableScope('evaluations:write'), async (context) => {
     const service = createEvaluationService(context.get('repositories'), context.env);
     return context.json(await service.evaluate(
       context.get('merchantId'),

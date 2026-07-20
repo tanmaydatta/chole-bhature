@@ -169,6 +169,7 @@ export const apiCredentials = sqliteTable('api_credentials', {
   environment: text('environment').notNull(),
   kind: text('kind').notNull(),
   scopesJson: text('scopes_json').notNull(),
+  allowedOriginsJson: text('allowed_origins_json').notNull().default('[]'),
   digest: text('digest').notNull(),
   suffix: text('suffix').notNull(),
   status: text('status').notNull().default('active'),

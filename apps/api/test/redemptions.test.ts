@@ -11,7 +11,7 @@ import { SELF } from 'cloudflare:test';
 import { env } from 'cloudflare:workers';
 import { beforeEach, describe, expect, test } from 'vitest';
 
-import { SEEDED_MERCHANT_ID } from '../src/auth/static-token.js';
+import { SEEDED_MERCHANT_ID } from './test-credentials.js';
 import { createApp } from '../src/app.js';
 import { createRepositories } from '../src/repositories/d1-repositories.js';
 import { signDecisionSnapshot } from '../src/services/evaluation-service.js';
@@ -107,14 +107,14 @@ function evaluateRaw(request: EvaluationRequest = baseRequest): Promise<Response
   return SELF.fetch('https://example.test/v1/evaluate', {
     method: 'POST',
     headers: {
-      authorization: 'Bearer publishable-test',
+      authorization: 'Bearer pk_test_publishable_credential_material_00000001',
       'content-type': 'application/json',
     },
     body: JSON.stringify(request),
   });
 }
 
-function redeemRaw(body: unknown, token = 'secret-test'): Promise<Response> {
+function redeemRaw(body: unknown, token = 'sk_test_secret_credential_material_000000000001'): Promise<Response> {
   return SELF.fetch('https://example.test/v1/redemptions', {
     method: 'POST',
     headers: {
@@ -172,14 +172,12 @@ describe('POST /v1/redemptions', () => {
     const response = await createApp().request('https://example.test/v1/redemptions', {
       method: 'POST',
       headers: {
-        authorization: 'Bearer secret-test',
+        authorization: 'Bearer sk_test_secret_credential_material_000000000001',
         'content-type': 'application/json',
       },
       body: JSON.stringify({ evaluationId: 'missing-program-and-identifier' }),
     }, {
       DB: env.DB,
-      PUBLISHABLE_TOKEN: 'publishable-test',
-      SECRET_TOKEN: 'secret-test',
       DECISION_SIGNING_SECRET: 'weak',
     });
     await expectError(response, 400, 'CONTEXT_VALIDATION_FAILED');
@@ -189,7 +187,7 @@ describe('POST /v1/redemptions', () => {
     const response = await createApp().request('https://example.test/v1/redemptions', {
       method: 'POST',
       headers: {
-        authorization: 'Bearer secret-test',
+        authorization: 'Bearer sk_test_secret_credential_material_000000000001',
         'content-type': 'application/json',
       },
       body: JSON.stringify({
@@ -199,8 +197,6 @@ describe('POST /v1/redemptions', () => {
       }),
     }, {
       DB: env.DB,
-      PUBLISHABLE_TOKEN: 'publishable-test',
-      SECRET_TOKEN: 'secret-test',
       DECISION_SIGNING_SECRET: 'weak',
     });
     const error = await expectError(response, 503, 'EVALUATION_UNAVAILABLE');
@@ -451,7 +447,7 @@ describe('POST /v1/redemptions', () => {
       'CONTEXT_VALIDATION_FAILED');
     await expectError(await redeemRaw({
       evaluationId: 'e', programRef: 'p', externalOrderRef: 'o',
-    }, 'publishable-test'), 403, 'FORBIDDEN');
+    }, 'pk_test_publishable_credential_material_00000001'), 403, 'FORBIDDEN');
   });
 
   test('conflicting identifier reuse returns VERSION_CONFLICT', async () => {

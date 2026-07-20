@@ -1,0 +1,69 @@
+import type {
+  ApiCredentialKind,
+  ApiCredentialScope,
+} from '@incentives/contracts';
+import type { MiddlewareHandler } from 'hono';
+
+import type { AppEnvironment } from '../env.js';
+import { ForbiddenError, UnauthorizedError } from '../errors.js';
+
+const encoder = new TextEncoder();
+
+function bearerToken(authorization: string | undefined): string | null {
+  if (authorization === undefined) return null;
+  const match = /^Bearer[ \t]+((?:pk|sk)_[A-Za-z0-9_-]{32,256})$/u.exec(authorization);
+  return match?.[1] ?? null;
+}
+
+async function digest(token: string): Promise<string> {
+  const bytes = new Uint8Array(await crypto.subtle.digest('SHA-256', encoder.encode(token)));
+  return [...bytes].map(byte => byte.toString(16).padStart(2, '0')).join('');
+}
+
+function requireCredential(
+  requiredKind: ApiCredentialKind | 'publishable-or-secret',
+  requiredScope?: ApiCredentialScope,
+): MiddlewareHandler<AppEnvironment> {
+  return async (context, next) => {
+    const token = bearerToken(context.req.header('authorization'));
+    if (token === null) throw new UnauthorizedError();
+
+    const repositories = context.get('repositories');
+    const authentication = await repositories.credentials.authenticateByDigest(await digest(token));
+    if (authentication === null) throw new UnauthorizedError();
+    const { credential, allowedOrigins } = authentication;
+    const merchant = await repositories.merchants.get(credential.merchantId);
+    const expired = credential.expiresAt !== undefined
+      && Date.parse(credential.expiresAt) <= Date.now();
+    if (credential.status !== 'active' || expired || merchant?.status !== 'active') {
+      throw new UnauthorizedError();
+    }
+    if (requiredKind === 'secret' && credential.kind !== 'secret') throw new ForbiddenError();
+    if (requiredScope !== undefined && !credential.scopes.includes(requiredScope)) {
+      throw new ForbiddenError();
+    }
+
+    const origin = context.req.header('origin');
+    if (credential.kind === 'publishable' && origin !== undefined) {
+      if (!allowedOrigins.includes(origin)) throw new ForbiddenError();
+      context.header('Access-Control-Allow-Origin', origin);
+      context.header('Vary', 'Origin');
+    }
+
+    context.set('merchantId', credential.merchantId);
+    context.set('credentialId', credential.id);
+    await repositories.credentials.markUsed(credential.id, new Date().toISOString());
+    await next();
+  };
+}
+
+export const requirePublishable = requireCredential('publishable-or-secret');
+export const requireSecret = requireCredential('secret');
+
+export function requirePublishableScope(scope: ApiCredentialScope): MiddlewareHandler<AppEnvironment> {
+  return requireCredential('publishable-or-secret', scope);
+}
+
+export function requireSecretScope(scope: ApiCredentialScope): MiddlewareHandler<AppEnvironment> {
+  return requireCredential('secret', scope);
+}

@@ -70,6 +70,14 @@ const PositiveIntegerSchema = z.number().int().positive();
 const NonnegativeIntegerSchema = z.number().int().nonnegative();
 const CurrencySchema = z.string().regex(/^[A-Z]{3}$/);
 const CredentialDigestSchema = z.string().regex(/^[0-9a-f]{64}$/u);
+const ExactOriginSchema = z.string().url().refine((origin) => {
+  const parsed = new URL(origin);
+  return parsed.origin === origin && parsed.username === '' && parsed.password === '';
+}, 'Origin must be an exact serialized origin');
+const AllowedOriginsSchema = z.array(ExactOriginSchema).max(100).refine(
+  origins => new Set(origins).size === origins.length,
+  'Origins must be unique',
+);
 const ReceiptIntegrityHashSchema = z.string().regex(/^[0-9a-f]{64}$/u);
 const StoredRedemptionEnvelopeSchema = z.object({
   version: z.literal(1),
@@ -451,6 +459,7 @@ function parseCredentialCreate(input: CredentialCreate) {
   return {
     view,
     digest: CredentialDigestSchema.parse(input.digest),
+    allowedOrigins: AllowedOriginsSchema.parse(input.allowedOrigins ?? []),
   };
 }
 
@@ -824,6 +833,16 @@ export function createRepositories(env: Env): Repositories {
         const row = await db.select().from(merchants).where(eq(merchants.id, id)).get();
         return row === undefined ? null : merchantFromRow(row);
       },
+
+      async activate(id, updatedAt) {
+        const parsedId = z.string().min(1).parse(id);
+        const parsedUpdatedAt = DateTimeSchema.parse(updatedAt);
+        await env.DB.prepare(`
+          UPDATE merchants SET status = 'active', updated_at = ?1 WHERE id = ?2
+        `).bind(parsedUpdatedAt, parsedId).run();
+        const row = await db.select().from(merchants).where(eq(merchants.id, parsedId)).get();
+        return row === undefined ? null : merchantFromRow(row);
+      },
     },
 
     credentials: {
@@ -836,6 +855,7 @@ export function createRepositories(env: Env): Repositories {
           environment: parsed.view.environment,
           kind: parsed.view.kind,
           scopesJson: canonicalJson(parsed.view.scopes),
+          allowedOriginsJson: canonicalJson(parsed.allowedOrigins),
           digest: parsed.digest,
           suffix: parsed.view.suffix,
           status: parsed.view.status,
@@ -854,11 +874,46 @@ export function createRepositories(env: Env): Repositories {
         return row === undefined ? null : credentialFromRow(row);
       },
 
+      async authenticateByDigest(digest) {
+        const parsedDigest = CredentialDigestSchema.parse(digest);
+        const row = await db.select().from(apiCredentials).where(
+          eq(apiCredentials.digest, parsedDigest),
+        ).get();
+        if (row === undefined) return null;
+        return {
+          credential: credentialFromRow(row),
+          allowedOrigins: parseJson(row.allowedOriginsJson, AllowedOriginsSchema),
+        };
+      },
+
       async list(merchantId) {
         const rows = await db.select().from(apiCredentials).where(
           eq(apiCredentials.merchantId, merchantId),
         ).orderBy(asc(apiCredentials.createdAt), asc(apiCredentials.id)).all();
         return rows.map(credentialFromRow);
+      },
+
+      async revoke(merchantId, id, revokedAt, revokedBy) {
+        const parsedMerchantId = z.string().min(1).parse(merchantId);
+        const parsedId = z.string().min(1).parse(id);
+        const parsedRevokedAt = DateTimeSchema.parse(revokedAt);
+        const parsedRevokedBy = z.string().min(1).parse(revokedBy);
+        await env.DB.prepare(`
+          UPDATE api_credentials
+          SET status = 'revoked', revoked_at = ?1, revoked_by = ?2
+          WHERE merchant_id = ?3 AND id = ?4 AND status = 'active'
+        `).bind(parsedRevokedAt, parsedRevokedBy, parsedMerchantId, parsedId).run();
+        const row = await db.select().from(apiCredentials).where(and(
+          eq(apiCredentials.merchantId, parsedMerchantId),
+          eq(apiCredentials.id, parsedId),
+        )).get();
+        return row === undefined ? null : credentialFromRow(row);
+      },
+
+      async markUsed(id, usedAt) {
+        await env.DB.prepare(`
+          UPDATE api_credentials SET last_used_at = ?1 WHERE id = ?2 AND status = 'active'
+        `).bind(DateTimeSchema.parse(usedAt), z.string().min(1).parse(id)).run();
       },
     },
 
