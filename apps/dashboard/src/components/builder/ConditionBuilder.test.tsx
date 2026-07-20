@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, within } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useState } from 'react';
 import { ConditionBuilder } from './ConditionBuilder';
@@ -245,4 +245,49 @@ test('authors typed number and nested date between bounds and normalizes on oper
   fireEvent.change(minimums[1]!, { target: { value: '1995-02-03' } });
   fireEvent.change(maximums[1]!, { target: { value: '2001-04-05' } });
   expect(latest.groups?.[0]?.conditions[0]?.value).toEqual(['1995-02-03', '2001-04-05']);
+});
+
+test('keeps unresolved and incompatible top-level and nested conditions visible and editable', async () => {
+  let latest: ConditionGroup = {
+    match: 'ALL',
+    conditions: [
+      { id: 'deprecated-top', variable: 'customer.deprecated', operator: 'eq', value: 'legacy' },
+      { id: 'wrong-operator', variable: 'context.channel', operator: 'gt', value: 'store' },
+    ],
+    groups: [{
+      match: 'ANY',
+      conditions: [{ id: 'missing-nested', variable: 'context.missing', operator: 'in', value: ['web'] }],
+    }],
+  };
+  function InvalidWrapper() {
+    const [value, setValue] = useState(latest);
+    const [valid, setValid] = useState(true);
+    return <>
+      <output aria-label="condition validity">{String(valid)}</output>
+      <ConditionBuilder
+        value={value}
+        variables={SAMPLE_VARIABLES}
+        onChange={next => { latest = next; setValue(next); }}
+        onValidityChange={setValid}
+      />
+    </>;
+  }
+  render(<InvalidWrapper />);
+
+  await waitFor(() => expect(screen.getByLabelText('condition validity')).toHaveTextContent('false'));
+  const top = screen.getByRole('group', { name: 'Unresolved condition customer.deprecated' });
+  expect(within(top).getByText('customer.deprecated')).toBeInTheDocument();
+  expect(within(top).getByText('eq')).toBeInTheDocument();
+  expect(within(top).getByText('legacy')).toBeInTheDocument();
+  expect(screen.getByText('Missing variable definition for customer.deprecated.')).toBeInTheDocument();
+  expect(screen.getByText('Missing variable definition for context.missing.')).toBeInTheDocument();
+  expect(screen.getByText('Operator “gt” is not valid for context.channel.')).toBeInTheDocument();
+
+  await userEvent.click(within(top).getByRole('button', { name: 'Replace customer.deprecated' }));
+  await userEvent.click(within(top).getByText('customer_tier'));
+  expect(latest.conditions[0]).toMatchObject({
+    id: 'deprecated-top', variable: 'customer_tier', operator: 'eq', value: 'gold',
+  });
+  await userEvent.click(screen.getByRole('button', { name: 'Remove context.missing' }));
+  expect(latest.groups?.[0]?.conditions).toEqual([]);
 });

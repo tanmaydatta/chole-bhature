@@ -1,7 +1,8 @@
-import { cleanup, render, screen, within } from '@testing-library/react';
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
+import { INVITATION_ACCEPT_PATH, invitationAcceptanceUrl } from '@incentives/contracts';
 
 import App from '../App';
 import { ThemeProvider } from '../theme/ThemeProvider';
@@ -302,29 +303,36 @@ describe('operator access flow', () => {
 
   test('accepts an invitation once and removes its token from browser history', async () => {
     const token = 'a'.repeat(43);
+    const capturedLocalEmailLink = new URL(invitationAcceptanceUrl('http://localhost:5173', token));
     const { calls } = installFetch(null);
     const replaceState = vi.spyOn(window.history, 'replaceState');
-    renderApp(`/invite/accept?token=${token}&email=new%40example.test`);
+    renderApp(`${capturedLocalEmailLink.pathname}${capturedLocalEmailLink.search}`);
 
+    const invitedEmail = await screen.findByLabelText('Invited email');
+    expect(invitedEmail).toHaveValue('');
+    await userEvent.type(invitedEmail, 'new@example.test');
     await userEvent.click(await screen.findByRole('button', { name: 'Accept invitation' }));
     expect(await screen.findByText('Invitation accepted. You can now sign in.')).toBeInTheDocument();
     expect(calls).toContainEqual({
       path: '/operator/v1/invitations/accept', method: 'POST',
       body: { token, email: 'new@example.test' },
     });
-    expect(replaceState).toHaveBeenCalledWith(null, '', '/invite/accept');
+    expect(replaceState).toHaveBeenCalledWith(null, '', INVITATION_ACCEPT_PATH);
+    await userEvent.click(screen.getByRole('link', { name: 'Sign in' }));
+    expect(await screen.findByLabelText('Work email')).toBeInTheDocument();
   });
 
   test('scrubs an invitation token from the URL before any submission', async () => {
     const token = 'b'.repeat(43);
     installFetch(null);
     const replaceState = vi.spyOn(window.history, 'replaceState');
-    renderApp(`/invite/accept?token=${token}&email=new%40example.test`);
+    const capturedLocalEmailLink = new URL(invitationAcceptanceUrl('http://localhost:5173', token));
+    renderApp(`${capturedLocalEmailLink.pathname}${capturedLocalEmailLink.search}`);
 
     await screen.findByRole('button', { name: 'Accept invitation' });
-    expect(replaceState).toHaveBeenCalledWith(null, '', '/invite/accept');
+    expect(replaceState).toHaveBeenCalledWith(null, '', INVITATION_ACCEPT_PATH);
     expect(window.location.search).toBe('');
-    expect(screen.getByDisplayValue('new@example.test')).toBeInTheDocument();
+    expect(screen.getByLabelText('Invited email')).toHaveValue('');
   });
 
   test('signs an active root in with a verified platform passkey', async () => {
@@ -426,6 +434,50 @@ describe('operator access flow', () => {
       path: '/operator/v1/platform/merchant-selection', method: 'POST',
       body: { merchantId: 'merchant-a' },
     });
+  });
+
+  test('never carries merchant A name across an authoritative A to B session refresh', async () => {
+    let selectedMerchantId = 'merchant-a';
+    let clientReads = 0;
+    let rejectMerchantBClients: ((reason?: unknown) => void) | undefined;
+    const merchantBClients = new Promise<Response>((_resolve, reject) => {
+      rejectMerchantBClients = reject;
+    });
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      const method = init?.method ?? 'GET';
+      if (path === '/operator/v1/session') return json({
+        ...sessions.rootSelected, merchantId: selectedMerchantId,
+      });
+      if (path === '/operator/v1/platform/merchant-selection') {
+        selectedMerchantId = 'merchant-b';
+        return new Response(null, { status: 204 });
+      }
+      if (path === '/operator/v1/platform/clients') {
+        clientReads += 1;
+        if (clientReads <= 2) return json({ clients: [
+          { provisioningId: 'provision-a', merchantId: 'merchant-a', organizationId: 'org-a', name: 'Client A', status: 'active', failedStep: null, retryable: false },
+          { provisioningId: 'provision-b', merchantId: 'merchant-b', organizationId: 'org-b', name: 'Client B', status: 'active', failedStep: null, retryable: false },
+        ] });
+        return merchantBClients;
+      }
+      throw new Error(`Unexpected BFF call: ${method} ${path}`);
+    }));
+
+    renderApp('/platform/clients');
+    expect(await screen.findByText('Root access · Client A')).toBeInTheDocument();
+    await userEvent.click(await screen.findByRole('button', { name: 'Select Client B' }));
+    await waitFor(() => expect(clientReads).toBe(3));
+    rejectMerchantBClients?.(new Error('client directory unavailable'));
+    expect(await screen.findByText('The operator service is temporarily unavailable')).toBeInTheDocument();
+    expect(screen.getByText('Root access · merchant-b')).toBeInTheDocument();
+    expect(screen.queryByText('Root access · Client A')).not.toBeInTheDocument();
+
+    cleanup();
+    renderApp('/');
+    expect(await screen.findByText('The operator service is temporarily unavailable')).toBeInTheDocument();
+    expect(screen.getByText('Root access · merchant-b')).toBeInTheDocument();
+    expect(screen.queryByText('Root access · Client A')).not.toBeInTheDocument();
   });
 
   test.each([

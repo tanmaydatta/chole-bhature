@@ -10,18 +10,33 @@ import {
 
 import { useAuth } from '../../auth/AuthContext';
 import { ErrorState } from '../../auth/ErrorState';
-import { ConditionBuilder } from '../../components/builder/ConditionBuilder';
+import {
+  ConditionBuilder,
+  type ConditionBuilderVariable,
+} from '../../components/builder/ConditionBuilder';
+import { conditionGroupIsAuthorable } from '../../components/builder/condition-validation';
 import { programApi } from '../../data/program-api';
 import { schemaApi } from '../../data/schema-api';
 import { BffClientError } from '../../lib/bff-client';
-import type { ConditionGroup, Variable } from '../../lib/types';
 
-function localVariable(definition: VariableDefinition): Variable {
+function localVariable(definition: VariableDefinition): ConditionBuilderVariable {
   return {
     name: definition.key, type: definition.type,
     origin: definition.source === 'customer' ? 'user' : definition.source === 'system' ? 'system' : 'dynamic',
     enumValues: definition.enumValues, defaultMessage: definition.defaultErrorMessage,
   };
+}
+
+function editorError(cause: unknown): BffClientError {
+  return cause instanceof BffClientError
+    ? cause
+    : new BffClientError(
+      0,
+      'UNEXPECTED_ERROR',
+      'The operator service is temporarily unavailable',
+      true,
+      'unavailable',
+    );
 }
 
 function nextId(prefix: string): string {
@@ -86,7 +101,7 @@ function RewardFields({ reward, change }: { reward: CommerceReward; change: (nex
   </div>;
 }
 
-function RewardRules({ program, variables, change }: { program: PromoProgram; variables: Variable[]; change: (next: PromoProgram) => void }) {
+function RewardRules({ program, variables, change }: { program: PromoProgram; variables: ConditionBuilderVariable[]; change: (next: PromoProgram) => void }) {
   function update(index: number, next: PromoRewardRule) {
     change({ ...program, rewardRules: program.rewardRules.map((rule, ruleIndex) => ruleIndex === index ? next : rule) });
   }
@@ -108,7 +123,7 @@ function RewardRules({ program, variables, change }: { program: PromoProgram; va
         <option value="free_shipping">Free shipping</option>
       </select></label>
       <RewardFields reward={rule.reward} change={reward => update(index, { ...rule, reward })}/>
-      <ConditionBuilder value={rule.conditions as ConditionGroup} variables={variables} onChange={conditions => update(index, { ...rule, conditions })}/>
+      <ConditionBuilder value={rule.conditions} variables={variables} onChange={conditions => update(index, { ...rule, conditions })}/>
       <button type="button" aria-label={`Move reward rule ${index + 1} up`} disabled={index === 0} onClick={() => move(index, -1)}>Move up</button>
       <button type="button" aria-label={`Move reward rule ${index + 1} down`} disabled={index === program.rewardRules.length - 1} onClick={() => move(index, 1)}>Move down</button>
       <button type="button" onClick={() => change({ ...program, rewardRules: program.rewardRules.filter((_, ruleIndex) => ruleIndex !== index) })}>Remove rule</button>
@@ -134,35 +149,70 @@ export default function LivePromoEditor() {
   const navigate = useNavigate();
   const { id } = useParams<{ id: string }>();
   const [program, setProgram] = useState<PromoProgram>(() => example('', ''));
-  const [variables, setVariables] = useState<Variable[]>([]);
+  const [variables, setVariables] = useState<ConditionBuilderVariable[]>([]);
   const [loading, setLoading] = useState(Boolean(id));
-  const [error, setError] = useState<BffClientError | null>(null);
+  const [loadError, setLoadError] = useState<BffClientError | null>(null);
+  const [saveError, setSaveError] = useState<BffClientError | null>(null);
+  const [compareError, setCompareError] = useState<BffClientError | null>(null);
+  const [comparison, setComparison] = useState<PromoProgram | null>(null);
+  const [conflictReference, setConflictReference] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [comparisonLoading, setComparisonLoading] = useState(false);
   const validation = useMemo(() => OperatorProgramDraftRequestSchema.safeParse(program), [program]);
+  const conditionsValid = useMemo(() => (
+    conditionGroupIsAuthorable(program.eligibility, variables)
+    && program.rewardRules.every(rule => conditionGroupIsAuthorable(rule.conditions, variables))
+  ), [program, variables]);
 
   useEffect(() => {
     let current = true;
     void schemaApi.list().then(result => {
       if (current) setVariables(result.definitions.map(view => view.definition).filter(definition => definition.source !== 'event').map(localVariable));
-    }).catch(cause => { if (current) setError(auth.handleError(cause)); });
+    }).catch(cause => { if (current) setLoadError(auth.handleError(cause)); });
     if (id) void programApi.get(id).then(view => {
       if (current) setProgram({ ...view.configuration, status: 'draft' });
-    }).catch(cause => { if (current) setError(auth.handleError(cause)); }).finally(() => {
+    }).catch(cause => { if (current) setLoadError(auth.handleError(cause)); }).finally(() => {
       if (current) setLoading(false);
     });
     return () => { current = false; };
   }, [auth, id]);
 
   async function save() {
-    setError(null);
+    setSaveError(null);
+    if (!id) setConflictReference(null);
+    setSaving(true);
+    let submittedReference = id ?? null;
     try {
       const input = OperatorProgramDraftRequestSchema.parse({ ...program, status: 'draft' });
+      submittedReference = input.id;
       const view = id ? await programApi.update(id, input) : await programApi.create(input);
       navigate(`/promo/${encodeURIComponent(view.configuration.id)}`);
-    } catch (cause) { setError(auth.handleError(cause)); }
+    } catch (cause) {
+      const error = editorError(cause);
+      setSaveError(error);
+      if (error.code === 'PROGRAM_CONFLICT') setConflictReference(submittedReference);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function loadComparison() {
+    const reference = id ?? conflictReference;
+    if (!reference) return;
+    setCompareError(null);
+    setComparisonLoading(true);
+    try {
+      const view = await programApi.get(reference);
+      setComparison(view.configuration);
+    } catch (cause) {
+      setCompareError(editorError(cause));
+    } finally {
+      setComparisonLoading(false);
+    }
   }
 
   if (loading) return <p>Loading Promo draft…</p>;
-  if (error) return <ErrorState error={error} retry={() => window.location.reload()} forceRetry />;
+  if (loadError) return <ErrorState error={loadError} retry={() => window.location.reload()} forceRetry />;
 
   return <main className="mx-auto max-w-4xl p-6 flex flex-col gap-5">
     <h1>{id ? 'Edit Promo draft' : 'Create Promo'}</h1>
@@ -171,7 +221,7 @@ export default function LivePromoEditor() {
     <label><input type="checkbox" checked={program.autoApply} onChange={event => setProgram(event.target.checked ? { ...program, autoApply: true } : { ...program, autoApply: false, code: program.code ?? '' })}/>Auto apply</label>
     {!program.autoApply && <label>Code<input value={program.code} onChange={event => setProgram({ ...program, code: event.target.value })}/></label>}
     {!id && <button type="button" onClick={() => setProgram(example(program.id, program.name))}>Use complete authoring example</button>}
-    <section><h2>Eligibility</h2><ConditionBuilder value={program.eligibility as ConditionGroup} variables={variables} onChange={eligibility => setProgram({ ...program, eligibility })}/></section>
+    <section><h2>Eligibility</h2><ConditionBuilder value={program.eligibility} variables={variables} onChange={eligibility => setProgram({ ...program, eligibility })}/></section>
     <RewardRules program={program} variables={variables} change={setProgram}/>
     <section className="grid grid-cols-2 gap-3"><h2 className="col-span-2">Limits, schedule, and stacking</h2>
       <label>Budget currency<input value={program.budget?.currency ?? ''} onChange={event => setProgram({ ...program, budget: { currency: event.target.value, minorUnits: program.budget?.minorUnits ?? 0 } })}/></label>
@@ -185,6 +235,25 @@ export default function LivePromoEditor() {
       <label><input type="checkbox" checked={program.stackable} onChange={event => setProgram({ ...program, stackable: event.target.checked })}/>Stackable</label>
     </section>
     {!validation.success && <p role="alert">Complete every required field and ensure each conditional rule has a condition.</p>}
-    <button type="button" disabled={!validation.success} onClick={() => void save()}>Save draft</button>
+    {!conditionsValid && <p role="alert">Resolve every missing field and incompatible condition before saving.</p>}
+    {saveError && <section className="flex flex-col gap-2">
+      <ErrorState error={saveError} retry={() => void save()} forceRetry retryLabel="Retry save" />
+      {(id || conflictReference) && <button type="button" onClick={() => void loadComparison()} disabled={comparisonLoading}>
+        {comparisonLoading ? 'Loading server version…' : 'Reload server version for comparison'}
+      </button>}
+    </section>}
+    {compareError && <ErrorState error={compareError} retry={() => void loadComparison()} retryLabel="Retry comparison" />}
+    {comparison && <section aria-label="Server version comparison" className="rounded border p-3">
+      <h2>Server version comparison</h2>
+      <p>Server Promo name: <code>{comparison.name}</code></p>
+      <p>Your authored draft remains in the editor. Replace it only after comparing.</p>
+      <button type="button" onClick={() => {
+        setProgram({ ...comparison, status: 'draft' });
+        setComparison(null);
+        setConflictReference(null);
+        setSaveError(null);
+      }}>Replace authored draft with server version</button>
+    </section>}
+    <button type="button" disabled={!validation.success || !conditionsValid || saving} onClick={() => void save()}>{saving ? 'Saving…' : 'Save draft'}</button>
   </main>;
 }

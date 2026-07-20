@@ -3,6 +3,7 @@ import {
   AuditEntrySchema,
   CoreMerchantActivationResultSchema,
   CoreMerchantProvisionResultSchema,
+  INVITATION_ACCEPT_PATH,
   MerchantActivationResultSchema,
   MerchantProvisionResultSchema,
   type MerchantActivationRequest,
@@ -12,6 +13,7 @@ import {
   type MerchantProvisionResult,
   type OperatorCallContext,
   type OperatorPrincipal,
+  invitationAcceptanceUrl,
 } from '@incentives/contracts';
 import { env } from 'cloudflare:workers';
 import { createExecutionContext, SELF } from 'cloudflare:test';
@@ -364,6 +366,12 @@ function tokenFrom(message: { text: string }): string {
   const token = new URL(link).searchParams.get('token');
   if (!token) throw new Error('Expected invitation token');
   return token;
+}
+
+function invitationLinkFrom(message: { text: string }): URL {
+  const link = message.text.match(/https?:\/\/\S+/)?.[0];
+  if (!link) throw new Error('Expected invitation link');
+  return new URL(link);
 }
 
 async function registerReplacement(cookie: string, credential: TestCredential): Promise<Response> {
@@ -720,6 +728,13 @@ describe('tenant-safe invitation lifecycle', () => {
     expect(operator.role).toBe('operator');
     expect(secondAdmin.role).toBe('admin');
     expect(mailer.messages).toHaveLength(3);
+    const capturedLink = invitationLinkFrom(mailer.messages[0] as { text: string });
+    expect(capturedLink.origin).toBe(publicOrigin);
+    expect(capturedLink.pathname).toBe(INVITATION_ACCEPT_PATH);
+    const capturedToken = capturedLink.searchParams.get('token') ?? '';
+    expect(capturedToken).toMatch(/^[A-Za-z0-9_-]{43}$/u);
+    expect(capturedLink.searchParams.has('email')).toBe(false);
+    expect(capturedLink.toString()).toBe(invitationAcceptanceUrl(publicOrigin, capturedToken));
   });
 
   test('Admin can invite fixed roles only within their active organization', async () => {

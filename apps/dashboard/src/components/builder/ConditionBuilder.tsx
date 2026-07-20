@@ -1,13 +1,26 @@
-import { useState } from 'react';
-import type { ConditionGroup, Variable, Condition } from '../../lib/types';
+import { useEffect, useState } from 'react';
+import type {
+  Condition,
+  ConditionGroup,
+  ConditionValue,
+} from '@incentives/contracts';
+import type { Variable } from '../../lib/types';
 import { OPERATORS_BY_TYPE } from '../../lib/conditions';
 import { ConditionRow } from './ConditionRow';
 import { VariablePicker } from './VariablePicker';
+import { conditionGroupIsAuthorable, conditionIssue } from './condition-validation';
 
 interface ConditionBuilderProps {
   value: ConditionGroup;
   variables: Variable[];
   onChange: (next: ConditionGroup) => void;
+  onValidityChange?: (valid: boolean) => void;
+}
+
+export type ConditionBuilderVariable = Variable;
+
+function displayValue(value: ConditionValue): string {
+  return Array.isArray(value) ? value.join(', ') : String(value);
 }
 
 function newId(): string {
@@ -32,11 +45,25 @@ function makeCondition(variable: Variable): Condition {
   };
 }
 
-export function ConditionBuilder({ value, variables, onChange }: ConditionBuilderProps) {
+export function ConditionBuilder({
+  value,
+  variables,
+  onChange,
+  onValidityChange,
+}: ConditionBuilderProps) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [nestedPicker, setNestedPicker] = useState<number | null>(null);
+  const [replacement, setReplacement] = useState<{
+    conditionId: string;
+    nestedIndex?: number;
+  } | null>(null);
 
   const varMap = Object.fromEntries(variables.map((v) => [v.name, v]));
+  const valid = conditionGroupIsAuthorable(value, variables);
+
+  useEffect(() => {
+    onValidityChange?.(valid);
+  }, [onValidityChange, valid]);
 
   function handleMatchChange(e: React.ChangeEvent<HTMLSelectElement>) {
     onChange({ ...value, match: e.target.value as 'ALL' | 'ANY' });
@@ -75,6 +102,66 @@ export function ConditionBuilder({ value, variables, onChange }: ConditionBuilde
     });
   }
 
+  function unresolvedCondition(
+    condition: Condition,
+    remove: () => void,
+    nestedIndex?: number,
+  ) {
+    const replacing = replacement?.conditionId === condition.id
+      && replacement.nestedIndex === nestedIndex;
+    return (
+      <div
+        key={condition.id}
+        role="group"
+        aria-label={`Unresolved condition ${condition.variable}`}
+        className="mb-2 rounded-[9px] border border-amber-500 bg-amber-50 p-3 text-[12.5px] text-slate-900"
+      >
+        <div className="flex flex-wrap items-center gap-2">
+          <code>{condition.variable}</code>
+          <code>{condition.operator}</code>
+          <code>{displayValue(condition.value)}</code>
+          <button type="button" onClick={() => setReplacement({ conditionId: condition.id, ...(nestedIndex === undefined ? {} : { nestedIndex }) })}>
+            Replace {condition.variable}
+          </button>
+          <button type="button" onClick={remove}>Remove {condition.variable}</button>
+        </div>
+        <p role="alert">Missing variable definition for {condition.variable}.</p>
+        {replacing && <VariablePicker variables={variables} onPick={variable => {
+          const next = { ...makeCondition(variable), id: condition.id };
+          if (nestedIndex === undefined) handleConditionChange(condition.id, next);
+          else {
+            const group = value.groups?.[nestedIndex];
+            if (group) updateNested(nestedIndex, {
+              ...group,
+              conditions: group.conditions.map(existing => existing.id === condition.id ? next : existing),
+            });
+          }
+          setReplacement(null);
+        }} />}
+      </div>
+    );
+  }
+
+  function conditionRow(
+    condition: Condition,
+    onConditionChange: (next: Condition) => void,
+    remove: () => void,
+    nestedIndex?: number,
+  ) {
+    const variable = varMap[condition.variable];
+    if (!variable) return unresolvedCondition(condition, remove, nestedIndex);
+    const issue = conditionIssue(condition, variables);
+    return <div key={condition.id}>
+      <ConditionRow
+        condition={condition}
+        variable={variable}
+        onChange={onConditionChange}
+        onRemove={remove}
+      />
+      {issue && <p role="alert" className="mb-2 text-[12px] text-amber-700">{issue}</p>}
+    </div>;
+  }
+
   return (
     <div>
       {/* Match ALL / ANY bar */}
@@ -94,19 +181,11 @@ export function ConditionBuilder({ value, variables, onChange }: ConditionBuilde
 
       {/* Condition group */}
       <div className="border border-[var(--border)] border-l-[3px] border-l-[var(--accent)] rounded-[10px] p-[12px] bg-[var(--bg)]">
-        {value.conditions.map((condition) => {
-          const variable = varMap[condition.variable];
-          if (!variable) return null;
-          return (
-            <ConditionRow
-              key={condition.id}
-              condition={condition}
-              variable={variable}
-              onChange={(next) => handleConditionChange(condition.id, next)}
-              onRemove={() => handleRemove(condition.id)}
-            />
-          );
-        })}
+        {value.conditions.map(condition => conditionRow(
+          condition,
+          next => handleConditionChange(condition.id, next),
+          () => handleRemove(condition.id),
+        ))}
 
         <div className="flex gap-[14px] mt-[6px]">
           <span
@@ -147,23 +226,18 @@ export function ConditionBuilder({ value, variables, onChange }: ConditionBuilde
                 })}
               >Remove group</button>
             </div>
-            {group.conditions.map(condition => {
-              const variable = varMap[condition.variable];
-              if (!variable) return null;
-              return <ConditionRow
-                key={condition.id}
-                condition={condition}
-                variable={variable}
-                onChange={next => updateNested(index, {
+            {group.conditions.map(condition => conditionRow(
+              condition,
+              next => updateNested(index, {
                   ...group,
                   conditions: group.conditions.map(existing => existing.id === condition.id ? next : existing),
-                })}
-                onRemove={() => updateNested(index, {
+                }),
+              () => updateNested(index, {
                   ...group,
                   conditions: group.conditions.filter(existing => existing.id !== condition.id),
-                })}
-              />;
-            })}
+                }),
+              index,
+            ))}
             <button
               type="button"
               aria-label={`Add condition to nested group ${index + 1}`}

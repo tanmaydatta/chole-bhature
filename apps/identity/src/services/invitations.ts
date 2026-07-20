@@ -1,4 +1,4 @@
-import type { OperatorPrincipal } from '@incentives/contracts';
+import { invitationAcceptanceUrl, type OperatorPrincipal } from '@incentives/contracts';
 
 import { authorize } from '../authorization/authorize.js';
 import type { FixedRole } from '../authorization/registry.js';
@@ -150,14 +150,13 @@ async function deliver(
   token: string,
   correlationId: string,
 ): Promise<InvitationView> {
-  const link = new URL('/invitations/accept', options.publicOrigin);
-  link.searchParams.set('token', token);
+  const link = invitationAcceptanceUrl(options.publicOrigin, token);
   let status: 'sent' | 'delivery_failed' = 'sent';
   try {
     await options.email.send({
       to: row.email,
       subject: 'You are invited to Incentives Operator',
-      text: `Use this single-use invitation before it expires.\n${link.toString()}`,
+      text: `Use this single-use invitation before it expires.\n${link}`,
     });
   } catch {
     status = 'delivery_failed';

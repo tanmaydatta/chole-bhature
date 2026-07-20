@@ -143,6 +143,7 @@ export function ConditionRow({ condition, variable, onChange, onRemove }: Condit
   );
 
   const operators = OPERATORS_BY_TYPE[variable.type];
+  const incompatibleOperator = !operators.includes(condition.operator);
   const chipClass = ORIGIN_CHIP_CLASS[variable.origin];
   const icon = ORIGIN_ICON[variable.origin];
 
@@ -179,6 +180,11 @@ export function ConditionRow({ condition, variable, onChange, onRemove }: Condit
           }}
           aria-label="operator"
         >
+          {incompatibleOperator && (
+            <option value={condition.operator} disabled>
+              Unsupported: {operatorLabel(condition.operator)}
+            </option>
+          )}
           {operators.map((op) => (
             <option key={op} value={op}>
               {operatorLabel(op)}

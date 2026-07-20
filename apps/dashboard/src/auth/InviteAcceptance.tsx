@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { useLocation } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
+import { INVITATION_ACCEPT_PATH } from '@incentives/contracts';
 
 import { BffClientError, bffClient } from '../lib/bff-client';
 import { ErrorState } from './ErrorState';
@@ -16,7 +17,7 @@ export function InviteAcceptance() {
   const [error, setError] = useState<BffClientError | null>(null);
 
   useEffect(() => {
-    if (location.search) window.history.replaceState(null, '', '/invite/accept');
+    if (location.search) window.history.replaceState(null, '', INVITATION_ACCEPT_PATH);
   }, [location.search]);
 
   async function accept(event: React.FormEvent) {
@@ -40,7 +41,10 @@ export function InviteAcceptance() {
       <section className="w-full max-w-[440px] rounded-[14px] border border-[var(--border)] bg-[var(--panel)] p-7">
         <h1 className="text-[22px] font-bold">Accept invitation</h1>
         {accepted ? (
-          <p role="status" className="mt-4">Invitation accepted. You can now sign in.</p>
+          <div className="mt-4 flex flex-col items-start gap-3">
+            <p role="status">Invitation accepted. You can now sign in.</p>
+            <Link className="rounded-[8px] bg-[var(--accent)] px-4 py-2 text-white" to="/">Sign in</Link>
+          </div>
         ) : (
           <form className="mt-5 space-y-4" onSubmit={accept}>
             <label className="block text-[13px] font-semibold">

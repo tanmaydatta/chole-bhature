@@ -510,4 +510,157 @@ describe('live operator authoring journey', () => {
     expect(await screen.findByText('The operator service returned an invalid response')).toBeInTheDocument();
     expect(screen.getByText('Correlation: corr-malformed')).toBeInTheDocument();
   });
+
+  test('renders unresolved conditions and blocks saving incompatible existing drafts', async () => {
+    const invalid = {
+      ...programConfiguration('Legacy Promo'),
+      eligibility: { match: 'ALL', conditions: [
+        { id: 'deprecated', variable: 'customer.deprecated', operator: 'eq', value: 'legacy' },
+        { id: 'incompatible', variable: 'context.channel', operator: 'gt', value: 'store' },
+      ] },
+    };
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path === '/operator/v1/session') return response(session);
+      if (path === '/operator/v1/schema/definitions') return response({
+        definitions: workingDefinitions, draftVersion: 1, publishedVersion: 1,
+      });
+      if (path === '/operator/v1/programs/gold-launch') return response({
+        configuration: invalid,
+        lifecycle: { programRef: 'gold-launch', status: 'active', activeRevision: 1, draftRevision: 2, updatedAt: now },
+      });
+      throw new Error(`Unexpected ${path}`);
+    }));
+
+    renderApp('/promo/gold-launch/edit');
+    expect(await screen.findByText('Missing variable definition for customer.deprecated.')).toBeInTheDocument();
+    expect(screen.getByText('Operator “gt” is not valid for context.channel.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Save draft' })).toBeDisabled();
+  });
+
+  test.each([
+    [409, 'PROGRAM_CONFLICT', 'The program state conflicts', false],
+    [503, 'CORE_UNAVAILABLE', 'Core is temporarily unavailable', true],
+    [401, 'UNAUTHORIZED', 'Authentication is required', false],
+  ] as const)('keeps the authored draft mounted after %s %s save responses', async (status, code, message, retryable) => {
+    const puts: Array<Record<string, unknown>> = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      const method = init?.method ?? 'GET';
+      if (path === '/operator/v1/session') return response(session);
+      if (path === '/operator/v1/schema/definitions') return response({
+        definitions: workingDefinitions, draftVersion: 1, publishedVersion: 1,
+      });
+      if (path === '/operator/v1/programs/gold-launch' && method === 'GET') return response({
+        configuration: programConfiguration('Server Promo'),
+        lifecycle: { programRef: 'gold-launch', status: 'active', activeRevision: 1, draftRevision: 2, updatedAt: now },
+      });
+      if (path === '/operator/v1/programs/gold-launch' && method === 'PUT') {
+        puts.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+        return error(status, code, message, retryable);
+      }
+      throw new Error(`Unexpected ${method} ${path}`);
+    }));
+
+    renderApp('/promo/gold-launch/edit');
+    const name = await screen.findByLabelText('Promo name');
+    await userEvent.clear(name);
+    await userEvent.type(name, 'Unsaved authored Promo');
+    await userEvent.click(screen.getByRole('button', { name: 'Save draft' }));
+
+    expect(await screen.findByText(message)).toBeInTheDocument();
+    expect(screen.getByText(`Code: ${code}`)).toBeInTheDocument();
+    expect(screen.getByText(`Retryable: ${retryable ? 'yes' : 'no'}`)).toBeInTheDocument();
+    expect(screen.getByText('Correlation: corr-live-error')).toBeInTheDocument();
+    expect(screen.getByLabelText('Promo name')).toHaveValue('Unsaved authored Promo');
+    expect(screen.getByRole('button', { name: 'Retry save' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Reload server version for comparison' })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Retry save' }));
+    expect(puts).toHaveLength(2);
+    expect(puts[0]).toMatchObject({ name: 'Unsaved authored Promo' });
+    expect(puts[1]).toMatchObject({ name: 'Unsaved authored Promo' });
+    await userEvent.click(screen.getByRole('button', { name: 'Reload server version for comparison' }));
+    expect(await screen.findByText('Server Promo', { selector: 'code' })).toBeInTheDocument();
+    expect(screen.getByLabelText('Promo name')).toHaveValue('Unsaved authored Promo');
+  });
+
+  test('compares a create-mode conflict by the submitted external reference without replacing the draft', async () => {
+    const calls: Array<{ path: string; method: string; body?: Record<string, unknown> }> = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      const method = init?.method ?? 'GET';
+      const body = typeof init?.body === 'string'
+        ? JSON.parse(init.body) as Record<string, unknown>
+        : undefined;
+      calls.push({ path, method, ...(body ? { body } : {}) });
+      if (path === '/operator/v1/session') return response(session);
+      if (path === '/operator/v1/schema/definitions') return response({
+        definitions: workingDefinitions, draftVersion: 1, publishedVersion: 1,
+      });
+      if (path === '/operator/v1/programs' && method === 'POST') {
+        return error(409, 'PROGRAM_CONFLICT', 'The program state conflicts');
+      }
+      if (path === '/operator/v1/programs/existing-ref' && method === 'GET') return response({
+        configuration: { ...programConfiguration('Existing server Promo'), id: 'existing-ref' },
+        lifecycle: { programRef: 'existing-ref', status: 'draft', draftRevision: 1, updatedAt: now },
+      });
+      throw new Error(`Unexpected ${method} ${path}`);
+    }));
+
+    renderApp('/promo/new');
+    await userEvent.type(await screen.findByLabelText('External reference'), 'existing-ref');
+    await userEvent.type(screen.getByLabelText('Promo name'), 'Unsaved create Promo');
+    await userEvent.click(screen.getByRole('button', { name: 'Use complete authoring example' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Save draft' }));
+
+    expect(await screen.findByText('The program state conflicts')).toBeInTheDocument();
+    expect(screen.getByLabelText('External reference')).toHaveValue('existing-ref');
+    expect(screen.getByLabelText('Promo name')).toHaveValue('Unsaved create Promo');
+    expect(screen.getByRole('button', { name: 'Reload server version for comparison' })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Reload server version for comparison' }));
+    expect(await screen.findByText('Existing server Promo', { selector: 'code' })).toBeInTheDocument();
+    expect(screen.getByLabelText('External reference')).toHaveValue('existing-ref');
+    expect(screen.getByLabelText('Promo name')).toHaveValue('Unsaved create Promo');
+    expect(calls).toContainEqual({ path: '/operator/v1/programs/existing-ref', method: 'GET' });
+    expect(calls.find(call => call.path === '/operator/v1/programs' && call.method === 'POST')?.body)
+      .toMatchObject({ id: 'existing-ref', name: 'Unsaved create Promo' });
+  });
+
+  test('keeps lookup loading owned by the newest overlapping exact-customer request', async () => {
+    let resolveOld: ((response: Response) => void) | undefined;
+    let resolveNew: ((response: Response) => void) | undefined;
+    const oldRequest = new Promise<Response>(resolve => { resolveOld = resolve; });
+    const newRequest = new Promise<Response>(resolve => { resolveNew = resolve; });
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path === '/operator/v1/session') return response(session);
+      if (path === '/operator/v1/schema/published') return response({
+        version: 1, publishedAt: now, definitions: publishedDefinitions, jsonSchema: {}, sample: {},
+      });
+      if (path === '/operator/v1/customers/customer-old') return oldRequest;
+      if (path === '/operator/v1/customers/customer-new') return newRequest;
+      throw new Error(`Unexpected ${path}`);
+    }));
+
+    renderApp('/customers');
+    const reference = await screen.findByLabelText('Customer reference');
+    await userEvent.type(reference, 'customer-old');
+    await userEvent.click(screen.getByRole('button', { name: 'Look up customer' }));
+    expect(screen.getByRole('button', { name: 'Look up customer' })).toBeDisabled();
+
+    await userEvent.clear(reference);
+    await userEvent.type(reference, 'customer-new');
+    expect(screen.getByRole('button', { name: 'Look up customer' })).toBeEnabled();
+    await userEvent.click(screen.getByRole('button', { name: 'Look up customer' }));
+    resolveOld?.(error(404, 'NOT_FOUND', 'The requested resource was not found'));
+    await Promise.resolve();
+    expect(screen.getByRole('button', { name: 'Look up customer' })).toBeDisabled();
+    expect(screen.queryByText('No customer exists for this exact reference.')).not.toBeInTheDocument();
+
+    resolveNew?.(error(404, 'NOT_FOUND', 'The requested resource was not found'));
+    expect(await screen.findByText('No customer exists for this exact reference.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Look up customer' })).toBeEnabled();
+  });
 });

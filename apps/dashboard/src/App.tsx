@@ -1,4 +1,5 @@
 import { Outlet, Routes, Route } from 'react-router-dom';
+import { INVITATION_ACCEPT_PATH } from '@incentives/contracts';
 import { AppShell } from './components/layout/AppShell';
 import Overview from './pages/Overview';
 import AffiliateList from './pages/affiliate/AffiliateList';
@@ -41,7 +42,7 @@ export default function App() {
   return (
     <AuthProvider>
       <Routes>
-        <Route path="/invite/accept" element={<InviteAcceptance />} />
+        <Route path={INVITATION_ACCEPT_PATH} element={<InviteAcceptance />} />
         <Route element={<AuthenticatedRoute />}>
           <Route element={<DemoBuilderRoute />}>
             <Route element={<MerchantRoute permission="programs:manage" />}>

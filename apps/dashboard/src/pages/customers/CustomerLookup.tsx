@@ -69,7 +69,9 @@ export default function CustomerLookup() {
         setRecord(null); setMissing(true); setResolvedReference(exactReference);
         setValues(Object.fromEntries(customerDefinitions.map(definition => [fieldName(definition), ''])));
       } else setError(auth.handleError(cause));
-    } finally { setLooking(false); }
+    } finally {
+      if (sequence === lookupSequence.current) setLooking(false);
+    }
   }
 
   async function save() {
@@ -108,6 +110,7 @@ export default function CustomerLookup() {
     <div>
       <label>Customer reference<input aria-label="Customer reference" value={reference} onChange={event => {
         lookupSequence.current += 1;
+        setLooking(false);
         setReference(event.target.value);
         setResolvedReference(null); setRecord(null); setMissing(false); setValues({}); setValidationError(null); setError(null);
       }}/></label>
