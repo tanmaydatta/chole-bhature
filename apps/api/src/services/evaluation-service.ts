@@ -320,7 +320,7 @@ export function projectedDiscountMinorUnits(
 
 type PromoDecision = Awaited<ReturnType<typeof PromoModule.evaluate>>[number];
 
-function baseProgramDecision(program: PromoProgram): Pick<
+function baseProgramDecision(program: PromoProgram, revision = 1): Pick<
   PromoDecision,
   | 'programRef'
   | 'programRevision'
@@ -331,7 +331,7 @@ function baseProgramDecision(program: PromoProgram): Pick<
 > {
   return {
     programRef: program.id,
-    programRevision: 1,
+    programRevision: revision,
     programType: 'promo',
     priority: program.priority,
     stackable: program.stackable,
@@ -366,9 +366,9 @@ function exhaustedDecision(
   };
 }
 
-function customerRequiredDecision(program: PromoProgram): PromoDecision {
+function customerRequiredDecision(program: PromoProgram, revision: number): PromoDecision {
   return {
-    ...baseProgramDecision(program),
+    ...baseProgramDecision(program, revision),
     outcome: 'not_qualified',
     effects: [],
     reasonCodes: ['CUSTOMER_REQUIRED'],
@@ -451,7 +451,7 @@ export function createEvaluationService(repositories: Repositories, env: Env) {
           ),
         };
 
-        const programs = await repositories.programs.list(merchantId);
+        const programs = await repositories.programs.listActive(merchantId);
         const now = new Date();
         const evaluationId = crypto.randomUUID();
         const liveFacts = factInputs(request);
@@ -499,14 +499,17 @@ export function createEvaluationService(repositories: Repositories, env: Env) {
             ...liveFacts,
             system,
           });
-          const moduleEvaluated = await PromoModule.evaluate({
+          const moduleEvaluated = (await PromoModule.evaluate({
             merchantId,
             evaluationId,
             now,
             request,
             facts: programFacts,
             definitions,
-          }, record.program);
+          }, record.program)).map(decision => ({
+            ...decision,
+            programRevision: record.revision,
+          }));
           const currencyChecked = moduleEvaluated.map(decision => (
             decision.outcome === 'qualified'
             && selectedCurrencyMismatch(record.program, decision, request.cart.currency)
@@ -515,7 +518,7 @@ export function createEvaluationService(repositories: Repositories, env: Env) {
           ));
           const evaluated = customer === null && record.program.perCustomerCap !== undefined
             ? currencyChecked.map(decision => decision.outcome === 'qualified'
-              ? customerRequiredDecision(record.program)
+              ? customerRequiredDecision(record.program, record.revision)
               : decision)
             : currencyChecked;
           for (const decision of evaluated) {

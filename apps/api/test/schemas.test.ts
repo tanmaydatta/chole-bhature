@@ -215,20 +215,27 @@ describe('schema registry API', () => {
     ), 409, 'SCHEMA_CONFLICT');
   });
 
-  test('rejects required additions after publication and leaves the published snapshot unchanged', async () => {
+  test('allows required live additions after publication for operator warning handling', async () => {
     await createDefinition(channelDefinition);
     expect((await schemaRequest('POST', '/v1/schema/publish')).status).toBe(201);
 
-    await expectError(await schemaRequest('POST', '/v1/schema/definitions', 'sk_test_secret_credential_material_000000000001', {
+    expect((await schemaRequest('POST', '/v1/schema/definitions', 'sk_test_secret_credential_material_000000000001', {
       key: 'context.locale',
       label: 'Locale',
       source: 'context',
       type: 'string',
       required: true,
-    }), 409, 'SCHEMA_CONFLICT');
+    })).status).toBe(201);
+    expect((await schemaRequest('POST', '/v1/schema/publish')).status).toBe(201);
 
     const published = await schemaRequest('GET', '/v1/schema/published', 'pk_test_publishable_credential_material_00000001');
-    expect(await published.json()).toMatchObject({ version: 1, definitions: [channelDefinition] });
+    expect(await published.json()).toMatchObject({
+      version: 2,
+      definitions: expect.arrayContaining([
+        channelDefinition,
+        expect.objectContaining({ key: 'context.locale', required: true }),
+      ]),
+    });
   });
 
   test('lists, updates, and deletes an unreferenced draft definition', async () => {
@@ -488,7 +495,7 @@ describe('schema registry API', () => {
     )).resolves.toMatchObject({ publishedAt: published.publishedAt });
   });
 
-  test('PATCHing a published id removed from the current draft returns a canonical conflict', async () => {
+  test('requires deprecation instead of deleting a published id from the current draft', async () => {
     const original = await createDefinition(channelDefinition);
     expect((await schemaRequest('POST', '/v1/schema/publish')).status).toBe(201);
     await createDefinition({
@@ -498,14 +505,22 @@ describe('schema registry API', () => {
       type: 'string',
       required: false,
     });
-    expect((await schemaRequest('DELETE', `/v1/schema/definitions/${original.id}`)).status).toBe(204);
+    await expectError(
+      await schemaRequest('DELETE', `/v1/schema/definitions/${original.id}`),
+      409,
+      'SCHEMA_CONFLICT',
+    );
 
-    await expectError(await schemaRequest(
+    const presentationUpdate = await schemaRequest(
       'PATCH',
       `/v1/schema/definitions/${original.id}`,
       'sk_test_secret_credential_material_000000000001',
       { ...channelDefinition, label: 'Restored' },
-    ), 409, 'SCHEMA_CONFLICT');
+    );
+    expect(presentationUpdate.status).toBe(200);
+    expect(await presentationUpdate.json()).toMatchObject({
+      definition: { key: channelDefinition.key, label: 'Restored' },
+    });
   });
 
   test.each([

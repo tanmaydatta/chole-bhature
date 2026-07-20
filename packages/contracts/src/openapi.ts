@@ -56,13 +56,6 @@ export function buildOpenApiDocument(): OpenApiDocument {
     description: 'Request correlation identifier returned by the runtime',
     schema: { type: 'string', minLength: 1 },
   });
-  registry.registerComponent('parameters', 'SchemaDefinitionId', {
-    name: 'id',
-    in: 'path',
-    required: true,
-    description: 'Definition identifier returned by the list/create API',
-    schema: { type: 'string', minLength: 1 },
-  });
   registry.registerComponent('parameters', 'CustomerRef', {
     name: 'customerRef',
     in: 'path',
@@ -70,16 +63,9 @@ export function buildOpenApiDocument(): OpenApiDocument {
     description: 'Opaque client customer reference',
     schema: { type: 'string', minLength: 1 },
   });
-  registry.registerComponent('parameters', 'ProgramExternalRef', {
-    name: 'externalRef',
-    in: 'path',
-    required: true,
-    description: 'Immutable Promo program reference',
-    schema: { type: 'string', minLength: 1 },
-  });
 
   registry.register('Money', MoneySchema);
-  const variableDefinition = registry.register('VariableDefinition', VariableDefinitionSchema);
+  registry.register('VariableDefinition', VariableDefinitionSchema);
   registry.register('Effect', EffectSchema);
   registry.register('CommerceReward', CommerceRewardSchema);
   registry.register('RewardRule', PromoRewardRuleSchema);
@@ -88,14 +74,14 @@ export function buildOpenApiDocument(): OpenApiDocument {
   const redemptionRequest = registry.register('RedemptionRequest', RedemptionRequestSchema);
   const redemptionResponse = registry.register('RedemptionResponse', RedemptionResponseSchema);
   const apiError = registry.register('ApiError', ApiErrorSchema);
-  const promoProgram = registry.register('PromoProgram', PromoProgramSchema);
+  registry.register('PromoProgram', PromoProgramSchema);
   registry.register('AffiliateProgram', AffiliateProgramSchema);
   registry.register('ReferralProgram', ReferralProgramSchema);
   registry.register('LoyaltyProgram', LoyaltyProgramSchema);
   const healthResponse = registry.register('HealthResponse', HealthResponseSchema);
   const accessSummary = registry.register('AccessSummary', AccessSummarySchema);
-  const definitionView = registry.register('SchemaDefinitionView', SchemaDefinitionViewSchema);
-  const definitionsResponse = registry.register(
+  registry.register('SchemaDefinitionView', SchemaDefinitionViewSchema);
+  registry.register(
     'SchemaDefinitionsResponse',
     SchemaDefinitionsResponseSchema,
   );
@@ -105,7 +91,7 @@ export function buildOpenApiDocument(): OpenApiDocument {
   );
   const customerPatch = registry.register('CustomerPatchRequest', CustomerPatchRequestSchema);
   const customerRecord = registry.register('CustomerRecord', CustomerRecordSchema);
-  const programList = registry.register('ProgramListResponse', ProgramListResponseSchema);
+  registry.register('ProgramListResponse', ProgramListResponseSchema);
   const openApiDocument = registry.register(
     'OpenApiDocument',
     OpenApiDocumentResponseSchema,
@@ -132,9 +118,7 @@ export function buildOpenApiDocument(): OpenApiDocument {
     410: errorResponse('The evaluation decision has expired'),
     503: errorResponse('The runtime is temporarily unavailable; inspect retryable'),
   };
-  const schemaDefinitionId = { $ref: '#/components/parameters/SchemaDefinitionId' };
   const customerRef = { $ref: '#/components/parameters/CustomerRef' };
-  const programExternalRef = { $ref: '#/components/parameters/ProgramExternalRef' };
 
   registry.registerPath({
     method: 'get',

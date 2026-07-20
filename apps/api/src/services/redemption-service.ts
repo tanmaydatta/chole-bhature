@@ -213,18 +213,28 @@ export function createRedemptionService(repositories: Repositories, env: Env) {
         if (canonicalJson(decision.effects) !== canonicalJson([snapshotReward])) {
           throw new VersionConflictError('The signed selected reward does not match its rule');
         }
-        const program = await repositories.programs.get(merchantId, request.programRef);
+        const [program, revision] = await Promise.all([
+          repositories.programs.getActive(merchantId, request.programRef),
+          repositories.programs.getRevision(
+            merchantId,
+            request.programRef,
+            decision.programRevision,
+          ),
+        ]);
         if (program === null || program.program.status !== 'active') throw new ExhaustedError();
-        const currentReward = rewardByRef(program.program, decision.rewardRuleRef);
-        if (canonicalJson(decision.effects) !== canonicalJson([currentReward])) {
-          throw new VersionConflictError('The program reward changed after evaluation');
+        if (revision?.publishedAt === undefined) {
+          throw new VersionConflictError('The evaluated program revision is not published');
+        }
+        const revisionReward = rewardByRef(revision.configuration, decision.rewardRuleRef);
+        if (canonicalJson(decision.effects) !== canonicalJson([revisionReward])) {
+          throw new VersionConflictError('The selected reward does not match its revision');
         }
         const cartCurrency = record.request.cart.currency;
         if (
-          ('amount' in currentReward
-            && currentReward.amount.currency !== cartCurrency)
-          || (program.program.budget !== undefined
-            && program.program.budget.currency !== cartCurrency)
+          ('amount' in revisionReward
+            && revisionReward.amount.currency !== cartCurrency)
+          || (revision.configuration.budget !== undefined
+            && revision.configuration.budget.currency !== cartCurrency)
         ) {
           throw new VersionConflictError('The program currency changed after evaluation');
         }
@@ -233,7 +243,7 @@ export function createRedemptionService(repositories: Repositories, env: Env) {
           record.request.cart,
         );
 
-        if (program.program.perCustomerCap !== undefined) {
+        if (revision.configuration.perCustomerCap !== undefined) {
           if (record.customerRef === undefined) {
             throw new VersionConflictError('A customer is required for this redemption');
           }
@@ -243,7 +253,7 @@ export function createRedemptionService(repositories: Repositories, env: Env) {
             request.programRef,
             verifyIntegrity,
           );
-          if (count >= program.program.perCustomerCap) throw new ExhaustedError();
+          if (count >= revision.configuration.perCustomerCap) throw new ExhaustedError();
         }
 
         const result = RedemptionResponseSchema.parse({
@@ -274,13 +284,13 @@ export function createRedemptionService(repositories: Repositories, env: Env) {
           discountMinorUnits,
           currency: cartCurrency,
           createdAt: new Date().toISOString(),
-          programId: program.id,
+          programId: revision.programId,
           programRef: request.programRef,
-          expectedProgram: program.program,
+          expectedProgram: revision.configuration,
           ...(record.customerRef === undefined ? {} : { customerRef: record.customerRef }),
-          ...(program.program.perCustomerCap === undefined
+          ...(revision.configuration.perCustomerCap === undefined
             ? {}
-            : { perCustomerCap: program.program.perCustomerCap }),
+            : { perCustomerCap: revision.configuration.perCustomerCap }),
         } satisfies Omit<AtomicRedemptionCommit, 'receiptIntegrityHash'>;
         const commit: AtomicRedemptionCommit = {
           ...unsignedCommit,

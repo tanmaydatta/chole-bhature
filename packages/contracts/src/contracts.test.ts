@@ -827,6 +827,8 @@ describe('canonical contracts', () => {
     expect(paths['/v1/programs/{externalRef}']).toBeUndefined();
     expect(paths['/v1/schema/definitions']).toBeUndefined();
     expect(paths['/v1/schema/definitions/{id}']).toBeUndefined();
+    expect(document.components?.parameters?.SchemaDefinitionId).toBeUndefined();
+    expect(document.components?.parameters?.ProgramExternalRef).toBeUndefined();
     expect(paths['/v1/schema/publish']).toBeUndefined();
 
     const programList = schemas?.ProgramListResponse as {

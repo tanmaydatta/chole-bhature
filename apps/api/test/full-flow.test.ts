@@ -2,14 +2,31 @@ import {
   EvaluationResponseSchema,
   RedemptionResponseSchema,
   buildOpenApiDocument,
+  type OperatorCallContext,
+  type PermissionKey,
   type PromoProgram,
   type VariableDefinition,
 } from '@incentives/contracts';
-import { SELF } from 'cloudflare:test';
+import { createExecutionContext, SELF } from 'cloudflare:test';
 import { env } from 'cloudflare:workers';
 import { beforeEach, describe, expect, test } from 'vitest';
 
+import type { Env } from '../src/env.js';
+import { CoreOperatorService } from '../src/worker.js';
 import { operatorAuthoringRequest } from './operator-authoring-app.js';
+import { SEEDED_MERCHANT_ID } from './test-credentials.js';
+
+interface LifecycleOperatorService extends CoreOperatorService {
+  createSchemaDefinition(context: OperatorCallContext, input: unknown): Promise<unknown>;
+  publishSchema(context: OperatorCallContext): Promise<unknown>;
+  createProgramDraft(context: OperatorCallContext, input: unknown): Promise<PromoProgram>;
+  updateProgramDraft(
+    context: OperatorCallContext,
+    externalRef: string,
+    input: unknown,
+  ): Promise<PromoProgram>;
+  publishProgram(context: OperatorCallContext, externalRef: string): Promise<unknown>;
+}
 
 const secretHeaders = {
   authorization: 'Bearer sk_test_secret_credential_material_000000000001',
@@ -152,6 +169,23 @@ async function resetData(): Promise<void> {
   ]);
 }
 
+function operatorContext(permission: PermissionKey): OperatorCallContext {
+  return {
+    correlationId: `full-flow-${permission}`,
+    actorUserId: 'full-flow-operator',
+    actorKind: 'member',
+    merchantId: SEEDED_MERCHANT_ID,
+    permission,
+  };
+}
+
+function lifecycleOperatorService(): LifecycleOperatorService {
+  return new CoreOperatorService(
+    createExecutionContext(),
+    env as Env,
+  ) as LifecycleOperatorService;
+}
+
 async function jsonRequest(
   method: string,
   path: string,
@@ -173,6 +207,136 @@ async function jsonRequest(
 
 describe('integration-ready runtime', () => {
   beforeEach(resetData);
+
+  test('redeems a signed old revision after atomic replacement and keeps logical counters', async () => {
+    const service = lifecycleOperatorService();
+    await service.createSchemaDefinition(
+      operatorContext('schemas:manage'),
+      contextChannelDefinition,
+    );
+    await service.publishSchema(operatorContext('schemas:publish'));
+
+    const firstRevision = {
+      id: 'revision-redemption',
+      type: 'promo',
+      name: 'Revision redemption offer',
+      status: 'draft',
+      eligibility: {
+        match: 'ALL',
+        conditions: [{
+          id: 'web-channel',
+          variable: 'context.channel',
+          operator: 'eq',
+          value: 'web',
+        }],
+      },
+      rewardRules: [{
+        id: 'stable-rule',
+        name: 'Stable reward identity',
+        conditions: {
+          match: 'ALL',
+          conditions: [{
+            id: 'positive-cart',
+            variable: 'cart.subtotal',
+            operator: 'gte',
+            value: 0,
+          }],
+        },
+        reward: {
+          type: 'order_discount',
+          calculation: 'fixed',
+          amount: { currency: 'GBP', minorUnits: 500 },
+        },
+      }],
+      budget: { currency: 'GBP', minorUnits: 5_000 },
+      usageCap: 5,
+      stackable: false,
+      priority: 20,
+      autoApply: true,
+    } as const satisfies PromoProgram;
+    await service.createProgramDraft(operatorContext('programs:manage'), firstRevision);
+    await service.publishProgram(operatorContext('programs:publish'), firstRevision.id);
+
+    const oldEvaluationResponse = await jsonRequest('POST', '/v1/evaluate', {
+      cart: { currency: 'GBP', subtotal: 4_000, items: [] },
+      context: { channel: 'web' },
+    }, 'pk_test_publishable_credential_material_00000001');
+    expect(oldEvaluationResponse.status).toBe(200);
+    const oldEvaluation = EvaluationResponseSchema.parse(await oldEvaluationResponse.json());
+    expect(oldEvaluation.decisions).toContainEqual(expect.objectContaining({
+      programRef: firstRevision.id,
+      programRevision: 1,
+      rewardRuleRef: 'stable-rule',
+      effects: [firstRevision.rewardRules[0].reward],
+      outcome: 'qualified',
+    }));
+
+    const secondRevision = {
+      ...firstRevision,
+      name: 'Replacement reward revision',
+      rewardRules: [{
+        ...firstRevision.rewardRules[0],
+        reward: {
+          type: 'order_discount',
+          calculation: 'fixed',
+          amount: { currency: 'GBP', minorUnits: 700 },
+        },
+      }],
+    } as const satisfies PromoProgram;
+    await service.updateProgramDraft(
+      operatorContext('programs:manage'),
+      firstRevision.id,
+      secondRevision,
+    );
+    await service.publishProgram(operatorContext('programs:publish'), firstRevision.id);
+
+    const redemptionResponse = await jsonRequest('POST', '/v1/redemptions', {
+      evaluationId: oldEvaluation.evaluationId,
+      programRef: firstRevision.id,
+      externalOrderRef: 'old-revision-order',
+      idempotencyKey: 'old-revision-attempt',
+    });
+    expect(redemptionResponse.status).toBe(200);
+    expect(RedemptionResponseSchema.parse(await redemptionResponse.json())).toMatchObject({
+      programRef: firstRevision.id,
+      rewardRuleRef: 'stable-rule',
+      effects: [firstRevision.rewardRules[0].reward],
+      status: 'committed',
+    });
+    expect(await env.DB.prepare(`
+      SELECT usage_count AS usageCount, budget_remaining AS budgetRemaining
+      FROM program_counters WHERE merchant_id = ?1
+    `).bind(SEEDED_MERCHANT_ID).first()).toEqual({
+      usageCount: 1,
+      budgetRemaining: 4_500,
+    });
+
+    const currentEvaluationResponse = await jsonRequest('POST', '/v1/evaluate', {
+      cart: { currency: 'GBP', subtotal: 4_000, items: [] },
+      context: { channel: 'web' },
+    }, 'pk_test_publishable_credential_material_00000001');
+    expect(currentEvaluationResponse.status).toBe(200);
+    const currentEvaluation = EvaluationResponseSchema.parse(
+      await currentEvaluationResponse.json(),
+    );
+    expect(currentEvaluation.decisions).toContainEqual(expect.objectContaining({
+      programRef: firstRevision.id,
+      programRevision: 2,
+      rewardRuleRef: 'stable-rule',
+      effects: [secondRevision.rewardRules[0].reward],
+      outcome: 'qualified',
+    }));
+    const snapshot = await env.DB.prepare(`
+      SELECT facts_json AS factsJson FROM evaluation_decisions WHERE id = ?1
+    `).bind(currentEvaluation.evaluationId).first<{ factsJson: string }>();
+    expect(JSON.parse(snapshot!.factsJson).programs).toContainEqual(expect.objectContaining({
+      programRef: firstRevision.id,
+      system: expect.objectContaining({
+        redemptions_total: 1,
+        budget_remaining: 4_500,
+      }),
+    }));
+  });
 
   test('proves tiered rewards, selected-rule integrity, and program-wide exhaustion', async () => {
     for (const definition of [customerTierDefinition, contextChannelDefinition]) {
@@ -428,16 +592,8 @@ describe('integration-ready runtime', () => {
       },
     });
     expect(document.components?.parameters).toMatchObject({
-      SchemaDefinitionId: {
-        name: 'id', in: 'path', required: true,
-        schema: { type: 'string', minLength: 1 },
-      },
       CustomerRef: {
         name: 'customerRef', in: 'path', required: true,
-        schema: { type: 'string', minLength: 1 },
-      },
-      ProgramExternalRef: {
-        name: 'externalRef', in: 'path', required: true,
         schema: { type: 'string', minLength: 1 },
       },
     });

@@ -6,7 +6,9 @@ import {
   EvaluationRequestSchema,
   IncentiveDecisionSchema,
   PromoProgramSchema,
+  ProgramLifecycleSchema,
   ProgramRevisionSchema,
+  ProgramStatusSchema,
   RedemptionResponseSchema,
   VariableDefinitionSchema,
   type VariableDefinition,
@@ -98,6 +100,21 @@ function storedProgramJson(program: z.infer<typeof PromoProgramSchema>): string 
   const serialized = JSON.stringify(program);
   if (serialized === undefined) throw new Error('Program config is not serializable');
   return serialized;
+}
+
+function validStoredCustomerValue(definition: VariableDefinition, value: unknown): boolean {
+  switch (definition.type) {
+    case 'string':
+      return typeof value === 'string';
+    case 'number':
+      return typeof value === 'number' && Number.isFinite(value);
+    case 'boolean':
+      return typeof value === 'boolean';
+    case 'enum':
+      return typeof value === 'string' && (definition.enumValues ?? []).includes(value);
+    case 'date':
+      return typeof value === 'string' && z.iso.date().safeParse(value).success;
+  }
 }
 
 function isConstraintError(error: unknown): boolean {
@@ -312,12 +329,17 @@ interface StoredProgramRow {
 }
 
 function parseProgramRow(row: StoredProgramRow): ProgramRecord {
-  let program: ReturnType<typeof PromoProgramSchema.parse>;
+  let storedProgram: ReturnType<typeof PromoProgramSchema.parse>;
   try {
-    program = parseJson(row.configJson, PromoProgramSchema);
+    storedProgram = parseJson(row.configJson, PromoProgramSchema);
   } catch (cause) {
     throw new Error('Stored program config is not canonical', { cause });
   }
+  const lifecycleStatus = ProgramStatusSchema.parse(row.status);
+  const selectedDraft = row.draftRevision === row.revision;
+  const program = selectedDraft
+    ? storedProgram
+    : PromoProgramSchema.parse({ ...storedProgram, status: lifecycleStatus });
   if (!Number.isSafeInteger(row.usageCount) || row.usageCount < 0) {
     throw new Error('Program usage counter is invalid');
   }
@@ -325,20 +347,28 @@ function parseProgramRow(row: StoredProgramRow): ProgramRecord {
   if (
     program.id !== row.externalRef
     || program.type !== row.type
-    || program.name !== row.name
-    || program.status !== row.status
-    || program.priority !== row.priority
+    || (
+      selectedDraft
+      && row.activeRevision !== null
+      && storedProgram.status !== 'draft'
+    )
+    || (
+      selectedDraft
+      && row.activeRevision === null
+      && storedProgram.status !== lifecycleStatus
+    )
   ) {
     throw new Error('Program JSON does not match its relational columns');
   }
-  if (
+  const configOwnsCounters = row.activeRevision === null || !selectedDraft;
+  if (configOwnsCounters && (
     (program.usageCap === undefined && row.maxUses !== null)
     || (program.usageCap !== undefined && row.maxUses !== program.usageCap)
     || (program.usageCap !== undefined && usageCount > program.usageCap)
-  ) {
+  )) {
     throw new Error('Program usage cap does not match its relational counter columns');
   }
-  if (
+  if (configOwnsCounters && (
     (program.budget === undefined && row.budgetRemaining !== null)
     || (program.budget !== undefined && row.budgetRemaining === null)
     || (
@@ -350,7 +380,7 @@ function parseProgramRow(row: StoredProgramRow): ProgramRecord {
         || row.budgetRemaining > program.budget.minorUnits
       )
     )
-  ) {
+  )) {
     throw new Error('Program budget does not match its relational counter columns');
   }
 
@@ -359,6 +389,9 @@ function parseProgramRow(row: StoredProgramRow): ProgramRecord {
     merchantId: row.merchantId,
     externalRef: row.externalRef,
     program,
+    revision: row.revision,
+    ...optional('activeRevision', row.activeRevision),
+    ...optional('draftRevision', row.draftRevision),
     usageCount,
     ...optional('budgetRemaining', row.budgetRemaining),
     createdAt: DateTimeSchema.parse(row.createdAt),
@@ -673,7 +706,11 @@ function parseAtomicRedemption(input: AtomicRedemptionCommit): AtomicRedemptionC
 export function createRepositories(env: Env): Repositories {
   const db = createDatabase(env);
 
-  const programProjection = `
+  function programProjection(revision: 'working' | 'active' = 'working'): string {
+    const revisionPointer = revision === 'active'
+      ? 'logical.active_revision'
+      : 'COALESCE(logical.draft_revision, logical.active_revision)';
+    return `
     SELECT
       logical.id AS id,
       logical.merchant_id AS merchantId,
@@ -695,17 +732,18 @@ export function createRepositories(env: Env): Repositories {
     INNER JOIN program_revisions AS revision
       ON revision.merchant_id = logical.merchant_id
       AND revision.program_id = logical.id
-      AND revision.revision = COALESCE(logical.draft_revision, logical.active_revision)
+      AND revision.revision = ${revisionPointer}
     INNER JOIN program_counters AS counter
       ON counter.merchant_id = logical.merchant_id
       AND counter.program_id = logical.id
   `;
+  }
 
   async function getProgramById(
     merchantId: string,
     id: string,
   ): Promise<ProgramRecord | null> {
-    const row = await env.DB.prepare(`${programProjection}
+    const row = await env.DB.prepare(`${programProjection()}
       WHERE logical.merchant_id = ?1 AND logical.id = ?2
     `).bind(merchantId, id).first<StoredProgramRow>();
     return row === null ? null : programFromRow(row);
@@ -715,8 +753,19 @@ export function createRepositories(env: Env): Repositories {
     merchantId: string,
     externalRef: string,
   ): Promise<ProgramRecord | null> {
-    const row = await env.DB.prepare(`${programProjection}
+    const row = await env.DB.prepare(`${programProjection()}
       WHERE logical.merchant_id = ?1 AND logical.external_ref = ?2
+    `).bind(merchantId, externalRef).first<StoredProgramRow>();
+    return row === null ? null : programFromRow(row);
+  }
+
+  async function getActiveProgramByExternalRef(
+    merchantId: string,
+    externalRef: string,
+  ): Promise<ProgramRecord | null> {
+    const row = await env.DB.prepare(`${programProjection('active')}
+      WHERE logical.merchant_id = ?1 AND logical.external_ref = ?2
+        AND logical.active_revision IS NOT NULL
     `).bind(merchantId, externalRef).first<StoredProgramRow>();
     return row === null ? null : programFromRow(row);
   }
@@ -1418,7 +1467,7 @@ export function createRepositories(env: Env): Repositories {
       async getDefinitionImpact(merchantId, key) {
         const parsedMerchantId = z.string().min(1).parse(merchantId);
         const parsedKey = z.string().min(1).parse(key);
-        const [versions, references, customerCount] = await Promise.all([
+        const [versions, references, definitionRow, customerRows] = await Promise.all([
           env.DB.prepare(`
             SELECT DISTINCT schema_version AS version
             FROM variable_definitions
@@ -1439,14 +1488,89 @@ export function createRepositories(env: Env): Repositories {
             ORDER BY logical.external_ref
           `).bind(parsedMerchantId, parsedKey).all<{ externalRef: string }>(),
           env.DB.prepare(`
-            SELECT COUNT(*) AS count FROM customers WHERE merchant_id = ?1
-          `).bind(parsedMerchantId).first<{ count: number }>(),
+            SELECT key, label, source, type, required, enum_values_json AS enumValuesJson,
+              description, default_error_message AS defaultErrorMessage
+            FROM variable_definitions
+            WHERE merchant_id = ?1 AND key = ?2
+            ORDER BY schema_version DESC LIMIT 1
+          `).bind(parsedMerchantId, parsedKey).first<{
+            key: string;
+            label: string;
+            source: string;
+            type: string;
+            required: number;
+            enumValuesJson: string | null;
+            description: string | null;
+            defaultErrorMessage: string | null;
+          }>(),
+          env.DB.prepare(`
+            SELECT attributes_json AS attributesJson
+            FROM customers WHERE merchant_id = ?1
+          `).bind(parsedMerchantId).all<{ attributesJson: string }>(),
         ]);
+        if (definitionRow === null) return {
+          publishedVersions: versions.results.map(row => row.version),
+          referencedProgramRefs: references.results.map(row => row.externalRef),
+          storedCustomerCount: 0,
+        };
+        const definition = VariableDefinitionSchema.parse({
+          key: definitionRow.key,
+          label: definitionRow.label,
+          source: definitionRow.source,
+          type: definitionRow.type,
+          required: definitionRow.required === 1,
+          ...optional(
+            'enumValues',
+            definitionRow.enumValuesJson === null
+              ? undefined
+              : parseJson(definitionRow.enumValuesJson, z.array(z.string())),
+          ),
+          ...optional('description', definitionRow.description),
+          ...optional('defaultErrorMessage', definitionRow.defaultErrorMessage),
+        });
+        let storedCustomerCount = 0;
+        if (definition.source === 'customer') {
+          const field = definition.key.slice('customer.'.length);
+          for (const row of customerRows.results) {
+            const attributes = parseJson(row.attributesJson, AttributesSchema);
+            const present = Object.hasOwn(attributes, field);
+            const valid = present && validStoredCustomerValue(definition, attributes[field]);
+            if (valid) storedCustomerCount += 1;
+          }
+        }
         return {
           publishedVersions: versions.results.map(row => row.version),
           referencedProgramRefs: references.results.map(row => row.externalRef),
-          storedCustomerCount: customerCount?.count ?? 0,
+          storedCustomerCount,
         };
+      },
+
+      async countIncompatibleCustomers(merchantId, definitionInput) {
+        const parsedMerchantId = z.string().min(1).parse(merchantId);
+        const definition = VariableDefinitionSchema.parse(definitionInput);
+        if (definition.source !== 'customer') return 0;
+        const field = definition.key.slice('customer.'.length);
+        const rows = await env.DB.prepare(`
+          SELECT attributes_json AS attributesJson
+          FROM customers WHERE merchant_id = ?1
+        `).bind(parsedMerchantId).all<{ attributesJson: string }>();
+        let incompatible = 0;
+        for (const row of rows.results) {
+          const attributes = parseJson(row.attributesJson, AttributesSchema);
+          const present = Object.hasOwn(attributes, field);
+          const valid = present && validStoredCustomerValue(definition, attributes[field]);
+          if ((!present && definition.required) || (present && !valid)) incompatible += 1;
+        }
+        return incompatible;
+      },
+
+      async listDeprecatedKeys(merchantId) {
+        const rows = await env.DB.prepare(`
+          SELECT DISTINCT key FROM variable_definitions
+          WHERE merchant_id = ?1 AND state = 'deprecated'
+          ORDER BY key
+        `).bind(z.string().min(1).parse(merchantId)).all<{ key: string }>();
+        return new Set(rows.results.map(({ key }) => key));
       },
 
       async deprecateDefinition(input) {
@@ -1619,9 +1743,21 @@ export function createRepositories(env: Env): Repositories {
         return getProgramByExternalRef(merchantId, externalRef);
       },
 
+      async getActive(merchantId, externalRef) {
+        return getActiveProgramByExternalRef(merchantId, externalRef);
+      },
+
       async list(merchantId) {
-        const rows = await env.DB.prepare(`${programProjection}
+        const rows = await env.DB.prepare(`${programProjection()}
           WHERE logical.merchant_id = ?1
+          ORDER BY logical.created_at, logical.external_ref
+        `).bind(merchantId).all<StoredProgramRow>();
+        return rows.results.map(programFromRow);
+      },
+
+      async listActive(merchantId) {
+        const rows = await env.DB.prepare(`${programProjection('active')}
+          WHERE logical.merchant_id = ?1 AND logical.active_revision IS NOT NULL
           ORDER BY logical.created_at, logical.external_ref
         `).bind(merchantId).all<StoredProgramRow>();
         return rows.results.map(programFromRow);
@@ -1642,6 +1778,120 @@ export function createRepositories(env: Env): Repositories {
         const schema = programSchemaSnapshot(merchantId, input.schema);
         const candidateUpdatedAt = DateTimeSchema.parse(input.updatedAt ?? now());
         const updatedAt = nextProgramTimestamp(expectedUpdatedAt, candidateUpdatedAt);
+        const logical = await env.DB.prepare(`
+          SELECT id, status, active_revision AS activeRevision,
+            draft_revision AS draftRevision, updated_at AS updatedAt
+          FROM programs WHERE merchant_id = ?1 AND external_ref = ?2
+        `).bind(merchantId, externalRef).first<{
+          id: string;
+          status: string;
+          activeRevision: number | null;
+          draftRevision: number | null;
+          updatedAt: string;
+        }>();
+        if (logical === null || logical.updatedAt !== expectedUpdatedAt) {
+          throw new ProgramConflictError('The program draft changed before it was stored');
+        }
+
+        if (logical.activeRevision !== null) {
+          if (parsedProgram.status !== 'draft') {
+            throw new ProgramConflictError('Replacement revisions must remain drafts');
+          }
+          const configJson = storedProgramJson(parsedProgram);
+          if (logical.draftRevision === null) {
+            const nextRevision = Math.max(logical.activeRevision, 0) + 1;
+            const [revisionResult, logicalResult] = await env.DB.batch([
+              env.DB.prepare(`
+                INSERT INTO program_revisions (
+                  program_id, merchant_id, revision, config_json, created_at, created_by,
+                  published_at, published_by
+                )
+                SELECT id, merchant_id, ?1, ?2, ?3, 'system:operator', NULL, NULL
+                FROM programs
+                WHERE merchant_id = ?4 AND external_ref = ?5
+                  AND active_revision = ?6 AND draft_revision IS NULL
+                  AND updated_at = ?7
+              `).bind(
+                nextRevision,
+                configJson,
+                updatedAt,
+                merchantId,
+                externalRef,
+                logical.activeRevision,
+                expectedUpdatedAt,
+              ),
+              env.DB.prepare(`
+                UPDATE programs SET type = ?1, name = ?2, config_json = ?3,
+                  priority = ?4, draft_revision = ?5, updated_at = ?6
+                WHERE merchant_id = ?7 AND external_ref = ?8
+                  AND active_revision = ?9 AND draft_revision IS NULL
+                  AND updated_at = ?10
+                  AND EXISTS (
+                    SELECT 1 FROM program_revisions
+                    WHERE merchant_id = ?7 AND program_id = programs.id
+                      AND revision = ?5 AND published_at IS NULL
+                  )
+              `).bind(
+                parsedProgram.type,
+                parsedProgram.name,
+                configJson,
+                parsedProgram.priority,
+                nextRevision,
+                updatedAt,
+                merchantId,
+                externalRef,
+                logical.activeRevision,
+                expectedUpdatedAt,
+              ),
+            ]);
+            if (
+              revisionResult?.meta.changes !== 1
+              || (logicalResult?.meta.changes ?? 0) < 1
+            ) {
+              throw new ProgramConflictError('The program draft changed before it was stored');
+            }
+          } else {
+            const [revisionResult, logicalResult] = await env.DB.batch([
+              env.DB.prepare(`
+                UPDATE program_revisions SET config_json = ?1
+                WHERE merchant_id = ?2 AND program_id = ?3 AND revision = ?4
+                  AND published_at IS NULL AND config_json = ?5
+              `).bind(
+                configJson,
+                merchantId,
+                logical.id,
+                logical.draftRevision,
+                storedProgramJson(expectedProgram),
+              ),
+              env.DB.prepare(`
+                UPDATE programs SET type = ?1, name = ?2, config_json = ?3,
+                  priority = ?4, updated_at = ?5
+                WHERE merchant_id = ?6 AND external_ref = ?7
+                  AND draft_revision = ?8 AND updated_at = ?9
+              `).bind(
+                parsedProgram.type,
+                parsedProgram.name,
+                configJson,
+                parsedProgram.priority,
+                updatedAt,
+                merchantId,
+                externalRef,
+                logical.draftRevision,
+                expectedUpdatedAt,
+              ),
+            ]);
+            if (
+              (revisionResult?.meta.changes ?? 0) < 1
+              || (logicalResult?.meta.changes ?? 0) < 1
+            ) {
+              throw new ProgramConflictError('The program draft changed before it was stored');
+            }
+          }
+          const stored = await getProgramByExternalRef(merchantId, externalRef);
+          if (stored === null) throw new ProgramConflictError('The program was not stored');
+          return stored;
+        }
+
         const result = await env.DB.prepare(`
           UPDATE programs SET
             type = ?1, name = ?2, status = ?3, config_json = ?4,
@@ -1698,8 +1948,206 @@ export function createRepositories(env: Env): Repositories {
         return stored;
       },
 
+      async publishDraft(input) {
+        const merchantId = z.string().min(1).parse(input.merchantId);
+        const externalRef = z.string().min(1).parse(input.externalRef);
+        const expectedDraftRevision = PositiveIntegerSchema.parse(input.expectedDraftRevision);
+        const status = ProgramStatusSchema.parse(input.status);
+        if (status === 'draft') throw new ProgramConflictError('Draft is not a published status');
+        const publishedAt = DateTimeSchema.parse(input.publishedAt);
+        const publishedBy = z.string().min(1).parse(input.publishedBy);
+        const current = await env.DB.prepare(`
+          SELECT logical.id AS programId, logical.updated_at AS updatedAt,
+            logical.active_revision AS activeRevision,
+            draft.config_json AS draftConfigJson,
+            active.config_json AS activeConfigJson,
+            counter.max_uses AS maxUses,
+            counter.usage_count AS usageCount,
+            counter.budget_remaining AS budgetRemaining
+          FROM programs AS logical
+          INNER JOIN program_revisions AS draft
+            ON draft.merchant_id = logical.merchant_id
+            AND draft.program_id = logical.id
+            AND draft.revision = logical.draft_revision
+          LEFT JOIN program_revisions AS active
+            ON active.merchant_id = logical.merchant_id
+            AND active.program_id = logical.id
+            AND active.revision = logical.active_revision
+          INNER JOIN program_counters AS counter
+            ON counter.merchant_id = logical.merchant_id
+            AND counter.program_id = logical.id
+          WHERE logical.merchant_id = ?1 AND logical.external_ref = ?2
+            AND logical.draft_revision = ?3
+        `).bind(merchantId, externalRef, expectedDraftRevision).first<{
+          programId: string;
+          updatedAt: string;
+          activeRevision: number | null;
+          draftConfigJson: string;
+          activeConfigJson: string | null;
+          maxUses: number | null;
+          usageCount: number;
+          budgetRemaining: number | null;
+        }>();
+        if (current === null) throw new ProgramConflictError('There is no draft revision to publish');
+        const draft = parseJson(current.draftConfigJson, PromoProgramSchema);
+        const active = current.activeConfigJson === null
+          ? null
+          : parseJson(current.activeConfigJson, PromoProgramSchema);
+        const nextMaxUses = draft.usageCap ?? null;
+        if (nextMaxUses !== null && current.usageCount > nextMaxUses) {
+          throw new ProgramConflictError('The replacement usage cap is below current usage');
+        }
+        const oldBudget = active?.budget;
+        const nextBudget = draft.budget;
+        const spent = oldBudget === undefined
+          ? 0
+          : oldBudget.minorUnits - (current.budgetRemaining ?? 0);
+        if (
+          oldBudget !== undefined
+          && nextBudget !== undefined
+          && oldBudget.currency !== nextBudget.currency
+          && spent > 0
+        ) {
+          throw new ProgramConflictError('A spent program budget cannot change currency');
+        }
+        const nextBudgetRemaining = nextBudget === undefined
+          ? null
+          : nextBudget.minorUnits - spent;
+        if (nextBudgetRemaining !== null && nextBudgetRemaining < 0) {
+          throw new ProgramConflictError('The replacement budget is below committed spend');
+        }
+        const updatedAt = nextProgramTimestamp(current.updatedAt, publishedAt);
+        const [revisionResult, counterResult, logicalResult] = await env.DB.batch([
+          env.DB.prepare(`
+            UPDATE program_revisions
+            SET published_at = ?1, published_by = ?2
+            WHERE merchant_id = ?3 AND revision = ?4
+              AND published_at IS NULL AND published_by IS NULL
+              AND program_id = (
+                SELECT id FROM programs
+                WHERE merchant_id = ?3 AND external_ref = ?5
+                  AND draft_revision = ?4
+              )
+          `).bind(publishedAt, publishedBy, merchantId, expectedDraftRevision, externalRef),
+          env.DB.prepare(`
+            UPDATE program_counters
+            SET max_uses = ?1, budget_remaining = ?2
+            WHERE merchant_id = ?3 AND program_id = ?4
+              AND usage_count = ?5
+              AND (
+                (?6 IS NULL AND max_uses IS NULL)
+                OR max_uses = ?6
+              )
+              AND (
+                (?7 IS NULL AND budget_remaining IS NULL)
+                OR budget_remaining = ?7
+              )
+              AND EXISTS (
+                SELECT 1 FROM program_revisions
+                WHERE merchant_id = ?3 AND program_id = ?4
+                  AND revision = ?8 AND published_at = ?9 AND published_by = ?10
+              )
+          `).bind(
+            nextMaxUses,
+            nextBudgetRemaining,
+            merchantId,
+            current.programId,
+            current.usageCount,
+            current.maxUses,
+            current.budgetRemaining,
+            expectedDraftRevision,
+            publishedAt,
+            publishedBy,
+          ),
+          env.DB.prepare(`
+            UPDATE programs
+            SET active_revision = draft_revision, draft_revision = NULL,
+              status = ?1, max_uses = ?2, budget_remaining = ?3, updated_at = ?4
+            WHERE merchant_id = ?5 AND external_ref = ?6
+              AND draft_revision = ?7 AND updated_at = ?8
+              AND usage_count = ?9
+              AND EXISTS (
+                SELECT 1 FROM program_revisions
+                WHERE merchant_id = ?5 AND program_id = programs.id
+                  AND revision = ?7 AND published_at = ?10 AND published_by = ?11
+              )
+              AND EXISTS (
+                SELECT 1 FROM program_counters
+                WHERE merchant_id = ?5 AND program_id = programs.id
+                  AND usage_count = ?9
+                  AND ((?2 IS NULL AND max_uses IS NULL) OR max_uses = ?2)
+                  AND ((?3 IS NULL AND budget_remaining IS NULL) OR budget_remaining = ?3)
+              )
+          `).bind(
+            status,
+            nextMaxUses,
+            nextBudgetRemaining,
+            updatedAt,
+            merchantId,
+            externalRef,
+            expectedDraftRevision,
+            current.updatedAt,
+            current.usageCount,
+            publishedAt,
+            publishedBy,
+          ),
+        ]);
+        if (
+          revisionResult?.meta.changes !== 1
+          || counterResult?.meta.changes !== 1
+          || (logicalResult?.meta.changes ?? 0) < 1
+        ) {
+          throw new ProgramConflictError('The program draft changed before publication');
+        }
+        const published = await getActiveProgramByExternalRef(merchantId, externalRef);
+        if (published === null) throw new ProgramConflictError('The published revision is missing');
+        return published;
+      },
+
+      async updateLifecycle(input) {
+        const merchantId = z.string().min(1).parse(input.merchantId);
+        const externalRef = z.string().min(1).parse(input.externalRef);
+        const expectedStatus = ProgramStatusSchema.parse(input.expectedStatus);
+        const status = ProgramStatusSchema.parse(input.status);
+        if (status === 'draft') throw new ProgramConflictError('Lifecycle cannot return to draft');
+        const candidateUpdatedAt = DateTimeSchema.parse(input.updatedAt);
+        const current = await env.DB.prepare(`
+          SELECT active_revision AS activeRevision, draft_revision AS draftRevision,
+            updated_at AS updatedAt
+          FROM programs WHERE merchant_id = ?1 AND external_ref = ?2
+            AND status = ?3 AND active_revision IS NOT NULL
+        `).bind(merchantId, externalRef, expectedStatus).first<{
+          activeRevision: number;
+          draftRevision: number | null;
+          updatedAt: string;
+        }>();
+        if (current === null) throw new ProgramConflictError('The program lifecycle changed');
+        const updatedAt = nextProgramTimestamp(current.updatedAt, candidateUpdatedAt);
+        const result = await env.DB.prepare(`
+          UPDATE programs SET status = ?1, updated_at = ?2
+          WHERE merchant_id = ?3 AND external_ref = ?4
+            AND status = ?5 AND active_revision = ?6 AND updated_at = ?7
+        `).bind(
+          status,
+          updatedAt,
+          merchantId,
+          externalRef,
+          expectedStatus,
+          current.activeRevision,
+          current.updatedAt,
+        ).run();
+        if (result.meta.changes !== 1) throw new ProgramConflictError('The program lifecycle changed');
+        return ProgramLifecycleSchema.parse({
+          programRef: externalRef,
+          status,
+          activeRevision: current.activeRevision,
+          ...optional('draftRevision', current.draftRevision),
+          updatedAt,
+        });
+      },
+
       async listReferencedVariableKeys(merchantId) {
-        const rows = await env.DB.prepare(`${programProjection}
+        const rows = await env.DB.prepare(`${programProjection()}
           WHERE logical.merchant_id = ?1
         `).bind(merchantId).all<StoredProgramRow>();
         const keys = new Set<string>();
@@ -1810,51 +2258,55 @@ export function createRepositories(env: Env): Repositories {
 
       async commitAtomically(input) {
         const parsed = parseAtomicRedemption(input);
-        const [counter, ledger] = await env.DB.batch([
+        const [counter, legacyCounter, ledger] = await env.DB.batch([
           env.DB.prepare(`
-            UPDATE programs
+            UPDATE program_counters
             SET usage_count = usage_count + 1,
                 budget_remaining = CASE
                   WHEN budget_remaining IS NULL THEN NULL
                   ELSE budget_remaining - ?1
                 END
-            WHERE id = ?2 AND merchant_id = ?3 AND external_ref = ?4
-              AND status = 'active' AND config_json = ?5
+            WHERE program_id = ?2 AND merchant_id = ?3
+              AND EXISTS (
+                SELECT 1 FROM programs
+                WHERE id = ?2 AND merchant_id = ?3 AND external_ref = ?4
+                  AND status = 'active' AND active_revision IS NOT NULL
+              )
               AND (
-                (?10 IS NULL AND max_uses IS NULL)
-                OR (?10 IS NOT NULL AND max_uses = ?10)
+                (?9 IS NULL AND max_uses IS NULL)
+                OR (?9 IS NOT NULL AND max_uses = ?9)
               )
               AND usage_count >= 0
-              AND (?10 IS NULL OR usage_count <= ?10)
+              AND (?9 IS NULL OR usage_count <= ?9)
               AND (
-                (?11 IS NULL AND budget_remaining IS NULL)
+                (?10 IS NULL AND budget_remaining IS NULL)
                 OR (
-                  ?11 IS NOT NULL AND budget_remaining IS NOT NULL
-                  AND budget_remaining BETWEEN 0 AND ?11
+                  ?10 IS NOT NULL AND budget_remaining IS NOT NULL
+                  AND budget_remaining BETWEEN 0 AND ?10
                 )
               )
               AND (max_uses IS NULL OR usage_count < max_uses)
               AND (budget_remaining IS NULL OR budget_remaining >= ?1)
+              AND (?5 IS NULL OR NOT EXISTS (
+                SELECT 1 FROM redemptions
+                WHERE merchant_id = ?3 AND external_order_ref = ?5
+              ))
               AND (?6 IS NULL OR NOT EXISTS (
                 SELECT 1 FROM redemptions
-                WHERE merchant_id = ?3 AND external_order_ref = ?6
-              ))
-              AND (?7 IS NULL OR NOT EXISTS (
-                SELECT 1 FROM redemptions
-                WHERE merchant_id = ?3 AND idempotency_key = ?7
+                WHERE merchant_id = ?3 AND idempotency_key = ?6
               ))
               AND (
-                ?8 IS NULL OR (
-                  ?9 IS NOT NULL AND (
+                ?7 IS NULL OR (
+                  ?8 IS NOT NULL AND (
                     SELECT COUNT(*)
                     FROM redemptions AS prior
                     INNER JOIN evaluation_decisions AS prior_decision
                       ON prior.merchant_id = prior_decision.merchant_id
                       AND prior.evaluation_id = prior_decision.id
                     WHERE prior.merchant_id = ?3
-                      AND prior_decision.customer_ref = ?9
+                      AND prior_decision.customer_ref = ?8
                       AND json_extract(prior.result_json, '$.result.programRef') = ?4
-                  ) < ?8
+                  ) < ?7
                 )
               )
           `).bind(
@@ -1862,7 +2314,6 @@ export function createRepositories(env: Env): Repositories {
             parsed.programId,
             parsed.merchantId,
             parsed.programRef,
-            storedProgramJson(parsed.expectedProgram),
             parsed.externalOrderRef ?? null,
             parsed.idempotencyKey ?? null,
             parsed.perCustomerCap ?? null,
@@ -1870,6 +2321,19 @@ export function createRepositories(env: Env): Repositories {
             parsed.expectedProgram.usageCap ?? null,
             parsed.expectedProgram.budget?.minorUnits ?? null,
           ),
+          env.DB.prepare(`
+            UPDATE programs
+            SET usage_count = (
+                  SELECT usage_count FROM program_counters
+                  WHERE merchant_id = ?1 AND program_id = ?2
+                ),
+                budget_remaining = (
+                  SELECT budget_remaining FROM program_counters
+                  WHERE merchant_id = ?1 AND program_id = ?2
+                )
+            WHERE merchant_id = ?1 AND id = ?2 AND external_ref = ?3
+              AND changes() = 1
+          `).bind(parsed.merchantId, parsed.programId, parsed.programRef),
           env.DB.prepare(`
             INSERT INTO redemptions (
               id, merchant_id, external_order_ref, idempotency_key, evaluation_id,
@@ -1889,8 +2353,16 @@ export function createRepositories(env: Env): Repositories {
             parsed.createdAt,
           ),
         ]);
-        if (counter?.meta.changes === 0 && ledger?.meta.changes === 0) return false;
-        if (counter?.meta.changes !== 1 || ledger?.meta.changes !== 1) {
+        if (
+          counter?.meta.changes === 0
+          && legacyCounter?.meta.changes === 0
+          && ledger?.meta.changes === 0
+        ) return false;
+        if (
+          counter?.meta.changes !== 1
+          || (legacyCounter?.meta.changes ?? 0) < 1
+          || ledger?.meta.changes !== 1
+        ) {
           throw new Error('Atomic redemption counter and ledger diverged');
         }
         return true;

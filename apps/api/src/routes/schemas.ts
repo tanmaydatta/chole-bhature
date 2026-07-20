@@ -1,10 +1,13 @@
 import { Hono } from 'hono';
+import type { OperatorCallContext } from '@incentives/contracts';
 
+import { requireOperatorContext } from '../auth/operator-context.js';
 import {
   publishablePreflight,
   requirePublishableScope,
 } from '../auth/api-credentials.js';
-import type { AppEnvironment } from '../env.js';
+import type { AppEnvironment, Env } from '../env.js';
+import { createRepositories } from '../repositories/d1-repositories.js';
 import { createSchemaService } from '../services/schema-service.js';
 
 export function createSchemaRoutes(): Hono<AppEnvironment> {
@@ -21,4 +24,72 @@ export function createSchemaRoutes(): Hono<AppEnvironment> {
   });
 
   return routes;
+}
+
+function operatorSchemaService(
+  env: Env,
+  context: OperatorCallContext,
+  permission: 'schemas:read' | 'schemas:manage' | 'schemas:publish',
+) {
+  const operator = requireOperatorContext(context, permission);
+  return {
+    operator,
+    service: createSchemaService(createRepositories(env)),
+  };
+}
+
+export async function listSchemaDefinitions(env: Env, context: OperatorCallContext) {
+  const { operator, service } = operatorSchemaService(env, context, 'schemas:read');
+  return service.list(operator.merchantId);
+}
+
+export async function createSchemaDefinition(
+  env: Env,
+  context: OperatorCallContext,
+  input: unknown,
+) {
+  const { operator, service } = operatorSchemaService(env, context, 'schemas:manage');
+  return service.create(operator.merchantId, input);
+}
+
+export async function updateSchemaDefinition(
+  env: Env,
+  context: OperatorCallContext,
+  definitionId: string,
+  input: unknown,
+) {
+  const { operator, service } = operatorSchemaService(env, context, 'schemas:manage');
+  return service.update(operator.merchantId, definitionId, input);
+}
+
+export async function deleteSchemaDefinition(
+  env: Env,
+  context: OperatorCallContext,
+  definitionId: string,
+) {
+  const { operator, service } = operatorSchemaService(env, context, 'schemas:manage');
+  return service.delete(operator.merchantId, definitionId);
+}
+
+export async function previewSchemaDefinitionImpact(
+  env: Env,
+  context: OperatorCallContext,
+  definitionId: string,
+) {
+  const { operator, service } = operatorSchemaService(env, context, 'schemas:read');
+  return service.impact(operator.merchantId, definitionId);
+}
+
+export async function deprecateSchemaDefinition(
+  env: Env,
+  context: OperatorCallContext,
+  definitionId: string,
+) {
+  const { operator, service } = operatorSchemaService(env, context, 'schemas:manage');
+  return service.deprecate(operator.merchantId, definitionId, operator.actorUserId);
+}
+
+export async function publishSchema(env: Env, context: OperatorCallContext) {
+  const { operator, service } = operatorSchemaService(env, context, 'schemas:publish');
+  return service.publishForOperator(operator.merchantId);
 }

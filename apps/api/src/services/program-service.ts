@@ -5,6 +5,7 @@ import {
   type Condition,
   type ConditionGroup,
   type PromoProgram,
+  type ProgramLifecycle,
   type VariableDefinition,
 } from '@incentives/contracts';
 import { OPERATORS_BY_TYPE } from '@incentives/engine';
@@ -206,16 +207,28 @@ function assertAddressableExternalRef(externalRef: string): void {
 }
 
 export function createProgramService(repositories: Repositories) {
-  async function currentDefinitions(merchantId: string, status: PromoProgram['status']) {
-    const current = status === 'draft'
+  async function currentDefinitions(
+    merchantId: string,
+    status: PromoProgram['status'],
+    forcePublished = false,
+  ) {
+    const current = status === 'draft' && !forcePublished
       ? await repositories.schemas.getLatestVersion(merchantId, 'draft')
         ?? await repositories.schemas.getLatestVersion(merchantId, 'published')
       : await repositories.schemas.getLatestVersion(merchantId, 'published');
+    const [records, deprecatedKeys] = await Promise.all([
+      current === null
+        ? Promise.resolve([])
+        : repositories.schemas.listDefinitions(merchantId, current.version),
+      repositories.schemas.listDeprecatedKeys(merchantId),
+    ]);
     return {
       schema: current,
       definitions: [
         ...BUILTIN_VARIABLE_DEFINITIONS,
-        ...(current?.definitions ?? []),
+        ...records
+          .filter(record => !deprecatedKeys.has(record.definition.key))
+          .map(record => record.definition),
       ],
     };
   }
@@ -240,9 +253,76 @@ export function createProgramService(repositories: Repositories) {
     return record;
   }
 
+  async function active(merchantId: string, externalRef: string) {
+    const record = await repositories.programs.getActive(merchantId, externalRef);
+    if (record === null) throw new NotFoundError('Program not found', 'PROGRAM_NOT_FOUND');
+    return record;
+  }
+
+  function lifecycle(record: Awaited<ReturnType<typeof find>>): ProgramLifecycle {
+    return {
+      programRef: record.externalRef,
+      status: record.program.status,
+      ...(
+        record.activeRevision === undefined
+          ? {}
+          : { activeRevision: record.activeRevision }
+      ),
+      ...(
+        record.draftRevision === undefined
+          ? {}
+          : { draftRevision: record.draftRevision }
+      ),
+      updatedAt: record.updatedAt,
+    };
+  }
+
+  function effectiveStatus(program: PromoProgram): 'scheduled' | 'active' | 'ended' {
+    const today = new Date().toISOString().slice(0, 10);
+    if (program.endDate !== undefined && program.endDate < today) return 'ended';
+    if (program.startDate !== undefined && program.startDate > today) return 'scheduled';
+    return 'active';
+  }
+
+  function publicationWarnings(program: PromoProgram) {
+    const seen = new Set<string>();
+    const warnings: Array<{ code: string; message: string }> = [];
+    for (const rule of program.rewardRules) {
+      const signature = JSON.stringify(rule.conditions);
+      if (seen.has(signature)) {
+        warnings.push({
+          code: 'OVERLAPPING_REWARD_RULES',
+          message: `Reward rule ${rule.id} overlaps an earlier rule and may be unreachable`,
+        });
+      }
+      seen.add(signature);
+    }
+    return warnings;
+  }
+
+  async function validateForPublishedSchema(
+    merchantId: string,
+    program: PromoProgram,
+  ): Promise<void> {
+    const current = await currentDefinitions(merchantId, program.status, true);
+    if (current.schema === null) {
+      throw new ProgramConflictError('A schema must be published before the program');
+    }
+    validateRewardAndCaps(program);
+    validateConditions(program, current.definitions);
+  }
+
   return {
     async create(merchantId: string, input: unknown): Promise<PromoProgram> {
       const validated = await validatedProgram(merchantId, input);
+      return (await repositories.programs.create({ merchantId, ...validated })).program;
+    },
+
+    async createDraft(merchantId: string, input: unknown): Promise<PromoProgram> {
+      const validated = await validatedProgram(merchantId, input);
+      if (validated.program.status !== 'draft') {
+        throw new ProgramConflictError('New operator-authored programs must begin as drafts');
+      }
       return (await repositories.programs.create({ merchantId, ...validated })).program;
     },
 
@@ -278,6 +358,101 @@ export function createProgramService(repositories: Repositories) {
         expectedProgram: existing.program,
         expectedUpdatedAt: existing.updatedAt,
       })).program;
+    },
+
+    async updateDraft(
+      merchantId: string,
+      externalRef: string,
+      input: unknown,
+    ): Promise<PromoProgram> {
+      assertAddressableExternalRef(externalRef);
+      const existing = await find(merchantId, externalRef);
+      const validated = await validatedProgram(merchantId, input);
+      if (validated.program.id !== externalRef) {
+        throw new ProgramConflictError('The program external reference is immutable');
+      }
+      if (validated.program.status !== 'draft') {
+        throw new ProgramConflictError('Program revision drafts must have draft status');
+      }
+      return (await repositories.programs.updateDraft({
+        merchantId,
+        externalRef,
+        ...validated,
+        expectedProgram: existing.program,
+        expectedUpdatedAt: existing.updatedAt,
+      })).program;
+    },
+
+    async publish(merchantId: string, externalRef: string, actorUserId: string) {
+      assertAddressableExternalRef(externalRef);
+      const draft = await find(merchantId, externalRef);
+      if (draft.draftRevision === undefined || draft.program.status !== 'draft') {
+        throw new ProgramConflictError('There is no draft revision to publish');
+      }
+      await validateForPublishedSchema(merchantId, draft.program);
+      const previous = await repositories.programs.getActive(merchantId, externalRef);
+      const status = previous?.program.status === 'paused' || previous?.program.status === 'ended'
+        ? previous.program.status
+        : effectiveStatus(draft.program);
+      const published = await repositories.programs.publishDraft({
+        merchantId,
+        externalRef,
+        expectedDraftRevision: draft.draftRevision,
+        status,
+        publishedAt: new Date().toISOString(),
+        publishedBy: actorUserId,
+      });
+      return {
+        ...lifecycle(published),
+        warnings: publicationWarnings(draft.program),
+      };
+    },
+
+    async pause(merchantId: string, externalRef: string): Promise<ProgramLifecycle> {
+      const current = await active(merchantId, externalRef);
+      if (current.program.status !== 'active' && current.program.status !== 'scheduled') {
+        throw new ProgramConflictError('Only active or scheduled programs can be paused');
+      }
+      return repositories.programs.updateLifecycle({
+        merchantId,
+        externalRef,
+        expectedStatus: current.program.status,
+        status: 'paused',
+        updatedAt: new Date().toISOString(),
+      });
+    },
+
+    async resume(merchantId: string, externalRef: string): Promise<ProgramLifecycle> {
+      const current = await active(merchantId, externalRef);
+      if (current.program.status === 'ended') {
+        throw new ProgramConflictError('Ended programs cannot be resumed');
+      }
+      if (current.program.status !== 'paused') {
+        throw new ProgramConflictError('Only paused programs can be resumed');
+      }
+      const status = effectiveStatus(current.program);
+      if (status === 'ended') throw new ProgramConflictError('Expired programs cannot be resumed');
+      return repositories.programs.updateLifecycle({
+        merchantId,
+        externalRef,
+        expectedStatus: 'paused',
+        status,
+        updatedAt: new Date().toISOString(),
+      });
+    },
+
+    async end(merchantId: string, externalRef: string): Promise<ProgramLifecycle> {
+      const current = await active(merchantId, externalRef);
+      if (current.program.status === 'ended') {
+        throw new ProgramConflictError('The program has already ended');
+      }
+      return repositories.programs.updateLifecycle({
+        merchantId,
+        externalRef,
+        expectedStatus: current.program.status,
+        status: 'ended',
+        updatedAt: new Date().toISOString(),
+      });
     },
   };
 }

@@ -8,6 +8,8 @@ import type {
   EvaluationRequest,
   IncentiveDecision,
   PromoProgram,
+  ProgramLifecycle,
+  ProgramStatus,
   ProgramRevision,
   RedemptionResponse,
   VariableDefinition,
@@ -85,6 +87,11 @@ export interface SchemaRepository {
     publishedAt: string,
   ): Promise<SchemaVersionRecord>;
   getDefinitionImpact(merchantId: string, key: string): Promise<SchemaDefinitionImpact>;
+  countIncompatibleCustomers(
+    merchantId: string,
+    definition: VariableDefinition,
+  ): Promise<number>;
+  listDeprecatedKeys(merchantId: string): Promise<Set<string>>;
   deprecateDefinition(input: SchemaDefinitionDeprecation): Promise<void>;
 }
 
@@ -195,6 +202,9 @@ export interface ProgramRecord {
   merchantId: string;
   externalRef: string;
   program: PromoProgram;
+  revision: number;
+  activeRevision?: number;
+  draftRevision?: number;
   usageCount: number;
   budgetRemaining?: number;
   createdAt: string;
@@ -217,8 +227,25 @@ export interface ProgramCounterRecord {
 export interface ProgramRepository {
   create(input: ProgramCreate): Promise<ProgramRecord>;
   get(merchantId: string, externalRef: string): Promise<ProgramRecord | null>;
+  getActive(merchantId: string, externalRef: string): Promise<ProgramRecord | null>;
   list(merchantId: string): Promise<ProgramRecord[]>;
+  listActive(merchantId: string): Promise<ProgramRecord[]>;
   updateDraft(input: ProgramUpdate): Promise<ProgramRecord>;
+  publishDraft(input: {
+    merchantId: string;
+    externalRef: string;
+    expectedDraftRevision: number;
+    status: Exclude<ProgramStatus, 'draft'>;
+    publishedAt: string;
+    publishedBy: string;
+  }): Promise<ProgramRecord>;
+  updateLifecycle(input: {
+    merchantId: string;
+    externalRef: string;
+    expectedStatus: ProgramStatus;
+    status: Exclude<ProgramStatus, 'draft'>;
+    updatedAt: string;
+  }): Promise<ProgramLifecycle>;
   listReferencedVariableKeys(merchantId: string): Promise<Set<string>>;
   getRevision(
     merchantId: string,

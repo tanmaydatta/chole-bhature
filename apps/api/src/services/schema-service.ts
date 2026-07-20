@@ -27,6 +27,11 @@ export interface PublishedSchema {
   sample: Record<string, unknown>;
 }
 
+export interface SchemaLifecycleWarning {
+  code: 'REQUIRED_LIVE_FIELD';
+  message: string;
+}
+
 export const BUILTIN_VARIABLE_DEFINITIONS = [
   { key: 'cart.currency', label: 'Cart currency', source: 'cart', type: 'string', required: true },
   { key: 'cart.subtotal', label: 'Cart subtotal', source: 'cart', type: 'number', required: true },
@@ -132,17 +137,13 @@ export function createSchemaService(repositories: Repositories) {
     }
   }
 
-  async function assertRequiredCompatibility(
-    merchantId: string,
-    definition: VariableDefinition,
-  ): Promise<void> {
-    if (!definition.required) return;
-    const published = await latestPublished(merchantId);
-    if (published === null) return;
-    const previous = published.definitions.find(candidate => candidate.key === definition.key);
-    if (previous?.required !== true) {
-      throw new SchemaConflictError('Published integrations cannot gain a required field');
-    }
+  function warningsFor(definition: VariableDefinition): SchemaLifecycleWarning[] {
+    return definition.required && definition.source !== 'customer'
+      ? [{
+          code: 'REQUIRED_LIVE_FIELD',
+          message: `Required live field ${definition.key} may break existing integrations`,
+        }]
+      : [];
   }
 
   async function workingDefinitions(merchantId: string): Promise<VariableDefinitionRecord[]> {
@@ -166,6 +167,44 @@ export function createSchemaService(repositories: Repositories) {
     };
   }
 
+  async function publishForOperator(merchantId: string): Promise<PublishedSchema & {
+    warnings: SchemaLifecycleWarning[];
+  }> {
+    const draft = await repositories.schemas.getLatestVersion(merchantId, 'draft');
+    if (draft === null) {
+      if (await latestPublished(merchantId) !== null) throw new SchemaRevisionConflictError();
+      throw new SchemaConflictError('There is no draft schema to publish');
+    }
+    const records = await repositories.schemas.listDefinitions(merchantId, draft.version);
+    const definitions = assertDraftSnapshot(draft, records);
+    for (const definition of definitions) {
+      assertMerchantDefinition(definition);
+      if (definition.required && definition.source === 'customer') {
+        const incompatibleCustomerCount = await repositories.schemas.countIncompatibleCustomers(
+          merchantId,
+          definition,
+        );
+        if (incompatibleCustomerCount > 0) {
+          throw new SchemaConflictError(
+            `${incompatibleCustomerCount} stored customers are incompatible with ${definition.key}`,
+          );
+        }
+      }
+    }
+    buildPublishedEvaluationJsonSchema(definitions);
+    const publishedAt = new Date().toISOString();
+    const published = await repositories.schemas.publishDraft(
+      merchantId,
+      draft.version,
+      definitions,
+      publishedAt,
+    );
+    return {
+      ...publishedPayload(published),
+      warnings: definitions.flatMap(warningsFor),
+    };
+  }
+
   return {
     async list(merchantId: string) {
       const [records, references, draft, published] = await Promise.all([
@@ -183,7 +222,7 @@ export function createSchemaService(repositories: Repositories) {
       return {
         definitions: [
           ...builtins,
-          ...records.map(record => ({
+          ...records.filter(record => record.state !== 'deprecated').map(record => ({
             id: record.id,
             definition: record.definition,
             readOnly: false,
@@ -198,7 +237,6 @@ export function createSchemaService(repositories: Repositories) {
     async create(merchantId: string, input: unknown): Promise<SchemaDefinitionView> {
       const definition = VariableDefinitionSchema.parse(input);
       assertMerchantDefinition(definition);
-      await assertRequiredCompatibility(merchantId, definition);
       const draft = await ensureDraft(merchantId);
       const records = await repositories.schemas.listDefinitions(merchantId, draft.version);
       const expectedDefinitions = assertDraftSnapshot(draft, records);
@@ -225,13 +263,19 @@ export function createSchemaService(repositories: Repositories) {
       }
       const definition = VariableDefinitionSchema.parse(input);
       assertMerchantDefinition(definition);
-      await assertRequiredCompatibility(merchantId, definition);
 
       const original = await repositories.schemas.getDefinition(merchantId, id);
       if (original === null) throw new NotFoundError('Definition not found', 'SCHEMA_DEFINITION_NOT_FOUND');
+      if (original.state === 'deprecated') {
+        throw new SchemaConflictError('Deprecated definitions cannot be edited');
+      }
       const references = await repositories.programs.listReferencedVariableKeys(merchantId);
+      const impact = await repositories.schemas.getDefinitionImpact(
+        merchantId,
+        original.definition.key,
+      );
       if (
-        references.has(original.definition.key)
+        (references.has(original.definition.key) || impact.publishedVersions.length > 0)
         && (
           definition.key !== original.definition.key
           || definition.source !== original.definition.source
@@ -269,6 +313,9 @@ export function createSchemaService(repositories: Repositories) {
       }
       const original = await repositories.schemas.getDefinition(merchantId, id);
       if (original === null) throw new NotFoundError('Definition not found', 'SCHEMA_DEFINITION_NOT_FOUND');
+      if (original.state !== 'draft') {
+        throw new SchemaConflictError('Published definitions must be deprecated, not deleted');
+      }
       const references = await repositories.programs.listReferencedVariableKeys(merchantId);
       if (references.has(original.definition.key)) {
         throw new SchemaConflictError('Referenced definitions cannot be deleted');
@@ -290,27 +337,44 @@ export function createSchemaService(repositories: Repositories) {
       );
     },
 
-    async publish(merchantId: string): Promise<PublishedSchema> {
-      const draft = await repositories.schemas.getLatestVersion(merchantId, 'draft');
-      if (draft === null) {
-        if (await latestPublished(merchantId) !== null) throw new SchemaRevisionConflictError();
-        throw new SchemaConflictError('There is no draft schema to publish');
-      }
-      const records = await repositories.schemas.listDefinitions(merchantId, draft.version);
-      const definitions = assertDraftSnapshot(draft, records);
-      for (const definition of definitions) {
-        assertMerchantDefinition(definition);
-        await assertRequiredCompatibility(merchantId, definition);
-      }
-      buildPublishedEvaluationJsonSchema(definitions);
-      const publishedAt = new Date().toISOString();
-      const published = await repositories.schemas.publishDraft(
+    async impact(merchantId: string, id: string) {
+      const record = await repositories.schemas.getDefinition(merchantId, id);
+      if (record === null) throw new NotFoundError('Definition not found', 'SCHEMA_DEFINITION_NOT_FOUND');
+      const impact = await repositories.schemas.getDefinitionImpact(
         merchantId,
-        draft.version,
-        definitions,
-        publishedAt,
+        record.definition.key,
       );
-      return publishedPayload(published);
+      const incompatibleCustomerCount = await repositories.schemas.countIncompatibleCustomers(
+        merchantId,
+        record.definition,
+      );
+      return {
+        ...impact,
+        incompatibleCustomerCount,
+        warnings: warningsFor(record.definition),
+      };
+    },
+
+    async deprecate(merchantId: string, id: string, actorUserId: string): Promise<void> {
+      const record = await repositories.schemas.getDefinition(merchantId, id);
+      if (record === null) throw new NotFoundError('Definition not found', 'SCHEMA_DEFINITION_NOT_FOUND');
+      if (record.state !== 'published') {
+        throw new SchemaConflictError('Only published definitions can be deprecated');
+      }
+      await repositories.schemas.deprecateDefinition({
+        merchantId,
+        id,
+        schemaVersion: record.schemaVersion,
+        deprecatedAt: new Date().toISOString(),
+        deprecatedBy: actorUserId,
+      });
+    },
+
+    publishForOperator,
+
+    async publish(merchantId: string): Promise<PublishedSchema> {
+      const { warnings: _warnings, ...published } = await publishForOperator(merchantId);
+      return published;
     },
 
     async published(merchantId: string): Promise<PublishedSchema> {
