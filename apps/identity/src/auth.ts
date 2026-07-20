@@ -4,8 +4,11 @@ import { magicLink } from 'better-auth/plugins';
 
 import { createIdentityEmailAdapter, type EmailAdapter } from './email.js';
 import {
+  cancelRecoverySession,
   errorResponse,
+  expiredSessionCookieHeader,
   markReplacementPasskeyRegistered,
+  writeIdentityAudit,
 } from './recovery.js';
 import type { Env } from './worker.js';
 
@@ -14,7 +17,13 @@ export type AuthenticationMethod = 'magic-link' | 'passkey' | 'recovery';
 export interface IdentityAuth {
   handler(request: Request, executionContext?: ExecutionContext): Promise<Response>;
   getSession(headers: Headers): Promise<{
-    session: { id: string; userId: string };
+    session: {
+      id: string;
+      userId: string;
+      authenticationMethod: AuthenticationMethod;
+      authenticatedAt: number;
+      recoveryOnly: boolean;
+    };
     user: { id: string };
   } | null>;
 }
@@ -32,8 +41,12 @@ interface SessionAccess {
   sessionId: string;
   userId: string;
   subjectKind: 'employee' | 'root';
+  authenticationMethod: AuthenticationMethod;
+  authenticatedAt: number;
   recoveryOnly: number;
 }
+
+type CurrentSession = Awaited<ReturnType<IdentityAuth['getSession']>>;
 
 function correlationId(request: Request): string {
   return request.headers.get('x-correlation-id') ?? crypto.randomUUID();
@@ -109,19 +122,7 @@ async function writeAudit(
     outcome: 'succeeded' | 'failed' | 'denied';
   },
 ): Promise<void> {
-  try {
-    await env.AUTH_DB.prepare(`
-      INSERT INTO identity_audit (
-        id, occurred_at, actor_kind, actor_id, action, target_type,
-        target_id, outcome, correlation_id, metadata_json
-      ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, NULL)
-    `).bind(
-      crypto.randomUUID(), Date.now(), input.actorKind, input.actorId, input.action,
-      input.targetType, input.targetId, input.outcome, id,
-    ).run();
-  } catch {
-    // Authentication outcomes stay generic even if the safe audit sink fails.
-  }
+  await writeIdentityAudit(env, id, input);
 }
 
 export async function disableEmailLogin(
@@ -136,7 +137,7 @@ export async function disableEmailLogin(
     `).bind(userId),
     database.prepare(`
       DELETE FROM verification
-      WHERE json_extract(value, '$.email') = (SELECT email FROM user WHERE id = ?1)
+      WHERE lower(json_extract(value, '$.email')) = lower((SELECT email FROM user WHERE id = ?1))
     `).bind(userId),
     database.prepare(`
       INSERT INTO identity_audit (
@@ -192,7 +193,7 @@ async function findKnownEmployee(env: Env, email: string): Promise<{ id: string 
     SELECT user.id
     FROM user
     INNER JOIN auth_profile ON auth_profile.user_id = user.id
-    WHERE user.email = ?1
+    WHERE lower(user.email) = ?1
       AND auth_profile.subject_kind = 'employee'
       AND auth_profile.status = 'active'
       AND auth_profile.email_login_enabled = 1
@@ -221,6 +222,7 @@ async function handleMagicLinkRequest(
   const requestCorrelationId = correlationId(request);
 
   let email: string;
+  let parsedBody: Record<string, unknown>;
   try {
     const body: unknown = await request.clone().json();
     if (!body || typeof body !== 'object' || typeof (body as { email?: unknown }).email !== 'string') {
@@ -228,6 +230,7 @@ async function handleMagicLinkRequest(
         requestCorrelationId, 400, 'INVALID_REQUEST', 'A valid email is required.',
       );
     }
+    parsedBody = body as Record<string, unknown>;
     email = (body as { email: string }).email.trim().toLowerCase();
   } catch {
     return errorResponse(
@@ -240,19 +243,29 @@ async function handleMagicLinkRequest(
     actorKind: 'anonymous', actorId: 'anonymous', action: 'magic_link.requested',
     targetType: 'authentication', targetId: 'magic-link', outcome: 'succeeded',
   });
-  try {
-    await authHandler(request, {
-      ...(executionContext ? { executionContext } : {}),
-      correlationId: requestCorrelationId,
-      userId: employee?.id ?? null,
+  if (employee) {
+    const headers = new Headers(request.headers);
+    headers.delete('content-length');
+    const canonicalRequest = new Request(request, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ ...parsedBody, email }),
     });
-  } catch {
-    if (employee) {
+    try {
+      await authHandler(canonicalRequest, {
+        ...(executionContext ? { executionContext } : {}),
+        correlationId: requestCorrelationId,
+        userId: employee.id,
+      });
+    } catch {
       await writeAudit(env, requestCorrelationId, {
         actorKind: 'system', actorId: 'identity', action: 'magic_link.delivery',
         targetType: 'user', targetId: employee.id, outcome: 'failed',
       });
     }
+  } else {
+    await crypto.subtle.digest('SHA-256', new TextEncoder().encode(email));
+    await env.AUTH_DB.prepare('SELECT COUNT(*) AS count FROM verification WHERE 0').first();
   }
   return genericMagicLinkResponse(request);
 }
@@ -284,12 +297,46 @@ async function getSessionAccess(env: Env, sessionId: string): Promise<SessionAcc
   return env.AUTH_DB.prepare(`
     SELECT session.id AS sessionId, session.userId AS userId,
       auth_profile.subject_kind AS subjectKind,
-      COALESCE(session_context.recovery_only, 0) AS recoveryOnly
+      session.authenticationMethod, session.authenticatedAt,
+      session.recoveryOnly
     FROM session
     INNER JOIN auth_profile ON auth_profile.user_id = session.userId
-    LEFT JOIN session_context ON session_context.session_id = session.id
-    WHERE session.id = ?1 AND auth_profile.status = 'active'
-  `).bind(sessionId).first<SessionAccess>();
+    WHERE session.id = ?1 AND session.expiresAt > ?2
+      AND session.authenticationMethod IN ('magic-link', 'passkey', 'recovery')
+      AND session.authenticatedAt IS NOT NULL
+      AND session.recoveryOnly IN (0, 1)
+      AND auth_profile.status = 'active'
+      AND (
+        (
+          session.authenticationMethod = 'magic-link'
+          AND session.recoveryOnly = 0
+          AND auth_profile.subject_kind = 'employee'
+          AND auth_profile.email_login_enabled = 1
+        )
+        OR (
+          session.authenticationMethod = 'passkey'
+          AND session.recoveryOnly = 0
+          AND auth_profile.subject_kind = 'root'
+          AND NOT EXISTS (
+            SELECT 1 FROM recovery_flow
+            WHERE recovery_flow.user_id = session.userId
+              AND recovery_flow.completed_at IS NULL
+              AND recovery_flow.cancelled_at IS NULL
+          )
+        )
+        OR (
+          session.authenticationMethod = 'recovery'
+          AND session.recoveryOnly = 1
+          AND auth_profile.subject_kind = 'root'
+          AND EXISTS (
+            SELECT 1 FROM recovery_flow
+            WHERE recovery_flow.session_id = session.id
+              AND recovery_flow.completed_at IS NULL
+              AND recovery_flow.cancelled_at IS NULL
+          )
+        )
+      )
+  `).bind(sessionId, Date.now()).first<SessionAccess>();
 }
 
 function isPasskeyManagementPath(pathname: string): boolean {
@@ -302,6 +349,75 @@ function recoverySessionAllows(pathname: string, method: string): boolean {
   return (pathname === '/auth/passkey/generate-register-options' && method === 'GET')
     || (pathname === '/auth/passkey/verify-registration' && method === 'POST')
     || (pathname === '/auth/sign-out' && method === 'POST');
+}
+
+function hasSessionCookie(headers: Headers, env: Env): boolean {
+  const cookie = headers.get('cookie') ?? '';
+  return cookie.split(';').some(part => {
+    const name = part.trim().split('=', 1)[0];
+    return name === `${env.COOKIE_PREFIX}.session_token`
+      || name === `__Secure-${env.COOKIE_PREFIX}.session_token`;
+  });
+}
+
+async function normalizedAuthResponse(
+  response: Response,
+  id: string,
+  pathname: string,
+): Promise<Response> {
+  if (response.status < 400) return response;
+  if (pathname === '/auth/passkey/verify-authentication') {
+    return errorResponse(
+      id, 401, 'AUTHENTICATION_FAILED', 'Passkey authentication failed.',
+    );
+  }
+  if (pathname === '/auth/passkey/verify-registration') {
+    return errorResponse(
+      id, response.status === 401 || response.status === 403 ? 403 : 400,
+      'PASSKEY_REGISTRATION_FAILED', 'Passkey registration failed.',
+    );
+  }
+  const status = response.status === 401 || response.status === 403 || response.status === 429
+    ? response.status
+    : 400;
+  return errorResponse(
+    id,
+    status,
+    status === 429 ? 'RATE_LIMITED' : 'AUTHENTICATION_FAILED',
+    status === 429
+      ? 'Too many requests. Please try again later.'
+      : 'Authentication failed.',
+    status === 429,
+    status === 429 && response.headers.get('retry-after')
+      ? { 'retry-after': response.headers.get('retry-after') as string }
+      : undefined,
+  );
+}
+
+async function responseUserId(response: Response): Promise<string | null> {
+  if (!response.ok) return null;
+  try {
+    const body: unknown = await response.clone().json();
+    if (!body || typeof body !== 'object') return null;
+    const user = (body as { user?: unknown }).user;
+    if (!user || typeof user !== 'object') return null;
+    const id = (user as { id?: unknown }).id;
+    return typeof id === 'string' ? id : null;
+  } catch {
+    return null;
+  }
+}
+
+async function responsePasskeyId(response: Response): Promise<string | null> {
+  if (!response.ok) return null;
+  try {
+    const body: unknown = await response.clone().json();
+    if (!body || typeof body !== 'object') return null;
+    const id = (body as { id?: unknown }).id;
+    return typeof id === 'string' && id.length > 0 ? id : null;
+  } catch {
+    return null;
+  }
 }
 
 export function createIdentityAuth(
@@ -340,6 +456,17 @@ export function createIdentityAuth(
     session: {
       storeSessionInDatabase: true,
       cookieCache: { enabled: false },
+      additionalFields: {
+        authenticationMethod: {
+          type: 'string', required: true, input: false, returned: true,
+        },
+        authenticatedAt: {
+          type: 'number', required: true, input: false, returned: true, bigint: true,
+        },
+        recoveryOnly: {
+          type: 'boolean', required: true, input: false, returned: true,
+        },
+      },
     },
     rateLimit: {
       enabled: true,
@@ -369,30 +496,30 @@ export function createIdentityAuth(
         create: {
           before: async (session, context) => {
             const method = authenticationMethodForPath(context?.path ?? '');
-            return method !== null && await isSessionCreationAllowed(env, session.userId, method);
+            if (!method || !await isSessionCreationAllowed(env, session.userId, method)) {
+              return false;
+            }
+            return {
+              data: {
+                ...session,
+                authenticationMethod: method,
+                authenticatedAt: Date.now(),
+                recoveryOnly: false,
+              },
+            };
           },
           after: async (session, context) => {
             const method = authenticationMethodForPath(context?.path ?? '');
             if (!method) return;
             const id = context?.headers?.get('x-correlation-id') ?? crypto.randomUUID();
-            const now = Date.now();
-            await env.AUTH_DB.batch([
-              env.AUTH_DB.prepare(`
-                INSERT INTO session_context (
-                  session_id, authentication_method, authenticated_at, recovery_only
-                ) VALUES (?1, ?2, ?3, 0)
-              `).bind(session.id, method, now),
-              env.AUTH_DB.prepare(`
-                INSERT INTO identity_audit (
-                  id, occurred_at, actor_kind, actor_id, action, target_type,
-                  target_id, outcome, correlation_id, metadata_json
-                ) VALUES (?1, ?2, ?3, ?4, 'session.created', 'session', ?5,
-                  'succeeded', ?6, NULL)
-              `).bind(
-                crypto.randomUUID(), now, method === 'passkey' ? 'root' : 'employee',
-                session.userId, session.id, id,
-              ),
-            ]);
+            await writeAudit(env, id, {
+              actorKind: method === 'passkey' ? 'root' : 'employee',
+              actorId: session.userId,
+              action: 'session.created',
+              targetType: 'session',
+              targetId: session.id,
+              outcome: 'succeeded',
+            });
           },
         },
         delete: {
@@ -462,6 +589,12 @@ export function createIdentityAuth(
               WHERE passkey.credentialID = ?1
                 AND auth_profile.subject_kind = 'root'
                 AND auth_profile.status = 'active'
+                AND NOT EXISTS (
+                  SELECT 1 FROM recovery_flow
+                  WHERE recovery_flow.user_id = auth_profile.user_id
+                    AND recovery_flow.completed_at IS NULL
+                    AND recovery_flow.cancelled_at IS NULL
+                )
             `).bind(clientData.id).first<{ user_id: string }>();
             if (!profile) throw new Error('Passkey authentication is not permitted');
           },
@@ -470,14 +603,36 @@ export function createIdentityAuth(
     ],
   });
 
-  const getSession = async (headers: Headers) => {
+  const resolveSession = async (headers: Headers): Promise<{
+    session: CurrentSession;
+    invalid: boolean;
+  }> => {
     const session = await auth.api.getSession({ headers });
-    if (!session) return null;
-    return session as {
-      session: { id: string; userId: string };
-      user: { id: string };
-    };
+    if (!session) return { session: null, invalid: false };
+    const current = session as unknown as NonNullable<CurrentSession>;
+    const access = await getSessionAccess(env, current.session.id);
+    if (access) {
+      return { invalid: false, session: {
+        session: {
+          ...current.session,
+          authenticationMethod: access.authenticationMethod,
+          authenticatedAt: access.authenticatedAt,
+          recoveryOnly: access.recoveryOnly === 1,
+        },
+        user: current.user,
+      } };
+    }
+    await env.AUTH_DB.prepare('DELETE FROM session WHERE id = ?1')
+      .bind(current.session.id).run();
+    await writeAudit(env, crypto.randomUUID(), {
+      actorKind: 'system', actorId: current.session.userId, action: 'session.denied',
+      targetType: 'session', targetId: current.session.id, outcome: 'denied',
+    });
+    return { session: null, invalid: true };
   };
+
+  const getSession = async (headers: Headers): Promise<CurrentSession> =>
+    (await resolveSession(headers)).session;
 
   return {
     getSession,
@@ -502,8 +657,13 @@ export function createIdentityAuth(
         );
       }
 
-      const current = await getSession(request.headers);
+      const presentedSessionCookie = hasSessionCookie(request.headers, env);
+      const resolved = await resolveSession(request.headers);
+      const current = resolved.session;
       const access = current ? await getSessionAccess(env, current.session.id) : null;
+      if (presentedSessionCookie && resolved.invalid) {
+        return errorResponse(id, 401, 'SESSION_INVALID', 'The session is invalid.');
+      }
       if (access?.recoveryOnly === 1 && !recoverySessionAllows(pathname, request.method)) {
         return errorResponse(
           id, 403, 'RECOVERY_RESTRICTED', 'Recovery sessions cannot access this resource.',
@@ -521,10 +681,37 @@ export function createIdentityAuth(
         return requirePasskeyUserVerification(await auth.handler(request));
       }
 
+      if (
+        pathname === '/auth/sign-out'
+        && request.method === 'POST'
+        && access?.recoveryOnly === 1
+      ) {
+        await cancelRecoverySession(env, access.sessionId, id);
+        return Response.json({ success: true }, {
+          status: 200,
+          headers: {
+            'set-cookie': expiredSessionCookieHeader(env),
+            'x-correlation-id': id,
+          },
+        });
+      }
+
       const response = await auth.handler(request);
       if (pathname === '/auth/passkey/verify-registration') {
         if (response.ok && access?.recoveryOnly === 1) {
-          await markReplacementPasskeyRegistered(env, access.sessionId, id);
+          const passkeyId = await responsePasskeyId(response);
+          if (!passkeyId) {
+            await cancelRecoverySession(env, access.sessionId, id, 'passkey-mark-failed');
+            throw new Error('RECOVERY_PASSKEY_ID_MISSING');
+          }
+          try {
+            await markReplacementPasskeyRegistered(env, access.sessionId, passkeyId, id);
+          } catch (error) {
+            await cancelRecoverySession(
+              env, access.sessionId, id, 'passkey-mark-failed', passkeyId,
+            );
+            throw error;
+          }
         }
         await writeAudit(env, id, {
           actorKind: access?.subjectKind === 'root' ? 'root' : 'anonymous',
@@ -536,16 +723,28 @@ export function createIdentityAuth(
         });
       }
       if (pathname === '/auth/passkey/verify-authentication') {
+        const actorId = await responseUserId(response);
         await writeAudit(env, id, {
           actorKind: response.ok ? 'root' : 'anonymous',
-          actorId: response.ok ? 'root' : 'anonymous',
+          actorId: actorId ?? 'anonymous',
           action: 'passkey.authentication',
           targetType: 'authentication',
           targetId: 'passkey',
           outcome: response.ok ? 'succeeded' : 'denied',
         });
       }
-      return response;
+      if (pathname.includes('/magic-link/verify')) {
+        const location = response.headers.get('location');
+        const denied = response.status >= 400 || (location?.includes('error=') ?? false);
+        await writeAudit(env, id, {
+          actorKind: denied ? 'anonymous' : 'employee',
+          actorId: await responseUserId(response) ?? 'anonymous',
+          action: 'magic_link.verification',
+          targetType: 'authentication', targetId: 'magic-link',
+          outcome: denied ? 'denied' : 'succeeded',
+        });
+      }
+      return normalizedAuthResponse(response, id, pathname);
     },
   };
 }

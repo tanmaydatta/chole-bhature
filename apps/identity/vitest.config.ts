@@ -10,6 +10,10 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig(async () => {
   const migrations = await readD1Migrations(path.join(__dirname, 'migrations'));
   const wranglerConfig = await readFile(path.join(__dirname, 'wrangler.toml'), 'utf8');
+  const hardeningMigration = await readFile(
+    path.join(__dirname, 'migrations/0002_identity_hardening.sql'),
+    'utf8',
+  );
 
   return {
     plugins: [
@@ -22,6 +26,7 @@ export default defineConfig(async () => {
             PUBLIC_APP_ORIGIN: 'https://operator.example.test',
             PASSKEY_RP_ID: 'operator.example.test',
             WRANGLER_CONFIG_TEXT: wranglerConfig,
+            HARDENING_MIGRATION_TEXT: hardeningMigration,
           },
         },
       }),

@@ -109,6 +109,13 @@ function decodeBase64Url(value: string): Uint8Array {
   return Uint8Array.from(atob(padded), character => character.charCodeAt(0));
 }
 
+function testRecoveryCode(byte: number): string {
+  const bytes = new Uint8Array(32).fill(byte);
+  let binary = '';
+  for (const value of bytes) binary += String.fromCharCode(value);
+  return btoa(binary).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '');
+}
+
 async function seedPasskey(userId: string, credential: TestCredential, id = crypto.randomUUID()) {
   await testEnv.AUTH_DB.prepare(`
     INSERT INTO passkey (
@@ -266,8 +273,8 @@ describe('magic-link hardening', () => {
     const cookie = cookieFrom(login);
 
     await expect(testEnv.AUTH_DB.prepare(`
-      SELECT authentication_method AS method, recovery_only AS recoveryOnly
-      FROM session_context
+      SELECT authenticationMethod AS method, recoveryOnly
+      FROM session
     `).first()).resolves.toMatchObject({ method: 'magic-link', recoveryOnly: 0 });
 
     const signout = await authRequest('/auth/sign-out', {
@@ -287,7 +294,7 @@ describe('magic-link hardening', () => {
 
 describe('root recovery hardening', () => {
   test('atomically claims one code, revokes all old material, and returns a hashed single-use grant', async () => {
-    const codes = ['root-code-one', 'root-code-two'];
+    const codes = [testRecoveryCode(1), testRecoveryCode(2)];
     await seedUser({
       id: 'root-1', email: 'root@example.test', kind: 'root', emailLoginEnabled: false,
     });
@@ -327,7 +334,10 @@ describe('root recovery hardening', () => {
     await expect(testEnv.AUTH_DB.prepare(`
       SELECT COUNT(*) AS count FROM root_recovery_code
       WHERE used_at IS NOT NULL AND recovery_flow_id IS NOT NULL
-    `).first('count')).resolves.toBe(2);
+    `).first('count')).resolves.toBe(1);
+    await expect(testEnv.AUTH_DB.prepare(`
+      SELECT COUNT(*) AS count FROM root_recovery_code WHERE used_at IS NULL
+    `).first('count')).resolves.toBe(1);
     const flow = await testEnv.AUTH_DB.prepare(`
       SELECT grant_hash AS grantHash FROM recovery_flow
     `).first<{ grantHash: string }>();
@@ -352,11 +362,11 @@ describe('root recovery hardening', () => {
     await seedUser({
       id: 'root-1', email: 'root@example.test', kind: 'root', emailLoginEnabled: false,
     });
-    await seedRecoveryMaterial('root-1', ['valid-recovery-code']);
+    await seedRecoveryMaterial('root-1', [testRecoveryCode(3)]);
 
     const sourceResponses: Response[] = [];
     for (let attempt = 0; attempt < 6; attempt += 1) {
-      sourceResponses.push(await beginRecovery('root-1', 'wrong-code', '203.0.113.41'));
+      sourceResponses.push(await beginRecovery('root-1', testRecoveryCode(4), '203.0.113.41'));
     }
     expect(sourceResponses.map(response => response.status)).toEqual([401, 401, 401, 401, 401, 429]);
     await expectSafeError(sourceResponses[5] as Response, 429, 'RATE_LIMITED');
@@ -367,7 +377,7 @@ describe('root recovery hardening', () => {
     for (let attempt = 0; attempt < 6; attempt += 1) {
       credentialResponses.push(await beginRecovery(
         'root-1',
-        'another-wrong-code',
+        testRecoveryCode(5),
         `203.0.113.${50 + attempt}`,
       ));
     }
@@ -382,16 +392,17 @@ describe('root recovery hardening', () => {
     expect(rows.results.some(row => row.attemptCount === 6)).toBe(true);
     const persisted = JSON.stringify(rows.results);
     expect(persisted).not.toContain('root-1');
-    expect(persisted).not.toContain('another-wrong-code');
+    expect(persisted).not.toContain(testRecoveryCode(5));
     expect(persisted).not.toContain('203.0.113.');
   });
 
-  test('exchanges a grant once for a recovery-only session', async () => {
+  test('idempotently exchanges a grant for the same recovery-only session', async () => {
     await seedUser({
       id: 'root-1', email: 'root@example.test', kind: 'root', emailLoginEnabled: false,
     });
-    await seedRecoveryMaterial('root-1', ['valid-recovery-code']);
-    const recovery = await beginRecovery('root-1', 'valid-recovery-code');
+    const recoveryCode = testRecoveryCode(6);
+    await seedRecoveryMaterial('root-1', [recoveryCode]);
+    const recovery = await beginRecovery('root-1', recoveryCode);
     expect(recovery.status).toBe(200);
     const { grant } = await recovery.json<{ grant: string }>();
 
@@ -399,10 +410,14 @@ describe('root recovery hardening', () => {
     expect(exchange.status).toBe(200);
     const cookie = cookieFrom(exchange);
     await expect(testEnv.AUTH_DB.prepare(`
-      SELECT authentication_method AS method, recovery_only AS recoveryOnly
-      FROM session_context
+      SELECT authenticationMethod AS method, recoveryOnly
+      FROM session
     `).first()).resolves.toMatchObject({ method: 'recovery', recoveryOnly: 1 });
-    await expectSafeError(await exchangeRecovery(grant), 401, 'RECOVERY_FAILED');
+    const replay = await exchangeRecovery(grant);
+    expect(replay.status).toBe(200);
+    expect(cookieFrom(replay)).toBe(cookie);
+    await expect(testEnv.AUTH_DB.prepare('SELECT COUNT(*) AS count FROM session').first('count'))
+      .resolves.toBe(1);
 
     await expectSafeError(await authRequest('/auth/get-session', {
       headers: { cookie },
@@ -421,8 +436,9 @@ describe('root recovery hardening', () => {
     await seedUser({
       id: 'root-1', email: 'root@example.test', kind: 'root', emailLoginEnabled: false,
     });
-    await seedRecoveryMaterial('root-1', ['valid-recovery-code']);
-    const recovery = await beginRecovery('root-1', 'valid-recovery-code');
+    const recoveryCode = testRecoveryCode(7);
+    await seedRecoveryMaterial('root-1', [recoveryCode]);
+    const recovery = await beginRecovery('root-1', recoveryCode);
     const { grant } = await recovery.json<{ grant: string }>();
     const exchange = await exchangeRecovery(grant);
     const recoveryCookie = cookieFrom(exchange);
@@ -490,8 +506,8 @@ describe('root recovery hardening', () => {
     });
     expect(authentication.status).toBe(200);
     await expect(testEnv.AUTH_DB.prepare(`
-      SELECT authentication_method AS method, recovery_only AS recoveryOnly
-      FROM session_context
+      SELECT authenticationMethod AS method, recoveryOnly
+      FROM session
     `).first()).resolves.toMatchObject({ method: 'passkey', recoveryOnly: 0 });
   });
 });
@@ -545,7 +561,7 @@ describe('installed passkey verification', () => {
     expect(rootResponse.status).toBe(200);
     expect(rootResponse.headers.get('set-cookie')).toContain('incentives-local.session_token=');
     await expect(testEnv.AUTH_DB.prepare(`
-      SELECT authentication_method AS method FROM session_context
+      SELECT authenticationMethod AS method FROM session
     `).first('method')).resolves.toBe('passkey');
 
     await seedUser({ id: 'employee-1', email: 'employee@example.test' });

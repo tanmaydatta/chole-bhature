@@ -4,7 +4,9 @@ import {
   errorResponse,
   exchangeRecoveryGrant,
   getRecoverySession,
+  reissueRecoveryCodes,
   rotateRecoveryCodes,
+  writeIdentityAudit,
 } from './recovery.js';
 
 export interface Env {
@@ -76,20 +78,31 @@ export default {
         const recovery = session
           ? await getRecoverySession(env, session.session.id)
           : null;
-        response = recovery
-          ? await rotateRecoveryCodes(env, recovery.sessionId, correlationId)
-          : errorResponse(
+        if (recovery) {
+          response = await rotateRecoveryCodes(env, recovery.sessionId, correlationId);
+        } else if (
+          session?.session.authenticationMethod === 'passkey'
+          && session.session.recoveryOnly === false
+        ) {
+          response = await reissueRecoveryCodes(env, session.user.id, correlationId);
+        } else {
+          response = errorResponse(
               correlationId,
               403,
               'RECOVERY_RESTRICTED',
-              'A recovery session is required.',
+              'A recovery session or verified root passkey is required.',
             );
+        }
       } else {
         const identity = createIdentityAuth(env);
         response = await identity.handler(request, executionContext);
       }
       return correlated(response, correlationId);
     } catch {
+      await writeIdentityAudit(env, correlationId, {
+        actorKind: 'system', actorId: 'identity', action: 'identity.worker_failure',
+        targetType: 'identity', targetId: 'worker', outcome: 'failed',
+      });
       return errorResponse(
         correlationId,
         503,
