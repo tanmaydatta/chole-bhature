@@ -5,6 +5,10 @@ import {
   CustomerSnapshotSchema,
   EvaluationRequestSchema,
   IncentiveDecisionSchema,
+  MerchantActivationRequestSchema,
+  MerchantActivationResultSchema,
+  MerchantProvisionRequestSchema,
+  MerchantProvisionResultSchema,
   PromoProgramSchema,
   ProgramLifecycleSchema,
   ProgramRevisionSchema,
@@ -315,6 +319,9 @@ function credentialFromRow(row: typeof apiCredentials.$inferSelect) {
     ...optional('lastUsedAt', row.lastUsedAt),
     status: row.status,
     suffix: row.suffix,
+    ...(row.kind === 'publishable'
+      ? { requestsPerMinute: row.requestsPerMinute }
+      : {}),
   }));
 }
 
@@ -479,12 +486,14 @@ function auditFromRow(row: typeof productAudit.$inferSelect) {
 }
 
 function parseMerchantProvision(input: MerchantProvision): MerchantRecord {
-  const createdAt = DateTimeSchema.parse(input.createdAt ?? now());
+  const { createdAt: createdAtInput, ...request } = input;
+  const provision = MerchantProvisionRequestSchema.parse(request);
+  const createdAt = DateTimeSchema.parse(createdAtInput ?? now());
   return {
-    id: z.string().min(1).parse(input.id),
-    name: z.string().min(1).max(200).parse(input.name),
+    id: provision.id,
+    name: provision.name,
     status: 'provisioning',
-    provisioningId: z.string().min(1).parse(input.provisioningId),
+    provisioningId: provision.provisioningId,
     createdAt,
     updatedAt: createdAt,
   };
@@ -504,6 +513,9 @@ function parseCredentialCreate(input: CredentialCreate) {
     createdBy: input.createdBy,
     status: 'active',
     suffix: input.suffix,
+    ...(input.kind === 'publishable'
+      ? { requestsPerMinute: input.requestsPerMinute }
+      : {}),
   });
   return {
     view,
@@ -937,7 +949,7 @@ export function createRepositories(env: Env): Repositories {
         ) {
           throw new Error('Merchant provisioning identity conflicts with an existing merchant');
         }
-        return record;
+        return MerchantProvisionResultSchema.parse(record);
       },
 
       async get(id) {
@@ -945,14 +957,29 @@ export function createRepositories(env: Env): Repositories {
         return row === undefined ? null : merchantFromRow(row);
       },
 
-      async activate(id, updatedAt) {
-        const parsedId = z.string().min(1).parse(id);
+      async activate(input, updatedAt) {
+        const parsed = MerchantActivationRequestSchema.parse(input);
         const parsedUpdatedAt = DateTimeSchema.parse(updatedAt);
-        await env.DB.prepare(`
-          UPDATE merchants SET status = 'active', updated_at = ?1 WHERE id = ?2
-        `).bind(parsedUpdatedAt, parsedId).run();
-        const row = await db.select().from(merchants).where(eq(merchants.id, parsedId)).get();
-        return row === undefined ? null : merchantFromRow(row);
+        const existing = await db.select().from(merchants).where(eq(merchants.id, parsed.id)).get();
+        if (
+          existing === undefined
+          || existing.provisioningId !== parsed.provisioningId
+        ) {
+          throw new Error('Merchant activation provisioning identity conflicts with existing state');
+        }
+        if (existing.status === 'active') {
+          return MerchantActivationResultSchema.parse(merchantFromRow(existing));
+        }
+        const result = await env.DB.prepare(`
+          UPDATE merchants SET status = 'active', updated_at = ?1
+          WHERE id = ?2 AND provisioning_id = ?3 AND status = 'provisioning'
+        `).bind(parsedUpdatedAt, parsed.id, parsed.provisioningId).run();
+        if (result.meta.changes !== 1) {
+          throw new Error('Merchant activation provisioning identity conflicts with existing state');
+        }
+        const row = await db.select().from(merchants).where(eq(merchants.id, parsed.id)).get();
+        if (row === undefined) throw new Error('Activated merchant could not be read');
+        return MerchantActivationResultSchema.parse(merchantFromRow(row));
       },
     },
 
@@ -969,9 +996,11 @@ export function createRepositories(env: Env): Repositories {
           env.DB.prepare(`
             INSERT INTO api_credentials (
               id, merchant_id, name, environment, kind, scopes_json,
-              allowed_origins_json, digest, suffix, status, expires_at,
-              created_at, created_by
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+              allowed_origins_json, requests_per_minute, digest, suffix, status,
+              expires_at, created_at, created_by
+            ) VALUES (
+              ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14
+            )
           `).bind(
             parsed.view.id,
             parsed.view.merchantId,
@@ -980,6 +1009,7 @@ export function createRepositories(env: Env): Repositories {
             parsed.view.kind,
             canonicalJson(parsed.view.scopes),
             canonicalJson(parsed.allowedOrigins),
+            parsed.view.kind === 'publishable' ? parsed.view.requestsPerMinute : null,
             parsed.digest,
             parsed.view.suffix,
             parsed.view.status,
@@ -1113,6 +1143,36 @@ export function createRepositories(env: Env): Repositories {
         await env.DB.prepare(`
           UPDATE api_credentials SET last_used_at = ?1 WHERE id = ?2 AND status = 'active'
         `).bind(DateTimeSchema.parse(usedAt), z.string().min(1).parse(id)).run();
+      },
+
+      async consumePublishableRateLimit(credentialId, requestsPerMinute, windowStartedAt) {
+        const parsedCredentialId = z.string().min(1).parse(credentialId);
+        const parsedRequestsPerMinute = PositiveIntegerSchema.max(10_000).parse(
+          requestsPerMinute,
+        );
+        const parsedWindowStartedAt = NonnegativeIntegerSchema.refine(
+          value => value % 60_000 === 0,
+          'Rate-limit window must align to a minute',
+        ).parse(windowStartedAt);
+        const result = await env.DB.prepare(`
+          INSERT INTO credential_rate_limit_windows (
+            credential_id, window_started_at, request_count
+          ) VALUES (?1, ?2, 1)
+          ON CONFLICT (credential_id) DO UPDATE SET
+            window_started_at = excluded.window_started_at,
+            request_count = CASE
+              WHEN credential_rate_limit_windows.window_started_at = excluded.window_started_at
+              THEN credential_rate_limit_windows.request_count + 1
+              ELSE 1
+            END
+          WHERE credential_rate_limit_windows.window_started_at <> excluded.window_started_at
+            OR credential_rate_limit_windows.request_count < ?3
+        `).bind(
+          parsedCredentialId,
+          parsedWindowStartedAt,
+          parsedRequestsPerMinute,
+        ).run();
+        return result.meta.changes === 1;
       },
     },
 
@@ -1936,21 +1996,16 @@ export function createRepositories(env: Env): Repositories {
                 expectedUpdatedAt,
               ),
               env.DB.prepare(`
-                UPDATE programs SET type = ?1, name = ?2, config_json = ?3,
-                  priority = ?4, draft_revision = ?5, updated_at = ?6
-                WHERE merchant_id = ?7 AND external_ref = ?8
-                  AND active_revision = ?9 AND draft_revision IS NULL
-                  AND updated_at = ?10
+                UPDATE programs SET draft_revision = ?1, updated_at = ?2
+                WHERE merchant_id = ?3 AND external_ref = ?4
+                  AND active_revision = ?5 AND draft_revision IS NULL
+                  AND updated_at = ?6
                   AND EXISTS (
                     SELECT 1 FROM program_revisions
-                    WHERE merchant_id = ?7 AND program_id = programs.id
-                      AND revision = ?5 AND published_at IS NULL
+                    WHERE merchant_id = ?3 AND program_id = programs.id
+                      AND revision = ?1 AND published_at IS NULL
                   )
               `).bind(
-                parsedProgram.type,
-                parsedProgram.name,
-                configJson,
-                parsedProgram.priority,
                 nextRevision,
                 updatedAt,
                 merchantId,
@@ -1987,16 +2042,11 @@ export function createRepositories(env: Env): Repositories {
                   expectedUpdatedAt,
                 ),
                 env.DB.prepare(`
-                  UPDATE programs SET type = ?1, name = ?2, config_json = ?3,
-                    priority = ?4, updated_at = ?5
-                  WHERE merchant_id = ?6 AND external_ref = ?7
+                  UPDATE programs SET updated_at = ?1
+                  WHERE merchant_id = ?2 AND external_ref = ?3
                     AND changes() = 1
-                    AND draft_revision = ?8 AND updated_at = ?9
+                    AND draft_revision = ?4 AND updated_at = ?5
                 `).bind(
-                  parsedProgram.type,
-                  parsedProgram.name,
-                  configJson,
-                  parsedProgram.priority,
                   updatedAt,
                   merchantId,
                   externalRef,
@@ -2161,6 +2211,7 @@ export function createRepositories(env: Env): Repositories {
           throw new ProgramConflictError('The replacement budget is below committed spend');
         }
         const updatedAt = nextProgramTimestamp(current.updatedAt, publishedAt);
+        const legacyMirrorJson = storedProgramJson({ ...draft, status });
         let results: D1Result[];
         try {
           results = await env.DB.batch([
@@ -2217,27 +2268,32 @@ export function createRepositories(env: Env): Repositories {
             ),
             env.DB.prepare(`
               UPDATE programs
-              SET active_revision = draft_revision, draft_revision = NULL,
-                status = ?1, max_uses = ?2, budget_remaining = ?3, updated_at = ?4
-              WHERE merchant_id = ?5 AND external_ref = ?6
+              SET type = ?1, name = ?2, status = ?3, config_json = ?4,
+                priority = ?5, active_revision = draft_revision, draft_revision = NULL,
+                max_uses = ?6, budget_remaining = ?7, updated_at = ?8
+              WHERE merchant_id = ?9 AND external_ref = ?10
                 AND changes() = 1
-                AND draft_revision = ?7 AND updated_at = ?8
-                AND usage_count = ?9
+                AND draft_revision = ?11 AND updated_at = ?12
+                AND usage_count = ?13
                 AND EXISTS (
                   SELECT 1 FROM program_revisions
-                  WHERE merchant_id = ?5 AND program_id = programs.id
-                    AND revision = ?7 AND published_at = ?10 AND published_by = ?11
+                  WHERE merchant_id = ?9 AND program_id = programs.id
+                    AND revision = ?11 AND published_at = ?14 AND published_by = ?15
                 )
                 AND EXISTS (
                   SELECT 1 FROM program_counters
-                  WHERE merchant_id = ?5 AND program_id = programs.id
-                    AND usage_count = ?9
-                    AND ((?2 IS NULL AND max_uses IS NULL) OR max_uses = ?2)
-                    AND ((?3 IS NULL AND budget_remaining IS NULL) OR budget_remaining = ?3)
-                    AND committed_spend = ?12
+                  WHERE merchant_id = ?9 AND program_id = programs.id
+                    AND usage_count = ?13
+                    AND ((?6 IS NULL AND max_uses IS NULL) OR max_uses = ?6)
+                    AND ((?7 IS NULL AND budget_remaining IS NULL) OR budget_remaining = ?7)
+                    AND committed_spend = ?16
                 )
             `).bind(
+              draft.type,
+              draft.name,
               status,
+              legacyMirrorJson,
+              draft.priority,
               nextMaxUses,
               nextBudgetRemaining,
               updatedAt,
@@ -2296,7 +2352,10 @@ export function createRepositories(env: Env): Repositories {
         if (current === null) throw new ProgramConflictError('The program lifecycle changed');
         const updatedAt = nextProgramTimestamp(current.updatedAt, candidateUpdatedAt);
         const result = await env.DB.prepare(`
-          UPDATE programs SET status = ?1, updated_at = ?2
+          UPDATE programs
+          SET status = ?1,
+            config_json = json_set(config_json, '$.status', ?1),
+            updated_at = ?2
           WHERE merchant_id = ?3 AND external_ref = ?4
             AND status = ?5 AND active_revision = ?6 AND updated_at = ?7
         `).bind(

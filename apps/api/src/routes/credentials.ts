@@ -1,7 +1,7 @@
 import {
-  ApiCredentialKindSchema,
-  ApiCredentialScopeSchema,
-  DeploymentEnvironmentSchema,
+  ApiCredentialCreateInputSchema,
+  ApiCredentialCreateResultSchema,
+  type ApiCredentialCreateInput,
   type ApiCredentialScope,
   type OperatorCallContext,
 } from '@incentives/contracts';
@@ -11,18 +11,6 @@ import { requireOperatorContext } from '../auth/operator-context.js';
 import type { Env } from '../env.js';
 import { NotFoundError } from '../errors.js';
 import { createRepositories } from '../repositories/d1-repositories.js';
-
-const ExactOriginSchema = z.string().url().refine((origin) => new URL(origin).origin === origin, {
-  message: 'Origin must be an exact serialized origin',
-});
-const CredentialInputSchema = z.object({
-  name: z.string().min(1).max(200),
-  environment: DeploymentEnvironmentSchema,
-  kind: ApiCredentialKindSchema,
-  scopes: z.array(ApiCredentialScopeSchema).min(1),
-  allowedOrigins: z.array(ExactOriginSchema).max(100).optional(),
-  expiresAt: z.iso.datetime({ offset: true }).optional(),
-}).strict();
 
 const encoder = new TextEncoder();
 
@@ -66,11 +54,11 @@ function assertCredentialPolicy(
 export async function createCredential(
   env: Env,
   operatorInput: OperatorCallContext,
-  input: unknown,
+  input: ApiCredentialCreateInput,
 ) {
   const operator = requireOperatorContext(operatorInput, 'credentials:manage');
-  const parsed = CredentialInputSchema.parse(input);
-  const allowedOrigins = parsed.allowedOrigins ?? [];
+  const parsed = ApiCredentialCreateInputSchema.parse(input);
+  const allowedOrigins = parsed.kind === 'publishable' ? parsed.allowedOrigins ?? [] : [];
   assertCredentialPolicy(parsed.kind, parsed.scopes, allowedOrigins, parsed.environment);
   const repositories = createRepositories(env);
   const merchant = await repositories.merchants.get(operator.merchantId);
@@ -89,6 +77,9 @@ export async function createCredential(
     kind: parsed.kind,
     scopes: parsed.scopes,
     allowedOrigins,
+    ...(parsed.kind === 'publishable'
+      ? { requestsPerMinute: parsed.requestsPerMinute }
+      : {}),
     digest: await digest(token),
     suffix,
     ...(parsed.expiresAt === undefined ? {} : { expiresAt: parsed.expiresAt }),
@@ -107,7 +98,7 @@ export async function createCredential(
     correlationId: operator.correlationId,
     metadata: { kind: parsed.kind, suffix },
   });
-  return { credential, token };
+  return ApiCredentialCreateResultSchema.parse({ credential, token });
 }
 
 export async function listCredentials(env: Env, operatorInput: OperatorCallContext) {

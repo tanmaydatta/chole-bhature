@@ -1,10 +1,5 @@
 import { Hono } from 'hono';
-import type { Context, MiddlewareHandler } from 'hono';
-
-import {
-  requirePublishableScope,
-  requireSecretScope,
-} from './auth/api-credentials.js';
+import type { MiddlewareHandler } from 'hono';
 import type { AppEnvironment } from './env.js';
 import {
   apiErrorResponse,
@@ -37,14 +32,6 @@ const requestScope: MiddlewareHandler<AppEnvironment> = async (context, next) =>
   await next();
 };
 
-function contextSummary(context: Context<AppEnvironment>) {
-  return context.json({
-    merchantId: context.get('merchantId'),
-    correlationId: context.get('correlationId'),
-    repositories: context.get('repositories') !== undefined,
-  });
-}
-
 export function createApp(): Hono<AppEnvironment> {
   const app = new Hono<AppEnvironment>();
 
@@ -54,8 +41,6 @@ export function createApp(): Hono<AppEnvironment> {
   app.notFound((context) => apiErrorResponse(context, new NotFoundError()));
 
   app.get('/v1/health', (context) => context.json({ status: 'ok' }));
-  app.get('/v1/test-publishable', requirePublishableScope('schema:read'), contextSummary);
-  app.get('/v1/test-secret', requireSecretScope('customers:write'), contextSummary);
   app.route('/v1/customers', createCustomerRoutes());
   app.route('/v1/schema', createSchemaRoutes());
   app.route('/v1/evaluate', createEvaluationRoutes());

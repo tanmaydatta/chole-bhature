@@ -1,10 +1,16 @@
 import { describe, expect, test } from 'vitest';
 
 import {
+  ApiCredentialCreateInputSchema,
+  ApiCredentialCreateResultSchema,
   ApiCredentialViewSchema,
   AuditEntrySchema,
   EvaluationRequestSchema,
   IncentiveDecisionSchema,
+  MerchantActivationRequestSchema,
+  MerchantActivationResultSchema,
+  MerchantProvisionRequestSchema,
+  MerchantProvisionResultSchema,
   OperatorCallContextSchema,
   OperatorEvaluationRequestSchema,
   OperatorPrincipalSchema,
@@ -49,6 +55,98 @@ describe('production operator contracts', () => {
     expect(ApiCredentialViewSchema.safeParse({
       ...canonicalApiCredentialView,
       digest: 'sha256-secret-material',
+    }).success).toBe(false);
+  });
+
+  test('defines strict canonical merchant provisioning and activation RPC contracts', () => {
+    const provision = {
+      id: 'merchant-123',
+      name: 'Example merchant',
+      provisioningId: 'provisioning-123',
+    } as const;
+    const provisioningResult = {
+      ...provision,
+      status: 'provisioning',
+      createdAt: '2026-07-20T12:00:00.000Z',
+      updatedAt: '2026-07-20T12:00:00.000Z',
+    } as const;
+    const activation = {
+      id: provision.id,
+      provisioningId: provision.provisioningId,
+    } as const;
+    const activationResult = {
+      ...provisioningResult,
+      status: 'active',
+      updatedAt: '2026-07-20T12:01:00.000Z',
+    } as const;
+
+    expect(MerchantProvisionRequestSchema.parse(provision)).toEqual(provision);
+    expect(MerchantProvisionResultSchema.parse(provisioningResult))
+      .toEqual(provisioningResult);
+    expect(MerchantActivationRequestSchema.parse(activation)).toEqual(activation);
+    expect(MerchantActivationResultSchema.parse(activationResult)).toEqual(activationResult);
+    expect(MerchantProvisionRequestSchema.safeParse({
+      ...provision,
+      status: 'active',
+    }).success).toBe(false);
+    expect(MerchantActivationRequestSchema.safeParse({
+      ...activation,
+      differentProvisioningId: 'forged',
+    }).success).toBe(false);
+    expect(MerchantActivationResultSchema.safeParse({
+      ...activationResult,
+      status: 'provisioning',
+    }).success).toBe(false);
+  });
+
+  test('defines strict canonical credential create/show-once RPC contracts and quotas', () => {
+    const publishableInput = {
+      name: 'Browser checkout',
+      environment: 'production',
+      kind: 'publishable',
+      scopes: ['schema:read', 'evaluations:write'],
+      allowedOrigins: ['https://shop.example'],
+      requestsPerMinute: 120,
+    } as const;
+    const parsedInput = ApiCredentialCreateInputSchema.parse(publishableInput);
+    expect(parsedInput).toEqual(publishableInput);
+    expect(ApiCredentialCreateInputSchema.parse({
+      ...publishableInput,
+      requestsPerMinute: undefined,
+    })).toMatchObject({ requestsPerMinute: 60 });
+    expect(ApiCredentialCreateInputSchema.safeParse({
+      ...publishableInput,
+      requestsPerMinute: 0,
+    }).success).toBe(false);
+    expect(ApiCredentialCreateInputSchema.safeParse({
+      ...publishableInput,
+      requestsPerMinute: 10_001,
+    }).success).toBe(false);
+    expect(ApiCredentialCreateInputSchema.safeParse({
+      name: 'Server key',
+      environment: 'production',
+      kind: 'secret',
+      scopes: ['customers:write'],
+      requestsPerMinute: 60,
+    }).success).toBe(false);
+
+    const showOnce = {
+      credential: {
+        ...canonicalApiCredentialView,
+        kind: 'publishable',
+        scopes: ['schema:read'],
+        requestsPerMinute: 120,
+      },
+      token: 'pk_abcdefghijklmnopqrstuvwxyzABCDEFGH12345678',
+    } as const;
+    expect(ApiCredentialCreateResultSchema.parse(showOnce)).toEqual(showOnce);
+    expect(ApiCredentialCreateResultSchema.safeParse({
+      ...showOnce,
+      token: showOnce.token.replace(/^pk_/u, 'sk_'),
+    }).success).toBe(false);
+    expect(ApiCredentialCreateResultSchema.safeParse({
+      ...showOnce,
+      digest: 'forbidden-private-state',
     }).success).toBe(false);
   });
 

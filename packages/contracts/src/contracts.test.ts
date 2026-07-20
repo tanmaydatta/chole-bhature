@@ -627,6 +627,10 @@ describe('canonical contracts', () => {
         '/v1/redemptions': { post: {} },
       },
     });
+    expect(document.paths).not.toHaveProperty('/v1/test-publishable');
+    expect(document.paths).not.toHaveProperty('/v1/test-secret');
+    expect(document.paths?.['/v1/schema/published']?.get?.responses).toHaveProperty('429');
+    expect(document.paths?.['/v1/evaluate']?.post?.responses).toHaveProperty('429');
     const effectSchema = document.components?.schemas?.Effect;
     const variants = (effectSchema as { anyOf?: unknown[] } | undefined)?.anyOf;
     expect(variants?.[0]).toMatchObject({

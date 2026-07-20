@@ -40,7 +40,34 @@ export const OperatorCallContextSchema = z.object({
   permission: PermissionKeySchema,
 }).strict();
 
+export const MerchantProvisionRequestSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1).max(200),
+  provisioningId: z.string().min(1),
+}).strict();
+
+const MerchantProvisionRecordSchema = MerchantProvisionRequestSchema.extend({
+  status: z.enum(['provisioning', 'active']),
+  createdAt: z.iso.datetime({ offset: true }),
+  updatedAt: z.iso.datetime({ offset: true }),
+}).strict();
+
+export const MerchantProvisionResultSchema = MerchantProvisionRecordSchema;
+
+export const MerchantActivationRequestSchema = z.object({
+  id: z.string().min(1),
+  provisioningId: z.string().min(1),
+}).strict();
+
+export const MerchantActivationResultSchema = MerchantProvisionRecordSchema.extend({
+  status: z.literal('active'),
+}).strict();
+
 export type PermissionKey = z.infer<typeof PermissionKeySchema>;
 export type OperatorActorKind = z.infer<typeof OperatorActorKindSchema>;
 export type OperatorPrincipal = z.infer<typeof OperatorPrincipalSchema>;
 export type OperatorCallContext = z.infer<typeof OperatorCallContextSchema>;
+export type MerchantProvisionRequest = z.infer<typeof MerchantProvisionRequestSchema>;
+export type MerchantProvisionResult = z.infer<typeof MerchantProvisionResultSchema>;
+export type MerchantActivationRequest = z.infer<typeof MerchantActivationRequestSchema>;
+export type MerchantActivationResult = z.infer<typeof MerchantActivationResultSchema>;

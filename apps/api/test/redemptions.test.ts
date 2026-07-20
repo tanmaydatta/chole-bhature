@@ -207,7 +207,7 @@ describe('POST /v1/redemptions', () => {
   test.each([
     ['stored decision', 'evaluation_decisions', "decisions_json = '[{\"programRef\":\"welcome\"}]'"],
     ['stored redemption retry', 'redemptions', "result_json = '{\"programRef\":\"welcome\"}'"],
-    ['stored program', 'programs', "config_json = '{\"id\":\"welcome\"}'"],
+    ['stored program', 'program_revisions', "config_json = '{\"id\":\"welcome\"}'"],
   ])('maps a schema-invalid %s row to a generic retryable 503', async (
     _name,
     table,
@@ -222,8 +222,13 @@ describe('POST /v1/redemptions', () => {
         externalOrderRef: 'corrupt-retry',
       });
     }
-    await env.DB.prepare(`UPDATE ${table} SET ${mutation} WHERE merchant_id = ?1`)
-      .bind(SEEDED_MERCHANT_ID).run();
+    await env.DB.prepare(`
+      UPDATE ${table} SET ${mutation} WHERE merchant_id = ?1
+        ${table === 'program_revisions' ? `AND revision = (
+          SELECT active_revision FROM programs
+          WHERE merchant_id = ?1 AND external_ref = 'welcome'
+        )` : ''}
+    `).bind(SEEDED_MERCHANT_ID).run();
 
     const response = await redeemRaw({
       evaluationId: evaluation.evaluationId,
@@ -701,7 +706,13 @@ describe('POST /v1/redemptions', () => {
       },
     });
     await env.DB.prepare(`
-      UPDATE programs SET config_json = ?1 WHERE merchant_id = ?2 AND external_ref = 'welcome'
+      UPDATE program_revisions SET config_json = ?1
+      WHERE merchant_id = ?2 AND revision = (
+        SELECT active_revision FROM programs
+        WHERE merchant_id = ?2 AND external_ref = 'welcome'
+      ) AND program_id = (
+        SELECT id FROM programs WHERE merchant_id = ?2 AND external_ref = 'welcome'
+      )
     `).bind(JSON.stringify(changed), SEEDED_MERCHANT_ID).run();
 
     await expectError(await redeemRaw({
@@ -812,9 +823,15 @@ describe('POST /v1/redemptions', () => {
     await seedProgram(promo('changed-rule-id'));
     const evaluation = await evaluate();
     await env.DB.prepare(`
-      UPDATE programs
+      UPDATE program_revisions
       SET config_json = json_set(config_json, '$.rewardRules[0].id', 'renamed-rule')
-      WHERE merchant_id = ?1 AND external_ref = 'changed-rule-id'
+      WHERE merchant_id = ?1 AND revision = (
+        SELECT active_revision FROM programs
+        WHERE merchant_id = ?1 AND external_ref = 'changed-rule-id'
+      ) AND program_id = (
+        SELECT id FROM programs
+        WHERE merchant_id = ?1 AND external_ref = 'changed-rule-id'
+      )
     `).bind(SEEDED_MERCHANT_ID).run();
 
     await expectError(await redeemRaw({
@@ -828,13 +845,19 @@ describe('POST /v1/redemptions', () => {
     await seedProgram(promo('no-reevaluation'));
     const evaluation = await evaluate();
     await env.DB.prepare(`
-      UPDATE programs
+      UPDATE program_revisions
       SET config_json = json_set(
         config_json,
         '$.rewardRules[0].conditions.conditions[0].value',
         100000
       )
-      WHERE merchant_id = ?1 AND external_ref = 'no-reevaluation'
+      WHERE merchant_id = ?1 AND revision = (
+        SELECT active_revision FROM programs
+        WHERE merchant_id = ?1 AND external_ref = 'no-reevaluation'
+      ) AND program_id = (
+        SELECT id FROM programs
+        WHERE merchant_id = ?1 AND external_ref = 'no-reevaluation'
+      )
     `).bind(SEEDED_MERCHANT_ID).run();
 
     await expect(redeem({

@@ -1,5 +1,6 @@
 import {
   EvaluationResponseSchema,
+  PromoProgramSchema,
   ProgramPublicationResultSchema,
   type OperatorCallContext,
   type PermissionKey,
@@ -111,6 +112,72 @@ function draftProgram(
   } as PromoProgram;
 }
 
+interface PlanTwoProgramRow {
+  id: string;
+  merchantId: string;
+  externalRef: string;
+  type: string;
+  name: string;
+  status: string;
+  configJson: string;
+  priority: number;
+  maxUses: number | null;
+  usageCount: number;
+  budgetRemaining: number | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+async function readWithExactPlanTwoProgramReader(externalRef: string): Promise<PromoProgram> {
+  const row = await env.DB.prepare(`
+    SELECT id, merchant_id AS merchantId, external_ref AS externalRef,
+      type, name, status, config_json AS configJson, priority,
+      max_uses AS maxUses, usage_count AS usageCount,
+      budget_remaining AS budgetRemaining, created_at AS createdAt,
+      updated_at AS updatedAt
+    FROM programs WHERE merchant_id = ?1 AND external_ref = ?2
+  `).bind(SEEDED_MERCHANT_ID, externalRef).first<PlanTwoProgramRow>();
+  if (row === null) throw new Error('Plan 2 reader could not find program');
+  const program = PromoProgramSchema.parse(JSON.parse(row.configJson));
+  if (!Number.isSafeInteger(row.usageCount) || row.usageCount < 0) {
+    throw new Error('Program usage counter is invalid');
+  }
+  if (
+    program.id !== row.externalRef
+    || program.type !== row.type
+    || program.name !== row.name
+    || program.status !== row.status
+    || program.priority !== row.priority
+  ) {
+    throw new Error('Program JSON does not match its relational columns');
+  }
+  if (
+    (program.usageCap === undefined && row.maxUses !== null)
+    || (program.usageCap !== undefined && row.maxUses !== program.usageCap)
+    || (program.usageCap !== undefined && row.usageCount > program.usageCap)
+  ) {
+    throw new Error('Program usage cap does not match its relational counter columns');
+  }
+  if (
+    (program.budget === undefined && row.budgetRemaining !== null)
+    || (program.budget !== undefined && row.budgetRemaining === null)
+    || (
+      program.budget !== undefined
+      && row.budgetRemaining !== null
+      && (
+        !Number.isSafeInteger(row.budgetRemaining)
+        || row.budgetRemaining < 0
+        || row.budgetRemaining > program.budget.minorUnits
+      )
+    )
+  ) {
+    throw new Error('Program budget does not match its relational counter columns');
+  }
+  expect(row.createdAt).toMatch(/^\d{4}-\d{2}-\d{2}T/u);
+  expect(row.updatedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/u);
+  return program;
+}
+
 async function evaluate(programRef: string) {
   const response = await SELF.fetch('https://runtime.test/v1/evaluate', {
     method: 'POST',
@@ -154,6 +221,69 @@ describe('immutable Promo revisions and lifecycle', () => {
   afterEach(async () => {
     vi.useRealTimers();
     await env.DB.prepare('DROP TRIGGER IF EXISTS fail_program_revision_swap').run();
+  });
+
+  test('keeps the legacy programs row readable by the exact Plan-2 reader across new Worker lifecycle writes', async () => {
+    const service = operatorService();
+    const initial = draftProgram('plan-two-rollback-reader', {
+      name: 'Initial draft',
+      priority: 10,
+      usageCap: 10,
+      budget: { currency: 'GBP', minorUnits: 10_000 },
+    });
+    await service.createProgramDraft(operatorContext('programs:manage'), initial);
+    expect(await readWithExactPlanTwoProgramReader(initial.id)).toEqual(initial);
+
+    const editedInitial = draftProgram(initial.id, {
+      name: 'Edited before first publication',
+      priority: 20,
+      usageCap: 20,
+      budget: { currency: 'GBP', minorUnits: 20_000 },
+    });
+    await service.updateProgramDraft(
+      operatorContext('programs:manage'),
+      initial.id,
+      editedInitial,
+    );
+    expect(await readWithExactPlanTwoProgramReader(initial.id)).toEqual(editedInitial);
+
+    await service.publishProgram(operatorContext('programs:publish'), initial.id);
+    expect(await readWithExactPlanTwoProgramReader(initial.id)).toEqual({
+      ...editedInitial,
+      status: 'active',
+    });
+
+    const replacement = draftProgram(initial.id, {
+      name: 'Replacement draft hidden from rollback Worker',
+      priority: 30,
+      usageCap: 30,
+      budget: { currency: 'GBP', minorUnits: 30_000 },
+    });
+    await service.updateProgramDraft(
+      operatorContext('programs:manage'),
+      initial.id,
+      replacement,
+    );
+    expect(await readWithExactPlanTwoProgramReader(initial.id)).toEqual({
+      ...editedInitial,
+      status: 'active',
+    });
+    await expect(service.getProgram(
+      operatorContext('programs:read'),
+      initial.id,
+    )).resolves.toEqual(replacement);
+
+    await service.publishProgram(operatorContext('programs:publish'), initial.id);
+    expect(await readWithExactPlanTwoProgramReader(initial.id)).toEqual({
+      ...replacement,
+      status: 'active',
+    });
+
+    await service.pauseProgram(operatorContext('programs:manage'), initial.id);
+    expect(await readWithExactPlanTwoProgramReader(initial.id)).toEqual({
+      ...replacement,
+      status: 'paused',
+    });
   });
 
   test('atomically swaps immutable revisions, preserves counters, and keeps first-match order', async () => {
@@ -347,7 +477,9 @@ describe('immutable Promo revisions and lifecycle', () => {
             if (injectLifecycleRace) {
               injectLifecycleRace = false;
               await target.prepare(`
-                UPDATE programs SET status = 'paused', updated_at = ?1
+                UPDATE programs SET status = 'paused',
+                  config_json = json_set(config_json, '$.status', 'paused'),
+                  updated_at = ?1
                 WHERE merchant_id = ?2 AND external_ref = ?3
               `).bind(
                 '2099-01-01T00:00:00.000Z',
@@ -388,7 +520,7 @@ describe('immutable Promo revisions and lifecycle', () => {
     }>();
     expect(stored).not.toBeNull();
     expect(stored!.status).toBe('paused');
-    expect(JSON.parse(stored!.shadowConfigJson)).toEqual(originalDraft);
+    expect(JSON.parse(stored!.shadowConfigJson)).toEqual({ ...first, status: 'paused' });
     expect(JSON.parse(stored!.revisionConfigJson)).toEqual(originalDraft);
   });
 

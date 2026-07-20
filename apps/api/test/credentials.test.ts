@@ -1,7 +1,13 @@
 import type {
+  ApiCredentialCreateInput,
   ApiCredentialScope,
   OperatorCallContext,
   PermissionKey,
+} from '@incentives/contracts';
+import {
+  ApiCredentialCreateResultSchema,
+  MerchantActivationResultSchema,
+  MerchantProvisionResultSchema,
 } from '@incentives/contracts';
 import { createExecutionContext } from 'cloudflare:test';
 import { env } from 'cloudflare:workers';
@@ -41,6 +47,21 @@ async function provisionMerchant(
   });
 }
 
+async function activateMerchant(
+  merchantId: string,
+  provisioningId = `provision-${merchantId}`,
+) {
+  return operatorService().activateMerchant(operatorContext(merchantId), {
+    id: merchantId,
+    provisioningId,
+  });
+}
+
+async function provisionActiveMerchant(merchantId: string) {
+  await provisionMerchant(merchantId);
+  return activateMerchant(merchantId);
+}
+
 async function createCredential(
   merchantId: string,
   input: {
@@ -49,16 +70,21 @@ async function createCredential(
     scopes?: ApiCredentialScope[];
     allowedOrigins?: string[];
     expiresAt?: string;
+    requestsPerMinute?: number;
   } = {},
 ) {
-  return operatorService().createCredential(operatorContext(merchantId), {
+  const request: ApiCredentialCreateInput = {
     name: input.name ?? 'Integration key',
     environment: 'production',
     kind: input.kind ?? 'secret',
     scopes: input.scopes ?? ['customers:write'],
-    allowedOrigins: input.allowedOrigins,
     expiresAt: input.expiresAt ?? futureExpiry,
-  });
+    ...(input.allowedOrigins === undefined ? {} : { allowedOrigins: input.allowedOrigins }),
+    ...(input.requestsPerMinute === undefined ? {} : {
+      requestsPerMinute: input.requestsPerMinute,
+    }),
+  };
+  return operatorService().createCredential(operatorContext(merchantId), request);
 }
 
 describe('private Core operator credential service', () => {
@@ -81,23 +107,86 @@ describe('private Core operator credential service', () => {
   });
 
   test('provisions a merchant idempotently by the trusted provisioning identity', async () => {
-    const first = await provisionMerchant('merchant-a', 'provisioning-event-1');
-    const replay = await provisionMerchant('merchant-a', 'provisioning-event-1');
+    const first = MerchantProvisionResultSchema.parse(
+      await provisionMerchant('merchant-a', 'provisioning-event-1'),
+    );
+    const replay = MerchantProvisionResultSchema.parse(
+      await provisionMerchant('merchant-a', 'provisioning-event-1'),
+    );
 
     expect(replay).toEqual(first);
     expect(first).toMatchObject({
       id: 'merchant-a',
       name: 'Merchant merchant-a',
       provisioningId: 'provisioning-event-1',
-      status: 'active',
+      status: 'provisioning',
     });
     expect(await env.DB.prepare(
       "SELECT COUNT(*) AS count FROM merchants WHERE provisioning_id = 'provisioning-event-1'",
     ).first<{ count: number }>()).toEqual({ count: 1 });
   });
 
+  test('activates the same provisioning saga idempotently and rejects conflicting identity', async () => {
+    const provisioned = MerchantProvisionResultSchema.parse(
+      await provisionMerchant('merchant-a', 'provisioning-event-1'),
+    );
+    expect(provisioned.status).toBe('provisioning');
+
+    await expect(activateMerchant('merchant-a', 'different-provisioning-event'))
+      .rejects.toThrow(/provisioning identity conflicts/i);
+    expect(await env.DB.prepare(`
+      SELECT status FROM merchants WHERE id = 'merchant-a'
+    `).first()).toEqual({ status: 'provisioning' });
+
+    const first = MerchantActivationResultSchema.parse(
+      await activateMerchant('merchant-a', 'provisioning-event-1'),
+    );
+    const replay = MerchantActivationResultSchema.parse(
+      await activateMerchant('merchant-a', 'provisioning-event-1'),
+    );
+    expect(first).toMatchObject({
+      id: 'merchant-a',
+      provisioningId: 'provisioning-event-1',
+      status: 'active',
+    });
+    expect(replay).toEqual(first);
+    expect(MerchantProvisionResultSchema.parse(
+      await provisionMerchant('merchant-a', 'provisioning-event-1'),
+    )).toEqual(first);
+  });
+
+  test('rejects conflicting merchant and provisioning saga identities without duplicates', async () => {
+    await provisionMerchant('merchant-a', 'provisioning-event-1');
+    await expect(provisionMerchant('merchant-a', 'provisioning-event-2'))
+      .rejects.toThrow(/identity conflicts/i);
+    await expect(provisionMerchant('merchant-b', 'provisioning-event-1'))
+      .rejects.toThrow(/identity conflicts/i);
+    expect(await env.DB.prepare('SELECT COUNT(*) AS count FROM merchants').first())
+      .toEqual({ count: 1 });
+  });
+
+  test('parses strict canonical merchant and credential RPC inputs at the Worker boundary', async () => {
+    await expect(operatorService().provisionMerchant(operatorContext('merchant-a'), {
+      id: 'merchant-a',
+      name: 'Merchant merchant-a',
+      provisioningId: 'provisioning-event-1',
+      forgedStatus: 'active',
+    })).rejects.toMatchObject({ name: 'ZodError' });
+
+    await provisionActiveMerchant('merchant-a');
+    const created = ApiCredentialCreateResultSchema.parse(await createCredential('merchant-a'));
+    expect(created.credential).not.toHaveProperty('digest');
+    await expect(operatorService().createCredential(operatorContext('merchant-a'), {
+      name: 'Strict key',
+      environment: 'production',
+      kind: 'secret',
+      scopes: ['customers:write'],
+      repositoryOnlyDigest: 'forged',
+    })).rejects.toMatchObject({ name: 'ZodError' });
+  });
+
   test('shows random credential material once and persists only safe metadata plus its digest', async () => {
-    await provisionMerchant('merchant-a');
+    await provisionActiveMerchant('merchant-a');
     const created = await createCredential('merchant-a', {
       name: 'Checkout secret',
       kind: 'secret',
@@ -141,9 +230,43 @@ describe('private Core operator credential service', () => {
     expect(columns.results.map(({ name }) => name)).not.toContain('token');
   });
 
+  test('defaults and persists configurable publishable quotas while leaving secrets unthrottled', async () => {
+    await provisionActiveMerchant('merchant-a');
+    const defaulted = await createCredential('merchant-a', {
+      name: 'Default browser quota',
+      kind: 'publishable',
+      scopes: ['schema:read'],
+      allowedOrigins: ['https://shop.example'],
+    });
+    const configured = await createCredential('merchant-a', {
+      name: 'Configured browser quota',
+      kind: 'publishable',
+      scopes: ['schema:read'],
+      allowedOrigins: ['https://shop.example'],
+      requestsPerMinute: 500,
+    });
+    const secret = await createCredential('merchant-a', {
+      name: 'Unthrottled server key',
+      kind: 'secret',
+      scopes: ['schema:read'],
+    });
+
+    expect(defaulted.credential).toMatchObject({ requestsPerMinute: 60 });
+    expect(configured.credential).toMatchObject({ requestsPerMinute: 500 });
+    expect(secret.credential).not.toHaveProperty('requestsPerMinute');
+    expect((await env.DB.prepare(`
+      SELECT name, requests_per_minute AS requestsPerMinute
+      FROM api_credentials WHERE merchant_id = 'merchant-a' ORDER BY name
+    `).all()).results).toEqual([
+      { name: 'Configured browser quota', requestsPerMinute: 500 },
+      { name: 'Default browser quota', requestsPerMinute: 60 },
+      { name: 'Unthrottled server key', requestsPerMinute: null },
+    ]);
+  });
+
   test('keeps credential management scoped to the selected merchant', async () => {
-    await provisionMerchant('merchant-a');
-    await provisionMerchant('merchant-b');
+    await provisionActiveMerchant('merchant-a');
+    await provisionActiveMerchant('merchant-b');
     const credentialA = await createCredential('merchant-a');
     const credentialB = await createCredential('merchant-b');
 
@@ -163,7 +286,7 @@ describe('private Core operator credential service', () => {
   });
 
   test('requires the exact operator permission for every private credential operation', async () => {
-    await provisionMerchant('merchant-a');
+    await provisionActiveMerchant('merchant-a');
 
     await expect(operatorService().createCredential(
       operatorContext('merchant-a', 'credentials:read'),
@@ -181,7 +304,7 @@ describe('private Core operator credential service', () => {
   });
 
   test('audits credential creation and revocation without token material or digests', async () => {
-    await provisionMerchant('merchant-a');
+    await provisionActiveMerchant('merchant-a');
     const created = await createCredential('merchant-a');
     await operatorService().revokeCredential(
       operatorContext('merchant-a'),
@@ -207,7 +330,7 @@ describe('private Core operator credential service', () => {
   });
 
   test('rolls back credential creation when the matching audit append fails', async () => {
-    await provisionMerchant('merchant-a');
+    await provisionActiveMerchant('merchant-a');
     await env.DB.prepare(`
       CREATE TRIGGER fail_credential_created_audit
       BEFORE INSERT ON product_audit
@@ -231,7 +354,7 @@ describe('private Core operator credential service', () => {
   });
 
   test('rolls back revocation when the matching audit append fails', async () => {
-    await provisionMerchant('merchant-a');
+    await provisionActiveMerchant('merchant-a');
     const created = await createCredential('merchant-a', { name: 'Remain active' });
     await env.DB.prepare(`
       CREATE TRIGGER fail_credential_revoked_audit
@@ -262,7 +385,7 @@ describe('private Core operator credential service', () => {
   });
 
   test('treats repeated revocation as idempotent and preserves the first actor history', async () => {
-    await provisionMerchant('merchant-a');
+    await provisionActiveMerchant('merchant-a');
     const created = await createCredential('merchant-a', { name: 'Rotate once' });
 
     const first = await operatorService().revokeCredential(

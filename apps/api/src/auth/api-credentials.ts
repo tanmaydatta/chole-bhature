@@ -5,7 +5,7 @@ import type {
 import type { MiddlewareHandler } from 'hono';
 
 import type { AppEnvironment } from '../env.js';
-import { ForbiddenError, UnauthorizedError } from '../errors.js';
+import { ForbiddenError, RateLimitError, UnauthorizedError } from '../errors.js';
 
 const encoder = new TextEncoder();
 
@@ -48,6 +48,23 @@ function requireCredential(
       if (!allowedOrigins.includes(origin)) throw new ForbiddenError();
       context.header('Access-Control-Allow-Origin', origin);
       context.header('Vary', 'Origin');
+    }
+
+    if (credential.kind === 'publishable') {
+      const checkedAt = Date.now();
+      const windowStartedAt = Math.floor(checkedAt / 60_000) * 60_000;
+      const allowed = await repositories.credentials.consumePublishableRateLimit(
+        credential.id,
+        credential.requestsPerMinute,
+        windowStartedAt,
+      );
+      if (!allowed) {
+        const retryAfterSeconds = Math.max(
+          1,
+          Math.ceil((windowStartedAt + 60_000 - checkedAt) / 1_000),
+        );
+        throw new RateLimitError(retryAfterSeconds);
+      }
     }
 
     context.set('merchantId', credential.merchantId);

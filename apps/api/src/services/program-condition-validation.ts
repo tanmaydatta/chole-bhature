@@ -81,6 +81,13 @@ export function validateProgramConditions(
 
   for (const { condition, path } of allConditionEntries(program)) {
     const definition = definitionsByKey.get(condition.variable);
+    if (condition.variable.startsWith('event.') || definition?.source === 'event') {
+      throw new ContextValidationError('The program failed validation', [{
+        path: `${path}.variable`,
+        code: 'unsupported_condition_source',
+        message: 'Promo conditions cannot use event variables',
+      }]);
+    }
     if (definition === undefined) {
       throw new ContextValidationError('The program failed validation', [{
         path: `${path}.variable`,

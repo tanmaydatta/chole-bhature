@@ -55,6 +55,7 @@ async function resetToMigrationOne(): Promise<D1Migration> {
 
   const applicationTables = [
     'product_audit',
+    'credential_rate_limit_windows',
     'api_credentials',
     'redemptions',
     'evaluation_decisions',
@@ -337,6 +338,72 @@ test('forward-migrates logical committed spend from populated Task 2 counters', 
     { programId: 'legacy-draft-row', committedSpend: 250 },
     { programId: 'legacy-program-row', committedSpend: 500 },
   ]);
+});
+
+test('backfills publishable quotas and creates isolated fixed-window state without affecting secrets', async () => {
+  const productionMigration = await resetToMigrationOne();
+  await seedRepresentativePlanTwoData();
+  const originsMigration = testEnv.TEST_MIGRATIONS.find(migration => (
+    migration.name === '0003_credential_origins.sql'
+  ));
+  const spendMigration = testEnv.TEST_MIGRATIONS.find(migration => (
+    migration.name === '0004_program_committed_spend.sql'
+  ));
+  const rateLimitMigration = testEnv.TEST_MIGRATIONS.find(migration => (
+    migration.name === '0005_publishable_rate_limits.sql'
+  ));
+  expect(originsMigration).toBeDefined();
+  expect(spendMigration).toBeDefined();
+  expect(rateLimitMigration, 'the publishable rate-limit migration must exist').toBeDefined();
+  await applyD1Migrations(testEnv.DB, [
+    productionMigration,
+    originsMigration!,
+    spendMigration!,
+  ]);
+  await testEnv.DB.batch([
+    testEnv.DB.prepare(`
+      INSERT INTO api_credentials (
+        id, merchant_id, name, environment, kind, scopes_json,
+        allowed_origins_json, digest, suffix, status, created_at, created_by
+      ) VALUES (
+        'legacy-publishable', 'phase-0-merchant', 'Legacy browser key', 'production',
+        'publishable', '["schema:read"]', '["https://shop.example"]',
+        ?1, 'pub12345', 'active', ?2, 'migration-test'
+      )
+    `).bind('a'.repeat(64), createdAt),
+    testEnv.DB.prepare(`
+      INSERT INTO api_credentials (
+        id, merchant_id, name, environment, kind, scopes_json,
+        allowed_origins_json, digest, suffix, status, created_at, created_by
+      ) VALUES (
+        'legacy-secret', 'phase-0-merchant', 'Legacy server key', 'production',
+        'secret', '["customers:write"]', '[]',
+        ?1, 'sec12345', 'active', ?2, 'migration-test'
+      )
+    `).bind('b'.repeat(64), createdAt),
+  ]);
+
+  await applyD1Migrations(testEnv.DB, [rateLimitMigration!]);
+
+  expect((await testEnv.DB.prepare(`
+    SELECT id, requests_per_minute AS requestsPerMinute
+    FROM api_credentials WHERE id IN ('legacy-publishable', 'legacy-secret')
+    ORDER BY id
+  `).all()).results).toEqual([
+    { id: 'legacy-publishable', requestsPerMinute: 60 },
+    { id: 'legacy-secret', requestsPerMinute: null },
+  ]);
+  expect(await testEnv.DB.prepare(`
+    SELECT COUNT(*) AS count FROM credential_rate_limit_windows
+  `).first()).toEqual({ count: 0 });
+  await expect(testEnv.DB.prepare(`
+    UPDATE api_credentials SET requests_per_minute = 0
+    WHERE id = 'legacy-publishable'
+  `).run()).rejects.toThrow();
+  await expect(testEnv.DB.prepare(`
+    UPDATE api_credentials SET requests_per_minute = 60
+    WHERE id = 'legacy-secret'
+  `).run()).rejects.toThrow();
 });
 
 test('recovers spend from a rolled-back counter-first Worker update sequence', async () => {

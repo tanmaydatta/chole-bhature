@@ -1417,8 +1417,14 @@ describe('POST /v1/evaluate', () => {
     await seedCustomer();
     await seedProgram(promo('corrupt'));
     await env.DB.prepare(`
-      UPDATE programs SET config_json = '{"invalid":true}'
-      WHERE merchant_id = ?1 AND external_ref = 'corrupt'
+      UPDATE program_revisions SET config_json = '{"invalid":true}'
+      WHERE merchant_id = ?1 AND revision = (
+        SELECT active_revision FROM programs
+        WHERE merchant_id = ?1 AND external_ref = 'corrupt'
+      ) AND program_id = (
+        SELECT id FROM programs
+        WHERE merchant_id = ?1 AND external_ref = 'corrupt'
+      )
     `).bind(SEEDED_MERCHANT_ID).run();
 
     const error = await expectError(

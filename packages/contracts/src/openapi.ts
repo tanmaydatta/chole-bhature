@@ -21,7 +21,6 @@ import {
   PromoRewardRuleSchema,
 } from './reward-rules.js';
 import {
-  AccessSummarySchema,
   CustomerPatchRequestSchema,
   CustomerRecordSchema,
   HealthResponseSchema,
@@ -79,7 +78,6 @@ export function buildOpenApiDocument(): OpenApiDocument {
   registry.register('ReferralProgram', ReferralProgramSchema);
   registry.register('LoyaltyProgram', LoyaltyProgramSchema);
   const healthResponse = registry.register('HealthResponse', HealthResponseSchema);
-  const accessSummary = registry.register('AccessSummary', AccessSummarySchema);
   registry.register('SchemaDefinitionView', SchemaDefinitionViewSchema);
   registry.register(
     'SchemaDefinitionsResponse',
@@ -116,6 +114,7 @@ export function buildOpenApiDocument(): OpenApiDocument {
     404: errorResponse('The merchant-scoped resource was not found'),
     409: errorResponse('The requested mutation conflicts or capacity is exhausted'),
     410: errorResponse('The evaluation decision has expired'),
+    429: errorResponse('The publishable credential request quota is exhausted'),
     503: errorResponse('The runtime is temporarily unavailable; inspect retryable'),
   };
   const customerRef = { $ref: '#/components/parameters/CustomerRef' };
@@ -138,30 +137,6 @@ export function buildOpenApiDocument(): OpenApiDocument {
   });
   registry.registerPath({
     method: 'get',
-    path: '/v1/test-publishable',
-    summary: 'Verify publishable-or-secret credential access',
-    security: publishableSecurity,
-    responses: {
-      200: { description: 'Resolved request scope', content: jsonContent(accessSummary) },
-      401: errors[401],
-      503: errors[503],
-    },
-  });
-  registry.registerPath({
-    method: 'get',
-    path: '/v1/test-secret',
-    summary: 'Verify secret credential access',
-    security: secretSecurity,
-    responses: {
-      200: { description: 'Resolved request scope', content: jsonContent(accessSummary) },
-      401: errors[401],
-      403: errors[403],
-      503: errors[503],
-    },
-  });
-
-  registry.registerPath({
-    method: 'get',
     path: '/v1/schema/published',
     summary: 'Fetch the active typed schema, JSON Schema, and sample',
     security: publishableSecurity,
@@ -169,6 +144,7 @@ export function buildOpenApiDocument(): OpenApiDocument {
       200: { description: 'Current published schema', content: jsonContent(publishedSchema) },
       401: errors[401],
       404: errors[404],
+      429: errors[429],
       503: errors[503],
     },
   });
@@ -216,6 +192,7 @@ export function buildOpenApiDocument(): OpenApiDocument {
       400: errors[400],
       401: errors[401],
       404: errors[404],
+      429: errors[429],
       503: errors[503],
     },
   });

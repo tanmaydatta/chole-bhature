@@ -1,4 +1,29 @@
-import type { OperatorCallContext } from '@incentives/contracts';
+import {
+  ApiCredentialCreateInputSchema,
+  ApiCredentialCreateResultSchema,
+  ApiCredentialViewSchema,
+  MerchantActivationRequestSchema,
+  MerchantActivationResultSchema,
+  MerchantProvisionRequestSchema,
+  MerchantProvisionResultSchema,
+  OperatorCallContextSchema,
+  ProgramLifecycleSchema,
+  ProgramListResponseSchema,
+  ProgramPublicationResultSchema,
+  PromoProgramSchema,
+  SchemaDefinitionImpactPreviewSchema,
+  SchemaDefinitionViewSchema,
+  SchemaDefinitionsResponseSchema,
+  SchemaPublicationResultSchema,
+  VariableDefinitionSchema,
+  type ApiCredentialCreateInput,
+  type MerchantActivationRequest,
+  type MerchantProvisionRequest,
+  type OperatorCallContext,
+  type PromoProgram,
+  type VariableDefinition,
+} from '@incentives/contracts';
+import { z } from 'zod';
 import { WorkerEntrypoint } from 'cloudflare:workers';
 
 import { createApp } from './app.js';
@@ -8,7 +33,7 @@ import {
   listCredentials,
   revokeCredential,
 } from './routes/credentials.js';
-import { provisionMerchant } from './routes/internal-merchants.js';
+import { activateMerchant, provisionMerchant } from './routes/internal-merchants.js';
 import {
   createProgramDraft,
   endProgram,
@@ -30,88 +55,170 @@ import {
 } from './routes/schemas.js';
 
 export class CoreOperatorService extends WorkerEntrypoint<Env> {
-  provisionMerchant(context: OperatorCallContext, input: Parameters<typeof provisionMerchant>[2]) {
-    return provisionMerchant(this.env, context, input);
+  async provisionMerchant(context: OperatorCallContext, input: MerchantProvisionRequest) {
+    return MerchantProvisionResultSchema.parse(await provisionMerchant(
+      this.env,
+      OperatorCallContextSchema.parse(context),
+      MerchantProvisionRequestSchema.parse(input),
+    ));
   }
 
-  createCredential(context: OperatorCallContext, input: unknown) {
-    return createCredential(this.env, context, input);
+  async activateMerchant(context: OperatorCallContext, input: MerchantActivationRequest) {
+    return MerchantActivationResultSchema.parse(await activateMerchant(
+      this.env,
+      OperatorCallContextSchema.parse(context),
+      MerchantActivationRequestSchema.parse(input),
+    ));
   }
 
-  listCredentials(context: OperatorCallContext) {
-    return listCredentials(this.env, context);
+  async createCredential(context: OperatorCallContext, input: ApiCredentialCreateInput) {
+    return ApiCredentialCreateResultSchema.parse(await createCredential(
+      this.env,
+      OperatorCallContextSchema.parse(context),
+      ApiCredentialCreateInputSchema.parse(input),
+    ));
   }
 
-  revokeCredential(context: OperatorCallContext, credentialId: string) {
-    return revokeCredential(this.env, context, credentialId);
+  async listCredentials(context: OperatorCallContext) {
+    return z.array(ApiCredentialViewSchema).parse(await listCredentials(
+      this.env,
+      OperatorCallContextSchema.parse(context),
+    ));
   }
 
-  listSchemaDefinitions(context: OperatorCallContext) {
-    return listSchemaDefinitions(this.env, context);
+  async revokeCredential(context: OperatorCallContext, credentialId: string) {
+    return ApiCredentialViewSchema.parse(await revokeCredential(
+      this.env,
+      OperatorCallContextSchema.parse(context),
+      z.string().min(1).parse(credentialId),
+    ));
   }
 
-  createSchemaDefinition(context: OperatorCallContext, input: unknown) {
-    return createSchemaDefinition(this.env, context, input);
+  async listSchemaDefinitions(context: OperatorCallContext) {
+    return SchemaDefinitionsResponseSchema.parse(await listSchemaDefinitions(
+      this.env,
+      OperatorCallContextSchema.parse(context),
+    ));
   }
 
-  updateSchemaDefinition(
+  async createSchemaDefinition(context: OperatorCallContext, input: VariableDefinition) {
+    return SchemaDefinitionViewSchema.parse(await createSchemaDefinition(
+      this.env,
+      OperatorCallContextSchema.parse(context),
+      VariableDefinitionSchema.parse(input),
+    ));
+  }
+
+  async updateSchemaDefinition(
     context: OperatorCallContext,
     definitionId: string,
-    input: unknown,
+    input: VariableDefinition,
   ) {
-    return updateSchemaDefinition(this.env, context, definitionId, input);
+    return SchemaDefinitionViewSchema.parse(await updateSchemaDefinition(
+      this.env,
+      OperatorCallContextSchema.parse(context),
+      z.string().min(1).parse(definitionId),
+      VariableDefinitionSchema.parse(input),
+    ));
   }
 
-  deleteSchemaDefinition(context: OperatorCallContext, definitionId: string) {
-    return deleteSchemaDefinition(this.env, context, definitionId);
+  async deleteSchemaDefinition(context: OperatorCallContext, definitionId: string) {
+    await deleteSchemaDefinition(
+      this.env,
+      OperatorCallContextSchema.parse(context),
+      z.string().min(1).parse(definitionId),
+    );
   }
 
-  previewSchemaDefinitionImpact(context: OperatorCallContext, definitionId: string) {
-    return previewSchemaDefinitionImpact(this.env, context, definitionId);
+  async previewSchemaDefinitionImpact(context: OperatorCallContext, definitionId: string) {
+    return SchemaDefinitionImpactPreviewSchema.parse(await previewSchemaDefinitionImpact(
+      this.env,
+      OperatorCallContextSchema.parse(context),
+      z.string().min(1).parse(definitionId),
+    ));
   }
 
-  deprecateSchemaDefinition(context: OperatorCallContext, definitionId: string) {
-    return deprecateSchemaDefinition(this.env, context, definitionId);
+  async deprecateSchemaDefinition(context: OperatorCallContext, definitionId: string) {
+    await deprecateSchemaDefinition(
+      this.env,
+      OperatorCallContextSchema.parse(context),
+      z.string().min(1).parse(definitionId),
+    );
   }
 
-  publishSchema(context: OperatorCallContext) {
-    return publishSchema(this.env, context);
+  async publishSchema(context: OperatorCallContext) {
+    return SchemaPublicationResultSchema.parse(await publishSchema(
+      this.env,
+      OperatorCallContextSchema.parse(context),
+    ));
   }
 
-  createProgramDraft(context: OperatorCallContext, input: unknown) {
-    return createProgramDraft(this.env, context, input);
+  async createProgramDraft(context: OperatorCallContext, input: PromoProgram) {
+    return PromoProgramSchema.parse(await createProgramDraft(
+      this.env,
+      OperatorCallContextSchema.parse(context),
+      PromoProgramSchema.parse(input),
+    ));
   }
 
-  getProgram(context: OperatorCallContext, externalRef: string) {
-    return getProgram(this.env, context, externalRef);
+  async getProgram(context: OperatorCallContext, externalRef: string) {
+    return PromoProgramSchema.parse(await getProgram(
+      this.env,
+      OperatorCallContextSchema.parse(context),
+      z.string().min(1).parse(externalRef),
+    ));
   }
 
-  listPrograms(context: OperatorCallContext) {
-    return listPrograms(this.env, context);
+  async listPrograms(context: OperatorCallContext) {
+    return ProgramListResponseSchema.parse(await listPrograms(
+      this.env,
+      OperatorCallContextSchema.parse(context),
+    ));
   }
 
-  updateProgramDraft(
+  async updateProgramDraft(
     context: OperatorCallContext,
     externalRef: string,
-    input: unknown,
+    input: PromoProgram,
   ) {
-    return updateProgramDraft(this.env, context, externalRef, input);
+    return PromoProgramSchema.parse(await updateProgramDraft(
+      this.env,
+      OperatorCallContextSchema.parse(context),
+      z.string().min(1).parse(externalRef),
+      PromoProgramSchema.parse(input),
+    ));
   }
 
-  publishProgram(context: OperatorCallContext, externalRef: string) {
-    return publishProgram(this.env, context, externalRef);
+  async publishProgram(context: OperatorCallContext, externalRef: string) {
+    return ProgramPublicationResultSchema.parse(await publishProgram(
+      this.env,
+      OperatorCallContextSchema.parse(context),
+      z.string().min(1).parse(externalRef),
+    ));
   }
 
-  pauseProgram(context: OperatorCallContext, externalRef: string) {
-    return pauseProgram(this.env, context, externalRef);
+  async pauseProgram(context: OperatorCallContext, externalRef: string) {
+    return ProgramLifecycleSchema.parse(await pauseProgram(
+      this.env,
+      OperatorCallContextSchema.parse(context),
+      z.string().min(1).parse(externalRef),
+    ));
   }
 
-  resumeProgram(context: OperatorCallContext, externalRef: string) {
-    return resumeProgram(this.env, context, externalRef);
+  async resumeProgram(context: OperatorCallContext, externalRef: string) {
+    return ProgramLifecycleSchema.parse(await resumeProgram(
+      this.env,
+      OperatorCallContextSchema.parse(context),
+      z.string().min(1).parse(externalRef),
+    ));
   }
 
-  endProgram(context: OperatorCallContext, externalRef: string) {
-    return endProgram(this.env, context, externalRef);
+  async endProgram(context: OperatorCallContext, externalRef: string) {
+    return ProgramLifecycleSchema.parse(await endProgram(
+      this.env,
+      OperatorCallContextSchema.parse(context),
+      z.string().min(1).parse(externalRef),
+    ));
   }
 }
 

@@ -3,10 +3,16 @@ import type {
   OperatorCallContext,
   PermissionKey,
 } from '@incentives/contracts';
+import { ApiErrorSchema } from '@incentives/contracts';
 import { SELF, createExecutionContext } from 'cloudflare:test';
 import { env } from 'cloudflare:workers';
 import { beforeEach, describe, expect, test } from 'vitest';
 
+import { createApp } from '../src/app.js';
+import {
+  requirePublishableScope,
+  requireSecretScope,
+} from '../src/auth/api-credentials.js';
 import type { Env } from '../src/env.js';
 import { CoreOperatorService } from '../src/worker.js';
 
@@ -30,10 +36,15 @@ function operatorService(): CoreOperatorService {
 }
 
 async function provisionMerchant(merchantId: string) {
-  return operatorService().provisionMerchant(operatorContext(merchantId), {
+  const input = {
     id: merchantId,
     name: `Merchant ${merchantId}`,
     provisioningId: `provision-${merchantId}`,
+  };
+  await operatorService().provisionMerchant(operatorContext(merchantId), input);
+  return operatorService().activateMerchant(operatorContext(merchantId), {
+    id: input.id,
+    provisioningId: input.provisioningId,
   });
 }
 
@@ -45,6 +56,7 @@ async function createCredential(
     scopes: ApiCredentialScope[];
     allowedOrigins?: string[];
     expiresAt?: string;
+    requestsPerMinute?: number;
   },
 ) {
   return operatorService().createCredential(operatorContext(merchantId), {
@@ -52,8 +64,11 @@ async function createCredential(
     environment: 'production',
     kind: input.kind,
     scopes: input.scopes,
-    allowedOrigins: input.allowedOrigins,
     expiresAt: input.expiresAt ?? futureExpiry,
+    ...(input.allowedOrigins === undefined ? {} : { allowedOrigins: input.allowedOrigins }),
+    ...(input.requestsPerMinute === undefined ? {} : {
+      requestsPerMinute: input.requestsPerMinute,
+    }),
   });
 }
 
@@ -65,6 +80,31 @@ async function publicRequest(
   const headers = new Headers(init.headers);
   headers.set('authorization', `Bearer ${token}`);
   return SELF.fetch(`https://core.example${path}`, { ...init, headers });
+}
+
+async function testOnlyCredentialRequest(
+  kind: 'publishable' | 'secret',
+  token: string,
+  init: RequestInit = {},
+): Promise<Response> {
+  const app = createApp();
+  app.get(
+    '/__test/publishable-context',
+    requirePublishableScope('schema:read'),
+    context => context.json({ merchantId: context.get('merchantId') }),
+  );
+  app.get(
+    '/__test/secret-context',
+    requireSecretScope('customers:write'),
+    context => context.json({ merchantId: context.get('merchantId') }),
+  );
+  const headers = new Headers(init.headers);
+  headers.set('authorization', `Bearer ${token}`);
+  return app.request(
+    `https://core.example/__test/${kind}-context`,
+    { ...init, headers },
+    env as Env,
+  );
 }
 
 async function preflight(
@@ -119,8 +159,8 @@ describe('merchant credential authentication and tenancy', () => {
     });
 
     const [responseA, responseB] = await Promise.all([
-      publicRequest('/v1/test-secret', keyA.token),
-      publicRequest('/v1/test-secret', keyB.token),
+      testOnlyCredentialRequest('secret', keyA.token),
+      testOnlyCredentialRequest('secret', keyB.token),
     ]);
 
     expect(responseA.status).toBe(200);
@@ -143,9 +183,11 @@ describe('merchant credential authentication and tenancy', () => {
       'x-operator-permission': 'credentials:manage',
     };
 
-    const authenticated = await SELF.fetch('https://core.example/v1/test-secret', {
-      headers: forgedHeaders,
-    });
+    const authenticated = await testOnlyCredentialRequest(
+      'secret',
+      keyA.token,
+      { headers: forgedHeaders },
+    );
     expect(authenticated.status).toBe(200);
     expect(await authenticated.json()).toMatchObject({ merchantId: 'merchant-a' });
 
@@ -157,7 +199,10 @@ describe('merchant credential authentication and tenancy', () => {
       expect(response.status).toBe(404);
     }
 
-    const staticFallback = await publicRequest('/v1/test-secret', 'sk_test_secret_credential_material_000000000001');
+    const staticFallback = await testOnlyCredentialRequest(
+      'secret',
+      'sk_test_secret_credential_material_000000000001',
+    );
     expect(staticFallback.status).toBe(401);
   });
 
@@ -173,10 +218,10 @@ describe('merchant credential authentication and tenancy', () => {
       scopes: ['evaluations:write'],
     });
 
-    const publishableOnSecret = await publicRequest('/v1/test-secret', publishable.token);
+    const publishableOnSecret = await testOnlyCredentialRequest('secret', publishable.token);
     expect(publishableOnSecret.status).toBe(403);
 
-    const missingScope = await publicRequest('/v1/test-secret', wrongScope.token);
+    const missingScope = await testOnlyCredentialRequest('secret', wrongScope.token);
     expect(missingScope.status).toBe(403);
   });
 
@@ -199,8 +244,8 @@ describe('merchant credential authentication and tenancy', () => {
       revoked.credential.id,
     );
 
-    expect((await publicRequest('/v1/test-secret', revoked.token)).status).toBe(401);
-    expect((await publicRequest('/v1/test-secret', expired.token)).status).toBe(401);
+    expect((await testOnlyCredentialRequest('secret', revoked.token)).status).toBe(401);
+    expect((await testOnlyCredentialRequest('secret', expired.token)).status).toBe(401);
   });
 
   test('allows only an exact configured Origin for publishable browser requests', async () => {
@@ -211,7 +256,7 @@ describe('merchant credential authentication and tenancy', () => {
       allowedOrigins: ['https://shop.example'],
     });
 
-    const allowed = await publicRequest('/v1/test-publishable', publishable.token, {
+    const allowed = await testOnlyCredentialRequest('publishable', publishable.token, {
       headers: { origin: 'https://shop.example' },
     });
     expect(allowed.status).toBe(200);
@@ -224,12 +269,109 @@ describe('merchant credential authentication and tenancy', () => {
       'https://SHOP.example',
       'https://shop.example/',
     ]) {
-      const disallowed = await publicRequest('/v1/test-publishable', publishable.token, {
+      const disallowed = await testOnlyCredentialRequest('publishable', publishable.token, {
         headers: { origin },
       });
       expect(disallowed.status).toBe(403);
       expect(disallowed.headers.has('access-control-allow-origin')).toBe(false);
     }
+  });
+
+  test('atomically enforces the configured publishable fixed-window boundary', async () => {
+    await provisionMerchant('merchant-a');
+    const publishable = await createCredential('merchant-a', {
+      kind: 'publishable',
+      scopes: ['schema:read'],
+      allowedOrigins: ['https://shop.example'],
+      requestsPerMinute: 1,
+    });
+
+    const responses = await Promise.all(Array.from({ length: 5 }, () => publicRequest(
+      '/v1/schema/published',
+      publishable.token,
+    )));
+    expect(responses.filter(response => response.status !== 429)).toHaveLength(1);
+    expect(responses.filter(response => response.status === 429)).toHaveLength(4);
+
+    const limited = responses.find(response => response.status === 429)!;
+    const retryAfter = Number(limited.headers.get('retry-after'));
+    expect(retryAfter).toBeGreaterThanOrEqual(1);
+    expect(retryAfter).toBeLessThanOrEqual(60);
+    expect(ApiErrorSchema.parse(await limited.json()).error).toMatchObject({
+      code: 'RATE_LIMITED',
+      message: 'Too many requests for this publishable credential',
+      retryable: true,
+    });
+  });
+
+  test('resets publishable limits at the next window and keeps quotas per credential', async () => {
+    await provisionMerchant('merchant-a');
+    const first = await createCredential('merchant-a', {
+      name: 'first browser key',
+      kind: 'publishable',
+      scopes: ['schema:read'],
+      allowedOrigins: ['https://shop.example'],
+      requestsPerMinute: 1,
+    });
+    const second = await createCredential('merchant-a', {
+      name: 'second browser key',
+      kind: 'publishable',
+      scopes: ['schema:read'],
+      allowedOrigins: ['https://shop.example'],
+      requestsPerMinute: 1,
+    });
+
+    expect((await publicRequest('/v1/schema/published', first.token)).status).not.toBe(429);
+    expect((await publicRequest('/v1/schema/published', second.token)).status).not.toBe(429);
+    expect((await publicRequest('/v1/schema/published', first.token)).status).toBe(429);
+    expect((await publicRequest('/v1/schema/published', second.token)).status).toBe(429);
+
+    await env.DB.prepare(`
+      UPDATE credential_rate_limit_windows
+      SET window_started_at = window_started_at - 60000
+      WHERE credential_id = ?1
+    `).bind(first.credential.id).run();
+    expect((await publicRequest('/v1/schema/published', first.token)).status).not.toBe(429);
+    expect((await publicRequest('/v1/schema/published', second.token)).status).toBe(429);
+  });
+
+  test('does not consume publishable quota for OPTIONS preflight', async () => {
+    await provisionMerchant('merchant-a');
+    const publishable = await createCredential('merchant-a', {
+      kind: 'publishable',
+      scopes: ['schema:read'],
+      allowedOrigins: ['https://shop.example'],
+      requestsPerMinute: 1,
+    });
+
+    expect((await preflight(
+      '/v1/schema/published',
+      'https://shop.example',
+      'GET',
+      'authorization',
+    )).status).toBe(204);
+    expect((await publicRequest('/v1/schema/published', publishable.token, {
+      headers: { origin: 'https://shop.example' },
+    })).status).not.toBe(429);
+    expect((await publicRequest('/v1/schema/published', publishable.token, {
+      headers: { origin: 'https://shop.example' },
+    })).status).toBe(429);
+  });
+
+  test('never applies browser rate limiting to secret credentials', async () => {
+    await provisionMerchant('merchant-a');
+    const secret = await createCredential('merchant-a', {
+      kind: 'secret',
+      scopes: ['schema:read'],
+    });
+
+    for (let index = 0; index < 65; index += 1) {
+      expect((await publicRequest('/v1/schema/published', secret.token)).status).not.toBe(429);
+    }
+    expect(await env.DB.prepare(`
+      SELECT COUNT(*) AS count FROM credential_rate_limit_windows
+      WHERE credential_id = ?1
+    `).bind(secret.credential.id).first()).toEqual({ count: 0 });
   });
 
   test('never opts secret routes into browser CORS', async () => {
@@ -239,7 +381,7 @@ describe('merchant credential authentication and tenancy', () => {
       scopes: ['customers:write'],
     });
 
-    const response = await publicRequest('/v1/test-secret', secret.token, {
+    const response = await testOnlyCredentialRequest('secret', secret.token, {
       headers: { origin: 'https://shop.example' },
     });
     expect(response.status).toBe(200);
@@ -260,16 +402,16 @@ describe('merchant credential authentication and tenancy', () => {
       scopes: ['customers:write'],
     });
 
-    expect((await publicRequest('/v1/test-secret', oldKey.token)).status).toBe(200);
-    expect((await publicRequest('/v1/test-secret', newKey.token)).status).toBe(200);
+    expect((await testOnlyCredentialRequest('secret', oldKey.token)).status).toBe(200);
+    expect((await testOnlyCredentialRequest('secret', newKey.token)).status).toBe(200);
 
     await operatorService().revokeCredential(
       operatorContext('merchant-a'),
       oldKey.credential.id,
     );
 
-    expect((await publicRequest('/v1/test-secret', oldKey.token)).status).toBe(401);
-    expect((await publicRequest('/v1/test-secret', newKey.token)).status).toBe(200);
+    expect((await testOnlyCredentialRequest('secret', oldKey.token)).status).toBe(401);
+    expect((await testOnlyCredentialRequest('secret', newKey.token)).status).toBe(200);
   });
 
   test('keeps configuration authoring off public fetch and cannot mutate it with a secret key', async () => {

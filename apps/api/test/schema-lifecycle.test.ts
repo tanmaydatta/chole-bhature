@@ -14,6 +14,7 @@ import { env } from 'cloudflare:workers';
 import { beforeEach, describe, expect, test } from 'vitest';
 
 import type { Env } from '../src/env.js';
+import { createRepositories } from '../src/repositories/d1-repositories.js';
 import { CoreOperatorService } from '../src/worker.js';
 import { SEEDED_MERCHANT_ID, SECRET_TEST_TOKEN } from './test-credentials.js';
 
@@ -285,6 +286,43 @@ describe('private schema lifecycle service', () => {
       programRef: 'draft-schema-program',
       status: 'active',
       activeRevision: 1,
+    });
+  });
+
+  test('keeps event variables definable for future modules but rejects them from Promo authoring and publication', async () => {
+    const service = operatorService();
+    await service.createSchemaDefinition(operatorContext('schemas:manage'), {
+      key: 'event.checkout_type',
+      label: 'Checkout type',
+      source: 'event',
+      type: 'string',
+      required: false,
+    });
+    const promo = draftProgram('future-event-promo', 'event.checkout_type');
+
+    await expect(service.createProgramDraft(
+      operatorContext('programs:manage'),
+      promo,
+    )).rejects.toMatchObject({
+      name: 'ContextValidationError',
+      fields: [{
+        path: 'eligibility.conditions.0.variable',
+        code: 'unsupported_condition_source',
+      }],
+    });
+
+    const repositories = createRepositories(env);
+    const schema = await repositories.schemas.getLatestVersion(SEEDED_MERCHANT_ID, 'draft');
+    expect(schema).not.toBeNull();
+    await repositories.programs.create({
+      merchantId: SEEDED_MERCHANT_ID,
+      program: promo,
+      schema,
+    });
+    await expect(service.publishSchema(
+      operatorContext('schemas:publish'),
+    )).rejects.toMatchObject({
+      name: 'SchemaConflictError',
     });
   });
 

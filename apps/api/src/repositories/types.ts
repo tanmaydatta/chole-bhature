@@ -7,6 +7,10 @@ import type {
   DeploymentEnvironment,
   EvaluationRequest,
   IncentiveDecision,
+  MerchantActivationRequest,
+  MerchantActivationResult,
+  MerchantProvisionRequest,
+  MerchantProvisionResult,
   PromoProgram,
   ProgramLifecycle,
   ProgramStatus,
@@ -95,15 +99,8 @@ export interface SchemaRepository {
   deprecateDefinition(input: SchemaDefinitionDeprecation): Promise<void>;
 }
 
+export type MerchantProvision = MerchantProvisionRequest & { createdAt?: string };
 export type MerchantStatus = 'provisioning' | 'active';
-
-export interface MerchantProvision {
-  id: string;
-  name: string;
-  provisioningId: string;
-  createdAt?: string;
-}
-
 export interface MerchantRecord {
   id: string;
   name: string;
@@ -114,9 +111,12 @@ export interface MerchantRecord {
 }
 
 export interface MerchantRepository {
-  provision(input: MerchantProvision): Promise<MerchantRecord>;
+  provision(input: MerchantProvision): Promise<MerchantProvisionResult>;
   get(id: string): Promise<MerchantRecord | null>;
-  activate(id: string, updatedAt: string): Promise<MerchantRecord | null>;
+  activate(
+    input: MerchantActivationRequest,
+    updatedAt: string,
+  ): Promise<MerchantActivationResult>;
 }
 
 export interface CredentialCreate {
@@ -127,6 +127,7 @@ export interface CredentialCreate {
   kind: ApiCredentialKind;
   scopes: ApiCredentialScope[];
   allowedOrigins?: string[];
+  requestsPerMinute?: number;
   digest: string;
   suffix: string;
   expiresAt?: string;
@@ -157,6 +158,11 @@ export interface CredentialRepository {
     audit: AuditEntry,
   ): Promise<ApiCredentialView | null>;
   markUsed(id: string, usedAt: string): Promise<void>;
+  consumePublishableRateLimit(
+    credentialId: string,
+    requestsPerMinute: number,
+    windowStartedAt: number,
+  ): Promise<boolean>;
 }
 
 export interface CustomerRecord {

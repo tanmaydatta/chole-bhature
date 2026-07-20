@@ -172,6 +172,7 @@ export const apiCredentials = sqliteTable('api_credentials', {
   kind: text('kind').notNull(),
   scopesJson: text('scopes_json').notNull(),
   allowedOriginsJson: text('allowed_origins_json').notNull().default('[]'),
+  requestsPerMinute: integer('requests_per_minute'),
   digest: text('digest').notNull(),
   suffix: text('suffix').notNull(),
   status: text('status').notNull().default('active'),
@@ -205,6 +206,32 @@ export const apiCredentials = sqliteTable('api_credentials', {
   check(
     'api_credentials_revocation_pair',
     sql`(${table.revokedAt} IS NULL) = (${table.revokedBy} IS NULL)`,
+  ),
+  check(
+    'api_credentials_rate_policy_valid',
+    sql`(${table.kind} = 'publishable' AND ${table.requestsPerMinute} BETWEEN 1 AND 10000) OR (${table.kind} = 'secret' AND ${table.requestsPerMinute} IS NULL)`,
+  ),
+]);
+
+export const credentialRateLimitWindows = sqliteTable('credential_rate_limit_windows', {
+  credentialId: text('credential_id').primaryKey().references(
+    () => apiCredentials.id,
+    { onDelete: 'cascade' },
+  ),
+  windowStartedAt: integer('window_started_at').notNull(),
+  requestCount: integer('request_count').notNull(),
+}, table => [
+  check(
+    'credential_rate_limit_windows_start_nonnegative',
+    sql`${table.windowStartedAt} >= 0`,
+  ),
+  check(
+    'credential_rate_limit_windows_start_aligned',
+    sql`${table.windowStartedAt} % 60000 = 0`,
+  ),
+  check(
+    'credential_rate_limit_windows_count_positive',
+    sql`${table.requestCount} > 0`,
   ),
 ]);
 
@@ -296,6 +323,7 @@ export type ProgramRow = typeof programs.$inferSelect;
 export type ProgramRevisionRow = typeof programRevisions.$inferSelect;
 export type ProgramCounterRow = typeof programCounters.$inferSelect;
 export type ApiCredentialRow = typeof apiCredentials.$inferSelect;
+export type CredentialRateLimitWindowRow = typeof credentialRateLimitWindows.$inferSelect;
 export type ProductAuditRow = typeof productAudit.$inferSelect;
 export type EvaluationDecisionRow = typeof evaluationDecisions.$inferSelect;
 export type RedemptionRow = typeof redemptions.$inferSelect;

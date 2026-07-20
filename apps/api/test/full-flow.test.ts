@@ -970,15 +970,9 @@ describe('integration-ready runtime', () => {
       'GET /v1/openapi.json': {
         security: 'public', success: ['200', 'OpenApiDocument'], errors: [],
       },
-      'GET /v1/test-publishable': {
-        security: 'publishable', success: ['200', 'AccessSummary'], errors: ['401', '503'],
-      },
-      'GET /v1/test-secret': {
-        security: 'secret', success: ['200', 'AccessSummary'], errors: ['401', '403', '503'],
-      },
       'GET /v1/schema/published': {
         security: 'publishable', success: ['200', 'PublishedSchemaResponse'],
-        errors: ['401', '404', '503'],
+        errors: ['401', '404', '429', '503'],
       },
       'GET /v1/customers/{customerRef}': {
         security: 'secret', success: ['200', 'CustomerRecord'],
@@ -991,7 +985,7 @@ describe('integration-ready runtime', () => {
       },
       'POST /v1/evaluate': {
         security: 'publishable', success: ['200', 'EvaluationResponse'],
-        requestBody: 'EvaluationRequest', errors: ['400', '401', '404', '503'],
+        requestBody: 'EvaluationRequest', errors: ['400', '401', '404', '429', '503'],
       },
       'POST /v1/redemptions': {
         security: 'secret', success: ['200', 'RedemptionResponse'],

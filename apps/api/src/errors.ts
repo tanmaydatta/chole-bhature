@@ -19,7 +19,7 @@ export const CORRELATION_ID_HEADER = 'x-correlation-id';
 abstract class ApiFailure extends Error {
   abstract readonly code: string;
   abstract readonly status: ContentfulStatusCode;
-  readonly retryable = false;
+  readonly retryable: boolean = false;
 }
 
 export class UnauthorizedError extends ApiFailure {
@@ -39,6 +39,17 @@ export class ForbiddenError extends ApiFailure {
 
   constructor() {
     super('This credential cannot access the requested resource');
+  }
+}
+
+export class RateLimitError extends ApiFailure {
+  override readonly name = 'RateLimitError';
+  readonly code = 'RATE_LIMITED';
+  readonly status = 429;
+  override readonly retryable = true;
+
+  constructor(readonly retryAfterSeconds: number) {
+    super('Too many requests for this publishable credential');
   }
 }
 
@@ -203,5 +214,8 @@ export function apiErrorResponse(
 
   return context.json(body, mapped.status, {
     [CORRELATION_ID_HEADER]: correlationId,
+    ...(error instanceof RateLimitError
+      ? { 'Retry-After': String(error.retryAfterSeconds) }
+      : {}),
   });
 }

@@ -22,22 +22,24 @@ await testEnv.DB.batch([
   testEnv.DB.prepare(`
     INSERT INTO api_credentials (
       id, merchant_id, name, environment, kind, scopes_json,
-      allowed_origins_json, digest, suffix, status, expires_at, created_at, created_by
+      allowed_origins_json, requests_per_minute, digest, suffix, status,
+      expires_at, created_at, created_by
     ) VALUES (
       'test-publishable-credential', 'phase-0-merchant', 'Test publishable', 'local',
       'publishable', '["schema:read","evaluations:write"]', '["https://shop.example"]',
-      ?1, ?2, 'active', '2099-01-01T00:00:00.000Z',
+      10000, ?1, ?2, 'active', '2099-01-01T00:00:00.000Z',
       '2026-07-18T00:00:00.000Z', 'test-setup'
     )
   `).bind(await digest(publishableToken), publishableToken.slice(-8)),
   testEnv.DB.prepare(`
     INSERT INTO api_credentials (
       id, merchant_id, name, environment, kind, scopes_json,
-      allowed_origins_json, digest, suffix, status, expires_at, created_at, created_by
+      allowed_origins_json, requests_per_minute, digest, suffix, status,
+      expires_at, created_at, created_by
     ) VALUES (
       'test-secret-credential', 'phase-0-merchant', 'Test secret', 'local',
       'secret', '["schema:read","customers:write","evaluations:write","redemptions:write"]',
-      '[]', ?1, ?2, 'active', '2099-01-01T00:00:00.000Z',
+      '[]', NULL, ?1, ?2, 'active', '2099-01-01T00:00:00.000Z',
       '2026-07-18T00:00:00.000Z', 'test-setup'
     )
   `).bind(await digest(secretToken), secretToken.slice(-8)),
