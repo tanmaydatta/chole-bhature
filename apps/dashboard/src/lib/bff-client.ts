@@ -14,6 +14,19 @@ import {
   OperatorMerchantSelectionRequestSchema,
   OperatorSessionViewSchema,
   OperatorTeamResponseSchema,
+  CustomerRecordSchema,
+  OperatorCustomerPatchRequestSchema,
+  OperatorProgramDraftRequestSchema,
+  OperatorProgramListResponseSchema,
+  OperatorProgramViewSchema,
+  OperatorSchemaDefinitionRequestSchema,
+  ProgramLifecycleSchema,
+  ProgramPublicationResultSchema,
+  PublishedSchemaResponseSchema,
+  SchemaDefinitionImpactPreviewSchema,
+  SchemaDefinitionViewSchema,
+  SchemaDefinitionsResponseSchema,
+  SchemaPublicationResultSchema,
   type ApiCredentialCreateInput,
   type ApiCredentialCreateResult,
   type ApiCredentialView,
@@ -23,6 +36,19 @@ import {
   type MembershipView,
   type OperatorSessionView,
   type OperatorTeamResponse,
+  type CustomerPatchRequest,
+  type CustomerRecord,
+  type OperatorProgramListResponse,
+  type OperatorProgramView,
+  type ProgramLifecycle,
+  type ProgramPublicationResult,
+  type PromoProgram,
+  type PublishedSchemaResponse,
+  type SchemaDefinitionImpactPreview,
+  type SchemaDefinitionView,
+  type SchemaDefinitionsResponse,
+  type SchemaPublicationResult,
+  type VariableDefinition,
 } from '@incentives/contracts';
 import type {
   AuthenticationResponseJSON,
@@ -297,6 +323,24 @@ export interface BffClient {
   credentials(): Promise<ApiCredentialView[]>;
   createCredential(input: ApiCredentialCreateInput): Promise<ApiCredentialCreateResult>;
   revokeCredential(credentialId: string): Promise<ApiCredentialView>;
+  schemaDefinitions(): Promise<SchemaDefinitionsResponse>;
+  publishedSchema(): Promise<PublishedSchemaResponse>;
+  createSchemaDefinition(input: VariableDefinition): Promise<SchemaDefinitionView>;
+  updateSchemaDefinition(id: string, input: VariableDefinition): Promise<SchemaDefinitionView>;
+  deleteSchemaDefinition(id: string): Promise<void>;
+  deprecateSchemaDefinition(id: string): Promise<void>;
+  schemaDefinitionImpact(id: string): Promise<SchemaDefinitionImpactPreview>;
+  publishSchema(): Promise<SchemaPublicationResult>;
+  customer(externalRef: string): Promise<CustomerRecord>;
+  patchCustomer(externalRef: string, input: CustomerPatchRequest): Promise<CustomerRecord>;
+  programs(): Promise<OperatorProgramListResponse>;
+  program(externalRef: string): Promise<OperatorProgramView>;
+  createProgram(input: PromoProgram): Promise<OperatorProgramView>;
+  updateProgram(externalRef: string, input: PromoProgram): Promise<OperatorProgramView>;
+  publishProgram(externalRef: string): Promise<ProgramPublicationResult>;
+  pauseProgram(externalRef: string): Promise<ProgramLifecycle>;
+  resumeProgram(externalRef: string): Promise<ProgramLifecycle>;
+  endProgram(externalRef: string): Promise<ProgramLifecycle>;
 }
 
 export function createBffClient(
@@ -423,6 +467,97 @@ export function createBffClient(
       return send(
         fetcher, `/operator/v1/credentials/${encoded(credentialId)}`,
         ApiCredentialViewSchema, { method: 'DELETE' },
+      );
+    },
+    schemaDefinitions: () => send(
+      fetcher, '/operator/v1/schema/definitions', SchemaDefinitionsResponseSchema,
+    ),
+    publishedSchema: () => send(
+      fetcher, '/operator/v1/schema/published', PublishedSchemaResponseSchema,
+    ),
+    createSchemaDefinition(input) {
+      const body = OperatorSchemaDefinitionRequestSchema.parse(input);
+      return send(fetcher, '/operator/v1/schema/definitions', SchemaDefinitionViewSchema, {
+        method: 'POST', body,
+      });
+    },
+    updateSchemaDefinition(id, input) {
+      const body = OperatorSchemaDefinitionRequestSchema.parse(input);
+      return send(
+        fetcher, `/operator/v1/schema/definitions/${encoded(id)}`,
+        SchemaDefinitionViewSchema, { method: 'PUT', body },
+      );
+    },
+    async deleteSchemaDefinition(id) {
+      await send(
+        fetcher, `/operator/v1/schema/definitions/${encoded(id)}`,
+        EmptyResponseSchema, { method: 'DELETE', empty: true },
+      );
+    },
+    async deprecateSchemaDefinition(id) {
+      await send(
+        fetcher, `/operator/v1/schema/definitions/${encoded(id)}/deprecate`,
+        EmptyResponseSchema, { method: 'POST', body: {}, empty: true },
+      );
+    },
+    schemaDefinitionImpact(id) {
+      return send(
+        fetcher, `/operator/v1/schema/definitions/${encoded(id)}/impact`,
+        SchemaDefinitionImpactPreviewSchema,
+      );
+    },
+    publishSchema: () => send(
+      fetcher, '/operator/v1/schema/publish', SchemaPublicationResultSchema,
+      { method: 'POST', body: {} },
+    ),
+    customer(externalRef) {
+      return send(fetcher, `/operator/v1/customers/${encoded(externalRef)}`, CustomerRecordSchema);
+    },
+    patchCustomer(externalRef, input) {
+      const body = OperatorCustomerPatchRequestSchema.parse(input);
+      return send(
+        fetcher, `/operator/v1/customers/${encoded(externalRef)}`, CustomerRecordSchema,
+        { method: 'PATCH', body },
+      );
+    },
+    programs: () => send(fetcher, '/operator/v1/programs', OperatorProgramListResponseSchema),
+    program(externalRef) {
+      return send(fetcher, `/operator/v1/programs/${encoded(externalRef)}`, OperatorProgramViewSchema);
+    },
+    createProgram(input) {
+      const body = OperatorProgramDraftRequestSchema.parse(input);
+      return send(fetcher, '/operator/v1/programs', OperatorProgramViewSchema, {
+        method: 'POST', body,
+      });
+    },
+    updateProgram(externalRef, input) {
+      const body = OperatorProgramDraftRequestSchema.parse(input);
+      return send(fetcher, `/operator/v1/programs/${encoded(externalRef)}`, OperatorProgramViewSchema, {
+        method: 'PUT', body,
+      });
+    },
+    publishProgram(externalRef) {
+      return send(
+        fetcher, `/operator/v1/programs/${encoded(externalRef)}/publish`,
+        ProgramPublicationResultSchema, { method: 'POST', body: {} },
+      );
+    },
+    pauseProgram(externalRef) {
+      return send(
+        fetcher, `/operator/v1/programs/${encoded(externalRef)}/pause`,
+        ProgramLifecycleSchema, { method: 'POST', body: {} },
+      );
+    },
+    resumeProgram(externalRef) {
+      return send(
+        fetcher, `/operator/v1/programs/${encoded(externalRef)}/resume`,
+        ProgramLifecycleSchema, { method: 'POST', body: {} },
+      );
+    },
+    endProgram(externalRef) {
+      return send(
+        fetcher, `/operator/v1/programs/${encoded(externalRef)}/end`,
+        ProgramLifecycleSchema, { method: 'POST', body: {} },
       );
     },
   };

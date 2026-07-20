@@ -1,5 +1,6 @@
 import {
   OperatorSchemaDefinitionRequestSchema,
+  PublishedSchemaResponseSchema,
   SchemaDefinitionImpactPreviewSchema,
   SchemaDefinitionViewSchema,
   SchemaDefinitionsResponseSchema,
@@ -9,6 +10,12 @@ import {
 import { EmptyBodySchema, NullSchema, requiredParam, type ProtectedRoute } from './types.js';
 
 export const schemaRoutes: readonly ProtectedRoute[] = [
+  {
+    method: 'GET', pattern: /^\/operator\/v1\/schema\/published$/u,
+    permission: 'schemas:read', responseSchema: PublishedSchemaResponseSchema,
+    downstream: 'core',
+    invoke: context => context.env.CORE.getPublishedSchema(context.operator),
+  },
   {
     method: 'GET', pattern: /^\/operator\/v1\/schema\/definitions$/u,
     permission: 'schemas:read', responseSchema: SchemaDefinitionsResponseSchema,

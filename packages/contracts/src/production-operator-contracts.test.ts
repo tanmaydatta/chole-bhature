@@ -14,6 +14,8 @@ import {
   MerchantProvisionResultSchema,
   OperatorCallContextSchema,
   OperatorEvaluationRequestSchema,
+  OperatorProgramListResponseSchema,
+  OperatorProgramViewSchema,
   OperatorPrincipalSchema,
   PermissionKeySchema,
   ProgramLifecycleSchema,
@@ -363,5 +365,38 @@ describe('production operator contracts', () => {
       ...programPublication,
       credential: 'sk_forbidden',
     }).success).toBe(false);
+
+    const operatorProgram = {
+      configuration: { ...canonicalProgramRevision.configuration, status: 'draft' as const },
+      lifecycle: {
+        ...canonicalProgramLifecycle,
+        draftRevision: 2,
+      },
+    } as const;
+    expect(OperatorProgramViewSchema.parse(operatorProgram)).toEqual(operatorProgram);
+    expect(OperatorProgramListResponseSchema.parse({ programs: [operatorProgram] }))
+      .toEqual({ programs: [operatorProgram] });
+    expect(OperatorProgramViewSchema.safeParse({
+      ...operatorProgram,
+      usageCount: 10,
+    }).success).toBe(false);
+    expect(OperatorProgramViewSchema.safeParse({
+      ...operatorProgram,
+      lifecycle: { ...operatorProgram.lifecycle, programRef: 'another-program' },
+    }).success).toBe(false);
+    for (const lifecycle of [
+      { ...operatorProgram.lifecycle, activeRevision: 2, draftRevision: 2 },
+      { ...operatorProgram.lifecycle, activeRevision: 3, draftRevision: 2 },
+      { ...operatorProgram.lifecycle, status: 'active' as const, activeRevision: undefined },
+      { ...operatorProgram.lifecycle, status: 'draft' as const, activeRevision: 1, draftRevision: 2 },
+      { ...operatorProgram.lifecycle, status: 'draft' as const, activeRevision: undefined, draftRevision: undefined },
+      { ...operatorProgram.lifecycle, status: 'draft' as const, activeRevision: undefined, draftRevision: 2 },
+      { ...operatorProgram.lifecycle, status: 'active' as const, activeRevision: 1, draftRevision: 3 },
+    ]) {
+      expect(OperatorProgramViewSchema.safeParse({
+        ...operatorProgram,
+        lifecycle,
+      }).success).toBe(false);
+    }
   });
 });

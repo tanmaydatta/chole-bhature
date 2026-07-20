@@ -83,12 +83,12 @@ export async function getProgram(
   externalRef: string,
 ) {
   const { operator, service } = operatorProgramService(env, context, 'programs:read');
-  return service.get(operator.merchantId, externalRef);
+  return service.getForOperator(operator.merchantId, externalRef);
 }
 
 export async function listPrograms(env: Env, context: OperatorCallContext) {
   const { operator, service } = operatorProgramService(env, context, 'programs:read');
-  return service.list(operator.merchantId);
+  return service.listForOperator(operator.merchantId);
 }
 
 export async function updateProgramDraft(

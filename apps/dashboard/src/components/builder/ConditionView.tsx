@@ -1,4 +1,4 @@
-import type { ConditionGroup, Variable } from '../../lib/types';
+import type { ConditionGroup, ConditionValue, Variable } from '../../lib/types';
 import { operatorLabel, resolveMessage } from '../../lib/conditions';
 
 const ORIGIN_COLORS: Record<string, { color: string; bg: string }> = {
@@ -7,9 +7,9 @@ const ORIGIN_COLORS: Record<string, { color: string; bg: string }> = {
   system:  { color: 'var(--sys)',     bg: 'var(--sys-bg)' },
 };
 
-function formatValue(value: string | string[]): string {
+function formatValue(value: ConditionValue): string {
   if (Array.isArray(value)) return value.join(', ');
-  return value;
+  return String(value);
 }
 
 interface ConditionViewProps {

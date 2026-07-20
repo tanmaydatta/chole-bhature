@@ -23,6 +23,7 @@ const groups: { label?: string; items: NavItem[] }[] = [
     items: [
       { label: 'Variables', to: '/variables', icon: '{x}', permission: 'schemas:read', merchantRequired: true },
       { label: 'Events', to: '/events', icon: '⚡', permission: 'schemas:read', merchantRequired: true },
+      { label: 'Customers', to: '/customers', icon: '♧', permission: 'customers:read', merchantRequired: true },
     ],
   },
   {

@@ -208,6 +208,10 @@ function createEnv(principal: Principal | ReturnType<typeof apiError> = admin): 
         version: 1, publishedAt: authenticatedAt, definitions: [],
         jsonSchema: {}, sample: {}, warnings: [],
       }),
+      getPublishedSchema: rpc({
+        version: 1, publishedAt: authenticatedAt, definitions: [],
+        jsonSchema: {}, sample: {},
+      }),
       getCustomer: rpc({
         externalRef: 'customer-a', attributes: {}, version: 1, updatedAt: authenticatedAt,
       }),
@@ -801,6 +805,43 @@ describe('live session and tenant boundary', () => {
       'NOT_FOUND', 'The requested resource was not found', false,
     ));
   });
+
+  test('returns the published schema snapshot and durable operator program views', async () => {
+    const handler = await worker();
+    const env = createEnv(admin);
+    const configuration = {
+      id: 'promo-a', type: 'promo', name: 'Promo A replacement', status: 'draft',
+      eligibility: { match: 'ALL', conditions: [] }, rewardRules: [],
+      fallbackReward: {
+        id: 'fallback', name: 'Fallback', reward: { type: 'free_shipping' },
+      },
+      stackable: false, priority: 0, autoApply: true,
+    };
+    const view = {
+      configuration,
+      lifecycle: {
+        programRef: 'promo-a', status: 'active', activeRevision: 1,
+        draftRevision: 2, updatedAt: authenticatedAt,
+      },
+    };
+    env.CORE.listPrograms.mockResolvedValue({ programs: [view] });
+    env.CORE.getProgram.mockResolvedValue(view);
+
+    const [published, listed, detail] = await Promise.all([
+      handler?.fetch(request('/operator/v1/schema/published'), env),
+      handler?.fetch(request('/operator/v1/programs'), env),
+      handler?.fetch(request('/operator/v1/programs/promo-a'), env),
+    ]);
+
+    expect(published?.status).toBe(200);
+    expect(await json(published)).toMatchObject({ version: 1, definitions: [] });
+    expect(await json(listed)).toEqual({ programs: [view] });
+    expect(await json(detail)).toEqual(view);
+    expect(env.CORE.getPublishedSchema).toHaveBeenCalledWith(expect.objectContaining({
+      permission: 'schemas:read', merchantId: 'merchant-a',
+    }));
+    expect(JSON.stringify(await json(Response.json(view)))).not.toContain('usageCount');
+  });
 });
 
 describe('correlation and safe downstream failures', () => {
@@ -840,6 +881,41 @@ describe('correlation and safe downstream failures', () => {
 
     expect(response?.status).toBe(503);
     expect(await json(response)).toEqual(apiError(
+      'CORE_UNAVAILABLE', 'Core is temporarily unavailable', true,
+    ));
+
+    env.CORE.listPrograms.mockResolvedValue({ programs: [{
+      configuration: {
+        id: 'promo-invalid', type: 'promo', name: 'Invalid lifecycle', status: 'draft',
+        eligibility: { match: 'ALL', conditions: [] }, rewardRules: [],
+        stackable: false, priority: 0, autoApply: true,
+      },
+      lifecycle: {
+        programRef: 'promo-invalid', status: 'active', draftRevision: 2,
+        updatedAt: authenticatedAt,
+      },
+    }] });
+    const malformedProgram = await handler?.fetch(request('/operator/v1/programs'), env);
+    const malformedProgramBody = await json(malformedProgram);
+    expect(malformedProgramBody).toEqual(apiError(
+      'CORE_UNAVAILABLE', 'Core is temporarily unavailable', true,
+    ));
+    expect(malformedProgram?.status).toBe(503);
+
+    env.CORE.listPrograms.mockResolvedValue({ programs: [{
+      configuration: {
+        id: 'promo-skipped-revision', type: 'promo', name: 'Skipped revision', status: 'draft',
+        eligibility: { match: 'ALL', conditions: [] }, rewardRules: [],
+        stackable: false, priority: 0, autoApply: true,
+      },
+      lifecycle: {
+        programRef: 'promo-skipped-revision', status: 'active', activeRevision: 1,
+        draftRevision: 3, updatedAt: authenticatedAt,
+      },
+    }] });
+    const skippedRevision = await handler?.fetch(request('/operator/v1/programs'), env);
+    expect(skippedRevision?.status).toBe(503);
+    expect(await json(skippedRevision)).toEqual(apiError(
       'CORE_UNAVAILABLE', 'Core is temporarily unavailable', true,
     ));
   });
@@ -976,12 +1052,18 @@ describe('semantic downstream validation', () => {
     },
     {
       name: 'path program ref', pathname: '/operator/v1/programs/promo-a', method: 'GET',
-      operation: 'getProgram', value: otherProgram, downstream: 'CORE',
+      operation: 'getProgram', value: {
+        configuration: otherProgram,
+        lifecycle: { programRef: 'promo-b', status: 'draft', draftRevision: 1, updatedAt: authenticatedAt },
+      }, downstream: 'CORE',
     },
     {
       name: 'created program ref', pathname: '/operator/v1/programs', method: 'POST',
       body: { ...otherProgram, id: 'promo-a', name: 'Promo A' },
-      operation: 'createProgramDraft', value: otherProgram, downstream: 'CORE',
+      operation: 'createProgramDraft', value: {
+        configuration: otherProgram,
+        lifecycle: { programRef: 'promo-b', status: 'draft', draftRevision: 1, updatedAt: authenticatedAt },
+      }, downstream: 'CORE',
     },
     {
       name: 'lifecycle program ref', pathname: '/operator/v1/programs/promo-a/publish',
@@ -1334,6 +1416,7 @@ describe('explicit route and permission matrix', () => {
     ['POST', '/operator/v1/credentials', 'credentials:manage', 'core', 'createCredential'],
     ['DELETE', '/operator/v1/credentials/credential-a', 'credentials:manage', 'core', 'revokeCredential'],
     ['GET', '/operator/v1/schema/definitions', 'schemas:read', 'core', 'listSchemaDefinitions'],
+    ['GET', '/operator/v1/schema/published', 'schemas:read', 'core', 'getPublishedSchema'],
     ['POST', '/operator/v1/schema/definitions', 'schemas:manage', 'core', 'createSchemaDefinition'],
     ['PUT', '/operator/v1/schema/definitions/definition-a', 'schemas:manage', 'core', 'updateSchemaDefinition'],
     ['DELETE', '/operator/v1/schema/definitions/definition-a', 'schemas:manage', 'core', 'deleteSchemaDefinition'],

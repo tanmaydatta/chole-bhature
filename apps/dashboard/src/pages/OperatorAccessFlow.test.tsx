@@ -174,6 +174,28 @@ function installFetch(session: object | null, overrides: Record<string, unknown>
         } : {}),
       }, token: `${body.kind === 'publishable' ? 'pk' : 'sk'}_${'a'.repeat(32)}` }, 201)
       : json(credentials);
+    if (path === '/operator/v1/programs') return json({ programs: [] });
+    if (path === '/operator/v1/programs/promo-draft-1') return json({
+      configuration: {
+        id: 'promo-draft-1', type: 'promo', name: 'Draft Summer Sale', status: 'draft',
+        eligibility: { match: 'ALL', conditions: [] }, rewardRules: [],
+        fallbackReward: { id: 'fallback', name: 'Shipping', reward: { type: 'free_shipping' } },
+        stackable: false, priority: 10, autoApply: true,
+      },
+      lifecycle: {
+        programRef: 'promo-draft-1', status: 'draft', draftRevision: 1,
+        updatedAt: '2026-07-20T10:00:00.000Z',
+      },
+    });
+    if (path === '/operator/v1/schema/definitions') return json({
+      definitions: [{
+        id: 'definition-country', readOnly: false, referenced: false,
+        definition: {
+          key: 'customer.country', label: 'Customer country', source: 'customer',
+          type: 'string', required: false,
+        },
+      }], draftVersion: 1,
+    });
     if (path.includes('/operator/v1/credentials/')) return json({ ...credentials[0], status: 'revoked' });
     throw new Error(`Unexpected BFF call: ${key}`);
   });
@@ -470,7 +492,8 @@ describe('operator access flow', () => {
     installFetch(sessions.viewer);
     renderApp(path);
 
-    await screen.findByText('Demo data');
+    if (path === '/promo') await screen.findByText('No Promos match this filter.');
+    else await screen.findByText('Demo data');
     expect(screen.queryByRole('button', { name: new RegExp(actionName, 'i') })).not.toBeInTheDocument();
   });
 
@@ -483,16 +506,17 @@ describe('operator access flow', () => {
   });
 
   test.each([
-    ['/variables', 'New variable', 'Open customer_country'],
+    ['/variables', 'New variable', 'Impact customer.country'],
     ['/events', 'New event', 'Edit'],
   ] as const)('lets a viewer inspect %s without local schema mutation controls', async (path, newAction, editAction) => {
     installFetch(sessions.viewer);
     renderApp(path);
 
-    await screen.findByText('Demo data');
+    if (path === '/variables') await screen.findByText('Draft version 1');
+    else await screen.findByText('Demo data');
     expect(screen.queryByRole('button', { name: new RegExp(newAction, 'i') })).not.toBeInTheDocument();
     if (path === '/variables') {
-      await userEvent.click(screen.getByRole('button', { name: editAction }));
+      expect(screen.getByRole('button', { name: editAction })).toBeInTheDocument();
       expect(screen.queryByRole('button', { name: 'Save variable' })).not.toBeInTheDocument();
     } else {
       expect(screen.queryByRole('button', { name: editAction })).not.toBeInTheDocument();
@@ -506,7 +530,8 @@ describe('operator access flow', () => {
       renderApp(path);
 
       expect(await screen.findByText('You do not have permission to view this page.')).toBeInTheDocument();
-      expect(screen.getByText('Demo data')).toBeInTheDocument();
+      if (path === '/promo/new') expect(screen.queryByText('Demo data')).not.toBeInTheDocument();
+      else expect(screen.getByText('Demo data')).toBeInTheDocument();
       expect(calls.filter(call => call.method !== 'GET')).toEqual([]);
     },
   );

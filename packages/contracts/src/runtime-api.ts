@@ -88,6 +88,7 @@ export const OpenApiDocumentResponseSchema = UnknownObjectSchema;
 
 export type CustomerPatchRequest = z.infer<typeof CustomerPatchRequestSchema>;
 export type CustomerRecord = z.infer<typeof CustomerRecordSchema>;
+export type SchemaDefinitionsResponse = z.infer<typeof SchemaDefinitionsResponseSchema>;
 export type PublishedSchemaResponse = z.infer<typeof PublishedSchemaResponseSchema>;
 export type ProgramPublicationResult = z.infer<typeof ProgramPublicationResultSchema>;
 export type ProgramPublicationWarning = z.infer<typeof ProgramPublicationWarningSchema>;

@@ -15,6 +15,7 @@ import type {
   IdentityRetryInvitationRequest,
   OperatorCallContext,
   OperatorPrincipal,
+  OperatorProgramView,
   PermissionKey,
   PromoProgram,
   VariableDefinition,
@@ -44,6 +45,7 @@ export interface CoreRpcService {
   listCredentials(context: OperatorCallContext): Promise<unknown>;
   revokeCredential(context: OperatorCallContext, credentialId: string): Promise<unknown>;
   listSchemaDefinitions(context: OperatorCallContext): Promise<unknown>;
+  getPublishedSchema(context: OperatorCallContext): Promise<unknown>;
   createSchemaDefinition(context: OperatorCallContext, input: VariableDefinition): Promise<unknown>;
   updateSchemaDefinition(
     context: OperatorCallContext,
@@ -64,7 +66,7 @@ export interface CoreRpcService {
     input: CustomerPatchRequest,
   ): Promise<unknown>;
   listPrograms(context: OperatorCallContext): Promise<unknown>;
-  createProgramDraft(context: OperatorCallContext, input: PromoProgram): Promise<unknown>;
+  createProgramDraft(context: OperatorCallContext, input: PromoProgram): Promise<OperatorProgramView>;
   getProgram(context: OperatorCallContext, externalRef: string): Promise<unknown>;
   updateProgramDraft(
     context: OperatorCallContext,

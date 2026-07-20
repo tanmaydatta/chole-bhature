@@ -1,5 +1,7 @@
 import {
   EvaluationResponseSchema,
+  OperatorProgramListResponseSchema,
+  OperatorProgramViewSchema,
   PromoProgramSchema,
   ProgramPublicationResultSchema,
   type OperatorCallContext,
@@ -21,12 +23,12 @@ import { PUBLISHABLE_TEST_TOKEN, SEEDED_MERCHANT_ID } from './test-credentials.j
 interface ProgramLifecycleOperatorService extends CoreOperatorService {
   createSchemaDefinition(context: OperatorCallContext, input: unknown): Promise<unknown>;
   publishSchema(context: OperatorCallContext): Promise<unknown>;
-  createProgramDraft(context: OperatorCallContext, input: unknown): Promise<PromoProgram>;
+  createProgramDraft(context: OperatorCallContext, input: unknown): Promise<unknown>;
   updateProgramDraft(
     context: OperatorCallContext,
     externalRef: string,
     input: unknown,
-  ): Promise<PromoProgram>;
+  ): Promise<unknown>;
   publishProgram(
     context: OperatorCallContext,
     externalRef: string,
@@ -34,8 +36,8 @@ interface ProgramLifecycleOperatorService extends CoreOperatorService {
   pauseProgram(context: OperatorCallContext, externalRef: string): Promise<ProgramLifecycle>;
   resumeProgram(context: OperatorCallContext, externalRef: string): Promise<ProgramLifecycle>;
   endProgram(context: OperatorCallContext, externalRef: string): Promise<ProgramLifecycle>;
-  getProgram(context: OperatorCallContext, externalRef: string): Promise<PromoProgram>;
-  listPrograms(context: OperatorCallContext): Promise<{ programs: PromoProgram[] }>;
+  getProgram(context: OperatorCallContext, externalRef: string): Promise<unknown>;
+  listPrograms(context: OperatorCallContext): Promise<unknown>;
 }
 
 const contextChannelDefinition = {
@@ -223,6 +225,55 @@ describe('immutable Promo revisions and lifecycle', () => {
     await env.DB.prepare('DROP TRIGGER IF EXISTS fail_program_revision_swap').run();
   });
 
+  test('accepts and publishes the complete Dashboard example under real Core semantics', async () => {
+    const service = operatorService();
+    await service.createSchemaDefinition(operatorContext('schemas:manage'), {
+      key: 'customer.tier', label: 'Customer tier', source: 'customer', type: 'enum',
+      required: false, enumValues: ['gold', 'silver'],
+    });
+    await service.publishSchema(operatorContext('schemas:publish'));
+    const example = draftProgram('dashboard-complete-example', {
+      name: 'Dashboard complete example',
+      eligibility: { match: 'ALL', conditions: [] },
+      rewardRules: [{
+        id: 'rule-large-basket', name: 'Large basket',
+        conditions: { match: 'ALL', conditions: [{
+          id: 'large-basket', variable: 'cart.subtotal', operator: 'gte', value: 10_000,
+        }] },
+        reward: { type: 'order_discount', calculation: 'percent', basisPoints: 2_000 },
+      }, {
+        id: 'rule-gold-customer', name: 'Gold customer',
+        conditions: { match: 'ANY', conditions: [], groups: [{
+          match: 'ALL', conditions: [{
+            id: 'gold-tier', variable: 'customer.tier', operator: 'eq', value: 'gold',
+          }],
+        }] },
+        reward: {
+          type: 'line_item_discount', productRef: 'product-a', calculation: 'fixed',
+          amount: { currency: 'GBP', minorUnits: 500 },
+        },
+      }],
+      fallbackReward: {
+        id: 'fallback-discount', name: 'Fallback discount',
+        reward: {
+          type: 'order_discount', calculation: 'fixed',
+          amount: { currency: 'GBP', minorUnits: 250 },
+        },
+      },
+      budget: { currency: 'GBP', minorUnits: 50_000 },
+      usageCap: 100,
+      perCustomerCap: 2,
+      priority: 10,
+    });
+
+    expect(OperatorProgramViewSchema.parse(await service.createProgramDraft(
+      operatorContext('programs:manage'), example,
+    ))).toMatchObject({ configuration: example, lifecycle: { draftRevision: 1 } });
+    expect(ProgramPublicationResultSchema.parse(await service.publishProgram(
+      operatorContext('programs:publish'), example.id,
+    ))).toMatchObject({ programRef: example.id, activeRevision: 1, status: 'active' });
+  });
+
   test('keeps the legacy programs row readable by the exact Plan-2 reader across new Worker lifecycle writes', async () => {
     const service = operatorService();
     const initial = draftProgram('plan-two-rollback-reader', {
@@ -271,7 +322,15 @@ describe('immutable Promo revisions and lifecycle', () => {
     await expect(service.getProgram(
       operatorContext('programs:read'),
       initial.id,
-    )).resolves.toEqual(replacement);
+    )).resolves.toMatchObject({
+      configuration: replacement,
+      lifecycle: {
+        programRef: initial.id,
+        status: 'active',
+        activeRevision: 1,
+        draftRevision: 2,
+      },
+    });
 
     await service.publishProgram(operatorContext('programs:publish'), initial.id);
     expect(await readWithExactPlanTwoProgramReader(initial.id)).toEqual({
@@ -327,6 +386,24 @@ describe('immutable Promo revisions and lifecycle', () => {
       first.id,
       replacement,
     );
+
+    const refreshedDraft = OperatorProgramViewSchema.parse(await service.getProgram(
+      operatorContext('programs:read'),
+      first.id,
+    ));
+    expect(refreshedDraft).toEqual({
+      configuration: replacement,
+      lifecycle: expect.objectContaining({
+        programRef: first.id,
+        status: 'active',
+        activeRevision: 1,
+        draftRevision: 2,
+      }),
+    });
+    expect(refreshedDraft).not.toHaveProperty('usageCount');
+    expect(OperatorProgramListResponseSchema.parse(await service.listPrograms(
+      operatorContext('programs:read'),
+    )).programs).toContainEqual(refreshedDraft);
 
     await env.DB.prepare(`
       CREATE TRIGGER fail_program_revision_swap
@@ -710,15 +787,27 @@ describe('immutable Promo revisions and lifecycle', () => {
   test('requires publish permission for revision swaps and manage permission for lifecycle changes', async () => {
     const service = operatorService();
     const program = draftProgram('permission-boundary');
-    await service.createProgramDraft(operatorContext('programs:manage'), program);
+    await expect(service.createProgramDraft(
+      operatorContext('programs:manage'),
+      program,
+    )).resolves.toMatchObject({
+      configuration: program,
+      lifecycle: { programRef: program.id, status: 'draft', draftRevision: 1 },
+    });
 
     await expect(service.getProgram(
       operatorContext('programs:read'),
       program.id,
-    )).resolves.toEqual(program);
+    )).resolves.toMatchObject({
+      configuration: program,
+      lifecycle: { programRef: program.id, status: 'draft', draftRevision: 1 },
+    });
     await expect(service.listPrograms(
       operatorContext('programs:read'),
-    )).resolves.toEqual({ programs: [program] });
+    )).resolves.toMatchObject({ programs: [{
+      configuration: program,
+      lifecycle: { programRef: program.id, status: 'draft', draftRevision: 1 },
+    }] });
     await expect(service.getProgram(
       operatorContext('programs:manage'),
       program.id,

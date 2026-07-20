@@ -1,6 +1,6 @@
 # Production Operator Platform and Integration Harness Implementation Plan
 
-**Status:** In progress — Tasks 1–8 and Gates A/B are complete; Task 9 is next.
+**Status:** In progress — Tasks 1–9 and Gates A/B are complete; Gate C review is next.
 
 **Notion parent:** [Plans](https://app.notion.com/p/Plans-390e5c7c2b8e8165b7f7d77392eab088)
 
@@ -237,10 +237,10 @@
 **Interfaces:**
 - Produces live schema impact/publish/deprecate, exact customer lookup/update, Promo draft/revision/lifecycle, typed nested conditions, and advisory rule warnings.
 
-- [ ] Write a mocked-BFF journey defining fields, publishing, updating a customer, authoring two ordered rewards/fallback, publishing revision 1, editing/publishing revision 2, and preserving counters.
-- [ ] Run focused tests; expect demo-store behavior to fail network assertions.
-- [ ] Replace store access only on live surfaces; keep future modules visibly demo-only and make nested `ALL`/`ANY` controls functional.
-- [ ] Run dashboard and workspace tests/build/lint; expect exit 0.
+- [x] Write a mocked-BFF journey defining fields, publishing, updating a customer, authoring two ordered rewards/fallback, publishing revision 1, editing/publishing revision 2, and preserving counters.
+- [x] Run focused tests; expect demo-store behavior to fail network assertions.
+- [x] Replace store access only on live surfaces; keep future modules visibly demo-only and make nested `ALL`/`ANY` controls functional.
+- [x] Run dashboard and workspace tests/build/lint; expect exit 0.
 - [ ] Commit with `git commit -m "feat: wire live schema customer and promo operations"`.
 
 **Gate C review:** Manually verify role-specific navigation, root context banner, refresh persistence, no browser secrets, real BFF errors, and live/demo separation.

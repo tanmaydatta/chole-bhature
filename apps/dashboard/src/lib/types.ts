@@ -2,8 +2,10 @@ export type Origin = 'user' | 'dynamic' | 'system';
 export type VarType = 'string' | 'number' | 'boolean' | 'enum' | 'date';
 export interface Variable { name: string; type: VarType; origin: Origin; enumValues?: string[]; defaultMessage?: string; readOnly?: boolean; usedIn?: number; }
 export type Operator = 'eq'|'neq'|'gt'|'gte'|'lt'|'lte'|'in'|'between'|'is';
-export interface Condition { id: string; variable: string; operator: Operator; value: string | string[]; message?: string; }
-export interface ConditionGroup { match: 'ALL' | 'ANY'; conditions: Condition[]; groups?: ConditionGroup[]; }
+export type ConditionValue = string | number | boolean | Array<string | number>;
+export interface Condition { id: string; variable: string; operator: Operator; value: ConditionValue; message?: string; }
+export interface NestedConditionGroup { match: 'ALL' | 'ANY'; conditions: Condition[]; }
+export interface ConditionGroup { match: 'ALL' | 'ANY'; conditions: Condition[]; groups?: NestedConditionGroup[]; }
 export type ProgramType = 'promo' | 'affiliate' | 'referral' | 'loyalty';
 export type Status = 'draft' | 'scheduled' | 'active' | 'paused' | 'ended';
 export interface Reward { kind: 'percent'|'fixed'|'free_shipping'|'points'|'credit'; value?: number; }

@@ -31,9 +31,61 @@ function ValueControl({
   condition: Condition;
   onChange: (next: Condition) => void;
 }) {
+  const arrayValue: Array<string | number> = Array.isArray(condition.value)
+    ? condition.value
+    : typeof condition.value === 'boolean' ? [] : [condition.value];
   const strVal = Array.isArray(condition.value)
     ? condition.value.join(', ')
-    : condition.value;
+    : String(condition.value);
+
+  if (condition.operator === 'in') {
+    if (variable.type === 'enum') return (
+      <select
+        multiple
+        aria-label="values"
+        value={arrayValue.map(String)}
+        onChange={event => onChange({
+          ...condition,
+          value: Array.from(event.target.selectedOptions, option => option.value),
+        })}
+      >
+        {(variable.enumValues ?? []).map(option => <option key={option}>{option}</option>)}
+      </select>
+    );
+    return <input
+      aria-label="values"
+      value={arrayValue.join(', ')}
+      onChange={event => onChange({
+        ...condition,
+        value: event.target.value.split(',').map(item => item.trim()).filter(Boolean).map(item => (
+          variable.type === 'number' ? Number(item) : item
+        )),
+      })}
+    />;
+  }
+
+  if (condition.operator === 'between') {
+    const inputType = variable.type === 'number' ? 'number' : variable.type === 'date' ? 'date' : 'text';
+    const typed = (raw: string) => variable.type === 'number' ? Number(raw) : raw;
+    return <div className="flex gap-2">
+      <input
+        aria-label="minimum value"
+        type={inputType}
+        value={String(arrayValue[0] ?? '')}
+        onChange={event => onChange({
+          ...condition, value: [typed(event.target.value), arrayValue[1] ?? typed(event.target.value)],
+        })}
+      />
+      <input
+        aria-label="maximum value"
+        type={inputType}
+        value={String(arrayValue[1] ?? '')}
+        onChange={event => onChange({
+          ...condition, value: [arrayValue[0] ?? typed(event.target.value), typed(event.target.value)],
+        })}
+      />
+    </div>;
+  }
 
   if (variable.type === 'boolean' || variable.type === 'enum') {
     if (variable.type === 'boolean') {
@@ -41,7 +93,7 @@ function ValueControl({
         <select
           className="border border-[var(--border)] bg-[var(--bg)] rounded-[7px] px-[9px] py-[4px] text-[var(--ink)] font-medium text-[12.5px]"
           value={strVal}
-          onChange={(e) => onChange({ ...condition, value: e.target.value })}
+          onChange={(e) => onChange({ ...condition, value: e.target.value === 'true' })}
           aria-label="value"
         >
           <option value="true">true</option>
@@ -70,7 +122,16 @@ function ValueControl({
     <input
       className="border border-[var(--border)] bg-[var(--panel)] rounded-[7px] px-[9px] py-[4px] min-w-[60px] text-[12.5px] text-[var(--ink)]"
       value={strVal}
-      onChange={(e) => onChange({ ...condition, value: e.target.value })}
+      type={variable.type === 'number' ? 'number' : variable.type === 'date' ? 'date' : 'text'}
+      onChange={(e) => {
+        const raw = e.target.value;
+        const value = condition.operator === 'in' || condition.operator === 'between'
+          ? raw.split(',').map(item => item.trim()).filter(Boolean).map(item => (
+            variable.type === 'number' ? Number(item) : item
+          ))
+          : variable.type === 'number' ? Number(raw) : raw;
+        onChange({ ...condition, value });
+      }}
       aria-label="value"
     />
   );
@@ -88,6 +149,18 @@ export function ConditionRow({ condition, variable, onChange, onRemove }: Condit
   const inherited = resolveMessage({ ...condition, message: undefined }, variable);
   const hasCustomMsg = Boolean(condition.message && condition.message.trim() !== '');
 
+  function normalizedValue(operator: Operator): Condition['value'] {
+    const current: Array<string | number> = Array.isArray(condition.value)
+      ? condition.value
+      : typeof condition.value === 'boolean' ? [] : [condition.value];
+    if (operator === 'in') return current.filter(value => value !== '');
+    if (operator === 'between') {
+      const first = current[0] ?? (variable.type === 'number' ? 0 : '');
+      return [first, current[1] ?? first];
+    }
+    return current[0] ?? (variable.type === 'boolean' ? true : variable.type === 'number' ? 0 : '');
+  }
+
   return (
     <div className="mb-[8px]">
       <div className="flex items-center gap-[8px] flex-wrap p-[9px] border border-[var(--border)] rounded-[9px] bg-[var(--panel)]">
@@ -100,9 +173,10 @@ export function ConditionRow({ condition, variable, onChange, onRemove }: Condit
         <select
           className="border border-[var(--border)] bg-[var(--bg)] rounded-[7px] px-[9px] py-[4px] text-[var(--ink)] font-medium cursor-pointer text-[12.5px]"
           value={condition.operator}
-          onChange={(e) =>
-            onChange({ ...condition, operator: e.target.value as Operator })
-          }
+          onChange={(e) => {
+            const operator = e.target.value as Operator;
+            onChange({ ...condition, operator, value: normalizedValue(operator) });
+          }}
           aria-label="operator"
         >
           {operators.map((op) => (

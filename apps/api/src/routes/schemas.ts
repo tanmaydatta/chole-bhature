@@ -47,6 +47,11 @@ export async function listSchemaDefinitions(env: Env, context: OperatorCallConte
   return service.list(operator.merchantId);
 }
 
+export async function getPublishedSchema(env: Env, context: OperatorCallContext) {
+  const { operator, service } = operatorSchemaService(env, context, 'schemas:read');
+  return service.published(operator.merchantId);
+}
+
 export async function createSchemaDefinition(
   env: Env,
   context: OperatorCallContext,

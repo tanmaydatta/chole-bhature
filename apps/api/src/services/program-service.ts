@@ -2,6 +2,7 @@ import {
   PromoProgramSchema,
   type ApiFieldError,
   type CommerceReward,
+  type OperatorProgramView,
   type PromoProgram,
   type ProgramLifecycle,
 } from '@incentives/contracts';
@@ -168,6 +169,29 @@ export function createProgramService(repositories: Repositories) {
     };
   }
 
+  async function operatorView(
+    merchantId: string,
+    record: Awaited<ReturnType<typeof find>>,
+  ): Promise<OperatorProgramView> {
+    const activeRecord = record.activeRevision === undefined
+      ? null
+      : await repositories.programs.getActive(merchantId, record.externalRef);
+    return {
+      configuration: record.program,
+      lifecycle: {
+        programRef: record.externalRef,
+        status: activeRecord?.program.status ?? record.program.status,
+        ...(record.activeRevision === undefined
+          ? {}
+          : { activeRevision: record.activeRevision }),
+        ...(record.draftRevision === undefined
+          ? {}
+          : { draftRevision: record.draftRevision }),
+        updatedAt: record.updatedAt,
+      },
+    };
+  }
+
   function effectiveStatus(program: PromoProgram): 'scheduled' | 'active' | 'ended' {
     const today = new Date().toISOString().slice(0, 10);
     if (program.endDate !== undefined && program.endDate < today) return 'ended';
@@ -209,12 +233,24 @@ export function createProgramService(repositories: Repositories) {
       return (await repositories.programs.create({ merchantId, ...validated })).program;
     },
 
-    async createDraft(merchantId: string, input: unknown): Promise<PromoProgram> {
+    async createDraft(merchantId: string, input: unknown): Promise<OperatorProgramView> {
       const validated = await validatedProgram(merchantId, input);
       if (validated.program.status !== 'draft') {
         throw new ProgramConflictError('New operator-authored programs must begin as drafts');
       }
-      return (await repositories.programs.create({ merchantId, ...validated })).program;
+      return operatorView(
+        merchantId,
+        await repositories.programs.create({ merchantId, ...validated }),
+      );
+    },
+
+    async getForOperator(merchantId: string, externalRef: string): Promise<OperatorProgramView> {
+      return operatorView(merchantId, await find(merchantId, externalRef));
+    },
+
+    async listForOperator(merchantId: string): Promise<{ programs: OperatorProgramView[] }> {
+      const records = await repositories.programs.list(merchantId);
+      return { programs: await Promise.all(records.map(record => operatorView(merchantId, record))) };
     },
 
     async get(merchantId: string, externalRef: string): Promise<PromoProgram> {
@@ -255,7 +291,7 @@ export function createProgramService(repositories: Repositories) {
       merchantId: string,
       externalRef: string,
       input: unknown,
-    ): Promise<PromoProgram> {
+    ): Promise<OperatorProgramView> {
       assertAddressableExternalRef(externalRef);
       const existing = await find(merchantId, externalRef);
       const validated = await validatedProgram(merchantId, input);
@@ -265,13 +301,13 @@ export function createProgramService(repositories: Repositories) {
       if (validated.program.status !== 'draft') {
         throw new ProgramConflictError('Program revision drafts must have draft status');
       }
-      return (await repositories.programs.updateDraft({
+      return operatorView(merchantId, await repositories.programs.updateDraft({
         merchantId,
         externalRef,
         ...validated,
         expectedProgram: existing.program,
         expectedUpdatedAt: existing.updatedAt,
-      })).program;
+      }));
     },
 
     async publish(merchantId: string, externalRef: string, actorUserId: string) {

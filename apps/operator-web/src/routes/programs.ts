@@ -1,9 +1,9 @@
 import {
   OperatorProgramDraftRequestSchema,
+  OperatorProgramListResponseSchema,
+  OperatorProgramViewSchema,
   ProgramLifecycleSchema,
-  ProgramListResponseSchema,
   ProgramPublicationResultSchema,
-  PromoProgramSchema,
 } from '@incentives/contracts';
 
 import { EmptyBodySchema, requiredParam, type ProtectedRoute } from './types.js';
@@ -11,7 +11,7 @@ import { EmptyBodySchema, requiredParam, type ProtectedRoute } from './types.js'
 export const programRoutes: readonly ProtectedRoute[] = [
   {
     method: 'GET', pattern: /^\/operator\/v1\/programs$/u,
-    permission: 'programs:read', responseSchema: ProgramListResponseSchema,
+    permission: 'programs:read', responseSchema: OperatorProgramListResponseSchema,
     downstream: 'core',
     invoke: context => context.env.CORE.listPrograms(context.operator),
   },
@@ -19,14 +19,14 @@ export const programRoutes: readonly ProtectedRoute[] = [
     method: 'POST', pattern: /^\/operator\/v1\/programs$/u,
     permission: 'programs:manage', bodySchema: OperatorProgramDraftRequestSchema,
     downstream: 'core',
-    responseSchema: PromoProgramSchema, status: 201,
+    responseSchema: OperatorProgramViewSchema, status: 201,
     invoke: context => context.env.CORE.createProgramDraft(
       context.operator, OperatorProgramDraftRequestSchema.parse(context.body),
     ),
     validateOutput(value, context) {
-      const output = PromoProgramSchema.parse(value);
+      const output = OperatorProgramViewSchema.parse(value);
       const input = OperatorProgramDraftRequestSchema.parse(context.body);
-      if (output.id !== input.id) {
+      if (output.configuration.id !== input.id) {
         throw new Error('Program response did not match its request');
       }
     },
@@ -35,12 +35,12 @@ export const programRoutes: readonly ProtectedRoute[] = [
     method: 'GET', pattern: /^\/operator\/v1\/programs\/([^/]+)$/u,
     parameterNames: ['externalRef'], permission: 'programs:read',
     downstream: 'core',
-    responseSchema: PromoProgramSchema,
+    responseSchema: OperatorProgramViewSchema,
     invoke: context => context.env.CORE.getProgram(
       context.operator, requiredParam(context, 'externalRef'),
     ),
     validateOutput(value, context) {
-      if (PromoProgramSchema.parse(value).id !== requiredParam(context, 'externalRef')) {
+      if (OperatorProgramViewSchema.parse(value).configuration.id !== requiredParam(context, 'externalRef')) {
         throw new Error('Program response did not match its request');
       }
     },
@@ -49,14 +49,14 @@ export const programRoutes: readonly ProtectedRoute[] = [
     method: 'PUT', pattern: /^\/operator\/v1\/programs\/([^/]+)$/u,
     parameterNames: ['externalRef'], permission: 'programs:manage',
     downstream: 'core',
-    bodySchema: OperatorProgramDraftRequestSchema, responseSchema: PromoProgramSchema,
+    bodySchema: OperatorProgramDraftRequestSchema, responseSchema: OperatorProgramViewSchema,
     invoke: context => context.env.CORE.updateProgramDraft(
       context.operator,
       requiredParam(context, 'externalRef'),
       OperatorProgramDraftRequestSchema.parse(context.body),
     ),
     validateOutput(value, context) {
-      if (PromoProgramSchema.parse(value).id !== requiredParam(context, 'externalRef')) {
+      if (OperatorProgramViewSchema.parse(value).configuration.id !== requiredParam(context, 'externalRef')) {
         throw new Error('Program response did not match its request');
       }
     },

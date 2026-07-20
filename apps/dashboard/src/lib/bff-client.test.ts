@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test, vi } from 'vitest';
+import type { VariableDefinition } from '@incentives/contracts';
 
 import { BffClientError, createBffClient } from './bff-client';
 
@@ -107,7 +108,7 @@ describe('same-origin BFF client', () => {
     const provisioning = {
       provisioningId: 'provisioning/a', merchantId: 'merchant-a', organizationId: null,
       name: 'Client A', status: 'failed', failedStep: 'core_provision', retryable: true,
-    } as const;
+    };
     const fetcher = vi.fn(async () => Response.json(provisioning));
     await expect(createBffClient(fetcher).provisioning('provisioning/a'))
       .resolves.toEqual(provisioning);
@@ -115,5 +116,64 @@ describe('same-origin BFF client', () => {
       '/operator/v1/platform/provisionings/provisioning%2Fa',
       expect.objectContaining({ method: 'GET', credentials: 'include' }),
     );
+  });
+
+  test('uses exact encoded live-authoring routes and runtime-parses every response', async () => {
+    const definition: VariableDefinition = {
+      key: 'customer.tier', label: 'Tier', source: 'customer', type: 'enum',
+      required: true, enumValues: ['gold', 'silver'],
+    };
+    const configuration = {
+      id: 'promo/a', type: 'promo', name: 'Gold offer', status: 'draft',
+      eligibility: { match: 'ALL', conditions: [] }, rewardRules: [],
+      fallbackReward: { id: 'fallback', name: 'Fallback', reward: { type: 'free_shipping' } },
+      stackable: false, priority: 10, autoApply: true,
+    } as const;
+    const view = {
+      configuration,
+      lifecycle: {
+        programRef: 'promo/a', status: 'active', activeRevision: 1, draftRevision: 2,
+        updatedAt: '2026-07-20T10:00:00.000Z',
+      },
+    } as const;
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path === '/operator/v1/schema/definitions') {
+        if (init?.method === 'POST') return Response.json({
+          id: 'definition/a', definition, readOnly: false, referenced: false,
+        }, { status: 201 });
+        return Response.json({ definitions: [], draftVersion: 2, publishedVersion: 1 });
+      }
+      if (path === '/operator/v1/schema/published') return Response.json({
+        version: 1, publishedAt: '2026-07-20T10:00:00.000Z', definitions: [definition],
+        jsonSchema: {}, sample: {},
+      });
+      if (path === '/operator/v1/customers/customer%2Fa') return Response.json({
+        externalRef: 'customer/a', attributes: { tier: 'gold' }, version: 2,
+        updatedAt: '2026-07-20T10:00:00.000Z',
+      });
+      if (path === '/operator/v1/programs/promo%2Fa') return Response.json(view);
+      throw new Error(`Unexpected ${init?.method ?? 'GET'} ${path}`);
+    });
+    const client = createBffClient(fetcher);
+
+    await expect(client.schemaDefinitions()).resolves.toMatchObject({ publishedVersion: 1 });
+    await expect(client.createSchemaDefinition(definition)).resolves.toMatchObject({
+      id: 'definition/a',
+    });
+    await expect(client.publishedSchema()).resolves.toMatchObject({ version: 1 });
+    await expect(client.customer('customer/a')).resolves.toMatchObject({ version: 2 });
+    await expect(client.program('promo/a')).resolves.toEqual(view);
+    expect(fetcher).toHaveBeenCalledWith(
+      '/operator/v1/programs/promo%2Fa',
+      expect.objectContaining({ method: 'GET', credentials: 'include' }),
+    );
+
+    const malformed = createBffClient(vi.fn(async () => Response.json({
+      configuration, lifecycle: { ...view.lifecycle, unexpectedCounter: 42 },
+    }, { headers: { 'x-correlation-id': 'corr-malformed' } })));
+    await expect(malformed.program('promo/a')).rejects.toMatchObject({
+      status: 502, code: 'INVALID_RESPONSE', correlationId: 'corr-malformed',
+    });
   });
 });

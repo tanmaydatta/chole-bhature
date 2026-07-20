@@ -11,8 +11,10 @@ import {
   MerchantProvisionRequestSchema,
   MerchantProvisionResultSchema,
   OperatorCallContextSchema,
+  OperatorProgramListResponseSchema,
+  OperatorProgramViewSchema,
+  PublishedSchemaResponseSchema,
   ProgramLifecycleSchema,
-  ProgramListResponseSchema,
   ProgramPublicationResultSchema,
   PromoProgramSchema,
   SchemaDefinitionImpactPreviewSchema,
@@ -56,6 +58,7 @@ import {
   createSchemaDefinition,
   deleteSchemaDefinition,
   deprecateSchemaDefinition,
+  getPublishedSchema,
   listSchemaDefinitions,
   previewSchemaDefinitionImpact,
   publishSchema,
@@ -176,6 +179,13 @@ export class CoreOperatorService extends WorkerEntrypoint<Env> {
     ));
   }
 
+  async getPublishedSchema(context: OperatorCallContext) {
+    return PublishedSchemaResponseSchema.parse(await getPublishedSchema(
+      this.env,
+      OperatorCallContextSchema.parse(context),
+    ));
+  }
+
   async createSchemaDefinition(context: OperatorCallContext, input: VariableDefinition) {
     return SchemaDefinitionViewSchema.parse(await createSchemaDefinition(
       this.env,
@@ -229,7 +239,7 @@ export class CoreOperatorService extends WorkerEntrypoint<Env> {
   }
 
   async createProgramDraft(context: OperatorCallContext, input: PromoProgram) {
-    return PromoProgramSchema.parse(await createProgramDraft(
+    return OperatorProgramViewSchema.parse(await createProgramDraft(
       this.env,
       OperatorCallContextSchema.parse(context),
       PromoProgramSchema.parse(input),
@@ -237,7 +247,7 @@ export class CoreOperatorService extends WorkerEntrypoint<Env> {
   }
 
   async getProgram(context: OperatorCallContext, externalRef: string) {
-    return PromoProgramSchema.parse(await getProgram(
+    return OperatorProgramViewSchema.parse(await getProgram(
       this.env,
       OperatorCallContextSchema.parse(context),
       z.string().min(1).parse(externalRef),
@@ -245,7 +255,7 @@ export class CoreOperatorService extends WorkerEntrypoint<Env> {
   }
 
   async listPrograms(context: OperatorCallContext) {
-    return ProgramListResponseSchema.parse(await listPrograms(
+    return OperatorProgramListResponseSchema.parse(await listPrograms(
       this.env,
       OperatorCallContextSchema.parse(context),
     ));
@@ -256,7 +266,7 @@ export class CoreOperatorService extends WorkerEntrypoint<Env> {
     externalRef: string,
     input: PromoProgram,
   ) {
-    return PromoProgramSchema.parse(await updateProgramDraft(
+    return OperatorProgramViewSchema.parse(await updateProgramDraft(
       this.env,
       OperatorCallContextSchema.parse(context),
       z.string().min(1).parse(externalRef),

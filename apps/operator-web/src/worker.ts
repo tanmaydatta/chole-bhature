@@ -431,7 +431,12 @@ async function handleProtected(
       }
       return errorResponse(failure.data);
     }
-    const output = match.route.responseSchema.parse(raw);
+    let output: unknown;
+    try {
+      output = match.route.responseSchema.parse(raw);
+    } catch {
+      throw new Error('Downstream returned a malformed response');
+    }
     match.route.validateOutput?.(output, routeContext);
     return new Response(JSON.stringify(output), {
       status: match.route.status ?? 200,

@@ -1,15 +1,12 @@
 import { Outlet, Routes, Route } from 'react-router-dom';
 import { AppShell } from './components/layout/AppShell';
 import Overview from './pages/Overview';
-import PromoList from './pages/promo/PromoList';
-import PromoCreate from './pages/promo/PromoCreate';
 import AffiliateList from './pages/affiliate/AffiliateList';
 import AffiliateCreate from './pages/affiliate/AffiliateCreate';
 import LoyaltyList from './pages/loyalty/LoyaltyList';
 import LoyaltyCreate from './pages/loyalty/LoyaltyCreate';
 import ReferralList from './pages/referral/ReferralList';
 import ReferralCreate from './pages/referral/ReferralCreate';
-import Variables from './pages/setup/Variables';
 import Events from './pages/setup/Events';
 import Analytics from './pages/Analytics';
 import ProgramDetail from './pages/ProgramDetail';
@@ -21,6 +18,11 @@ import Clients from './pages/platform/Clients';
 import Team from './pages/settings/Team';
 import Credentials from './pages/settings/Credentials';
 import { MerchantRoute, RootContextBanner, RootOnlyRoute } from './auth/RouteAccess';
+import LiveVariables from './pages/setup/LiveVariables';
+import CustomerLookup from './pages/customers/CustomerLookup';
+import LivePromoEditor from './pages/promo/LivePromoEditor';
+import LivePromoList from './pages/promo/LivePromoList';
+import LivePromoDetail from './pages/promo/LivePromoDetail';
 
 function AuthenticatedRoute() {
   return <AuthenticatedApp><RootContextBanner /><Outlet /></AuthenticatedApp>;
@@ -43,8 +45,6 @@ export default function App() {
         <Route element={<AuthenticatedRoute />}>
           <Route element={<DemoBuilderRoute />}>
             <Route element={<MerchantRoute permission="programs:manage" />}>
-              <Route path="/promo/new" element={<PromoCreate />} />
-              <Route path="/promo/:id/edit" element={<PromoCreate />} />
               <Route path="/affiliates/new" element={<AffiliateCreate />} />
               <Route path="/affiliates/:id/edit" element={<AffiliateCreate />} />
               <Route path="/referrals/new" element={<ReferralCreate />} />
@@ -53,11 +53,15 @@ export default function App() {
               <Route path="/loyalty/:id/edit" element={<LoyaltyCreate />} />
             </Route>
           </Route>
+          <Route element={<MerchantRoute permission="programs:manage" />}>
+            <Route path="/promo/new" element={<LivePromoEditor />} />
+            <Route path="/promo/:id/edit" element={<LivePromoEditor />} />
+          </Route>
           <Route element={<AuthenticatedShell />}>
             <Route element={<MerchantRoute permission="programs:read" />}>
               <Route index element={<Overview />} />
-              <Route path="/promo" element={<PromoList />} />
-              <Route path="/promo/:id" element={<ProgramDetail />} />
+              <Route path="/promo" element={<LivePromoList />} />
+              <Route path="/promo/:id" element={<LivePromoDetail />} />
               <Route path="/affiliates" element={<AffiliateList />} />
               <Route path="/affiliates/:id" element={<ProgramDetail />} />
               <Route path="/referrals" element={<ReferralList />} />
@@ -67,8 +71,11 @@ export default function App() {
               <Route path="/analytics" element={<Analytics />} />
             </Route>
             <Route element={<MerchantRoute permission="schemas:read" />}>
-              <Route path="/variables" element={<Variables />} />
+              <Route path="/variables" element={<LiveVariables />} />
               <Route path="/events" element={<Events />} />
+            </Route>
+            <Route element={<MerchantRoute permission="customers:read" />}>
+              <Route path="/customers" element={<CustomerLookup />} />
             </Route>
             <Route element={<RootOnlyRoute />}>
               <Route path="/platform/clients" element={<Clients />} />

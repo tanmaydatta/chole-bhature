@@ -11,6 +11,7 @@ const titleMap: Record<string, string> = {
   '/referrals': 'Referrals',
   '/loyalty': 'Loyalty',
   '/variables': 'Variables',
+  '/customers': 'Customers',
   '/events': 'Events',
   '/analytics': 'Analytics',
   '/platform/clients': 'Platform clients',
@@ -34,7 +35,7 @@ function usePageTitle(pathname: string): string {
   return titleMap[pathname] ?? 'Incentives';
 }
 
-const liveRoutes = new Set(['/platform/clients', '/settings/team', '/settings/credentials']);
+const liveRoutes = new Set(['/promo', '/variables', '/customers', '/platform/clients', '/settings/team', '/settings/credentials']);
 
 export function AppShell({
   session,
@@ -51,7 +52,7 @@ export function AppShell({
       <div className="flex-1 flex flex-col min-w-0">
         <TopBar title={title} onSignOut={onSignOut} />
         <main className="p-[24px_26px] overflow-auto flex-1">
-          {!liveRoutes.has(pathname) && <div className="mb-4 inline-flex rounded-full bg-[var(--accent-soft)] px-3 py-1 text-[11px] font-bold text-[var(--accent)]">Demo data</div>}
+          {!liveRoutes.has(pathname) && !pathname.startsWith('/promo/') && <div className="mb-4 inline-flex rounded-full bg-[var(--accent-soft)] px-3 py-1 text-[11px] font-bold text-[var(--accent)]">Demo data</div>}
           <Outlet />
         </main>
       </div>
