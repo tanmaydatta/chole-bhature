@@ -1,6 +1,6 @@
 # Production Operator Platform and Integration Harness Implementation Plan
 
-**Status:** In progress — Tasks 1–7 and Gates A/B are complete; Task 8 is active.
+**Status:** In progress — Tasks 1–8 and Gates A/B are complete; Task 9 is next.
 
 **Notion parent:** [Plans](https://app.notion.com/p/Plans-390e5c7c2b8e8165b7f7d77392eab088)
 
@@ -219,7 +219,7 @@
 - [x] Run the focused test; expect missing authenticated routes.
 - [x] Implement canonical typed pages without storing sessions or keys in local storage; preserve current visual system.
 - [x] Run dashboard tests/build/lint; expect exit 0.
-- [ ] Commit with `git commit -m "feat: add authenticated operator administration"`.
+- [x] Commit with `git commit -m "feat: add authenticated operator administration"`.
 
 ### Task 9: Wire schema, customer, and immutable Promo authoring
 
