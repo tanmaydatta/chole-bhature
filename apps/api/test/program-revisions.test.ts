@@ -463,6 +463,51 @@ describe('immutable Promo revisions and lifecycle', () => {
     )).rejects.toMatchObject({ name: 'ProgramConflictError' });
   });
 
+  test('rejects pause after the active revision has effectively ended', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-01T12:00:00.000Z'));
+    const service = operatorService();
+    const ending = draftProgram('pause-after-natural-end', { endDate: '2026-08-02' });
+    await service.createProgramDraft(operatorContext('programs:manage'), ending);
+    await service.publishProgram(operatorContext('programs:publish'), ending.id);
+
+    vi.setSystemTime(new Date('2026-08-03T00:00:00.000Z'));
+    await expect(service.pauseProgram(
+      operatorContext('programs:manage'),
+      ending.id,
+    )).rejects.toMatchObject({ name: 'ProgramConflictError' });
+    await expect(evaluate(ending.id)).resolves.toMatchObject({ outcome: 'unavailable' });
+  });
+
+  test('keeps prior natural end irreversible after pause and a longer replacement', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-01T12:00:00.000Z'));
+    const service = operatorService();
+    const ending = draftProgram('paused-before-natural-end', { endDate: '2026-08-02' });
+    await service.createProgramDraft(operatorContext('programs:manage'), ending);
+    await service.publishProgram(operatorContext('programs:publish'), ending.id);
+    await service.pauseProgram(operatorContext('programs:manage'), ending.id);
+    await service.updateProgramDraft(
+      operatorContext('programs:manage'),
+      ending.id,
+      draftProgram(ending.id, {
+        name: 'Longer replacement after paused expiry',
+        endDate: '2026-08-10',
+      }),
+    );
+
+    vi.setSystemTime(new Date('2026-08-03T00:00:00.000Z'));
+    await expect(service.publishProgram(
+      operatorContext('programs:publish'),
+      ending.id,
+    )).resolves.toMatchObject({ status: 'ended', activeRevision: 2 });
+    await expect(service.resumeProgram(
+      operatorContext('programs:manage'),
+      ending.id,
+    )).rejects.toMatchObject({ name: 'ProgramConflictError' });
+    await expect(evaluate(ending.id)).resolves.toMatchObject({ outcome: 'unavailable' });
+  });
+
   test('pauses and resumes an active Promo, then makes end irreversible', async () => {
     const service = operatorService();
     const active = draftProgram('lifecycle-offer');

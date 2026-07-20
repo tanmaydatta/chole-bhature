@@ -286,7 +286,11 @@ export function createProgramService(repositories: Repositories) {
       const priorStatus = previous === null
         ? undefined
         : effectiveProgramStatus(previous.program, now);
-      const status = priorStatus === 'paused' || priorStatus === 'ended'
+      const priorNaturallyEnded = previous?.program.endDate !== undefined
+        && previous.program.endDate < now.toISOString().slice(0, 10);
+      const status = priorNaturallyEnded || priorStatus === 'ended'
+        ? 'ended'
+        : priorStatus === 'paused'
         ? priorStatus
         : effectiveStatus(draft.program);
       const published = await repositories.programs.publishDraft({
@@ -305,7 +309,8 @@ export function createProgramService(repositories: Repositories) {
 
     async pause(merchantId: string, externalRef: string): Promise<ProgramLifecycle> {
       const current = await active(merchantId, externalRef);
-      if (current.program.status !== 'active' && current.program.status !== 'scheduled') {
+      const status = effectiveProgramStatus(current.program, new Date());
+      if (status !== 'active' && status !== 'scheduled') {
         throw new ProgramConflictError('Only active or scheduled programs can be paused');
       }
       return repositories.programs.updateLifecycle({
