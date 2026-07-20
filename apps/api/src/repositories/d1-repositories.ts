@@ -961,7 +961,10 @@ export function createRepositories(env: Env): Repositories {
           WHERE credential.kind = 'publishable'
             AND credential.status = 'active'
             AND merchant.status = 'active'
-            AND (credential.expires_at IS NULL OR credential.expires_at > ?1)
+            AND (
+              credential.expires_at IS NULL
+              OR julianday(credential.expires_at) > julianday(?1)
+            )
             AND EXISTS (
               SELECT 1 FROM json_each(credential.scopes_json)
               WHERE json_each.value = ?2

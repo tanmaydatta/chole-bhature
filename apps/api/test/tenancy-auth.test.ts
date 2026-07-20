@@ -83,6 +83,12 @@ async function preflight(
   });
 }
 
+function isoWithOffset(timestamp: number, offsetHours: number): string {
+  const shifted = new Date(timestamp + offsetHours * 60 * 60 * 1_000).toISOString();
+  const sign = offsetHours < 0 ? '-' : '+';
+  return `${shifted.slice(0, -1)}${sign}${Math.abs(offsetHours).toString().padStart(2, '0')}:00`;
+}
+
 describe('merchant credential authentication and tenancy', () => {
   beforeEach(async () => {
     await env.DB.batch([
@@ -494,5 +500,44 @@ describe('merchant credential authentication and tenancy', () => {
       expect(response.headers.has('access-control-allow-origin')).toBe(false);
       expect(response.headers.has('access-control-allow-methods')).toBe(false);
     }
+  });
+
+  test('allows preflight for a future expiry instant serialized with a negative offset', async () => {
+    await provisionMerchant('merchant-a');
+    await createCredential('merchant-a', {
+      kind: 'publishable',
+      scopes: ['schema:read'],
+      allowedOrigins: ['https://negative-offset-future.example'],
+      expiresAt: isoWithOffset(Date.now() + 60 * 60 * 1_000, -12),
+    });
+
+    const response = await preflight(
+      '/v1/schema/published',
+      'https://negative-offset-future.example',
+      'GET',
+      'authorization',
+    );
+    expect(response.status).toBe(204);
+    expect(response.headers.get('access-control-allow-origin'))
+      .toBe('https://negative-offset-future.example');
+  });
+
+  test('denies preflight for a past expiry instant serialized with a positive offset', async () => {
+    await provisionMerchant('merchant-a');
+    await createCredential('merchant-a', {
+      kind: 'publishable',
+      scopes: ['evaluations:write'],
+      allowedOrigins: ['https://positive-offset-past.example'],
+      expiresAt: isoWithOffset(Date.now() - 60 * 60 * 1_000, 12),
+    });
+
+    const response = await preflight(
+      '/v1/evaluate',
+      'https://positive-offset-past.example',
+      'POST',
+      'authorization, content-type',
+    );
+    expect(response.status).not.toBe(204);
+    expect(response.headers.has('access-control-allow-origin')).toBe(false);
   });
 });
