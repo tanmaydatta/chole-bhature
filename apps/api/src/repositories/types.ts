@@ -20,15 +20,17 @@ export interface VariableDefinitionCreate {
   id: string;
   merchantId: string;
   schemaVersion: number;
-  state: DefinitionState;
+  state: SchemaState;
   definition: VariableDefinition;
   createdAt?: string;
 }
 
-export interface VariableDefinitionRecord extends Required<VariableDefinitionCreate> {
-  deprecatedAt?: string;
-  deprecatedBy?: string;
-}
+type VariableDefinitionRecordBase = Omit<Required<VariableDefinitionCreate>, 'state'>;
+
+export type VariableDefinitionRecord = VariableDefinitionRecordBase & (
+  | { state: SchemaState; deprecatedAt?: never; deprecatedBy?: never }
+  | { state: 'deprecated'; deprecatedAt: string; deprecatedBy: string }
+);
 
 export interface SchemaDefinitionImpact {
   publishedVersions: number[];

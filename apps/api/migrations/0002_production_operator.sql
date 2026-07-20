@@ -10,6 +10,44 @@ CREATE UNIQUE INDEX merchants_provisioning_id_unique
 ALTER TABLE variable_definitions ADD COLUMN deprecated_at TEXT;
 ALTER TABLE variable_definitions ADD COLUMN deprecated_by TEXT;
 
+CREATE TRIGGER variable_definitions_validate_deprecation_insert
+BEFORE INSERT ON variable_definitions
+BEGIN
+  SELECT RAISE(ABORT, 'invalid variable definition deprecation state')
+  WHERE NEW.state NOT IN ('draft', 'published', 'deprecated')
+    OR NOT (
+      (
+        NEW.state = 'deprecated'
+        AND NEW.deprecated_at IS NOT NULL
+        AND NEW.deprecated_by IS NOT NULL
+      )
+      OR (
+        NEW.state <> 'deprecated'
+        AND NEW.deprecated_at IS NULL
+        AND NEW.deprecated_by IS NULL
+      )
+    );
+END;
+
+CREATE TRIGGER variable_definitions_validate_deprecation_update
+BEFORE UPDATE OF state, deprecated_at, deprecated_by ON variable_definitions
+BEGIN
+  SELECT RAISE(ABORT, 'invalid variable definition deprecation state')
+  WHERE NEW.state NOT IN ('draft', 'published', 'deprecated')
+    OR NOT (
+      (
+        NEW.state = 'deprecated'
+        AND NEW.deprecated_at IS NOT NULL
+        AND NEW.deprecated_by IS NOT NULL
+      )
+      OR (
+        NEW.state <> 'deprecated'
+        AND NEW.deprecated_at IS NULL
+        AND NEW.deprecated_by IS NULL
+      )
+    );
+END;
+
 CREATE TABLE api_credentials (
   id TEXT PRIMARY KEY NOT NULL,
   merchant_id TEXT NOT NULL,
@@ -48,6 +86,22 @@ UPDATE programs SET draft_revision = 1 WHERE status = 'draft';
 
 CREATE UNIQUE INDEX programs_merchant_id_unique
   ON programs (merchant_id, id);
+
+CREATE TRIGGER programs_validate_revision_pointers_insert
+BEFORE INSERT ON programs
+BEGIN
+  SELECT RAISE(ABORT, 'program revision pointers must be positive')
+  WHERE (NEW.active_revision IS NOT NULL AND NEW.active_revision <= 0)
+    OR (NEW.draft_revision IS NOT NULL AND NEW.draft_revision <= 0);
+END;
+
+CREATE TRIGGER programs_validate_revision_pointers_update
+BEFORE UPDATE OF active_revision, draft_revision ON programs
+BEGIN
+  SELECT RAISE(ABORT, 'program revision pointers must be positive')
+  WHERE (NEW.active_revision IS NOT NULL AND NEW.active_revision <= 0)
+    OR (NEW.draft_revision IS NOT NULL AND NEW.draft_revision <= 0);
+END;
 
 CREATE TABLE program_revisions (
   program_id TEXT NOT NULL,

@@ -122,7 +122,7 @@ function parseDefinitionCreate(input: VariableDefinitionCreate): VariableDefinit
     id: z.string().min(1).parse(input.id),
     merchantId: z.string().min(1).parse(input.merchantId),
     schemaVersion: PositiveIntegerSchema.parse(input.schemaVersion),
-    state: DefinitionStateSchema.parse(input.state),
+    state: SchemaStateSchema.parse(input.state),
     definition: VariableDefinitionSchema.parse(input.definition),
     createdAt: DateTimeSchema.parse(input.createdAt ?? now()),
   };
@@ -143,19 +143,31 @@ function parseDefinitionRow(row: typeof variableDefinitions.$inferSelect): Varia
     ...optional('defaultErrorMessage', row.defaultErrorMessage),
   });
 
-  return {
+  const base = {
     id: row.id,
     merchantId: row.merchantId,
     schemaVersion: PositiveIntegerSchema.parse(row.schemaVersion),
-    state: DefinitionStateSchema.parse(row.state),
     definition,
     createdAt: DateTimeSchema.parse(row.createdAt),
-    ...optional(
-      'deprecatedAt',
-      row.deprecatedAt === null ? undefined : DateTimeSchema.parse(row.deprecatedAt),
-    ),
-    ...optional('deprecatedBy', row.deprecatedBy),
   };
+  const state = DefinitionStateSchema.parse(row.state);
+  const deprecatedAt = row.deprecatedAt === null
+    ? null
+    : DateTimeSchema.parse(row.deprecatedAt);
+  const deprecatedBy = row.deprecatedBy === null
+    ? null
+    : z.string().min(1).parse(row.deprecatedBy);
+
+  if (state === 'deprecated') {
+    if (deprecatedAt === null || deprecatedBy === null) {
+      throw new Error('Deprecated schema definitions require timestamp and actor provenance');
+    }
+    return { ...base, state, deprecatedAt, deprecatedBy };
+  }
+  if (deprecatedAt !== null || deprecatedBy !== null) {
+    throw new Error('Non-deprecated schema definitions cannot carry deprecation provenance');
+  }
+  return { ...base, state };
 }
 
 function definitionFromRow(row: typeof variableDefinitions.$inferSelect): VariableDefinitionRecord {
@@ -619,10 +631,10 @@ export function createRepositories(env: Env): Repositories {
       logical.active_revision AS activeRevision,
       logical.draft_revision AS draftRevision,
       revision.revision AS revision,
-      logical.config_json AS configJson,
-      logical.max_uses AS maxUses,
-      logical.usage_count AS usageCount,
-      logical.budget_remaining AS budgetRemaining,
+      revision.config_json AS configJson,
+      counter.max_uses AS maxUses,
+      counter.usage_count AS usageCount,
+      counter.budget_remaining AS budgetRemaining,
       logical.created_at AS createdAt,
       logical.updated_at AS updatedAt
     FROM programs AS logical
@@ -761,6 +773,19 @@ export function createRepositories(env: Env): Repositories {
     merchants: {
       async provision(input) {
         const parsed = parseMerchantProvision(input);
+        await env.DB.prepare(`
+          INSERT INTO merchants (
+            id, name, status, provisioning_id, created_at, updated_at
+          ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+          ON CONFLICT DO NOTHING
+        `).bind(
+          parsed.id,
+          parsed.name,
+          parsed.status,
+          parsed.provisioningId,
+          parsed.createdAt,
+          parsed.updatedAt,
+        ).run();
         const existing = await env.DB.prepare(`
           SELECT id, name, status, provisioning_id AS provisioningId,
             created_at AS createdAt, updated_at AS updatedAt
@@ -774,33 +799,25 @@ export function createRepositories(env: Env): Repositories {
           createdAt: string;
           updatedAt: string | null;
         }>();
-        if (existing !== null) {
-          const record = merchantFromRow({
-            id: existing.id,
-            name: existing.name,
-            status: existing.status,
-            provisioningId: existing.provisioningId,
-            createdAt: existing.createdAt,
-            updatedAt: existing.updatedAt,
-          });
-          if (
-            record.id !== parsed.id
-            || record.name !== parsed.name
-            || record.provisioningId !== parsed.provisioningId
-          ) {
-            throw new Error('Merchant provisioning identity conflicts with an existing merchant');
-          }
-          return record;
+        if (existing === null) {
+          throw new Error('Merchant provisioning did not produce a readable merchant');
         }
-        const row = await db.insert(merchants).values({
-          id: parsed.id,
-          name: parsed.name,
-          status: parsed.status,
-          provisioningId: parsed.provisioningId,
-          createdAt: parsed.createdAt,
-          updatedAt: parsed.updatedAt,
-        }).returning().get();
-        return merchantFromRow(row);
+        const record = merchantFromRow({
+          id: existing.id,
+          name: existing.name,
+          status: existing.status,
+          provisioningId: existing.provisioningId,
+          createdAt: existing.createdAt,
+          updatedAt: existing.updatedAt,
+        });
+        if (
+          record.id !== parsed.id
+          || record.name !== parsed.name
+          || record.provisioningId !== parsed.provisioningId
+        ) {
+          throw new Error('Merchant provisioning identity conflicts with an existing merchant');
+        }
+        return record;
       },
 
       async get(id) {

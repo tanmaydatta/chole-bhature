@@ -541,11 +541,19 @@ describe('POST /v1/redemptions', () => {
   ])('fails closed without mutation when program relational %s', async (_name, mutation) => {
     await seedProgram(promo('relational-corruption'));
     const evaluation = await evaluate();
-    await env.DB.prepare(`
-      UPDATE programs SET ${mutation} WHERE merchant_id = ?1 AND external_ref = ?2
-    `).bind(SEEDED_MERCHANT_ID, 'relational-corruption').run();
+    await env.DB.exec('PRAGMA ignore_check_constraints = ON');
+    try {
+      await env.DB.prepare(`
+        UPDATE program_counters SET ${mutation}
+        WHERE merchant_id = ?1 AND program_id = (
+          SELECT id FROM programs WHERE merchant_id = ?1 AND external_ref = ?2
+        )
+      `).bind(SEEDED_MERCHANT_ID, 'relational-corruption').run();
+    } finally {
+      await env.DB.exec('PRAGMA ignore_check_constraints = OFF');
+    }
     const counterBefore = await env.DB.prepare(`
-      SELECT usage_count, budget_remaining FROM programs
+      SELECT usage_count, budget_remaining FROM program_counters
     `).first();
 
     await expectError(await redeemRaw({
@@ -553,8 +561,9 @@ describe('POST /v1/redemptions', () => {
       programRef: 'relational-corruption',
       externalOrderRef: `corrupt-${_name}`,
     }), 503, 'EVALUATION_UNAVAILABLE');
-    expect(await env.DB.prepare('SELECT usage_count, budget_remaining FROM programs').first())
-      .toEqual(counterBefore);
+    expect(await env.DB.prepare(`
+      SELECT usage_count, budget_remaining FROM program_counters
+    `).first()).toEqual(counterBefore);
     expect(await env.DB.prepare('SELECT COUNT(*) AS count FROM redemptions').first())
       .toEqual({ count: 0 });
   });

@@ -1,4 +1,4 @@
-import { sql } from 'drizzle-orm';
+import { desc, sql } from 'drizzle-orm';
 import {
   check,
   foreignKey,
@@ -44,6 +44,14 @@ export const variableDefinitions = sqliteTable('variable_definitions', {
     table.merchantId,
     table.schemaVersion,
     table.key,
+  ),
+  check(
+    'variable_definitions_state_valid',
+    sql`${table.state} IN ('draft', 'published', 'deprecated')`,
+  ),
+  check(
+    'variable_definitions_deprecation_invariant',
+    sql`(${table.state} = 'deprecated' AND ${table.deprecatedAt} IS NOT NULL AND ${table.deprecatedBy} IS NOT NULL) OR (${table.state} <> 'deprecated' AND ${table.deprecatedAt} IS NULL AND ${table.deprecatedBy} IS NULL)`,
   ),
 ]);
 
@@ -178,6 +186,23 @@ export const apiCredentials = sqliteTable('api_credentials', {
     table.createdAt,
     table.id,
   ),
+  check(
+    'api_credentials_environment_valid',
+    sql`${table.environment} IN ('local', 'staging', 'production')`,
+  ),
+  check('api_credentials_kind_valid', sql`${table.kind} IN ('publishable', 'secret')`),
+  check(
+    'api_credentials_status_valid',
+    sql`${table.status} IN ('active', 'revoked', 'expired')`,
+  ),
+  check(
+    'api_credentials_revoked_status_timestamp',
+    sql`(${table.status} = 'revoked') = (${table.revokedAt} IS NOT NULL)`,
+  ),
+  check(
+    'api_credentials_revocation_pair',
+    sql`(${table.revokedAt} IS NULL) = (${table.revokedBy} IS NULL)`,
+  ),
 ]);
 
 export const productAudit = sqliteTable('product_audit', {
@@ -195,10 +220,18 @@ export const productAudit = sqliteTable('product_audit', {
 }, table => [
   index('product_audit_merchant_occurred_index').on(
     table.merchantId,
-    table.occurredAt,
+    desc(table.occurredAt),
     table.id,
   ),
   index('product_audit_correlation_index').on(table.correlationId),
+  check(
+    'product_audit_actor_kind_valid',
+    sql`${table.actorKind} IN ('root', 'member', 'credential', 'system')`,
+  ),
+  check(
+    'product_audit_outcome_valid',
+    sql`${table.outcome} IN ('succeeded', 'failed', 'denied')`,
+  ),
 ]);
 
 export const evaluationDecisions = sqliteTable('evaluation_decisions', {

@@ -32,6 +32,13 @@ const programConfiguration = {
   autoApply: true,
 } as const;
 
+const draftProgramConfiguration = {
+  ...programConfiguration,
+  id: 'legacy-draft',
+  name: 'Legacy draft',
+  status: 'draft',
+} as const;
+
 async function resetToMigrationOne(): Promise<D1Migration> {
   const migrationOne = testEnv.TEST_MIGRATIONS.find(migration => (
     migration.name === '0001_core.sql'
@@ -140,6 +147,15 @@ async function seedRepresentativePlanTwoData(): Promise<void> {
       )
     `).bind(JSON.stringify(programConfiguration), createdAt),
     testEnv.DB.prepare(`
+      INSERT INTO programs (
+        id, merchant_id, external_ref, type, name, status, config_json,
+        priority, max_uses, usage_count, budget_remaining, created_at, updated_at
+      ) VALUES (
+        'legacy-draft-row', 'phase-0-merchant', 'legacy-draft', 'promo',
+        'Legacy draft', 'draft', ?1, 10, 10, 1, 4750, ?2, ?2
+      )
+    `).bind(JSON.stringify(draftProgramConfiguration), createdAt),
+    testEnv.DB.prepare(`
       INSERT INTO evaluation_decisions (
         id, merchant_id, customer_ref, customer_version, schema_version,
         request_json, facts_json, decisions_json, integrity_hash, expires_at, created_at
@@ -206,6 +222,28 @@ test('upgrades a populated Plan 2 database without breaking ownership or history
     published_by: 'system:migration',
   });
   expect(await testEnv.DB.prepare(`
+    SELECT id, active_revision, draft_revision
+    FROM programs WHERE id = 'legacy-draft-row'
+  `).first()).toEqual({
+    id: 'legacy-draft-row',
+    active_revision: null,
+    draft_revision: 1,
+  });
+  expect(await testEnv.DB.prepare(`
+    SELECT program_id, revision, config_json, created_at, created_by,
+      published_at, published_by
+    FROM program_revisions
+    WHERE merchant_id = 'phase-0-merchant' AND program_id = 'legacy-draft-row'
+  `).first()).toEqual({
+    program_id: 'legacy-draft-row',
+    revision: 1,
+    config_json: JSON.stringify(draftProgramConfiguration),
+    created_at: createdAt,
+    created_by: 'system:migration',
+    published_at: null,
+    published_by: null,
+  });
+  expect(await testEnv.DB.prepare(`
     SELECT program_id, merchant_id, max_uses, usage_count, budget_remaining
     FROM program_counters
     WHERE merchant_id = 'phase-0-merchant' AND program_id = 'legacy-program-row'
@@ -232,6 +270,35 @@ test('upgrades a populated Plan 2 database without breaking ownership or history
     redemptions: 1,
   });
   expect((await testEnv.DB.prepare('PRAGMA foreign_key_check').all()).results).toEqual([]);
+
+  const updatedDraftConfiguration = {
+    ...draftProgramConfiguration,
+    name: 'Legacy draft updated by old worker',
+  };
+  await testEnv.DB.prepare(`
+    UPDATE programs
+    SET config_json = ?1, max_uses = 12, usage_count = 2, budget_remaining = 4250
+    WHERE id = 'legacy-draft-row'
+  `).bind(JSON.stringify(updatedDraftConfiguration)).run();
+  expect(await testEnv.DB.prepare(`
+    SELECT config_json FROM program_revisions
+    WHERE merchant_id = 'phase-0-merchant' AND program_id = 'legacy-draft-row' AND revision = 1
+  `).first()).toEqual({ config_json: JSON.stringify(updatedDraftConfiguration) });
+  expect(await testEnv.DB.prepare(`
+    SELECT max_uses, usage_count, budget_remaining FROM program_counters
+    WHERE merchant_id = 'phase-0-merchant' AND program_id = 'legacy-draft-row'
+  `).first()).toEqual({
+    max_uses: 12,
+    usage_count: 2,
+    budget_remaining: 4250,
+  });
+
+  await testEnv.DB.prepare("DELETE FROM programs WHERE id = 'legacy-draft-row'").run();
+  expect(await testEnv.DB.prepare(`
+    SELECT
+      (SELECT COUNT(*) FROM program_revisions WHERE program_id = 'legacy-draft-row') AS revisions,
+      (SELECT COUNT(*) FROM program_counters WHERE program_id = 'legacy-draft-row') AS counters
+  `).first()).toEqual({ revisions: 0, counters: 0 });
 
   await testEnv.DB.prepare(`
     INSERT INTO merchants (id, name, status, created_at, updated_at)
