@@ -63,17 +63,18 @@ function requestMagicLink(email: string, ip = '203.0.113.10') {
   });
 }
 
-async function capturedMessages() {
+async function capturedMessages(expectedCount = 1) {
   let messages: Array<{ recipient: string; subject: string; textBody: string }> = [];
-  for (let attempt = 0; attempt < 20 && messages.length === 0; attempt += 1) {
-    await new Promise(resolve => setTimeout(resolve, 0));
+  const deadline = Date.now() + 2_000;
+  do {
     const result = await testEnv.AUTH_DB.prepare(`
       SELECT recipient, subject, text_body AS textBody
       FROM local_email_capture
       ORDER BY created_at, id
     `).all<{ recipient: string; subject: string; textBody: string }>();
     messages = result.results;
-  }
+    if (messages.length < expectedCount) await new Promise(resolve => setTimeout(resolve, 10));
+  } while (messages.length < expectedCount && Date.now() < deadline);
   return messages;
 }
 
@@ -187,7 +188,7 @@ describe('invite-only passwordless authentication', () => {
     });
     const emailAttempt = await requestMagicLink('root@example.test');
     expect(emailAttempt.status).toBe(202);
-    expect(await capturedMessages()).toEqual([]);
+    expect(await capturedMessages(0)).toEqual([]);
 
     const passkeyOptions = await authRequest('/auth/passkey/generate-authenticate-options');
     expect(passkeyOptions.status).toBe(200);
@@ -196,7 +197,7 @@ describe('invite-only passwordless authentication', () => {
       userVerification: 'required',
     });
 
-    expect(await capturedMessages()).toEqual([]);
+    expect(await capturedMessages(0)).toEqual([]);
   });
 
   test('rate-limits passwordless email requests using Auth D1', async () => {
@@ -210,7 +211,7 @@ describe('invite-only passwordless authentication', () => {
 
     expect(responses.map(response => response.status)).toEqual([202, 202, 202, 429]);
     expect(responses[3]?.headers.get('retry-after')).toMatch(/^\d+$/);
-    expect(await capturedMessages()).toHaveLength(3);
+    expect(await capturedMessages(3)).toHaveLength(3);
     await expect(testEnv.AUTH_DB.prepare('SELECT COUNT(*) AS count FROM rateLimit').first('count'))
       .resolves.toBeGreaterThan(0);
   });

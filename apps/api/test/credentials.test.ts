@@ -6,9 +6,12 @@ import type {
 } from '@incentives/contracts';
 import {
   ApiCredentialCreateResultSchema,
+  CoreMerchantActivationResultSchema,
+  CoreMerchantProvisionResultSchema,
   MerchantActivationResultSchema,
   MerchantProvisionResultSchema,
 } from '@incentives/contracts';
+import * as contracts from '@incentives/contracts';
 import { createExecutionContext } from 'cloudflare:test';
 import { env } from 'cloudflare:workers';
 import { beforeEach, describe, expect, test } from 'vitest';
@@ -40,21 +43,29 @@ async function provisionMerchant(
   merchantId: string,
   provisioningId = `provision-${merchantId}`,
 ) {
-  return operatorService().provisionMerchant(operatorContext(merchantId), {
+  const result = CoreMerchantProvisionResultSchema.parse(
+    await operatorService().provisionMerchant(operatorContext(merchantId), {
     id: merchantId,
     name: `Merchant ${merchantId}`,
     provisioningId,
-  });
+    }),
+  );
+  if (!result.ok) throw new Error(result.error.message);
+  return result.value;
 }
 
 async function activateMerchant(
   merchantId: string,
   provisioningId = `provision-${merchantId}`,
 ) {
-  return operatorService().activateMerchant(operatorContext(merchantId), {
+  const result = CoreMerchantActivationResultSchema.parse(
+    await operatorService().activateMerchant(operatorContext(merchantId), {
     id: merchantId,
     provisioningId,
-  });
+    }),
+  );
+  if (!result.ok) throw new Error(result.error.message);
+  return result.value;
 }
 
 async function provisionActiveMerchant(merchantId: string) {
@@ -124,6 +135,77 @@ describe('private Core operator credential service', () => {
     expect(await env.DB.prepare(
       "SELECT COUNT(*) AS count FROM merchants WHERE provisioning_id = 'provisioning-event-1'",
     ).first<{ count: number }>()).toEqual({ count: 1 });
+  });
+
+  test('preserves the exact merchant id, name, and provisioning id at the real Core RPC boundary', async () => {
+    const service = operatorService();
+    const requested = {
+      id: 'merchant-exact',
+      name: 'Exact merchant name',
+      provisioningId: 'provisioning-exact',
+    };
+
+    const provisionEnvelope = CoreMerchantProvisionResultSchema.parse(
+      await service.provisionMerchant(operatorContext(requested.id), requested),
+    );
+    if (!provisionEnvelope.ok) throw new Error('Expected Core provisioning success');
+    const activationEnvelope = CoreMerchantActivationResultSchema.parse(
+      await service.activateMerchant(operatorContext(requested.id), {
+        id: requested.id,
+        provisioningId: requested.provisioningId,
+      }),
+    );
+    if (!activationEnvelope.ok) throw new Error('Expected Core activation success');
+
+    expect(provisionEnvelope.value).toMatchObject(requested);
+    expect(activationEnvelope.value).toMatchObject(requested);
+  });
+
+  test('returns typed permanent conflict envelopes from the real Core provisioning and activation boundary', async () => {
+    const schemas = contracts as unknown as Record<string, {
+      parse(value: unknown): { ok: boolean; error?: { code: string; retryable: boolean } };
+    }>;
+    const service = operatorService();
+    const context = operatorContext('merchant-envelope');
+    const request = {
+      id: 'merchant-envelope',
+      name: 'Envelope merchant',
+      provisioningId: 'provision-envelope',
+    };
+    const provisioned = schemas.CoreMerchantProvisionResultSchema.parse(
+      await service.provisionMerchant(context, request),
+    );
+    expect(provisioned.ok).toBe(true);
+
+    const provisionConflict = schemas.CoreMerchantProvisionResultSchema.parse(
+      await service.provisionMerchant(context, {
+        ...request,
+        provisioningId: 'provision-conflict',
+      }),
+    );
+    expect(provisionConflict).toEqual({
+      ok: false,
+      error: {
+        code: 'CONFLICT',
+        message: 'Merchant provisioning identity conflicts',
+        retryable: false,
+      },
+    });
+
+    const activationConflict = schemas.CoreMerchantActivationResultSchema.parse(
+      await service.activateMerchant(context, {
+        id: request.id,
+        provisioningId: 'provision-conflict',
+      }),
+    );
+    expect(activationConflict).toEqual({
+      ok: false,
+      error: {
+        code: 'CONFLICT',
+        message: 'Merchant provisioning identity conflicts',
+        retryable: false,
+      },
+    });
   });
 
   test('activates the same provisioning saga idempotently and rejects conflicting identity', async () => {

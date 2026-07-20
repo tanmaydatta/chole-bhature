@@ -125,7 +125,7 @@ async function writeAudit(
   env: Env,
   id: string,
   input: {
-    actorKind: 'anonymous' | 'employee' | 'root' | 'system';
+    actorKind: 'anonymous' | 'member' | 'root' | 'system';
     actorId: string;
     action: string;
     targetType: string;
@@ -356,7 +356,20 @@ async function getSessionAccess(env: Env, sessionId: string): Promise<SessionAcc
       AND session.authenticationMethod IN ('magic-link', 'passkey', 'recovery')
       AND session.authenticatedAt IS NOT NULL
       AND session.recoveryOnly IN (0, 1)
-      AND auth_profile.status = 'active'
+      AND (
+        auth_profile.status = 'active'
+        OR (
+          auth_profile.status = 'pending'
+          AND session.authenticationMethod = 'recovery'
+          AND EXISTS (
+            SELECT 1 FROM recovery_flow AS bootstrap_flow
+            WHERE bootstrap_flow.session_id = session.id
+              AND bootstrap_flow.purpose = 'bootstrap'
+              AND bootstrap_flow.completed_at IS NULL
+              AND bootstrap_flow.cancelled_at IS NULL
+          )
+        )
+      )
       AND (
         (
           session.authenticationMethod = 'magic-link'
@@ -586,7 +599,7 @@ export function createIdentityAuth(
               throw new Error('PASSKEY_SESSION_AUTHORIZATION_STALE');
             }
             await writeAudit(env, id, {
-              actorKind: method === 'passkey' ? 'root' : 'employee',
+              actorKind: method === 'passkey' ? 'root' : 'member',
               actorId: session.userId,
               action: 'session.created',
               targetType: 'session',
@@ -837,7 +850,7 @@ export function createIdentityAuth(
         const location = response.headers.get('location');
         const denied = response.status >= 400 || (location?.includes('error=') ?? false);
         await writeAudit(env, id, {
-          actorKind: denied ? 'anonymous' : 'employee',
+          actorKind: denied ? 'anonymous' : 'member',
           actorId: await responseUserId(response) ?? 'anonymous',
           action: 'magic_link.verification',
           targetType: 'authentication', targetId: 'magic-link',

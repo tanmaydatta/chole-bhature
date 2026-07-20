@@ -5,6 +5,7 @@ import {
   ApiCredentialCreateResultSchema,
   ApiCredentialViewSchema,
   AuditEntrySchema,
+  AuditActorKindSchema,
   EvaluationRequestSchema,
   IncentiveDecisionSchema,
   MerchantActivationRequestSchema,
@@ -30,6 +31,7 @@ import {
   canonicalProgramLifecycle,
   canonicalProgramRevision,
 } from '../test-fixtures/documentation-examples.js';
+import * as contracts from './index.js';
 
 describe('production operator contracts', () => {
   test('accepts registered permission keys and rejects unregistered keys', () => {
@@ -97,6 +99,117 @@ describe('production operator contracts', () => {
       ...activationResult,
       status: 'provisioning',
     }).success).toBe(false);
+  });
+
+  test('defines strict session-authenticated Identity operator RPC contracts', () => {
+    const task6 = contracts as unknown as Record<string, {
+      safeParse(value: unknown): { success: boolean };
+      parse(value: unknown): unknown;
+    }>;
+    const provisionRequest = {
+      sessionId: 'session-root',
+      selectedMerchantId: 'merchant-123',
+      input: {
+        provisioningId: 'provisioning-123',
+        merchantId: 'merchant-123',
+        name: 'Example merchant',
+        correlationId: 'corr-provision',
+      },
+    };
+    const invitationRequest = {
+      sessionId: 'session-admin',
+      selectedMerchantId: 'merchant-123',
+      input: {
+        organizationId: 'org-123',
+        email: 'new-admin@example.test',
+        role: 'admin',
+        expiresInSeconds: 3_600,
+        correlationId: 'corr-invite',
+      },
+    };
+    const safeFailure = {
+      error: {
+        code: 'FORBIDDEN',
+        message: 'Operation is not permitted',
+        correlationId: 'corr-invite',
+        retryable: false,
+      },
+    };
+
+    expect(task6.IdentityProvisionClientRequestSchema.parse(provisionRequest))
+      .toEqual(provisionRequest);
+    expect(task6.IdentityCreateInvitationRequestSchema.parse(invitationRequest))
+      .toEqual(invitationRequest);
+    expect(task6.IdentityCreateInvitationRequestSchema.safeParse({
+      ...invitationRequest,
+      principal: canonicalOperatorPrincipal,
+    }).success).toBe(false);
+    expect(task6.IdentityProvisionClientRequestSchema.safeParse({
+      ...provisionRequest,
+      selectedMerchantId: undefined,
+    }).success).toBe(false);
+    expect(task6.IdentityRpcErrorSchema.parse(safeFailure)).toEqual(safeFailure);
+    expect(task6.IdentityRpcErrorSchema.safeParse({
+      ...safeFailure,
+      organizationId: 'org-secret',
+    }).success).toBe(false);
+    const preOrganizationFailure = {
+      provisioningId: 'provisioning-123',
+      merchantId: 'merchant-123',
+      organizationId: null,
+      name: 'Example merchant',
+      status: 'failed',
+      failedStep: 'core_provision',
+      retryable: true,
+    };
+    expect(task6.ClientProvisioningViewSchema.parse(preOrganizationFailure))
+      .toEqual(preOrganizationFailure);
+    expect(task6.ClientProvisioningViewSchema.safeParse({
+      ...preOrganizationFailure,
+      organizationId: '',
+    }).success).toBe(false);
+  });
+
+  test('defines typed Core provisioning result envelopes with stable retryability', () => {
+    const task6 = contracts as unknown as Record<string, {
+      safeParse(value: unknown): { success: boolean };
+      parse(value: unknown): unknown;
+    }>;
+    const success = {
+      ok: true,
+      value: {
+        id: 'merchant-123',
+        name: 'Example merchant',
+        provisioningId: 'provisioning-123',
+        status: 'provisioning',
+        createdAt: '2026-07-20T12:00:00.000Z',
+        updatedAt: '2026-07-20T12:00:00.000Z',
+      },
+    };
+    const conflict = {
+      ok: false,
+      error: {
+        code: 'CONFLICT',
+        message: 'Merchant provisioning identity conflicts',
+        retryable: false,
+      },
+    };
+
+    expect(task6.CoreMerchantProvisionResultSchema.parse(success)).toEqual(success);
+    expect(task6.CoreMerchantActivationResultSchema.parse({
+      ...success,
+      value: { ...success.value, status: 'active' },
+    })).toMatchObject({ ok: true, value: { status: 'active' } });
+    expect(task6.CoreMerchantProvisionResultSchema.parse(conflict)).toEqual(conflict);
+    expect(task6.CoreMerchantActivationResultSchema.parse(conflict)).toEqual(conflict);
+    expect(task6.CoreMerchantProvisionResultSchema.safeParse({
+      ...conflict,
+      error: { ...conflict.error, merchantId: 'tenant-secret' },
+    }).success).toBe(false);
+  });
+
+  test('includes anonymous authentication attempts in the canonical audit actor kinds', () => {
+    expect(AuditActorKindSchema.safeParse('anonymous').success).toBe(true);
   });
 
   test('defines strict canonical credential create/show-once RPC contracts and quotas', () => {

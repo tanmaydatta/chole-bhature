@@ -1,4 +1,17 @@
+import type {
+  IdentityAcceptInvitationRequest,
+  IdentityChangeMemberRoleRequest,
+  IdentityCreateInvitationRequest,
+  IdentityGetProvisioningRequest,
+  IdentityProvisionClientRequest,
+  IdentityRemoveMemberRequest,
+  IdentityResolvePrincipalRequest,
+  IdentityRetryInvitationRequest,
+} from '@incentives/contracts';
+import { WorkerEntrypoint } from 'cloudflare:workers';
+
 import { createIdentityAuth, validateIdentityEnvironment } from './auth.js';
+import { createIdentityEmailAdapter } from './email.js';
 import {
   beginRootRecovery,
   errorResponse,
@@ -8,6 +21,8 @@ import {
   rotateRecoveryCodes,
   writeIdentityAudit,
 } from './recovery.js';
+import { createIdentityOperatorService } from './routes/internal.js';
+import type { CoreMerchantProvisioningClient } from './services/organizations.js';
 
 export interface Env {
   AUTH_DB: D1Database;
@@ -24,6 +39,7 @@ export interface Env {
   PASSKEY_RP_NAME: string;
   RESEND_API_KEY?: string;
   RESEND_FROM?: string;
+  CORE: CoreMerchantProvisioningClient;
 }
 
 function withCorrelationId(request: Request, correlationId: string): Request {
@@ -52,6 +68,72 @@ function signupDisabled(correlationId: string): Response {
   );
 }
 
+function privateRouteNotFound(correlationId: string): Response {
+  return errorResponse(
+    correlationId,
+    404,
+    'NOT_FOUND',
+    'The requested resource is unavailable.',
+  );
+}
+
+function allowedRecipients(env: Env): ReadonlySet<string> {
+  const parsed: unknown = JSON.parse(env.STAGING_ALLOWED_RECIPIENTS);
+  if (!Array.isArray(parsed) || !parsed.every(value => typeof value === 'string')) {
+    throw new Error('STAGING_ALLOWED_RECIPIENTS must be a JSON string array');
+  }
+  return new Set(parsed.map(value => value.trim().toLowerCase()));
+}
+
+function operatorService(env: Env) {
+  return createIdentityOperatorService({
+    database: env.AUTH_DB,
+    core: env.CORE,
+    email: createIdentityEmailAdapter({
+      mode: env.EMAIL_MODE,
+      database: env.AUTH_DB,
+      allowedRecipients: allowedRecipients(env),
+      ...(env.RESEND_API_KEY === undefined ? {} : { resendApiKey: env.RESEND_API_KEY }),
+      ...(env.RESEND_FROM === undefined ? {} : { resendFrom: env.RESEND_FROM }),
+    }),
+    publicOrigin: env.PUBLIC_APP_ORIGIN,
+  });
+}
+
+export class IdentityOperatorService extends WorkerEntrypoint<Env> {
+  async resolvePrincipal(input: IdentityResolvePrincipalRequest) {
+    return operatorService(this.env).resolvePrincipal(input);
+  }
+
+  async provisionClient(input: IdentityProvisionClientRequest) {
+    return operatorService(this.env).provisionClient(input);
+  }
+
+  async getProvisioning(input: IdentityGetProvisioningRequest) {
+    return operatorService(this.env).getProvisioning(input);
+  }
+
+  async createInvitation(input: IdentityCreateInvitationRequest) {
+    return operatorService(this.env).createInvitation(input);
+  }
+
+  async retryInvitation(input: IdentityRetryInvitationRequest) {
+    return operatorService(this.env).retryInvitation(input);
+  }
+
+  async acceptInvitation(input: IdentityAcceptInvitationRequest) {
+    return operatorService(this.env).acceptInvitation(input);
+  }
+
+  async removeMember(input: IdentityRemoveMemberRequest) {
+    return operatorService(this.env).removeMember(input);
+  }
+
+  async changeMemberRole(input: IdentityChangeMemberRoleRequest) {
+    return operatorService(this.env).changeMemberRole(input);
+  }
+}
+
 export default {
   async fetch(originalRequest, env, executionContext) {
     const correlationId = originalRequest.headers.get('x-correlation-id') ?? crypto.randomUUID();
@@ -60,7 +142,12 @@ export default {
       validateIdentityEnvironment(env);
       const url = new URL(request.url);
       let response: Response;
-      if (url.pathname.startsWith('/auth/sign-up/')) {
+      if (
+        url.pathname.startsWith('/internal/')
+        || url.pathname === '/auth/root/bootstrap'
+      ) {
+        response = privateRouteNotFound(correlationId);
+      } else if (url.pathname.startsWith('/auth/sign-up/')) {
         response = signupDisabled(correlationId);
       } else if (url.pathname === '/auth/root/recovery' && request.method === 'POST') {
         response = await beginRootRecovery(request, env, correlationId);

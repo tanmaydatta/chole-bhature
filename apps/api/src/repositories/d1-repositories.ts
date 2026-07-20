@@ -35,6 +35,7 @@ import {
   variableDefinitions,
 } from '../db/schema.js';
 import type { Env } from '../env.js';
+import { MerchantIdentityConflictError } from '../errors/merchant-errors.js';
 import { canonicalJson } from '../json.js';
 import {
   OptimisticVersionConflictError,
@@ -947,7 +948,9 @@ export function createRepositories(env: Env): Repositories {
           || record.name !== parsed.name
           || record.provisioningId !== parsed.provisioningId
         ) {
-          throw new Error('Merchant provisioning identity conflicts with an existing merchant');
+          throw new MerchantIdentityConflictError(
+            'Merchant provisioning identity conflicts with an existing merchant',
+          );
         }
         return MerchantProvisionResultSchema.parse(record);
       },
@@ -965,7 +968,9 @@ export function createRepositories(env: Env): Repositories {
           existing === undefined
           || existing.provisioningId !== parsed.provisioningId
         ) {
-          throw new Error('Merchant activation provisioning identity conflicts with existing state');
+          throw new MerchantIdentityConflictError(
+            'Merchant activation provisioning identity conflicts with existing state',
+          );
         }
         if (existing.status === 'active') {
           return MerchantActivationResultSchema.parse(merchantFromRow(existing));
@@ -975,7 +980,9 @@ export function createRepositories(env: Env): Repositories {
           WHERE id = ?2 AND provisioning_id = ?3 AND status = 'provisioning'
         `).bind(parsedUpdatedAt, parsed.id, parsed.provisioningId).run();
         if (result.meta.changes !== 1) {
-          throw new Error('Merchant activation provisioning identity conflicts with existing state');
+          throw new MerchantIdentityConflictError(
+            'Merchant activation provisioning identity conflicts with existing state',
+          );
         }
         const row = await db.select().from(merchants).where(eq(merchants.id, parsed.id)).get();
         if (row === undefined) throw new Error('Activated merchant could not be read');

@@ -1,6 +1,7 @@
 import { makeSignature } from 'better-auth/crypto';
 
 import type { Env } from './worker.js';
+import { deriveBootstrapGrant } from './cli/bootstrap-cryptography.mjs';
 
 const RECOVERY_GRANT_TTL_MS = 10 * 60_000;
 const RECOVERY_SESSION_TTL_MS = 10 * 60_000;
@@ -82,11 +83,12 @@ async function keyedHash(secret: string, value: string): Promise<string> {
     .map(byte => byte.toString(16).padStart(2, '0')).join('');
 }
 
-async function deriveGrant(env: Env, flowId: string, codeHash: string): Promise<string> {
-  return base64Url(await keyedBytes(
-    env.AUTH_SECRET,
-    `identity-recovery-grant-v1:${flowId}:${codeHash}`,
-  ));
+export async function deriveRecoveryGrant(
+  authSecret: string,
+  flowId: string,
+  initiatingCodeHash: string,
+): Promise<string> {
+  return deriveBootstrapGrant(authSecret, flowId, initiatingCodeHash);
 }
 
 export function errorResponse(
@@ -110,7 +112,7 @@ export async function writeIdentityAudit(
   env: Env,
   correlationId: string,
   input: {
-    actorKind: 'anonymous' | 'employee' | 'root' | 'system';
+    actorKind: 'anonymous' | 'member' | 'root' | 'system';
     actorId: string;
     action: string;
     targetType: string;
@@ -286,14 +288,14 @@ export async function beginRootRecovery(
     && flowIsLive(existing, now)
   ) {
     return Response.json({
-      grant: await deriveGrant(env, existing.id, codeHash),
+      grant: await deriveRecoveryGrant(env.AUTH_SECRET, existing.id, codeHash),
       expiresAt: existing.expiresAt,
     }, { status: 200, headers: { 'x-correlation-id': correlationId } });
   }
 
   const flowId = crypto.randomUUID();
   const expiresAt = now + RECOVERY_GRANT_TTL_MS;
-  const grant = await deriveGrant(env, flowId, codeHash);
+  const grant = await deriveRecoveryGrant(env.AUTH_SECRET, flowId, codeHash);
   const grantHash = await sha256(grant);
   try {
     await env.AUTH_DB.batch([
@@ -368,7 +370,7 @@ export async function beginRootRecovery(
   const claimed = await activeFlow(env, input.userId);
   if (claimed?.initiatingCodeHash === codeHash && flowIsLive(claimed, now)) {
     return Response.json({
-      grant: await deriveGrant(env, claimed.id, codeHash),
+      grant: await deriveRecoveryGrant(env.AUTH_SECRET, claimed.id, codeHash),
       expiresAt: claimed.expiresAt,
     }, { status: 200, headers: { 'x-correlation-id': correlationId } });
   }
@@ -530,7 +532,11 @@ export async function getRecoverySession(
     INNER JOIN recovery_flow ON recovery_flow.session_id = session.id
     WHERE session.id = ?1 AND session.expiresAt > ?2
       AND session.authenticationMethod = 'recovery' AND session.recoveryOnly = 1
-      AND auth_profile.subject_kind = 'root' AND auth_profile.status = 'active'
+      AND auth_profile.subject_kind = 'root'
+      AND (
+        auth_profile.status = 'active'
+        OR (auth_profile.status = 'pending' AND recovery_flow.purpose = 'bootstrap')
+      )
       AND recovery_flow.completed_at IS NULL AND recovery_flow.cancelled_at IS NULL
   `).bind(sessionId, Date.now()).first<RecoverySession>();
 }
@@ -602,7 +608,7 @@ export async function rotateRecoveryCodes(
   correlationId: string,
 ): Promise<Response> {
   const flow = await env.AUTH_DB.prepare(`
-    SELECT id, user_id AS userId,
+    SELECT id, user_id AS userId, purpose,
       passkey_registered_at AS passkeyRegisteredAt,
       replacement_passkey_id AS replacementPasskeyId
     FROM recovery_flow
@@ -612,6 +618,7 @@ export async function rotateRecoveryCodes(
     userId: string;
     passkeyRegisteredAt: number | null;
     replacementPasskeyId: string | null;
+    purpose: 'recovery' | 'bootstrap';
   }>();
   if (!flow?.passkeyRegisteredAt || !flow.replacementPasskeyId) {
     await writeIdentityAudit(env, correlationId, {
@@ -640,6 +647,14 @@ export async function rotateRecoveryCodes(
       WHERE user_id = ?2 AND used_at IS NULL
         AND EXISTS (SELECT 1 FROM recovery_flow WHERE id = ?3 AND rotation_id = ?4)
     `).bind(now, flow.userId, flow.id, rotationId),
+    env.AUTH_DB.prepare(`
+      UPDATE auth_profile SET status = 'active'
+      WHERE user_id = ?1 AND subject_kind = 'root' AND status = 'pending'
+        AND EXISTS (
+          SELECT 1 FROM recovery_flow
+          WHERE id = ?2 AND purpose = 'bootstrap' AND rotation_id = ?3
+        )
+    `).bind(flow.userId, flow.id, rotationId),
     ...hashes.map(hash => env.AUTH_DB.prepare(`
       INSERT INTO root_recovery_code (
         id, user_id, code_hash, created_at, recovery_flow_id

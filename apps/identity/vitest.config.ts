@@ -21,6 +21,9 @@ export default defineConfig(async () => {
       cloudflareTest({
         wrangler: { configPath: './wrangler.toml' },
         miniflare: {
+          serviceBindings: {
+            CORE: { network: { deny: ['0.0.0.0/0', '::/0'] } },
+          },
           bindings: {
             TEST_MIGRATIONS: migrations,
             AUTH_SECRET: 'identity-test-secret-at-least-thirty-two-characters',
@@ -35,6 +38,7 @@ export default defineConfig(async () => {
     ],
     test: {
       fileParallelism: false,
+      include: ['test/**/*.test.ts'],
       setupFiles: ['./test/apply-migrations.ts'],
     },
   };

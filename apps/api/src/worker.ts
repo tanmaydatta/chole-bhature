@@ -2,6 +2,8 @@ import {
   ApiCredentialCreateInputSchema,
   ApiCredentialCreateResultSchema,
   ApiCredentialViewSchema,
+  CoreMerchantActivationResultSchema,
+  CoreMerchantProvisionResultSchema,
   MerchantActivationRequestSchema,
   MerchantActivationResultSchema,
   MerchantProvisionRequestSchema,
@@ -27,6 +29,7 @@ import { z } from 'zod';
 import { WorkerEntrypoint } from 'cloudflare:workers';
 
 import { createApp } from './app.js';
+import { MerchantIdentityConflictError } from './errors/merchant-errors.js';
 import type { Env } from './env.js';
 import {
   createCredential,
@@ -54,21 +57,60 @@ import {
   updateSchemaDefinition,
 } from './routes/schemas.js';
 
+function coreMerchantFailure(error: unknown) {
+  if (error instanceof MerchantIdentityConflictError) {
+    return {
+      ok: false as const,
+      error: {
+        code: 'CONFLICT' as const,
+        message: 'Merchant provisioning identity conflicts',
+        retryable: false,
+      },
+    };
+  }
+  return {
+    ok: false as const,
+    error: {
+      code: 'UNAVAILABLE' as const,
+      message: 'Core merchant operation is temporarily unavailable',
+      retryable: true,
+    },
+  };
+}
+
 export class CoreOperatorService extends WorkerEntrypoint<Env> {
   async provisionMerchant(context: OperatorCallContext, input: MerchantProvisionRequest) {
-    return MerchantProvisionResultSchema.parse(await provisionMerchant(
-      this.env,
-      OperatorCallContextSchema.parse(context),
-      MerchantProvisionRequestSchema.parse(input),
-    ));
+    const parsedContext = OperatorCallContextSchema.parse(context);
+    const parsedInput = MerchantProvisionRequestSchema.parse(input);
+    try {
+      return CoreMerchantProvisionResultSchema.parse({
+        ok: true,
+        value: MerchantProvisionResultSchema.parse(await provisionMerchant(
+          this.env,
+          parsedContext,
+          parsedInput,
+        )),
+      });
+    } catch (error) {
+      return CoreMerchantProvisionResultSchema.parse(coreMerchantFailure(error));
+    }
   }
 
   async activateMerchant(context: OperatorCallContext, input: MerchantActivationRequest) {
-    return MerchantActivationResultSchema.parse(await activateMerchant(
-      this.env,
-      OperatorCallContextSchema.parse(context),
-      MerchantActivationRequestSchema.parse(input),
-    ));
+    const parsedContext = OperatorCallContextSchema.parse(context);
+    const parsedInput = MerchantActivationRequestSchema.parse(input);
+    try {
+      return CoreMerchantActivationResultSchema.parse({
+        ok: true,
+        value: MerchantActivationResultSchema.parse(await activateMerchant(
+          this.env,
+          parsedContext,
+          parsedInput,
+        )),
+      });
+    } catch (error) {
+      return CoreMerchantActivationResultSchema.parse(coreMerchantFailure(error));
+    }
   }
 
   async createCredential(context: OperatorCallContext, input: ApiCredentialCreateInput) {

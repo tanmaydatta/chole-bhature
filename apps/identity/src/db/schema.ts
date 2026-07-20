@@ -11,7 +11,29 @@ export const authTableNames = [
   'recovery_rate_limit',
   'identity_audit',
   'local_email_capture',
+  'client_provisionings',
+  'organizations',
+  'memberships',
+  'invitations',
 ] as const;
+
+export type FixedRole = 'admin' | 'operator' | 'viewer';
+
+export interface OrganizationRow {
+  id: string;
+  merchantId: string;
+  provisioningId: string;
+  name: string;
+  status: 'provisioning' | 'active';
+}
+
+export interface MembershipRow {
+  id: string;
+  organizationId: string;
+  userId: string;
+  role: FixedRole;
+  status: 'active' | 'removed';
+}
 
 export type AuthTableName = typeof authTableNames[number];
 

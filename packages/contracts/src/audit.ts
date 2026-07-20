@@ -1,6 +1,7 @@
 import { z } from './zod.js';
 
 export const AuditActorKindSchema = z.enum([
+  'anonymous',
   'root',
   'member',
   'credential',

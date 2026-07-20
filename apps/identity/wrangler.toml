@@ -23,6 +23,11 @@ database_name = "incentives-auth-local"
 database_id = "10000000-0000-0000-0000-000000000001"
 migrations_dir = "migrations"
 
+[[services]]
+binding = "CORE"
+service = "incentives-api-local"
+entrypoint = "CoreOperatorService"
+
 [env.staging]
 name = "incentives-identity-staging"
 
@@ -43,3 +48,8 @@ binding = "AUTH_DB"
 database_name = "incentives-auth-staging"
 database_id = "20000000-0000-0000-0000-000000000002"
 migrations_dir = "migrations"
+
+[[env.staging.services]]
+binding = "CORE"
+service = "incentives-api-staging"
+entrypoint = "CoreOperatorService"
