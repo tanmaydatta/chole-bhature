@@ -14,7 +14,8 @@ import {
   type OperatorPrincipal,
 } from '@incentives/contracts';
 import { env } from 'cloudflare:workers';
-import { SELF } from 'cloudflare:test';
+import { createExecutionContext, SELF } from 'cloudflare:test';
+import { makeSignature } from 'better-auth/crypto';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
 import {
@@ -37,6 +38,7 @@ import internalRoutesSource from '../src/routes/internal.ts?raw';
 import identityPackageSource from '../package.json?raw';
 import organizationsMigrationSource from '../migrations/0003_organizations_authorization.sql?raw';
 import { sha256 } from '../src/recovery.js';
+import { IdentityOperatorService, type Env } from '../src/worker.js';
 import {
   createTestCredential,
   registrationResponse,
@@ -55,6 +57,12 @@ const faultTriggers = [
   'test_fail_organization_activate',
   'test_fail_security_audit',
 ] as const;
+
+async function signedSessionCookie(token: string): Promise<string> {
+  const signature = await makeSignature(token, testEnv.AUTH_SECRET);
+  return `__Secure-${testEnv.COOKIE_PREFIX}.session_token=`
+    + encodeURIComponent(`${token}.${signature}`);
+}
 
 function rootPrincipal(merchantId = 'merchant-a'): OperatorPrincipal {
   return {
@@ -1604,12 +1612,185 @@ describe('private Identity operator service boundary', () => {
       'changeMemberRole',
       'createInvitation',
       'getProvisioning',
+      'getProvisioningForRoot',
+      'listClients',
+      'listInvitations',
+      'listMembers',
       'provisionClient',
       'removeMember',
       'resolvePrincipal',
       'retryInvitation',
     ]);
     for (const method of Object.values(service)) expect(method).toBeTypeOf('function');
+  });
+
+  test('resolves browser cookies live and validates root merchants against active organizations', async () => {
+    await seedRoot();
+    await seedOrganization();
+    await seedOrganization({ id: 'org-pending', merchantId: 'merchant-pending', status: 'provisioning' });
+    const service = new IdentityOperatorService(
+      createExecutionContext(),
+      testEnv as unknown as Env,
+    );
+    const cookieHeader = await signedSessionCookie('token-root-session');
+
+    const selected = await service.resolveBrowserPrincipal({
+      cookieHeader, selectedMerchantId: 'merchant-a', correlationId: 'corr-browser-selected',
+    });
+    expect(selected).toMatchObject({
+      platformRole: 'root', sessionId: 'root-session', merchantId: 'merchant-a',
+      organizationId: 'org-a',
+    });
+    const pending = await service.resolveBrowserPrincipal({
+      cookieHeader, selectedMerchantId: 'merchant-pending', correlationId: 'corr-browser-pending',
+    });
+    expect(ApiErrorSchema.parse(pending).error).toMatchObject({
+      code: 'FORBIDDEN', message: 'Operation is not permitted', retryable: false,
+    });
+
+    await testEnv.AUTH_DB.prepare("DELETE FROM session WHERE id = 'root-session'").run();
+    const revoked = await service.resolveBrowserPrincipal({
+      cookieHeader, correlationId: 'corr-browser-revoked',
+    });
+    expect(ApiErrorSchema.parse(revoked).error.code).toBe('UNAUTHORIZED');
+  });
+
+  test('lists active, provisioning, and failed clients through a live root browser session', async () => {
+    await seedRoot();
+    await seedOrganization();
+    await seedOrganization({
+      id: 'org-provisioning', merchantId: 'merchant-provisioning', status: 'provisioning',
+    });
+    const now = Date.now();
+    await testEnv.AUTH_DB.prepare(`
+      INSERT INTO client_provisionings (
+        provisioning_id, merchant_id, organization_id, name, status, current_step,
+        failed_step, retryable, attempt_count, created_at, updated_at, correlation_id
+      ) VALUES (
+        'provision-failed', 'merchant-failed', NULL, 'Failed merchant', 'failed',
+        'core_provision', 'core_provision', 1, 1, ?1, ?1, 'corr-failed'
+      )
+    `).bind(now).run();
+    const service = new IdentityOperatorService(
+      createExecutionContext(),
+      testEnv as unknown as Env,
+    ) as IdentityOperatorService & {
+      listClients?: (input: unknown) => Promise<unknown>;
+    };
+    expect(service.listClients).toBeTypeOf('function');
+    if (!service.listClients) return;
+
+    const result = await service.listClients({
+      cookieHeader: await signedSessionCookie('token-root-session'),
+      correlationId: 'corr-root-list-clients',
+    });
+
+    expect(result).toMatchObject({
+      clients: expect.arrayContaining([
+        expect.objectContaining({ merchantId: 'merchant-a', status: 'active' }),
+        expect.objectContaining({ merchantId: 'merchant-provisioning', status: 'provisioning' }),
+        expect.objectContaining({
+          provisioningId: 'provision-failed', merchantId: 'merchant-failed',
+          organizationId: null, status: 'failed', failedStep: 'core_provision', retryable: true,
+        }),
+      ]),
+    });
+  });
+
+  test('gets a failed provisioning through a live root session without merchant selection', async () => {
+    await seedRoot();
+    const now = Date.now();
+    await testEnv.AUTH_DB.prepare(`
+      INSERT INTO client_provisionings (
+        provisioning_id, merchant_id, organization_id, name, status, current_step,
+        failed_step, retryable, attempt_count, created_at, updated_at, correlation_id
+      ) VALUES (
+        'provision-failed', 'merchant-failed', NULL, 'Failed merchant', 'failed',
+        'identity_organization', 'identity_organization', 1, 1, ?1, ?1, 'corr-failed'
+      )
+    `).bind(now).run();
+    const service = new IdentityOperatorService(
+      createExecutionContext(),
+      testEnv as unknown as Env,
+    ) as IdentityOperatorService & {
+      getProvisioningForRoot?: (input: unknown) => Promise<unknown>;
+    };
+    expect(service.getProvisioningForRoot).toBeTypeOf('function');
+    if (!service.getProvisioningForRoot) return;
+
+    await expect(service.getProvisioningForRoot({
+      cookieHeader: await signedSessionCookie('token-root-session'),
+      provisioningId: 'provision-failed',
+      correlationId: 'corr-root-get-provisioning',
+    })).resolves.toMatchObject({
+      provisioningId: 'provision-failed', merchantId: 'merchant-failed',
+      organizationId: null, status: 'failed', failedStep: 'identity_organization', retryable: true,
+    });
+  });
+
+  test('keeps root client inventory methods unavailable to live member sessions', async () => {
+    await seedOrganization();
+    await seedMember({
+      id: 'membership-admin', userId: 'admin-1', email: 'admin@example.test', role: 'admin',
+    });
+    const service = new IdentityOperatorService(
+      createExecutionContext(),
+      testEnv as unknown as Env,
+    ) as IdentityOperatorService & {
+      listClients?: (input: unknown) => Promise<unknown>;
+    };
+    expect(service.listClients).toBeTypeOf('function');
+    if (!service.listClients) return;
+
+    const result = await service.listClients({
+      cookieHeader: await signedSessionCookie('token-admin-1-0'),
+      correlationId: 'corr-member-list-clients',
+    });
+
+    expect(ApiErrorSchema.parse(result).error).toMatchObject({
+      code: 'FORBIDDEN', message: 'Operation is not permitted', retryable: false,
+    });
+  });
+
+  test('lists only the live selected tenant members and invitations', async () => {
+    await seedOrganization();
+    await seedMember({
+      id: 'membership-admin', userId: 'admin-1', email: 'admin@example.test', role: 'admin',
+    });
+    await seedMember({
+      id: 'membership-viewer', userId: 'viewer-1', email: 'viewer@example.test', role: 'viewer',
+    });
+    const service = createIdentityOperatorService({
+      database: testEnv.AUTH_DB,
+      core: new FakeCoreClient(),
+      email: new CapturingMailer(),
+      publicOrigin,
+    });
+    await service.createInvitation({
+      sessionId: 'session-admin-1-0', selectedMerchantId: 'merchant-a',
+      input: {
+        organizationId: 'org-a', email: 'invite@example.test', role: 'viewer',
+        expiresInSeconds: 3_600, correlationId: 'corr-list-create',
+      },
+    });
+
+    const members = await service.listMembers({
+      sessionId: 'session-admin-1-0', selectedMerchantId: 'merchant-a',
+      correlationId: 'corr-list-members',
+    });
+    const invitations = await service.listInvitations({
+      sessionId: 'session-admin-1-0', selectedMerchantId: 'merchant-a',
+      correlationId: 'corr-list-invitations',
+    });
+    expect(members).toMatchObject({
+      members: expect.arrayContaining([
+        expect.objectContaining({ id: 'membership-admin' }),
+        expect.objectContaining({ id: 'membership-viewer' }),
+      ]),
+    });
+    expect(invitations).toMatchObject({
+      invitations: [expect.objectContaining({ email: 'invite@example.test' })],
+    });
   });
 
   test('does not expose any private operator method through public fetch routes', async () => {
@@ -1814,6 +1995,14 @@ describe('private Identity operator service boundary', () => {
           organizationId: 'org-fault', email: 'invite@example.test', role: 'viewer',
           expiresInSeconds: 3_600, correlationId: 'corr-fault-create-invite',
         },
+      })],
+      ['listMembers', service.listMembers({
+        sessionId: 'session-fault', selectedMerchantId: 'merchant-fault',
+        correlationId: 'corr-fault-list-members',
+      })],
+      ['listInvitations', service.listInvitations({
+        sessionId: 'session-fault', selectedMerchantId: 'merchant-fault',
+        correlationId: 'corr-fault-list-invitations',
       })],
       ['retryInvite', service.retryInvitation({
         sessionId: 'session-fault', selectedMerchantId: 'merchant-fault',

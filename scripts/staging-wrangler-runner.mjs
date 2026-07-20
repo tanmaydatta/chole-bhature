@@ -7,8 +7,10 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import {
   loadIdentityStagingDevelopmentSecrets,
+  loadOperatorWebStagingDevelopmentSecrets,
   loadStagingConfiguration,
   renderIdentityStagingDevelopmentVars,
+  renderOperatorWebStagingDevelopmentVars,
   renderStagingWranglerConfig,
   stagingWranglerArguments,
 } from './staging-wrangler-config.mjs';
@@ -16,7 +18,7 @@ import {
 const defaultRepositoryRoot = fileURLToPath(new URL('../', import.meta.url));
 
 export function resolveAppWranglerInvocation(repositoryRoot, app) {
-  if (app !== 'api' && app !== 'identity') {
+  if (!['api', 'identity', 'operator-web'].includes(app)) {
     throw new Error('Unsupported staging Wrangler command.');
   }
   const entrypoint = path.join(
@@ -56,9 +58,13 @@ export async function runStagingWrangler({
     const appDirectory = path.join(repositoryRoot, 'apps', app ?? 'unsupported');
     const argumentsForWrangler = stagingWranglerArguments(app, action, 'CONFIG_PATH');
     const configuration = loadStagingConfiguration(environment);
-    const developmentSecrets = app === 'identity' && action === 'dev'
-      ? loadIdentityStagingDevelopmentSecrets(environment)
-      : null;
+    const developmentSecrets = action !== 'dev'
+      ? null
+      : app === 'identity'
+        ? { kind: 'identity', value: loadIdentityStagingDevelopmentSecrets(environment) }
+        : app === 'operator-web'
+          ? { kind: 'operator-web', value: loadOperatorWebStagingDevelopmentSecrets(environment) }
+          : null;
     const rendered = renderStagingWranglerConfig(app, configuration, repositoryRoot);
     temporaryDirectory = await mkdtemp(path.join(tmpdir(), 'incentives-staging-wrangler-'));
     const configPath = path.join(temporaryDirectory, `${app}.wrangler.toml`);
@@ -68,7 +74,9 @@ export async function runStagingWrangler({
       const devVarsPath = path.join(temporaryDirectory, '.dev.vars');
       await writeFile(
         devVarsPath,
-        renderIdentityStagingDevelopmentVars(developmentSecrets),
+        developmentSecrets.kind === 'identity'
+          ? renderIdentityStagingDevelopmentVars(developmentSecrets.value)
+          : renderOperatorWebStagingDevelopmentVars(developmentSecrets.value),
         { encoding: 'utf8', flag: 'wx', mode: 0o600 },
       );
       await chmod(devVarsPath, 0o600);
@@ -81,6 +89,7 @@ export async function runStagingWrangler({
     delete childEnvironment.AUTH_SECRET;
     delete childEnvironment.RESEND_API_KEY;
     delete childEnvironment.RESEND_FROM;
+    delete childEnvironment.OPERATOR_SELECTION_SECRET;
 
     const invocation = resolver(repositoryRoot, app);
     const result = spawn(

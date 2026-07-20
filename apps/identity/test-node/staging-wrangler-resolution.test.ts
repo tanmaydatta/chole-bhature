@@ -21,6 +21,7 @@ function validEnvironment(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv 
     STAGING_PRODUCT_D1_ID: 'd918b5cc-7ce4-4bf6-a33e-90c8335f2ef1',
     STAGING_AUTH_D1_ID: '6a65017f-df57-474e-bebb-e676e09377e5',
     STAGING_OPERATOR_ORIGIN: 'https://operator.staging.example.com',
+    STAGING_API_ORIGIN: 'https://api.staging.example.com',
     STAGING_PASSKEY_RP_ID: 'operator.staging.example.com',
     STAGING_ALLOWED_RECIPIENTS: '["operator@example.com"]',
     ...overrides,
@@ -84,7 +85,7 @@ describe('staging Wrangler executable resolution', () => {
   test('resolves app-local JavaScript entrypoints with the absolute Node executable', async () => {
     const repositoryRoot = await mkdtemp(path.join(tmpdir(), 'staging-resolver-repository-'));
     temporaryDirectories.push(repositoryRoot);
-    for (const app of ['api', 'identity']) {
+    for (const app of ['api', 'identity', 'operator-web']) {
       const bin = path.join(repositoryRoot, 'apps', app, 'node_modules/wrangler/bin');
       await mkdir(bin, { recursive: true });
       await writeFile(path.join(bin, 'wrangler.js'), '// fake Wrangler entrypoint\n');
@@ -94,6 +95,7 @@ describe('staging Wrangler executable resolution', () => {
       console.log(JSON.stringify({
         api: resolveAppWranglerInvocation(process.env.TEST_REPOSITORY_ROOT, 'api'),
         identity: resolveAppWranglerInvocation(process.env.TEST_REPOSITORY_ROOT, 'identity'),
+        operator: resolveAppWranglerInvocation(process.env.TEST_REPOSITORY_ROOT, 'operator-web'),
       }));
     `;
 
@@ -105,6 +107,7 @@ describe('staging Wrangler executable resolution', () => {
     const resolved = JSON.parse(result.stdout) as {
       api: { command: string; argumentsPrefix: string[] };
       identity: { command: string; argumentsPrefix: string[] };
+      operator: { command: string; argumentsPrefix: string[] };
     };
 
     expect(resolved.api).toEqual({
@@ -117,6 +120,12 @@ describe('staging Wrangler executable resolution', () => {
       command: process.execPath,
       argumentsPrefix: [
         path.join(repositoryRoot, 'apps/identity/node_modules/wrangler/bin/wrangler.js'),
+      ],
+    });
+    expect(resolved.operator).toEqual({
+      command: process.execPath,
+      argumentsPrefix: [
+        path.join(repositoryRoot, 'apps/operator-web/node_modules/wrangler/bin/wrangler.js'),
       ],
     });
   });

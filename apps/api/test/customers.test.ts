@@ -1,11 +1,18 @@
-import { ApiErrorSchema, type VariableDefinition } from '@incentives/contracts';
-import { SELF } from 'cloudflare:test';
+import {
+  ApiErrorSchema,
+  type OperatorCallContext,
+  type VariableDefinition,
+} from '@incentives/contracts';
+import { createExecutionContext, SELF } from 'cloudflare:test';
 import { env } from 'cloudflare:workers';
-import { beforeEach, describe, expect, test } from 'vitest';
+import { beforeEach, describe, expect, test, vi } from 'vitest';
 
 import { SEEDED_MERCHANT_ID } from './test-credentials.js';
+import type { Env } from '../src/env.js';
 import { createRepositories } from '../src/repositories/d1-repositories.js';
 import type { CustomerRecord } from '../src/repositories/types.js';
+import * as customerServices from '../src/services/customer-service.js';
+import { CoreOperatorService } from '../src/worker.js';
 
 const publishedAt = '2026-07-18T12:00:00.000Z';
 
@@ -121,6 +128,8 @@ async function seedPublishedSchema(
 
 async function resetCustomerData(): Promise<void> {
   await env.DB.batch([
+    env.DB.prepare('DROP TRIGGER IF EXISTS fail_customer_upsert_audit'),
+    env.DB.prepare('DELETE FROM product_audit'),
     env.DB.prepare('DELETE FROM redemptions'),
     env.DB.prepare('DELETE FROM evaluation_decisions'),
     env.DB.prepare('DELETE FROM customers'),
@@ -129,6 +138,20 @@ async function resetCustomerData(): Promise<void> {
     env.DB.prepare("DELETE FROM merchants WHERE id <> 'phase-0-merchant'"),
   ]);
   await seedPublishedSchema();
+}
+
+function operatorContext(
+  actorKind: 'root' | 'member',
+  actorUserId: string,
+  correlationId: string,
+): OperatorCallContext {
+  return {
+    correlationId,
+    actorUserId,
+    actorKind,
+    merchantId: SEEDED_MERCHANT_ID,
+    permission: 'customers:manage',
+  };
 }
 
 describe('customer profile API', () => {
@@ -335,5 +358,111 @@ describe('customer profile API', () => {
       403,
       'FORBIDDEN',
     );
+  });
+});
+
+describe('private operator customer mutation provenance', () => {
+  beforeEach(resetCustomerData);
+
+  test('passes the exact operator context into one fake atomic customer/audit repository call', async () => {
+    const createOperatorCustomerMutationService = Reflect.get(
+      customerServices,
+      'createOperatorCustomerMutationService',
+    ) as undefined | ((repositories: unknown) => {
+      upsert(context: OperatorCallContext, customerRef: string, input: unknown): Promise<unknown>;
+    });
+    expect(createOperatorCustomerMutationService).toBeTypeOf('function');
+    if (!createOperatorCustomerMutationService) return;
+    const upsertWithAudit = vi.fn(async () => ({
+      externalRef: 'customer-fake', attributes: validAttributes,
+      version: 1, updatedAt: publishedAt,
+    }));
+    const service = createOperatorCustomerMutationService({
+      schemas: {
+        getLatestVersion: vi.fn(async () => ({ definitions: customerDefinitions })),
+      },
+      customers: { upsertWithAudit },
+    });
+    const context = operatorContext('root', 'root-exact', 'corr-customer-fake');
+
+    await service.upsert(context, 'customer-fake', { attributes: validAttributes });
+
+    expect(upsertWithAudit).toHaveBeenCalledTimes(1);
+    const [mutation, audit] = upsertWithAudit.mock.calls[0] ?? [];
+    expect(mutation).toMatchObject({
+      merchantId: SEEDED_MERCHANT_ID,
+      externalRef: 'customer-fake',
+      attributes: validAttributes,
+    });
+    expect(audit).toMatchObject({
+      actorKind: 'root', actorId: 'root-exact', merchantId: SEEDED_MERCHANT_ID,
+      action: 'customer.upserted', targetType: 'customer', targetId: 'customer-fake',
+      outcome: 'succeeded', correlationId: 'corr-customer-fake',
+    });
+    expect(JSON.stringify(audit)).not.toContain('tier');
+    expect(JSON.stringify(audit)).not.toContain('Ada');
+  });
+
+  test.each([
+    ['root', 'root-operator', 'corr-customer-root'],
+    ['member', 'member-operator', 'corr-customer-member'],
+  ] as const)('persists exact %s operator provenance without customer attributes', async (
+    actorKind,
+    actorUserId,
+    correlationId,
+  ) => {
+    const service = new CoreOperatorService(createExecutionContext(), env as Env);
+
+    await service.upsertCustomer(
+      operatorContext(actorKind, actorUserId, correlationId),
+      `customer-${actorKind}`,
+      { attributes: validAttributes },
+    );
+
+    const row = await env.DB.prepare(`
+      SELECT actor_kind AS actorKind, actor_id AS actorId, merchant_id AS merchantId,
+        action, target_type AS targetType, target_id AS targetId,
+        outcome, correlation_id AS correlationId, metadata_json AS metadataJson
+      FROM product_audit WHERE correlation_id = ?1
+    `).bind(correlationId).first<Record<string, string | null>>();
+    expect(row).toEqual({
+      actorKind,
+      actorId: actorUserId,
+      merchantId: SEEDED_MERCHANT_ID,
+      action: 'customer.upserted',
+      targetType: 'customer',
+      targetId: `customer-${actorKind}`,
+      outcome: 'succeeded',
+      correlationId,
+      metadataJson: null,
+    });
+    expect(JSON.stringify(row)).not.toContain('Ada');
+    expect(JSON.stringify(row)).not.toContain('tier');
+  });
+
+  test('rolls back the real D1 customer mutation when its audit insert fails', async () => {
+    await env.DB.prepare(`
+      CREATE TRIGGER fail_customer_upsert_audit
+      BEFORE INSERT ON product_audit
+      WHEN NEW.action = 'customer.upserted'
+      BEGIN
+        SELECT RAISE(ABORT, 'forced customer audit failure');
+      END
+    `).run();
+    const service = new CoreOperatorService(createExecutionContext(), env as Env);
+
+    await expect(service.upsertCustomer(
+      operatorContext('member', 'member-rollback', 'corr-customer-rollback'),
+      'customer-rollback',
+      { attributes: validAttributes },
+    )).rejects.toThrow(/forced customer audit failure/u);
+
+    expect(await env.DB.prepare(`
+      SELECT COUNT(*) AS count FROM customers WHERE external_ref = 'customer-rollback'
+    `).first()).toEqual({ count: 0 });
+    expect(await env.DB.prepare(`
+      SELECT COUNT(*) AS count FROM product_audit
+      WHERE correlation_id = 'corr-customer-rollback'
+    `).first()).toEqual({ count: 0 });
   });
 });

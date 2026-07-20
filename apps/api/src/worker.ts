@@ -4,6 +4,8 @@ import {
   ApiCredentialViewSchema,
   CoreMerchantActivationResultSchema,
   CoreMerchantProvisionResultSchema,
+  CustomerPatchRequestSchema,
+  CustomerRecordSchema,
   MerchantActivationRequestSchema,
   MerchantActivationResultSchema,
   MerchantProvisionRequestSchema,
@@ -19,6 +21,7 @@ import {
   SchemaPublicationResultSchema,
   VariableDefinitionSchema,
   type ApiCredentialCreateInput,
+  type CustomerPatchRequest,
   type MerchantActivationRequest,
   type MerchantProvisionRequest,
   type OperatorCallContext,
@@ -30,7 +33,9 @@ import { WorkerEntrypoint } from 'cloudflare:workers';
 
 import { createApp } from './app.js';
 import { MerchantIdentityConflictError } from './errors/merchant-errors.js';
+import { requireOperatorContext } from './auth/operator-context.js';
 import type { Env } from './env.js';
+import { createRepositories } from './repositories/d1-repositories.js';
 import {
   createCredential,
   listCredentials,
@@ -56,6 +61,10 @@ import {
   publishSchema,
   updateSchemaDefinition,
 } from './routes/schemas.js';
+import {
+  createCustomerService,
+  createOperatorCustomerMutationService,
+} from './services/customer-service.js';
 
 function coreMerchantFailure(error: unknown) {
   if (error instanceof MerchantIdentityConflictError) {
@@ -133,6 +142,30 @@ export class CoreOperatorService extends WorkerEntrypoint<Env> {
       this.env,
       OperatorCallContextSchema.parse(context),
       z.string().min(1).parse(credentialId),
+    ));
+  }
+
+  async getCustomer(context: OperatorCallContext, customerRef: string) {
+    const operator = requireOperatorContext(
+      OperatorCallContextSchema.parse(context),
+      'customers:read',
+    );
+    return CustomerRecordSchema.parse(await createCustomerService(
+      createRepositories(this.env),
+    ).get(operator.merchantId, z.string().min(1).parse(customerRef)));
+  }
+
+  async upsertCustomer(
+    context: OperatorCallContext,
+    customerRef: string,
+    input: CustomerPatchRequest,
+  ) {
+    return CustomerRecordSchema.parse(await createOperatorCustomerMutationService(
+      createRepositories(this.env),
+    ).upsert(
+      OperatorCallContextSchema.parse(context),
+      z.string().min(1).parse(customerRef),
+      CustomerPatchRequestSchema.parse(input),
     ));
   }
 

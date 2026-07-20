@@ -17,6 +17,9 @@ STAGING_ALLOWED_RECIPIENTS = "[]"
 PASSKEY_RP_ID = "localhost"
 PASSKEY_RP_NAME = "Incentives Operator (Local)"
 
+[dev]
+port = 8788
+
 [[d1_databases]]
 binding = "AUTH_DB"
 database_name = "incentives-auth-local"

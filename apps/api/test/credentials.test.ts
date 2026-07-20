@@ -267,6 +267,48 @@ describe('private Core operator credential service', () => {
     })).rejects.toMatchObject({ name: 'ZodError' });
   });
 
+  test.each([
+    {
+      label: 'duplicate scopes',
+      input: {
+        name: 'Duplicate scopes', environment: 'production', kind: 'secret' as const,
+        scopes: ['schema:read', 'schema:read'] as ApiCredentialScope[],
+      },
+    },
+    {
+      label: 'duplicate origins',
+      input: {
+        name: 'Duplicate origins', environment: 'production', kind: 'publishable' as const,
+        scopes: ['schema:read'] as ApiCredentialScope[],
+        allowedOrigins: ['https://shop.example', 'https://shop.example'],
+      },
+    },
+    {
+      label: 'scope incompatible with credential kind',
+      input: {
+        name: 'Browser customer writer', environment: 'production', kind: 'publishable' as const,
+        scopes: ['customers:write'] as ApiCredentialScope[],
+        allowedOrigins: ['https://shop.example'],
+      },
+    },
+    {
+      label: 'production browser key without an origin',
+      input: {
+        name: 'Originless browser key', environment: 'production', kind: 'publishable' as const,
+        scopes: ['schema:read'] as ApiCredentialScope[], allowedOrigins: [],
+      },
+    },
+  ])('throws a stable non-retryable CredentialPolicyError for $label', async ({ input }) => {
+    await expect(operatorService().createCredential(
+      operatorContext('merchant-a'), input,
+    )).rejects.toMatchObject({
+      name: 'CredentialPolicyError',
+      code: 'CREDENTIAL_POLICY_FAILED',
+      status: 400,
+      retryable: false,
+    });
+  });
+
   test('shows random credential material once and persists only safe metadata plus its digest', async () => {
     await provisionActiveMerchant('merchant-a');
     const created = await createCredential('merchant-a', {

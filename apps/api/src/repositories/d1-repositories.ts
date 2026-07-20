@@ -548,12 +548,56 @@ function parseCredentialAudit(
   return audit;
 }
 
+function parseCustomerAudit(
+  input: unknown,
+  expected: { merchantId: string; targetId: string },
+) {
+  const audit = AuditEntrySchema.parse(input);
+  if (
+    audit.action !== 'customer.upserted'
+    || audit.targetType !== 'customer'
+    || audit.merchantId !== expected.merchantId
+    || audit.targetId !== expected.targetId
+    || audit.outcome !== 'succeeded'
+    || !['root', 'member'].includes(audit.actorKind)
+    || audit.metadata !== undefined
+  ) {
+    throw new Error('Customer audit does not match its mutation');
+  }
+  return audit;
+}
+
 function auditInsertStatement(env: Env, entry: ReturnType<typeof AuditEntrySchema.parse>) {
   return env.DB.prepare(`
     INSERT INTO product_audit (
       id, occurred_at, actor_kind, actor_id, merchant_id, action,
       target_type, target_id, outcome, correlation_id, metadata_json
     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+  `).bind(
+    entry.id,
+    entry.occurredAt,
+    entry.actorKind,
+    entry.actorId,
+    entry.merchantId ?? null,
+    entry.action,
+    entry.targetType,
+    entry.targetId,
+    entry.outcome,
+    entry.correlationId,
+    entry.metadata === undefined ? null : canonicalJson(entry.metadata),
+  );
+}
+
+function conditionalAuditInsertStatement(
+  env: Env,
+  entry: ReturnType<typeof AuditEntrySchema.parse>,
+) {
+  return env.DB.prepare(`
+    INSERT INTO product_audit (
+      id, occurred_at, actor_kind, actor_id, merchant_id, action,
+      target_type, target_id, outcome, correlation_id, metadata_json
+    ) SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11
+    WHERE changes() = 1
   `).bind(
     entry.id,
     entry.occurredAt,
@@ -1814,6 +1858,63 @@ export function createRepositories(env: Env): Repositories {
 
         if (row === undefined) throw new OptimisticVersionConflictError();
         return customerFromRow(row);
+      },
+
+      async upsertWithAudit(input: CustomerUpsert, auditInput) {
+        canonicalJson({
+          externalRef: input.externalRef,
+          attributes: input.attributes,
+        });
+        const snapshot = CustomerSnapshotSchema.parse({
+          externalRef: input.externalRef,
+          attributes: input.attributes,
+        });
+        const merchantId = z.string().min(1).parse(input.merchantId);
+        const updatedAt = DateTimeSchema.parse(input.updatedAt ?? now());
+        const audit = parseCustomerAudit(auditInput, {
+          merchantId,
+          targetId: snapshot.externalRef,
+        });
+        let results: D1Result[];
+
+        if (input.expectedVersion === undefined) {
+          try {
+            results = await env.DB.batch([
+              env.DB.prepare(`
+                INSERT INTO customers (
+                  id, merchant_id, external_ref, attributes_json, version, updated_at
+                ) VALUES (?1, ?2, ?3, ?4, 1, ?5)
+              `).bind(
+                crypto.randomUUID(), merchantId, snapshot.externalRef,
+                canonicalJson(snapshot.attributes), updatedAt,
+              ),
+              conditionalAuditInsertStatement(env, audit),
+            ]);
+          } catch (error) {
+            if (await getCustomer(merchantId, snapshot.externalRef) !== null) {
+              throw new OptimisticVersionConflictError();
+            }
+            throw error;
+          }
+        } else {
+          const expectedVersion = PositiveIntegerSchema.parse(input.expectedVersion);
+          results = await env.DB.batch([
+            env.DB.prepare(`
+              UPDATE customers
+              SET attributes_json = ?1, version = ?2, updated_at = ?3
+              WHERE merchant_id = ?4 AND external_ref = ?5 AND version = ?6
+            `).bind(
+              canonicalJson(snapshot.attributes), expectedVersion + 1, updatedAt,
+              merchantId, snapshot.externalRef, expectedVersion,
+            ),
+            conditionalAuditInsertStatement(env, audit),
+          ]);
+        }
+
+        if (results[1]?.meta.changes !== 1) throw new OptimisticVersionConflictError();
+        const stored = await getCustomer(merchantId, snapshot.externalRef);
+        if (stored === null) throw new Error('Customer mutation did not produce a readable row');
+        return stored;
       },
     },
 

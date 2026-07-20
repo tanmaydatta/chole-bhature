@@ -6,9 +6,16 @@ import {
   IdentityChangeMemberRoleRequestSchema,
   IdentityCreateInvitationRequestSchema,
   IdentityGetProvisioningRequestSchema,
+  IdentityClientsResponseSchema,
+  IdentityInvitationsResponseSchema,
+  IdentityListInvitationsRequestSchema,
+  IdentityListMembersRequestSchema,
+  IdentityMembersResponseSchema,
   IdentityProvisionClientRequestSchema,
   IdentityRemoveMemberRequestSchema,
   IdentityResolvePrincipalRequestSchema,
+  IdentityRootSessionProvisioningRequestSchema,
+  IdentityRootSessionRequestSchema,
   IdentityRetryInvitationRequestSchema,
   InvitationViewSchema,
   MembershipViewSchema,
@@ -126,6 +133,20 @@ export function createIdentityOperatorService(options: IdentityOperatorServiceOp
     return failure(correlationId, 'FORBIDDEN', 'Operation is not permitted');
   }
 
+  async function rootPrincipalFor(
+    sessionId: string,
+    correlationId: string,
+  ): Promise<OperatorPrincipal | ApiError> {
+    const principal = await organizations.resolvePrincipal(sessionId);
+    if (!principal) {
+      await auditDenial(options.database, null, correlationId);
+      return failure(correlationId, 'UNAUTHORIZED', 'Authentication is required');
+    }
+    if (principal.platformRole === 'root') return OperatorPrincipalSchema.parse(principal);
+    await auditDenial(options.database, principal, correlationId);
+    return failure(correlationId, 'FORBIDDEN', 'Operation is not permitted');
+  }
+
   function parseFailure(input: unknown): ApiError {
     return failure(
       correlationIdFrom(input),
@@ -136,7 +157,7 @@ export function createIdentityOperatorService(options: IdentityOperatorServiceOp
 
   async function requirePermission(
     principal: OperatorPrincipal,
-    permission: 'members:manage' | 'credentials:manage',
+    permission: 'members:read' | 'members:manage' | 'credentials:manage',
     merchantId: string,
     correlationId: string,
   ): Promise<ApiError | null> {
@@ -246,6 +267,32 @@ export function createIdentityOperatorService(options: IdentityOperatorServiceOp
       return ClientProvisioningViewSchema.parse(row);
     },
 
+    async listClients(rawInput: unknown) {
+      const parsed = IdentityRootSessionRequestSchema.safeParse(rawInput);
+      if (!parsed.success) return parseFailure(rawInput);
+      const principal = await rootPrincipalFor(parsed.data.sessionId, parsed.data.correlationId);
+      if ('error' in principal) return principal;
+      return IdentityClientsResponseSchema.parse({
+        clients: await organizations.listProvisionings(),
+      });
+    },
+
+    async getProvisioningForRoot(rawInput: unknown) {
+      const parsed = IdentityRootSessionProvisioningRequestSchema.safeParse(rawInput);
+      if (!parsed.success) return parseFailure(rawInput);
+      const principal = await rootPrincipalFor(parsed.data.sessionId, parsed.data.correlationId);
+      if ('error' in principal) return principal;
+      const row = await organizations.getProvisioning(parsed.data.provisioningId);
+      if (!row) {
+        return failure(
+          parsed.data.correlationId,
+          'OPERATION_FAILED',
+          'Operation could not be completed',
+        );
+      }
+      return ClientProvisioningViewSchema.parse(row);
+    },
+
     async createInvitation(rawInput: unknown) {
       const parsed = IdentityCreateInvitationRequestSchema.safeParse(rawInput);
       if (!parsed.success) return parseFailure(rawInput);
@@ -274,6 +321,77 @@ export function createIdentityOperatorService(options: IdentityOperatorServiceOp
           'Operation could not be completed',
         );
       }
+    },
+
+    async listMembers(rawInput: unknown) {
+      const parsed = IdentityListMembersRequestSchema.safeParse(rawInput);
+      if (!parsed.success) return parseFailure(rawInput);
+      const principal = await principalFor(
+        parsed.data.sessionId,
+        parsed.data.selectedMerchantId,
+        parsed.data.correlationId,
+      );
+      if ('error' in principal) return principal;
+      const denied = await requirePermission(
+        principal,
+        'members:read',
+        parsed.data.selectedMerchantId,
+        parsed.data.correlationId,
+      );
+      if (denied) return denied;
+      const rows = await options.database.prepare(`
+        SELECT memberships.id, memberships.organization_id AS organizationId,
+          memberships.user_id AS userId, memberships.role, memberships.status
+        FROM memberships
+        INNER JOIN organizations ON organizations.id = memberships.organization_id
+        WHERE organizations.merchant_id = ?1 AND organizations.status = 'active'
+        ORDER BY memberships.id
+      `).bind(parsed.data.selectedMerchantId).all();
+      return IdentityMembersResponseSchema.parse({ members: rows.results });
+    },
+
+    async listInvitations(rawInput: unknown) {
+      const parsed = IdentityListInvitationsRequestSchema.safeParse(rawInput);
+      if (!parsed.success) return parseFailure(rawInput);
+      const principal = await principalFor(
+        parsed.data.sessionId,
+        parsed.data.selectedMerchantId,
+        parsed.data.correlationId,
+      );
+      if ('error' in principal) return principal;
+      const denied = await requirePermission(
+        principal,
+        'members:read',
+        parsed.data.selectedMerchantId,
+        parsed.data.correlationId,
+      );
+      if (denied) return denied;
+      const rows = await options.database.prepare(`
+        SELECT invitations.id, invitations.organization_id AS organizationId,
+          invitations.email, invitations.role, invitations.status,
+          invitations.expires_at AS expiresAt
+        FROM invitations
+        INNER JOIN organizations ON organizations.id = invitations.organization_id
+        WHERE organizations.merchant_id = ?1 AND organizations.status = 'active'
+        ORDER BY invitations.id
+      `).bind(parsed.data.selectedMerchantId).all<{
+        id: string;
+        organizationId: string;
+        email: string;
+        role: 'admin' | 'operator' | 'viewer';
+        status: 'pending' | 'sent' | 'delivery_failed' | 'accepted' | 'revoked' | 'expired';
+        expiresAt: number;
+      }>();
+      return IdentityInvitationsResponseSchema.parse({
+        invitations: rows.results.map(row => ({
+          ...row,
+          status: row.expiresAt <= Date.now() && ['pending', 'sent', 'delivery_failed']
+            .includes(row.status)
+            ? 'expired'
+            : row.status,
+          expiresAt: new Date(row.expiresAt).toISOString(),
+        })),
+      });
     },
 
     async retryInvitation(rawInput: unknown) {
@@ -405,8 +523,20 @@ export function createIdentityOperatorService(options: IdentityOperatorServiceOp
     getProvisioning: (input: unknown) => normalizeRpc(
       input, () => unsafeService.getProvisioning(input),
     ),
+    listClients: (input: unknown) => normalizeRpc(
+      input, () => unsafeService.listClients(input),
+    ),
+    getProvisioningForRoot: (input: unknown) => normalizeRpc(
+      input, () => unsafeService.getProvisioningForRoot(input),
+    ),
     createInvitation: (input: unknown) => normalizeRpc(
       input, () => unsafeService.createInvitation(input),
+    ),
+    listMembers: (input: unknown) => normalizeRpc(
+      input, () => unsafeService.listMembers(input),
+    ),
+    listInvitations: (input: unknown) => normalizeRpc(
+      input, () => unsafeService.listInvitations(input),
     ),
     retryInvitation: (input: unknown) => normalizeRpc(
       input, () => unsafeService.retryInvitation(input),

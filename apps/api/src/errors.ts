@@ -115,6 +115,16 @@ export class ContextValidationError extends ApiFailure {
   }
 }
 
+export class CredentialPolicyError extends ApiFailure {
+  override readonly name = 'CredentialPolicyError';
+  readonly code = 'CREDENTIAL_POLICY_FAILED';
+  readonly status = 400;
+
+  constructor() {
+    super('Credential policy validation failed');
+  }
+}
+
 interface MappedFailure {
   status: ContentfulStatusCode;
   error: ApiError['error'];

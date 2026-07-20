@@ -64,12 +64,16 @@ describe('local and staging worker topology', () => {
       STAGING_PRODUCT_D1_ID: productDatabaseId,
       STAGING_AUTH_D1_ID: authDatabaseId,
       STAGING_OPERATOR_ORIGIN: 'https://operator.staging.example.com',
+      STAGING_API_ORIGIN: 'https://api.staging.example.com',
       STAGING_PASSKEY_RP_ID: 'operator.staging.example.com',
       STAGING_ALLOWED_RECIPIENTS: '["operator@example.com"]',
     });
     const apiStaging = renderStagingWranglerConfig('api', configuration, '/repository');
     const identityStaging = renderStagingWranglerConfig(
       'identity', configuration, '/repository',
+    );
+    const operatorStaging = renderStagingWranglerConfig(
+      'operator-web', configuration, '/repository',
     );
 
     expect(value(apiStaging, 'name')).toBe('incentives-api-staging');
@@ -89,6 +93,15 @@ describe('local and staging worker topology', () => {
       .toBe('https://operator.staging.example.com');
     expect(value(section(identityStaging, 'vars'), 'PASSKEY_RP_ID'))
       .toBe('operator.staging.example.com');
+    expect(apiStaging.match(/^routes\s*=/gmu) ?? []).toHaveLength(1);
+    expect(apiStaging).toContain(
+      'routes = [{ pattern = "api.staging.example.com", custom_domain = true }]',
+    );
+    expect(operatorStaging.match(/^routes\s*=/gmu) ?? []).toHaveLength(1);
+    expect(operatorStaging).toContain(
+      'routes = [{ pattern = "operator.staging.example.com", custom_domain = true }]',
+    );
+    expect(identityStaging).not.toMatch(/^routes\s*=/mu);
   });
 
   test('provides explicit local and staging commands without declaring production', () => {

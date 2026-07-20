@@ -9,7 +9,7 @@ import { z } from 'zod';
 
 import { requireOperatorContext } from '../auth/operator-context.js';
 import type { Env } from '../env.js';
-import { NotFoundError } from '../errors.js';
+import { CredentialPolicyError, NotFoundError } from '../errors.js';
 import { createRepositories } from '../repositories/d1-repositories.js';
 
 const encoder = new TextEncoder();
@@ -36,18 +36,18 @@ function assertCredentialPolicy(
   allowedOrigins: string[],
   environment: 'local' | 'staging' | 'production',
 ): void {
-  if (!unique(scopes) || !unique(allowedOrigins)) throw new Error('Credential policy has duplicates');
+  if (!unique(scopes) || !unique(allowedOrigins)) throw new CredentialPolicyError();
   const allowedScopes: ReadonlySet<ApiCredentialScope> = kind === 'publishable'
     ? new Set(['schema:read', 'evaluations:write'])
     : new Set(['schema:read', 'customers:write', 'evaluations:write', 'redemptions:write']);
   if (scopes.some(scope => !allowedScopes.has(scope))) {
-    throw new Error('Credential kind cannot receive one or more requested scopes');
+    throw new CredentialPolicyError();
   }
   if (kind === 'secret' && allowedOrigins.length > 0) {
-    throw new Error('Secret credentials cannot configure browser origins');
+    throw new CredentialPolicyError();
   }
   if (kind === 'publishable' && environment === 'production' && allowedOrigins.length === 0) {
-    throw new Error('Production publishable credentials require an allowed origin');
+    throw new CredentialPolicyError();
   }
 }
 

@@ -26,13 +26,13 @@ function databaseId(environment, key) {
   return value;
 }
 
-function operatorOrigin(environment) {
-  const raw = required(environment, 'STAGING_OPERATOR_ORIGIN');
+function publicOrigin(environment, key) {
+  const raw = required(environment, key);
   let parsed;
   try {
     parsed = new URL(raw);
   } catch {
-    throw new Error('STAGING_OPERATOR_ORIGIN must be a valid HTTPS origin.');
+    throw new Error(`${key} must be a valid HTTPS origin.`);
   }
   if (
     parsed.protocol !== 'https:'
@@ -44,7 +44,7 @@ function operatorOrigin(environment) {
     || parsed.hostname === 'invalid'
     || parsed.hostname.endsWith('.invalid')
   ) {
-    throw new Error('STAGING_OPERATOR_ORIGIN must be a real HTTPS origin without a path.');
+    throw new Error(`${key} must be a real HTTPS origin without a path.`);
   }
   return parsed.origin;
 }
@@ -91,11 +91,16 @@ export function loadStagingConfiguration(environment) {
   if (productDatabaseId === authDatabaseId) {
     throw new Error('Product and Auth staging D1 IDs must be different.');
   }
-  const origin = operatorOrigin(environment);
+  const origin = publicOrigin(environment, 'STAGING_OPERATOR_ORIGIN');
+  const apiOrigin = publicOrigin(environment, 'STAGING_API_ORIGIN');
+  if (apiOrigin === origin) {
+    throw new Error('STAGING_API_ORIGIN must differ from STAGING_OPERATOR_ORIGIN.');
+  }
   return Object.freeze({
     productDatabaseId,
     authDatabaseId,
     operatorOrigin: origin,
+    apiOrigin,
     passkeyRpId: passkeyRpId(environment, origin),
     allowedRecipients: allowedRecipients(environment),
   });
@@ -113,10 +118,25 @@ export function loadIdentityStagingDevelopmentSecrets(environment) {
   });
 }
 
+export function loadOperatorWebStagingDevelopmentSecrets(environment) {
+  const operatorSelectionSecret = required(environment, 'OPERATOR_SELECTION_SECRET');
+  if (operatorSelectionSecret.length < 32) {
+    throw new Error(
+      'OPERATOR_SELECTION_SECRET must contain at least 32 characters for staging development.',
+    );
+  }
+  return Object.freeze({ operatorSelectionSecret });
+}
+
 export function renderIdentityStagingDevelopmentVars(secrets) {
   return `AUTH_SECRET=${JSON.stringify(secrets.authSecret)}
 RESEND_API_KEY=${JSON.stringify(secrets.resendApiKey)}
 RESEND_FROM=${JSON.stringify(secrets.resendFrom)}
+`;
+}
+
+export function renderOperatorWebStagingDevelopmentVars(secrets) {
+  return `OPERATOR_SELECTION_SECRET=${JSON.stringify(secrets.operatorSelectionSecret)}
 `;
 }
 
@@ -129,12 +149,48 @@ export function renderStagingWranglerConfig(app, configuration, repositoryRoot) 
     return `name = "incentives-api-staging"
 main = ${tomlString(path.join(repositoryRoot, 'apps/api/src/worker.ts'))}
 compatibility_date = "2026-07-18"
+workers_dev = false
+preview_urls = false
+routes = [{ pattern = ${tomlString(new URL(configuration.apiOrigin).hostname)}, custom_domain = true }]
 
 [[d1_databases]]
 binding = "DB"
 database_name = "incentives-staging"
 database_id = "${configuration.productDatabaseId}"
 migrations_dir = ${tomlString(path.join(repositoryRoot, 'apps/api/migrations'))}
+`;
+  }
+  if (app === 'operator-web') {
+    return `name = "incentives-operator-web-staging"
+main = ${tomlString(path.join(repositoryRoot, 'apps/operator-web/src/worker.ts'))}
+compatibility_date = "2026-07-20"
+workers_dev = false
+preview_urls = false
+routes = [{ pattern = ${tomlString(new URL(configuration.operatorOrigin).hostname)}, custom_domain = true }]
+
+[vars]
+APP_ENV = "staging"
+PUBLIC_APP_ORIGIN = ${tomlString(configuration.operatorOrigin)}
+
+[[services]]
+binding = "IDENTITY_AUTH"
+service = "incentives-identity-staging"
+
+[[services]]
+binding = "IDENTITY"
+service = "incentives-identity-staging"
+entrypoint = "IdentityOperatorService"
+
+[[services]]
+binding = "CORE"
+service = "incentives-api-staging"
+entrypoint = "CoreOperatorService"
+
+[assets]
+directory = ${tomlString(path.join(repositoryRoot, 'apps/dashboard/dist'))}
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+run_worker_first = ["/auth/*", "/internal/*", "/operator/v1/*"]
 `;
   }
   if (app !== 'identity') throw new Error('Unsupported staging application.');
@@ -171,7 +227,11 @@ entrypoint = "CoreOperatorService"
 }
 
 export function stagingWranglerArguments(app, action, configPath) {
-  if (!['api', 'identity'].includes(app) || !['dev', 'migrate', 'deploy'].includes(action)) {
+  if (
+    !['api', 'identity', 'operator-web'].includes(app)
+    || !['dev', 'migrate', 'deploy'].includes(action)
+    || (app === 'operator-web' && action === 'migrate')
+  ) {
     throw new Error('Unsupported staging Wrangler command.');
   }
   if (action === 'dev') return ['dev', '--remote', '--config', configPath];

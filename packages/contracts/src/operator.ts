@@ -142,11 +142,45 @@ const SessionAuthenticatedRequestSchema = z.object({
   selectedMerchantId: z.string().min(1),
 }).strict();
 
+const BrowserSessionAuthenticatedRequestSchema = z.object({
+  cookieHeader: z.string().max(8192),
+  selectedMerchantId: z.string().min(1).max(200).optional(),
+  correlationId: z.string().min(1).max(200),
+}).strict();
+
+export const IdentityRootBrowserRequestSchema = z.object({
+  cookieHeader: z.string().max(8192),
+  correlationId: z.string().min(1).max(200),
+}).strict();
+
+export const IdentityRootProvisioningRequestSchema = IdentityRootBrowserRequestSchema.extend({
+  provisioningId: z.string().min(1).max(200),
+}).strict();
+
+export const IdentityRootSessionRequestSchema = z.object({
+  sessionId: z.string().min(1),
+  correlationId: z.string().min(1).max(200),
+}).strict();
+
+export const IdentityRootSessionProvisioningRequestSchema =
+  IdentityRootSessionRequestSchema.extend({
+    provisioningId: z.string().min(1).max(200),
+  }).strict();
+
 export const IdentityResolvePrincipalRequestSchema = z.object({
   sessionId: z.string().min(1),
   selectedMerchantId: z.string().min(1).optional(),
   correlationId: z.string().min(1),
 }).strict();
+
+export const IdentityResolveBrowserPrincipalRequestSchema =
+  BrowserSessionAuthenticatedRequestSchema;
+
+export const IdentityListMembersRequestSchema = SessionAuthenticatedRequestSchema.extend({
+  correlationId: z.string().min(1),
+}).strict();
+
+export const IdentityListInvitationsRequestSchema = IdentityListMembersRequestSchema;
 
 export const IdentityProvisionClientRequestSchema = SessionAuthenticatedRequestSchema.extend({
   input: ClientProvisionInputSchema,
@@ -198,6 +232,21 @@ export type InvitationView = z.infer<typeof InvitationViewSchema>;
 export type AcceptInvitationInput = z.infer<typeof AcceptInvitationInputSchema>;
 export type MembershipView = z.infer<typeof MembershipViewSchema>;
 export type IdentityResolvePrincipalRequest = z.infer<typeof IdentityResolvePrincipalRequestSchema>;
+export type IdentityRootBrowserRequest = z.infer<typeof IdentityRootBrowserRequestSchema>;
+export type IdentityRootProvisioningRequest = z.infer<
+  typeof IdentityRootProvisioningRequestSchema
+>;
+export type IdentityRootSessionRequest = z.infer<typeof IdentityRootSessionRequestSchema>;
+export type IdentityRootSessionProvisioningRequest = z.infer<
+  typeof IdentityRootSessionProvisioningRequestSchema
+>;
+export type IdentityResolveBrowserPrincipalRequest = z.infer<
+  typeof IdentityResolveBrowserPrincipalRequestSchema
+>;
+export type IdentityListMembersRequest = z.infer<typeof IdentityListMembersRequestSchema>;
+export type IdentityListInvitationsRequest = z.infer<
+  typeof IdentityListInvitationsRequestSchema
+>;
 export type IdentityProvisionClientRequest = z.infer<typeof IdentityProvisionClientRequestSchema>;
 export type IdentityGetProvisioningRequest = z.infer<typeof IdentityGetProvisioningRequestSchema>;
 export type IdentityCreateInvitationRequest = z.infer<typeof IdentityCreateInvitationRequestSchema>;

@@ -196,7 +196,7 @@
 - [ ] Run tests/build/lint and inspect generated Wrangler bindings; expect no D1 binding.
 - [ ] Commit with `git commit -m "feat: add operator web gateway"`.
 
-### Task 8: Wire authentication, root, team, credentials, and audit dashboard surfaces
+### Task 8: Wire authentication, root, team, and credential dashboard surfaces
 
 **Files:**
 - Create: `apps/dashboard/src/lib/bff-client.ts`
@@ -204,13 +204,12 @@
 - Create: `apps/dashboard/src/pages/platform/*`
 - Create: `apps/dashboard/src/pages/settings/Team.tsx`
 - Create: `apps/dashboard/src/pages/settings/Credentials.tsx`
-- Create: `apps/dashboard/src/pages/settings/Audit.tsx`
 - Modify: `apps/dashboard/src/App.tsx`
 - Modify: `apps/dashboard/src/components/layout/AppShell.tsx`
 - Test: `apps/dashboard/src/pages/OperatorAccessFlow.test.tsx`
 
 **Interfaces:**
-- Produces invite acceptance/sign-in, root provisioning/merchant switcher/banner, fixed role management, show-once keys, and merged audit views.
+- Produces invite acceptance/sign-in, root provisioning/merchant switcher/banner, fixed role management, and show-once keys.
 
 - [ ] Write mocked-BFF tests for root and each client role, last-Admin errors, key show-once/rotation/revocation, and demo markers.
 - [ ] Run the focused test; expect missing authenticated routes.
@@ -295,16 +294,24 @@
 - Create: `apps/identity/src/services/audit.ts`
 - Create: `apps/api/src/services/audit-service.ts`
 - Create: `apps/operator-web/src/routes/audit.ts`
+- Modify: `apps/dashboard/src/lib/bff-client.ts`
+- Create: `apps/dashboard/src/pages/settings/Audit.tsx`
+- Create: `apps/dashboard/src/pages/settings/Audit.test.tsx`
 - Modify: each Worker request/error middleware
+- Modify: `apps/dashboard/src/App.tsx`
+- Modify: `apps/dashboard/src/components/layout/AppShell.tsx`
 - Test: `apps/operator-web/test/audit.test.ts`
 - Test: `apps/api/test/safe-logging.test.ts`
 
 **Interfaces:**
-- Produces correlated Identity/Product audit queries, root labels, safe structured logs, configurable 12-month retention, and alertable safe events.
+- Produces correlated Identity/Product audit queries, merged live Audit dashboard views, root labels, safe structured logs, configurable 12-month retention, and alertable safe events.
+
+**Sequencing:** Task 8 deliberately ships without a live Audit surface. Task 12 adds the BFF audit contract, merged data, dashboard client, Audit page, and page tests together so the UI cannot precede its authoritative data boundary. Repository documentation synchronization to Notion remains required later in Task 13; this sequencing change does not reduce total scope.
 
 - [ ] Write tests that trace one correlation id across all Workers and reject snapshots containing tokens, links, attributes, carts, conditions, or rewards.
 - [ ] Run focused tests; expect missing audit services.
 - [ ] Implement owning-service audit writes and BFF merge pagination; add retention cleanup and safe event categories.
+- [ ] Implement the typed dashboard audit client and live Audit page only after the merged BFF query is available.
 - [ ] Run all service tests and secret-pattern scans; expect exit 0.
 - [ ] Commit with `git commit -m "feat: add production audit and observability"`.
 

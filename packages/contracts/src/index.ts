@@ -11,6 +11,7 @@ export type { LoyaltyProgram } from './loyalty-program.js';
 export * from './money.js';
 export * from './openapi.js';
 export * from './operator.js';
+export * from './operator-bff.js';
 export * from './programs.js';
 export { ReferralProgramSchema } from './referral-program.js';
 export type { ReferralProgram } from './referral-program.js';

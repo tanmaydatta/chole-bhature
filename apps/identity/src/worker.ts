@@ -1,12 +1,24 @@
 import type {
+  IdentityListInvitationsRequest,
+  IdentityListMembersRequest,
   IdentityAcceptInvitationRequest,
   IdentityChangeMemberRoleRequest,
   IdentityCreateInvitationRequest,
   IdentityGetProvisioningRequest,
   IdentityProvisionClientRequest,
+  IdentityRootBrowserRequest,
+  IdentityRootProvisioningRequest,
   IdentityRemoveMemberRequest,
   IdentityResolvePrincipalRequest,
+  IdentityResolveBrowserPrincipalRequest,
   IdentityRetryInvitationRequest,
+} from '@incentives/contracts';
+import {
+  ApiErrorSchema,
+  IdentityResolveBrowserPrincipalRequestSchema,
+  IdentityRootBrowserRequestSchema,
+  IdentityRootProvisioningRequestSchema,
+  OperatorPrincipalSchema,
 } from '@incentives/contracts';
 import { WorkerEntrypoint } from 'cloudflare:workers';
 
@@ -101,8 +113,118 @@ function operatorService(env: Env) {
 }
 
 export class IdentityOperatorService extends WorkerEntrypoint<Env> {
+  async resolveBrowserPrincipal(input: IdentityResolveBrowserPrincipalRequest) {
+    const parsed = IdentityResolveBrowserPrincipalRequestSchema.safeParse(input);
+    const correlationId = parsed.success && parsed.data.correlationId
+      ? parsed.data.correlationId
+      : crypto.randomUUID();
+    if (!parsed.success) {
+      return ApiErrorSchema.parse({
+        error: {
+          code: 'INVALID_REQUEST', message: 'Request validation failed',
+          correlationId, retryable: false,
+        },
+      });
+    }
+    try {
+      const headers = new Headers();
+      if (parsed.data.cookieHeader) headers.set('cookie', parsed.data.cookieHeader);
+      const session = await createIdentityAuth(this.env).getSession(headers);
+      if (!session) {
+        return ApiErrorSchema.parse({
+          error: {
+            code: 'UNAUTHORIZED', message: 'Authentication is required',
+            correlationId, retryable: false,
+          },
+        });
+      }
+      const service = operatorService(this.env);
+      const base = await service.resolvePrincipal({
+        sessionId: session.session.id,
+        correlationId,
+      });
+      if ('error' in base || !parsed.data.selectedMerchantId) return base;
+      if (base.platformRole === 'root') {
+        const organization = await this.env.AUTH_DB.prepare(`
+          SELECT id FROM organizations
+          WHERE merchant_id = ?1 AND status = 'active'
+        `).bind(parsed.data.selectedMerchantId).first<{ id: string }>();
+        if (!organization) {
+          return ApiErrorSchema.parse({
+            error: {
+              code: 'FORBIDDEN', message: 'Operation is not permitted',
+              correlationId, retryable: false,
+            },
+          });
+        }
+        const selected = await service.resolvePrincipal({
+          sessionId: session.session.id,
+          selectedMerchantId: parsed.data.selectedMerchantId,
+          correlationId,
+        });
+        if ('error' in selected) return selected;
+        return OperatorPrincipalSchema.parse({
+          ...selected,
+          organizationId: organization.id,
+        });
+      }
+      return service.resolvePrincipal({
+        sessionId: session.session.id,
+        selectedMerchantId: parsed.data.selectedMerchantId,
+        correlationId,
+      });
+    } catch {
+      return ApiErrorSchema.parse({
+        error: {
+          code: 'IDENTITY_UNAVAILABLE', message: 'Identity is temporarily unavailable',
+          correlationId, retryable: true,
+        },
+      });
+    }
+  }
+
   async resolvePrincipal(input: IdentityResolvePrincipalRequest) {
     return operatorService(this.env).resolvePrincipal(input);
+  }
+
+  async listClients(input: IdentityRootBrowserRequest) {
+    const parsed = IdentityRootBrowserRequestSchema.parse(input);
+    const principal = await this.resolveBrowserPrincipal(parsed);
+    if ('error' in principal) return principal;
+    if (principal.platformRole !== 'root') {
+      return ApiErrorSchema.parse({
+        error: {
+          code: 'FORBIDDEN', message: 'Operation is not permitted',
+          correlationId: parsed.correlationId, retryable: false,
+        },
+      });
+    }
+    return operatorService(this.env).listClients({
+      sessionId: principal.sessionId,
+      correlationId: parsed.correlationId,
+    });
+  }
+
+  async getProvisioningForRoot(input: IdentityRootProvisioningRequest) {
+    const parsed = IdentityRootProvisioningRequestSchema.parse(input);
+    const principal = await this.resolveBrowserPrincipal({
+      cookieHeader: parsed.cookieHeader,
+      correlationId: parsed.correlationId,
+    });
+    if ('error' in principal) return principal;
+    if (principal.platformRole !== 'root') {
+      return ApiErrorSchema.parse({
+        error: {
+          code: 'FORBIDDEN', message: 'Operation is not permitted',
+          correlationId: parsed.correlationId, retryable: false,
+        },
+      });
+    }
+    return operatorService(this.env).getProvisioningForRoot({
+      sessionId: principal.sessionId,
+      provisioningId: parsed.provisioningId,
+      correlationId: parsed.correlationId,
+    });
   }
 
   async provisionClient(input: IdentityProvisionClientRequest) {
@@ -115,6 +237,14 @@ export class IdentityOperatorService extends WorkerEntrypoint<Env> {
 
   async createInvitation(input: IdentityCreateInvitationRequest) {
     return operatorService(this.env).createInvitation(input);
+  }
+
+  async listMembers(input: IdentityListMembersRequest) {
+    return operatorService(this.env).listMembers(input);
+  }
+
+  async listInvitations(input: IdentityListInvitationsRequest) {
+    return operatorService(this.env).listInvitations(input);
   }
 
   async retryInvitation(input: IdentityRetryInvitationRequest) {

@@ -184,6 +184,7 @@ export interface CustomerRepository {
   create(merchantId: string, customer: CustomerSnapshot): Promise<CustomerRecord>;
   get(merchantId: string, externalRef: string): Promise<CustomerRecord | null>;
   upsert(input: CustomerUpsert): Promise<CustomerRecord>;
+  upsertWithAudit(input: CustomerUpsert, audit: AuditEntry): Promise<CustomerRecord>;
 }
 
 export interface ProgramCreate {

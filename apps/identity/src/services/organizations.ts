@@ -490,6 +490,17 @@ export function createOrganizationService(options: OrganizationServiceOptions) {
       return row ? provisioningView(row) : null;
     },
 
+    async listProvisionings(): Promise<ClientProvisioningView[]> {
+      const rows = await database.prepare(`
+        SELECT provisioning_id AS provisioningId, merchant_id AS merchantId,
+          organization_id AS organizationId, name, status,
+          failed_step AS failedStep, retryable
+        FROM client_provisionings
+        ORDER BY created_at, provisioning_id
+      `).all<ProvisioningRow>();
+      return rows.results.map(provisioningView);
+    },
+
     async removeMember(
       principal: OperatorPrincipal,
       input: MemberMutationInput,

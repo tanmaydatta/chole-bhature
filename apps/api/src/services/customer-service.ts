@@ -1,7 +1,13 @@
-import type { VariableDefinition } from '@incentives/contracts';
+import {
+  AuditEntrySchema,
+  OperatorCallContextSchema,
+  type OperatorCallContext,
+  type VariableDefinition,
+} from '@incentives/contracts';
 import { z } from 'zod';
 
 import { NotFoundError } from '../errors.js';
+import { requireOperatorContext } from '../auth/operator-context.js';
 import type { Repositories } from '../repositories/types.js';
 
 const CustomerRefSchema = z.string().min(1);
@@ -73,6 +79,63 @@ export function createCustomerService(repositories: Repositories) {
           ? {}
           : { expectedVersion: request.expectedVersion }),
       });
+    },
+  };
+}
+
+type OperatorCustomerRepositories = Pick<Repositories, 'customers' | 'schemas'>;
+
+async function operatorCustomerMutation(
+  repositories: OperatorCustomerRepositories,
+  merchantId: string,
+  customerRef: string,
+  input: unknown,
+) {
+  const externalRef = CustomerRefSchema.parse(customerRef);
+  const published = await repositories.schemas.getLatestVersion(merchantId, 'published');
+  if (published === null) {
+    throw new NotFoundError('No schema has been published', 'SCHEMA_NOT_PUBLISHED');
+  }
+  const request = z.object({
+    attributes: customerAttributesSchema(published.definitions),
+    expectedVersion: ExpectedVersionSchema.optional(),
+  }).strict().parse(input);
+  return {
+    merchantId,
+    externalRef,
+    attributes: request.attributes,
+    ...(request.expectedVersion === undefined ? {} : { expectedVersion: request.expectedVersion }),
+  };
+}
+
+export function createOperatorCustomerMutationService(
+  repositories: OperatorCustomerRepositories,
+) {
+  return {
+    async upsert(context: OperatorCallContext, customerRef: string, input: unknown) {
+      const operator = requireOperatorContext(
+        OperatorCallContextSchema.parse(context),
+        'customers:manage',
+      );
+      const mutation = await operatorCustomerMutation(
+        repositories,
+        operator.merchantId,
+        customerRef,
+        input,
+      );
+      const audit = AuditEntrySchema.parse({
+        id: crypto.randomUUID(),
+        occurredAt: new Date().toISOString(),
+        actorKind: operator.actorKind,
+        actorId: operator.actorUserId,
+        merchantId: operator.merchantId,
+        action: 'customer.upserted',
+        targetType: 'customer',
+        targetId: mutation.externalRef,
+        outcome: 'succeeded',
+        correlationId: operator.correlationId,
+      });
+      return repositories.customers.upsertWithAudit(mutation, audit);
     },
   };
 }

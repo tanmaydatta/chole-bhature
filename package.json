@@ -5,7 +5,8 @@
   "scripts": {
     "build": "pnpm -r build",
     "test": "pnpm -r test",
-    "lint": "apps/identity/node_modules/.bin/oxlint scripts/staging-wrangler-config.mjs scripts/staging-wrangler-runner.mjs && pnpm -r lint",
+    "lint": "apps/identity/node_modules/.bin/oxlint scripts/local-workers-runner.mjs scripts/staging-wrangler-config.mjs scripts/staging-wrangler-runner.mjs && pnpm -r lint",
+    "dev:local": "node scripts/local-workers-runner.mjs",
     "verify:clean-tests": "bash scripts/verify-clean-test-gate.sh"
   }
 }
