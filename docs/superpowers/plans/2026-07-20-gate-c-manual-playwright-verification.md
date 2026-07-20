@@ -1,6 +1,6 @@
 # Gate C Manual Playwright Verification Implementation Plan
 
-**Status:** Todo
+**Status:** In progress
 
 **Notion parent:** [Plans](https://app.notion.com/p/Plans-390e5c7c2b8e8165b7f7d77392eab088)
 
@@ -38,7 +38,7 @@
 - Produces stable manual case identifiers consumed by the temporary Playwright run and dated report.
 - Produces exact setup, action, expectation, safe-evidence, and cleanup instructions that require no Playwright knowledge.
 
-- [ ] **Step 1: Establish the documentation contract before writing the procedure**
+- [x] **Step 1: Establish the documentation contract before writing the procedure**
 
 Run:
 
@@ -48,7 +48,7 @@ test ! -e docs/testing/gate-c-manual-test.md
 
 Expected: exit 0, proving the new procedure is not accidentally validating an older document.
 
-- [ ] **Step 2: Write the procedure header and safe disposable setup**
+- [x] **Step 2: Write the procedure header and safe disposable setup**
 
 Document exact commands for:
 
@@ -61,7 +61,7 @@ pnpm install --offline --frozen-lockfile
 
 Then document generating separate 32-byte random secrets under a restrictive `umask`, writing them only to `apps/identity/.dev.vars` and `apps/operator-web/.dev.vars`, applying both local migration sets, starting `pnpm dev:local`, waiting for `http://localhost:5173`, and bootstrapping `root@gate-c.example` with the same in-memory `AUTH_SECRET` used by Identity.
 
-- [ ] **Step 3: Define the exact stable cases**
+- [x] **Step 3: Define the exact stable cases**
 
 The document must contain these identifiers in this order:
 
@@ -88,7 +88,7 @@ CLEANUP-01      Process, worktree, and temporary-artifact cleanup
 
 For every case, include starting state, numbered terminal/browser actions, visible expectations, network/security expectations, safe evidence, and dependencies on earlier cases.
 
-- [ ] **Step 4: Fix the test data and role expectations**
+- [x] **Step 4: Fix the test data and role expectations**
 
 Use these non-production values:
 
@@ -108,7 +108,7 @@ gate-c-free-shipping
 
 Document the fixed-role expectations from `ROLE_PERMISSIONS`: Admin has every current permission; Operator has schema/customer/program/evaluation operations but no team/credential management; Viewer has schema/program/evaluation reads and no customer/team/credential or mutation access; root requires a selected client for merchant routes and remains visibly root.
 
-- [ ] **Step 5: Document the live product actions exactly**
+- [x] **Step 5: Document the live product actions exactly**
 
 Specify:
 
@@ -118,7 +118,7 @@ Specify:
 - verify order fixed/percent, line-item fixed/percent, and free-shipping selectors; use a separate no-budget `gate-c-free-shipping` Promo if required by Core's free-shipping budget rule;
 - visit Affiliate, Referral, Loyalty, Events, and Analytics pages while recording `/operator/v1` mutation count.
 
-- [ ] **Step 6: Add result and issue templates**
+- [x] **Step 6: Add result and issue templates**
 
 Include this result row shape:
 
@@ -144,7 +144,7 @@ Include this issue shape:
 - Status: Open
 ```
 
-- [ ] **Step 7: Validate the procedure contract**
+- [x] **Step 7: Validate the procedure contract**
 
 Run:
 
@@ -156,7 +156,7 @@ git diff --check
 
 Expected: all 18 case identifiers appear, the result/issue/safety contract appears, and diff check exits 0.
 
-- [ ] **Step 8: Commit the manual procedure**
+- [x] **Step 8: Commit the manual procedure**
 
 ```bash
 git add docs/testing/gate-c-manual-test.md docs/superpowers/plans/2026-07-20-gate-c-manual-playwright-verification.md
