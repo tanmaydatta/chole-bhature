@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Status:** Todo
+**Status:** In progress
 
 **Notion mirror:** https://app.notion.com/p/3a4e5c7c2b8e818db4a4d406509448bc
 
@@ -162,7 +162,7 @@ git commit -m "docs: fix gate c environment setup"
 - Consumes: the verified local guide and existing Notion guide page `3a4e5c7c2b8e8197b2daf950431552b3`.
 - Produces: content-equivalent Notion guide, a Plan page under `390e5c7c2b8e8165b7f7d77392eab088`, and final `Done` plan status.
 
-- [ ] **Step 1: Mark this plan In progress in the Notion Plans page**
+- [x] **Step 1: Mark this plan In progress in the Notion Plans page**
 
 Change this plan and its row in `.superpowers/sdd/notion-plans-index.md` from `Todo` to `In progress`, then sync both existing pages. This plan already lives under parent page `390e5c7c2b8e8165b7f7d77392eab088` at page `3a4e5c7c2b8e818db4a4d406509448bc`.
 
