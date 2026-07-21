@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Status:** In progress
+**Status:** Done
 
 **Notion mirror:** https://app.notion.com/p/3a4e5c7c2b8e818db4a4d406509448bc
 
@@ -33,7 +33,7 @@
 - Consumes: the explicit Git ref stored in `GATE_C_SOURCE_REF` and the generated worktree path stored in the preparation shell's `GATE_C_RUN_ROOT`.
 - Produces: immutable `GATE_C_SOURCE_COMMIT` selection and a shell-safe `export GATE_C_REPO_PATH=...` command that can be copied into every independent terminal.
 
-- [ ] **Step 1: Reproduce the source-selection defect at the Git-object boundary**
+- [x] **Step 1: Reproduce the source-selection defect at the Git-object boundary**
 
 Run from the feature worktree:
 
@@ -50,7 +50,7 @@ git cat-file -e "feat/production-operator-platform:apps/operator-web/package.jso
 
 Expected: the first check prints `PASS`; both feature-ref checks exit 0 with no output.
 
-- [ ] **Step 2: Replace implicit `HEAD` selection with explicit, prevalidated ref selection**
+- [x] **Step 2: Replace implicit `HEAD` selection with explicit, prevalidated ref selection**
 
 In `docs/testing/gate-c-local-environment-setup.md`, replace the beginning of Step 1 with commands equivalent to:
 
@@ -70,7 +70,7 @@ cd "$GATE_C_RUN_ROOT/repo"
 
 State that developers must stop if any `rev-parse` or `cat-file` command fails, and must change `GATE_C_SOURCE_REF` intentionally when testing another branch, tag, or commit.
 
-- [ ] **Step 3: Add post-checkout validation and generate the cross-shell command**
+- [x] **Step 3: Add post-checkout validation and generate the cross-shell command**
 
 Replace the existing freshness block with:
 
@@ -88,7 +88,7 @@ printf 'export GATE_C_REPO_PATH=%q\n' "$GATE_C_REPO_PATH"
 
 Tell the developer to keep the preparation terminal open for cleanup and not to continue if any `test` command fails.
 
-- [ ] **Step 4: Make all multi-terminal commands self-contained**
+- [x] **Step 4: Make all multi-terminal commands self-contained**
 
 Update Terminal 1, Terminal 2, Terminal 3, root bootstrap, and local-email retrieval so each starts by telling the developer to paste the complete `export GATE_C_REPO_PATH=...` command printed in Step 1.
 
@@ -117,7 +117,7 @@ Run root bootstrap in a subshell so `AUTH_SECRET` cannot remain in the terminal:
 
 Replace local-email retrieval's `GATE_C_RUN_ROOT` path with the independently supplied `GATE_C_REPO_PATH`. Explicitly explain that Worker shells do not need either secret because Wrangler loads `.dev.vars` from each Worker directory.
 
-- [ ] **Step 5: Verify both corrected behaviors using an isolated worktree and clean shell**
+- [x] **Step 5: Verify both corrected behaviors using an isolated worktree and clean shell**
 
 Run:
 
@@ -133,7 +133,7 @@ rmdir "$GATE_C_VERIFY_ROOT"
 
 Expected: every command exits 0. The `env -i` shell proves the Worker-shell path does not depend on any preparation-shell export or secret.
 
-- [ ] **Step 6: Run documentation checks and commit the local correction**
+- [x] **Step 6: Run documentation checks and commit the local correction**
 
 ```sh
 rg -n "GATE_C_SOURCE_REF|cat-file -e|GATE_C_REPO_PATH|Wrangler loads|preparation terminal" docs/testing/gate-c-local-environment-setup.md
@@ -166,7 +166,7 @@ git commit -m "docs: fix gate c environment setup"
 
 Change this plan and its row in `.superpowers/sdd/notion-plans-index.md` from `Todo` to `In progress`, then sync both existing pages. This plan already lives under parent page `390e5c7c2b8e8165b7f7d77392eab088` at page `3a4e5c7c2b8e818db4a4d406509448bc`.
 
-- [ ] **Step 2: Sync the corrected developer guide**
+- [x] **Step 2: Sync the corrected developer guide**
 
 ```sh
 ntn pages edit 3a4e5c7c2b8e8197b2daf950431552b3 < docs/testing/gate-c-local-environment-setup.md
@@ -174,7 +174,7 @@ ntn pages edit 3a4e5c7c2b8e8197b2daf950431552b3 < docs/testing/gate-c-local-envi
 
 Expected: the CLI returns page ID `3a4e5c7c-2b8e-8197-b2da-f950431552b3`.
 
-- [ ] **Step 3: Read back and compare the Notion guide**
+- [x] **Step 3: Read back and compare the Notion guide**
 
 ```sh
 ntn pages get 3a4e5c7c2b8e8197b2daf950431552b3 --json | jq '{truncated: .markdown.truncated, unknown_block_ids: .markdown.unknown_block_ids}'
@@ -191,11 +191,11 @@ Expected:
 
 Confirm the read-back Markdown contains `GATE_C_SOURCE_REF`, `GATE_C_REPO_PATH`, and the instruction to paste the printed export command into every new terminal.
 
-- [ ] **Step 4: Mark the plan Done locally and in Notion**
+- [x] **Step 4: Mark the plan Done locally and in Notion**
 
 Set this plan's status to `Done`, check every completed step, update its Plans-index row to `Done`, then sync and read back both the plan page and Plans page without truncation or unknown blocks.
 
-- [ ] **Step 5: Commit final plan evidence**
+- [x] **Step 5: Commit final plan evidence**
 
 ```sh
 git add docs/superpowers/plans/2026-07-21-gate-c-environment-guide-corrections.md

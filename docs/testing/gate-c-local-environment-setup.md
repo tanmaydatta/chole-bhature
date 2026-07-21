@@ -6,7 +6,7 @@
 
 **Notion mirror:** https://app.notion.com/p/3a4e5c7c2b8e8197b2daf950431552b3
 
-**Tester guide:** [Non-technical end-to-end testing guide](gate-c-non-technical-manual-guide.md)
+**Tester guide:** `docs/testing/gate-c-non-technical-manual-guide.md`
 
 **Tester guide in Notion:** https://app.notion.com/p/3a4e5c7c2b8e81a8949cff0b321b04fc
 
@@ -277,7 +277,7 @@ Fill in only non-sensitive values:
 | Commit under test | Record the commit hash |
 | Root profile | Browser/profile name, not credentials |
 | Test client names | `Gate C Alpha`, `Gate C Beta` |
-| Tester guide | [Non-technical end-to-end testing guide](gate-c-non-technical-manual-guide.md) |
+| Tester guide | `docs/testing/gate-c-non-technical-manual-guide.md` |
 | Developer contact | Name/contact for one-time local email links |
 | Known blockers | `GATE-C-ISSUE-001`, `002`, and `003` until fixed |
 
