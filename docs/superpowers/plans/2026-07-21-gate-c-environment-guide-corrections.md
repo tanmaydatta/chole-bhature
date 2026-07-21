@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Status:** Done
+**Status:** In progress
 
 **Notion mirror:** https://app.notion.com/p/3a4e5c7c2b8e818db4a4d406509448bc
 
