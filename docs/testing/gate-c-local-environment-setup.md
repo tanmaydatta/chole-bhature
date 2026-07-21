@@ -46,36 +46,57 @@ Use a new checkout for every test run. This prevents a previous run's users, cli
 From any checkout of the repository, select the source ref intentionally. While Plan 3 remains unmerged, use the feature branch shown here:
 
 ```sh
-export GATE_C_SOURCE_REPO="$(git rev-parse --show-toplevel)"
 export GATE_C_SOURCE_REF="feat/production-operator-platform"
 
-git -C "$GATE_C_SOURCE_REPO" rev-parse --verify "${GATE_C_SOURCE_REF}^{commit}"
-git -C "$GATE_C_SOURCE_REPO" cat-file -e "${GATE_C_SOURCE_REF}:apps/identity/package.json"
-git -C "$GATE_C_SOURCE_REPO" cat-file -e "${GATE_C_SOURCE_REF}:apps/operator-web/package.json"
+gate_c_prepare_checkout() {
+  GATE_C_SOURCE_REPO="$(git rev-parse --show-toplevel)" || return 1
+  export GATE_C_SOURCE_REPO
 
-export GATE_C_SOURCE_COMMIT="$(git -C "$GATE_C_SOURCE_REPO" rev-parse "${GATE_C_SOURCE_REF}^{commit}")"
-export GATE_C_RUN_ROOT="$(mktemp -d)"
-git -C "$GATE_C_SOURCE_REPO" worktree add --detach "$GATE_C_RUN_ROOT/repo" "$GATE_C_SOURCE_COMMIT"
-cd "${GATE_C_RUN_ROOT}/repo"
+  GATE_C_SOURCE_COMMIT="$(git -C "$GATE_C_SOURCE_REPO" rev-parse --verify "${GATE_C_SOURCE_REF}^{commit}")" || return 1
+  export GATE_C_SOURCE_COMMIT
+  git -C "$GATE_C_SOURCE_REPO" cat-file -e "${GATE_C_SOURCE_COMMIT}:apps/identity/package.json" || return 1
+  git -C "$GATE_C_SOURCE_REPO" cat-file -e "${GATE_C_SOURCE_COMMIT}:apps/operator-web/package.json" || return 1
+
+  GATE_C_RUN_ROOT="$(mktemp -d)" || return 1
+  export GATE_C_RUN_ROOT
+  if ! git -C "$GATE_C_SOURCE_REPO" worktree add --detach "$GATE_C_RUN_ROOT/repo" "$GATE_C_SOURCE_COMMIT"; then
+    rmdir "$GATE_C_RUN_ROOT" 2>/dev/null
+    unset GATE_C_RUN_ROOT
+    return 1
+  fi
+  cd "${GATE_C_RUN_ROOT}/repo" || return 1
+}
+
+gate_c_prepare_checkout
 ```
 
-Stop if any `rev-parse` or `cat-file` command fails. To test another branch, tag, or commit, change `GATE_C_SOURCE_REF` intentionally before running the validation commands.
+The function resolves `GATE_C_SOURCE_REF` to `GATE_C_SOURCE_COMMIT` first, then validates both required files against that immutable commit. It returns before `mktemp` or `git worktree add` if resolution or validation fails. Stop if `gate_c_prepare_checkout` fails. To test another branch, tag, or commit, change `GATE_C_SOURCE_REF` intentionally before running the function.
 
 Confirm the detached checkout contains the selected commit and both required applications, then print the shell-safe command needed by every new terminal:
 
 ```sh
-test "$(git rev-parse HEAD)" = "$GATE_C_SOURCE_COMMIT"
-test -f apps/identity/package.json
-test -f apps/operator-web/package.json
-test ! -e apps/api/.wrangler
-test ! -e apps/identity/.wrangler
+gate_c_publish_repo_path() {
+  if
+    test "$(git rev-parse HEAD)" = "$GATE_C_SOURCE_COMMIT" &&
+      test -f apps/identity/package.json &&
+      test -f apps/operator-web/package.json &&
+      test ! -e apps/api/.wrangler &&
+      test ! -e apps/identity/.wrangler
+  then
+    GATE_C_REPO_PATH="$(pwd -P)" || return 1
+    export GATE_C_REPO_PATH
+    printf 'Copy this complete command into every new terminal:\n'
+    printf 'export GATE_C_REPO_PATH=%q\n' "$GATE_C_REPO_PATH"
+  else
+    printf 'ERROR: detached checkout validation failed; GATE_C_REPO_PATH was not exported.\n' >&2
+    return 1
+  fi
+}
 
-export GATE_C_REPO_PATH="$(pwd -P)"
-printf 'Copy this complete command into every new terminal:\n'
-printf 'export GATE_C_REPO_PATH=%q\n' "$GATE_C_REPO_PATH"
+gate_c_publish_repo_path
 ```
 
-Do not continue if any `test` command fails. Keep this preparation terminal open for the whole run because it retains `GATE_C_SOURCE_REPO` and `GATE_C_RUN_ROOT` for cleanup. `GATE_C_REPO_PATH` is a non-sensitive absolute path; copy only the complete command printed above into the independent terminals described below.
+Do not continue if `gate_c_publish_repo_path` fails. The function does not export or print `GATE_C_REPO_PATH` unless every commit, application, and freshness test succeeds. Keep this preparation terminal open for the whole run because it retains `GATE_C_SOURCE_REPO` and `GATE_C_RUN_ROOT` for cleanup. `GATE_C_REPO_PATH` is a non-sensitive absolute path; copy only the complete command printed above into the independent terminals described below.
 
 ## 2. Install the locked dependencies
 

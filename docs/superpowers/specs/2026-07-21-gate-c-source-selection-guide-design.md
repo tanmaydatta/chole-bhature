@@ -15,14 +15,14 @@ The local Gate C setup guide has two shell-context defects:
 
 The guide will require the developer to select an explicit Git source ref. While Plan 3 remains unmerged, the documented ref is `feat/production-operator-platform`. After the work merges, the developer may replace it with the branch, tag, or commit being verified.
 
-Before creating a disposable worktree, the procedure will resolve that ref to an immutable commit and verify that both of these files exist in it:
+Before creating a disposable worktree, a fail-closed preparation function will resolve that ref to an immutable commit and verify that both of these files exist in the resolved commit:
 
 - `apps/identity/package.json`
 - `apps/operator-web/package.json`
 
-After entering the disposable checkout, the procedure will verify the resolved commit and both application directories again. It will also verify that no Core or Identity `.wrangler` state exists. The developer must stop before dependency installation, migrations, or secret creation if any check fails and keep the preparation terminal open for cleanup.
+The function returns before calling `mktemp` or `git worktree add` if ref resolution or either immutable-commit path check fails. After entering the disposable checkout, a second fail-closed function will verify the resolved commit and both application directories again. It will also verify that no Core or Identity `.wrangler` state exists. The developer must stop before dependency installation, migrations, or secret creation if any check fails and keep the preparation terminal open for cleanup.
 
-The procedure will then print a complete, shell-safe `export GATE_C_REPO_PATH=...` command containing the disposable checkout's absolute, non-sensitive path. The developer will paste that command separately into every new terminal used for Identity, Core, Operator Web, root bootstrap, or local-email retrieval. Each command will validate its component directory before changing into it, and each Worker will start only if validation succeeds.
+Only after every post-checkout commit, application, and freshness check succeeds will the second function export the disposable checkout's absolute, non-sensitive path and print a complete, shell-safe `export GATE_C_REPO_PATH=...` command. The developer will paste that command separately into every new terminal used for Identity, Core, Operator Web, root bootstrap, or local-email retrieval. Each command will validate its component directory before changing into it, and each Worker will start only if validation succeeds.
 
 The Worker terminals do not receive either generated secret: Wrangler loads each Worker's own `.dev.vars` from its application directory. The root-bootstrap terminal loads `AUTH_SECRET` directly from Identity's `.dev.vars` inside a subshell containing only the bootstrap command, so the secret cannot remain in the terminal afterward. Generated authentication and Operator-selection secrets are never printed or copied between terminals.
 
@@ -44,15 +44,16 @@ Only the developer setup guide and its existing Notion mirror will change. The c
 
 1. replace implicit `HEAD` selection with `GATE_C_SOURCE_REF`;
 2. show the current feature branch value explicitly;
-3. add pre-checkout file validation;
-4. add post-checkout commit and directory validation;
-5. print the disposable repository's absolute path before the multi-terminal steps;
-6. print it as a complete shell-safe `export GATE_C_REPO_PATH=...` command;
-7. initialize and validate `GATE_C_REPO_PATH` independently in every Worker, bootstrap, and local-email terminal;
-8. guard every Worker start behind successful directory validation;
-9. load `AUTH_SECRET` for root bootstrap only inside a subshell;
-10. explain which values are intentionally not shared between shells; and
-11. explain the expected result and tell the developer not to continue on failure.
+3. resolve the ref to an immutable commit and fail closed while validating both required paths against it;
+4. mechanically gate temporary-state creation behind successful pre-checkout validation;
+5. add fail-closed post-checkout commit and directory validation;
+6. export and print the disposable repository's absolute path only after all post-checkout checks pass;
+7. print it as a complete shell-safe `export GATE_C_REPO_PATH=...` command;
+8. initialize and validate `GATE_C_REPO_PATH` independently in every Worker, bootstrap, and local-email terminal;
+9. guard every Worker start behind successful directory validation;
+10. load `AUTH_SECRET` for root bootstrap only inside a subshell;
+11. explain which values are intentionally not shared between shells; and
+12. explain the expected result and tell the developer not to continue on failure.
 
 The non-technical tester guide, product code, database schema, and runtime behavior are out of scope.
 
