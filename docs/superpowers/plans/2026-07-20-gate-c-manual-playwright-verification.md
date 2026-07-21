@@ -1,10 +1,14 @@
 # Gate C Manual Playwright Verification Implementation Plan
 
-**Status:** In progress
+**Status:** Killed — Playwright execution was stopped by user choice on 2026-07-21 and superseded by reusable developer-setup and non-technical browser guides. Partial findings remain in the dated run report.
 
 **Notion parent:** [Plans](https://app.notion.com/p/Plans-390e5c7c2b8e8165b7f7d77392eab088)
 
 **Notion mirror:** https://app.notion.com/p/3a3e5c7c2b8e81bc9760ded20a24acc3
+
+**Superseded by:** `docs/testing/gate-c-local-environment-setup.md` and `docs/testing/gate-c-non-technical-manual-guide.md`.
+
+**Notion replacements:** [Developer setup](https://app.notion.com/p/3a4e5c7c2b8e8197b2daf950431552b3) · [Non-technical tester](https://app.notion.com/p/3a4e5c7c2b8e81a8949cff0b321b04fc)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -12,7 +16,7 @@
 
 **Architecture:** Commit only the manual procedure and dated run report. Create a disposable detached Git worktree for fresh Wrangler state and install Playwright 1.61.1 plus Chromium only in a temporary directory. Use an uncommitted one-off driver with CDP virtual WebAuthn to operate the real three-Worker/two-D1 stack; record product failures without fixing them during this run.
 
-**Tech Stack:** Markdown, Git worktrees, pnpm 10, Wrangler 4.112.0, Playwright 1.61.1, Chromium, CDP WebAuthn, Cloudflare Workers, D1.
+**Tech Stack:** Markdown, Git worktrees, pnpm 11, Wrangler 4.112.0, Playwright 1.61.1, Chromium, CDP WebAuthn, Cloudflare Workers, D1.
 
 ## Global Constraints
 
@@ -175,11 +179,11 @@ git commit -m "docs: add repeatable gate c manual procedure"
 - Consumes the committed manual case identifiers.
 - Produces a fresh running local stack, a Chromium browser with virtual WebAuthn, and an in-memory result collection keyed by case identifier.
 
-- [ ] **Step 1: Create the disposable checkout from the exact current commit**
+- [x] **Step 1: Create the disposable checkout from the exact current commit**
 
 Run the `ENV-01` setup commands from the manual document. Record only the source commit and whether the detached checkout/install/migrations succeeded. Verify no `.wrangler` directory existed before migrations and both D1 migration commands exit 0.
 
-- [ ] **Step 2: Install temporary Playwright 1.61.1 and Chromium**
+- [x] **Step 2: Install temporary Playwright 1.61.1 and Chromium**
 
 Inside `$GATE_C_RUN_ROOT/playwright`, create a private temporary package and run:
 
@@ -191,7 +195,7 @@ pnpm exec playwright install chromium
 
 Expected: the repository lockfile and package manifests remain unchanged.
 
-- [ ] **Step 3: Create the one-off operator outside the repository**
+- [x] **Step 3: Create the one-off operator outside the repository**
 
 The scratch module must:
 
@@ -214,11 +218,11 @@ It must launch headed Chromium when available, attach CDP, enable `WebAuthn`, ad
 
 The operator must never write tokens, grants, codes, credentials, complete attributes, condition trees, reward payloads, or raw traces to stdout or files.
 
-- [ ] **Step 4: Start the real local stack and bootstrap root**
+- [x] **Step 4: Start the real local stack and bootstrap root**
 
 Launch `pnpm dev:local` in a persistent terminal in the disposable checkout. Wait by condition for Operator Web to answer at `http://localhost:5173`; do not use a fixed sleep. Run the real root bootstrap CLI, parse its JSON in memory, and pass the activation grant directly to the temporary process without logging it.
 
-- [ ] **Step 5: Create the dated run report skeleton**
+- [x] **Step 5: Create the dated run report skeleton**
 
 Write the source commit, safe tool versions, case table with all 18 identifiers initially `Not run`, an empty issue section, and a `Gate C verdict: In progress` footer. Do not include temporary absolute paths or secret values.
 
@@ -232,15 +236,15 @@ Write the source commit, safe tool versions, case table with all 18 identifiers 
 - Consumes the running disposable stack and stable procedure.
 - Produces actual-versus-expected results for `ENV-01` through `AUTHZ-ROOT`.
 
-- [ ] **Step 1: Execute `ENV-01`, `ROOT-01`, and `ROOT-02` exactly as documented**
+- [x] **Step 1: Execute `ENV-01`, `ROOT-01`, and `ROOT-02` exactly as documented**
 
 Use virtual WebAuthn for passkey registration and sign-in. Verify recovery codes are present, unique in count, and disappear after acknowledgement without reading or storing their text. Record visible/auth/session outcomes only.
 
-- [ ] **Step 2: Execute `TENANT-01`**
+- [x] **Step 2: Execute `TENANT-01`**
 
 Provision Alpha and Beta, select Alpha, hard-refresh, select Beta, hard-refresh, and verify every root banner/merchant-scoped response matches the authoritative selection. Record names and non-sensitive merchant IDs only if the procedure permits; never record signed selection cookies.
 
-- [ ] **Step 3: Execute `INVITE-01`**
+- [x] **Step 3: Execute `INVITE-01`**
 
 Invite the Admin, query the latest captured invitation only in memory, navigate to its real token-only path, manually fill the email field, accept, follow `Sign in`, request a magic link, query and navigate to it in memory, and verify authenticated Admin membership.
 
@@ -248,7 +252,7 @@ Invite the Admin, query the latest captured invitation only in memory, navigate 
 
 As Admin, invite Operator and Viewer and complete their captured-link flows in separate contexts. Check the documented navigation/control matrix and direct routes. For denied direct pages, observe that the protected page request is absent; separately call a forbidden real BFF endpoint and record only safe error metadata.
 
-- [ ] **Step 5: Record every deviation before continuing**
+- [x] **Step 5: Record every deviation before continuing**
 
 For each mismatch, add a `GATE-C-ISSUE-NNN` entry before executing the next independent case. Mark dependent cases `Blocked`; do not change product code.
 
@@ -261,11 +265,11 @@ For each mismatch, add a `GATE-C-ISSUE-NNN` entry before executing the next inde
 **Interfaces:**
 - Produces results for `SEC-01` through `DEMO-01` and the safe evidence needed for the final Gate C verdict.
 
-- [ ] **Step 1: Execute `SEC-01` through `SEC-03`**
+- [x] **Step 1: Execute `SEC-01` through `SEC-03`**
 
 Create a local credential, verify show-once behavior, then dismiss/navigate/refresh and prove list/storage/network metadata cannot recover plaintext. Inspect cookie flags, storage keys/counts, relative request destinations, forbidden authority headers, `no-store`, and CSRF rejection. Record only booleans, counts, safe codes, and correlation IDs.
 
-- [ ] **Step 2: Execute `SCHEMA-01`**
+- [x] **Step 2: Execute `SCHEMA-01`**
 
 Create the two fixed typed definitions, inspect impact, publish, observe version/warnings, then request deprecation of the published unreferenced context field. Hard-refresh and verify canonical draft/published lifecycle values.
 
@@ -281,7 +285,7 @@ Create/publish revision 1, refresh pointers, edit the same external reference in
 
 Visit retained module routes, assert visible `Demo data`, and record a zero count of unsafe `/operator/v1` requests caused by those pages.
 
-- [ ] **Step 6: Preserve failures without product fixes**
+- [x] **Step 6: Preserve failures without product fixes**
 
 If any product expectation fails, finish independent cases where safe, leave the issue `Open`, keep the Gate C verdict `In progress`, and do not start Task 10.
 
@@ -296,22 +300,22 @@ If any product expectation fails, finish independent cases where safe, leave the
 **Interfaces:**
 - Produces the durable Gate C verdict, issue list, local/Notion status, and Task 10 readiness decision.
 
-- [ ] **Step 1: Execute `CLEANUP-01`**
+- [x] **Step 1: Execute `CLEANUP-01`**
 
 Stop Chromium and all Workers, remove the disposable worktree with Git, then remove only the explicit `$GATE_C_RUN_ROOT` temporary directory. Verify the primary worktree's tracked and Wrangler state are unchanged except for the intended documentation files.
 
-- [ ] **Step 2: Finalize the dated report**
+- [x] **Step 2: Finalize the dated report**
 
 Replace every initial `Not run` with the actual result or a justified retained `Blocked`/`Not run`. Summarize counts by status and list open issue IDs. Set the verdict:
 
 - `Gate C complete — Task 10 ready` only when every required case is `Pass`;
 - otherwise `Gate C in progress — Task 10 blocked` with issue IDs.
 
-- [ ] **Step 3: Independently review the manual procedure and report**
+- [x] **Step 3: Independently review the manual procedure and report**
 
 Review for exact reproducibility, contradictions, accidental secret/customer payload inclusion, unsupported success claims, and mismatch between case table and issue list. Resolve documentation findings; do not resolve product failures inside this verification task.
 
-- [ ] **Step 4: Run final documentation/security checks**
+- [x] **Step 4: Run final documentation/security checks**
 
 ```bash
 rg -n "ENV-01|CLEANUP-01|Gate C verdict|GATE-C-ISSUE" docs/testing/gate-c-manual-test.md docs/testing/runs/2026-07-20-gate-c-playwright-run.md
@@ -322,11 +326,11 @@ git status --short
 
 Expected: structural checks pass; the sensitive-pattern scan contains only instructional prohibitions or synthetic labels, never real run values; diff check exits 0.
 
-- [ ] **Step 5: Update local and Notion status**
+- [x] **Step 5: Update local and Notion status**
 
 Mark this plan `Done` only if all its documentation/execution steps are complete. Update the main Plan 3 Gate C line and Plans index note from the actual verdict. Create/mirror the manual procedure and run report under the platform root, keep this plan under the Plans page, and read every page back without truncation or unknown blocks.
 
-- [ ] **Step 6: Commit the durable evidence**
+- [x] **Step 6: Commit the durable evidence**
 
 If Gate C passed:
 

@@ -1,6 +1,6 @@
 # Production Operator Platform and Integration Harness Implementation Plan
 
-**Status:** In progress — Tasks 1–9 and Gates A/B are complete; Gate C code review is clean and real-browser/local-stack verification is pending.
+**Status:** In progress — Tasks 1–9 and Gates A/B are complete. Gate C has reusable developer/non-technical manual guides, but full execution and Task 10 are blocked by the recorded local-startup and invitation issues.
 
 **Notion parent:** [Plans](https://app.notion.com/p/Plans-390e5c7c2b8e8165b7f7d77392eab088)
 
@@ -243,7 +243,9 @@
 - [x] Run dashboard and workspace tests/build/lint; expect exit 0.
 - [x] Commit with `git commit -m "feat: wire live schema customer and promo operations"`.
 
-**Gate C review: in progress.** Code review and automated verification are clean at `791443e`. Pending real-browser/local-stack verification: role-specific navigation and direct routes, root context switching/hard refresh, captured invitation acceptance and sign-in across all three Workers/two D1s, passkey ceremonies, browser storage/network/cookie/CSRF/no-store behavior, real correlated BFF errors, and live/demo separation.
+**Gate C review: in progress.** Code review and automated verification are clean at `791443e`. The stopped browser run verified root passkeys, client switching, root authorization, show-once credentials, browser security metadata, CSRF rejection, and schema lifecycle, but exposed local-startup and invitation contract failures. Reusable developer-setup and non-technical browser guides now define the repeatable handoff. Full client-role, customer, Promo, and demo verification remains pending; Task 10 stays blocked.
+
+Gate C handoff: [developer setup](https://app.notion.com/p/3a4e5c7c2b8e8197b2daf950431552b3) · [non-technical tester guide](https://app.notion.com/p/3a4e5c7c2b8e81a8949cff0b321b04fc) · [stopped run findings](https://app.notion.com/p/3a4e5c7c2b8e81f28b7dd9455e94b71a).
 
 ---
 

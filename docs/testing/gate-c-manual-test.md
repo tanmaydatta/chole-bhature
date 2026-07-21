@@ -6,6 +6,12 @@
 
 **Notion mirror:** https://app.notion.com/p/3a3e5c7c2b8e8155aa10c869b97b7e5a
 
+**Browser-only tester guide:** [Non-technical end-to-end testing guide](gate-c-non-technical-manual-guide.md)
+
+**Developer environment guide:** [Local environment setup for manual end-to-end testing](gate-c-local-environment-setup.md)
+
+**Notion guides:** [Developer setup](https://app.notion.com/p/3a4e5c7c2b8e8197b2daf950431552b3) · [Non-technical tester](https://app.notion.com/p/3a4e5c7c2b8e81a8949cff0b321b04fc)
+
 This is the canonical human procedure for Gate C. A Playwright-assisted run must perform these same numbered actions and record results against the same case IDs. It must not replace this procedure with an automated test suite.
 
 ## Safety and verdict rules
@@ -75,6 +81,8 @@ Root is unrestricted but must select a client before using merchant-scoped route
    ```sh
    pnpm install --offline --frozen-lockfile
    ```
+
+   If and only if this fails with `ERR_PNPM_NO_OFFLINE_TARBALL`, record the missing locked package as a setup note and run `pnpm install --frozen-lockfile` with network access. Do not continue for any other install error, and confirm the lockfile remains unchanged.
 
 4. Generate distinct secrets with private file permissions. Do not print them:
 
