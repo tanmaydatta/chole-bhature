@@ -1,6 +1,6 @@
 # Gate C environment-guide corrections
 
-**Status:** Revised for review
+**Status:** Approved design
 
 **Date:** 2026-07-21
 
