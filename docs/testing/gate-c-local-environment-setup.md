@@ -14,12 +14,13 @@ This guide prepares the real local Operator Web, Identity, and Core Workers with
 
 ## Current readiness note — 2026-07-21
 
-Two known blocker areas affect the current branch:
+Three known product blockers affect the current branch:
 
-1. The documented `pnpm dev:local` command does not build every workspace dependency and its concurrent Workers compete for a default inspector port. This guide uses separate build/start commands as a temporary setup workaround.
-2. A valid Team invitation currently returns `400 INVALID_REQUEST`, so Admin/Operator/Viewer onboarding cannot complete until `GATE-C-ISSUE-003` in the stopped run report is fixed.
+1. The documented `pnpm dev:local` command omits the engine, module-kit, and Promo builds. This guide uses separate build commands as a temporary setup workaround.
+2. The local runner does not give its concurrent Workers distinct inspector ports. This guide starts each Worker separately with an explicit inspector port as a temporary setup workaround.
+3. The Team invitation envelope includes a forbidden top-level `correlationId` and currently returns `400 INVALID_REQUEST`, so Admin/Operator/Viewer onboarding cannot complete until `GATE-C-ISSUE-003` in the stopped run report is fixed.
 
-The workaround changes no product source. It only lets root-capable journeys run. Do not report a successful full end-to-end test while either blocker remains open.
+The workarounds change no product source. They only let root-capable journeys run. Do not report a successful full end-to-end test while any blocker remains open.
 
 ## What the developer needs
 
@@ -111,14 +112,19 @@ Expected: installation succeeds and `git status --short` shows no tracked packag
 Generate two different secrets and write private `.dev.vars` files:
 
 ```sh
-umask 077
-export GATE_C_AUTH_SECRET="$(openssl rand -hex 32)"
-export GATE_C_OPERATOR_SECRET="$(openssl rand -hex 32)"
-printf 'AUTH_SECRET=%s\n' "$GATE_C_AUTH_SECRET" > apps/identity/.dev.vars
-printf 'OPERATOR_SELECTION_SECRET=%s\n' "$GATE_C_OPERATOR_SECRET" > apps/operator-web/.dev.vars
+unset GATE_C_AUTH_SECRET GATE_C_OPERATOR_SECRET
+(
+  umask 077
+  GATE_C_AUTH_SECRET="$(openssl rand -hex 32)" || exit 1
+  GATE_C_OPERATOR_SECRET="$(openssl rand -hex 32)" || exit 1
+  printf 'AUTH_SECRET=%s\n' "$GATE_C_AUTH_SECRET" > apps/identity/.dev.vars || exit 1
+  printf 'OPERATOR_SELECTION_SECRET=%s\n' "$GATE_C_OPERATOR_SECRET" > apps/operator-web/.dev.vars || exit 1
+)
+test -z "${GATE_C_AUTH_SECRET+x}"
+test -z "${GATE_C_OPERATOR_SECRET+x}"
 ```
 
-Do not print, message, commit, screenshot, or save these values anywhere else. They are disposable and must be removed with the worktree.
+The short subshell confines the restrictive `umask` and both ordinary, non-exported secret variables to the file-writing operation. The preceding `unset` removes any stale definitions from the preparation shell, and the final two tests confirm that neither variable exists there afterward. Do not continue if the subshell or either test fails. The two `.dev.vars` files are the only saved copies; do not print, message, commit, screenshot, or save their values anywhere else. They are disposable and must be removed with the worktree.
 
 ## 4. Create fresh Product and Auth databases
 

@@ -204,3 +204,33 @@ git status --short --branch
 ```
 
 Expected: the plan commit succeeds and the feature worktree is clean.
+
+---
+
+### Task 3: Close final-review secret handling without changing product blockers
+
+**Files:**
+- Modify: `docs/testing/gate-c-local-environment-setup.md`
+- Modify: `docs/superpowers/plans/2026-07-21-gate-c-environment-guide-corrections.md`
+- Modify (ignored sync source): `.superpowers/sdd/notion-plans-index.md`
+- Append evidence (ignored): `.superpowers/sdd/gate-c-guide-final-fix-report.md`
+
+- [x] **Step 1: Record final-review adjudication**
+
+  Keep the Team-invitation `correlationId`, omitted engine/module-kit/Promo builds, and shared inspector-port findings documented as Gate C/Task 10 product blockers. Per the human decision, do not modify the invitation route, local runner, or other product code in this documentation correction.
+
+- [x] **Step 2: Confine preparation-shell secret generation**
+
+  Generate and write `AUTH_SECRET` and `OPERATOR_SELECTION_SECRET` in a short `umask 077` subshell using non-exported `GATE_C_AUTH_SECRET` and `GATE_C_OPERATOR_SECRET` variables. Assert that neither variable exists in the preparation shell after the subshell; never print either value. Preserve root bootstrap's separate AUTH-only loading subshell.
+
+- [x] **Step 3: Verify secret confinement and documentation boundaries**
+
+  In fresh `env -i` zsh and bash shells, execute an equivalent secret-writing subshell in a fresh temporary directory. Require both files to exist and be nonempty with owner-only modes, and require both temporary variable names to be absent afterward. Statically scan the guide for forbidden exports, root-bootstrap subshell loading, blocker language, and secret-like values; then run `git diff --check`.
+
+- [x] **Step 4: Sync and read back the approved Notion pages**
+
+  Sync the corrected guide, this in-progress plan, and the Plans index only through the explicitly approved root-run writes. Read back the guide, plan, and Plans page untruncated with no unknown blocks; verify secret-subshell language, the correct parent, and exactly one plan page.
+
+- [ ] **Step 5: Commit and record final completion**
+
+  Commit all tracked guide/plan changes. Only after that commit succeeds, check this step, set the plan and Plans-index row to `Done`, and make a follow-up plan-evidence commit. Then have root re-sync the final plan and Plans index and read them back so local and Notion state match. Do not push.
