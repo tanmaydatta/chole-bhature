@@ -43,25 +43,39 @@ openssl version
 
 Use a new checkout for every test run. This prevents a previous run's users, clients, schema, customers, Promos, cookies, or D1 records from affecting the result.
 
-From the repository you want to test:
+From any checkout of the repository, select the source ref intentionally. While Plan 3 remains unmerged, use the feature branch shown here:
 
 ```sh
 export GATE_C_SOURCE_REPO="$(git rev-parse --show-toplevel)"
-export GATE_C_SOURCE_COMMIT="$(git rev-parse HEAD)"
+export GATE_C_SOURCE_REF="feat/production-operator-platform"
+
+git -C "$GATE_C_SOURCE_REPO" rev-parse --verify "${GATE_C_SOURCE_REF}^{commit}"
+git -C "$GATE_C_SOURCE_REPO" cat-file -e "${GATE_C_SOURCE_REF}:apps/identity/package.json"
+git -C "$GATE_C_SOURCE_REPO" cat-file -e "${GATE_C_SOURCE_REF}:apps/operator-web/package.json"
+
+export GATE_C_SOURCE_COMMIT="$(git -C "$GATE_C_SOURCE_REPO" rev-parse "${GATE_C_SOURCE_REF}^{commit}")"
 export GATE_C_RUN_ROOT="$(mktemp -d)"
-git worktree add --detach "$GATE_C_RUN_ROOT/repo" "$GATE_C_SOURCE_COMMIT"
-cd "$GATE_C_RUN_ROOT/repo"
+git -C "$GATE_C_SOURCE_REPO" worktree add --detach "$GATE_C_RUN_ROOT/repo" "$GATE_C_SOURCE_COMMIT"
+cd "${GATE_C_RUN_ROOT}/repo"
 ```
 
-Confirm it is fresh:
+Stop if any `rev-parse` or `cat-file` command fails. To test another branch, tag, or commit, change `GATE_C_SOURCE_REF` intentionally before running the validation commands.
+
+Confirm the detached checkout contains the selected commit and both required applications, then print the shell-safe command needed by every new terminal:
 
 ```sh
 test "$(git rev-parse HEAD)" = "$GATE_C_SOURCE_COMMIT"
+test -f apps/identity/package.json
+test -f apps/operator-web/package.json
 test ! -e apps/api/.wrangler
 test ! -e apps/identity/.wrangler
+
+export GATE_C_REPO_PATH="$(pwd -P)"
+printf 'Copy this complete command into every new terminal:\n'
+printf 'export GATE_C_REPO_PATH=%q\n' "$GATE_C_REPO_PATH"
 ```
 
-If either `.wrangler` check fails, stop. Do not reuse that checkout.
+Do not continue if any `test` command fails. Keep this preparation terminal open for the whole run because it retains `GATE_C_SOURCE_REPO` and `GATE_C_RUN_ROOT` for cleanup. `GATE_C_REPO_PATH` is a non-sensitive absolute path; copy only the complete command printed above into the independent terminals described below.
 
 ## 2. Install the locked dependencies
 
@@ -125,53 +139,67 @@ Open three terminals. Keep all three running for the whole test.
 
 ### Terminal 1 — Identity
 
+In this new terminal, first paste and run the complete `export GATE_C_REPO_PATH=...` command printed in Step 1.
+
 Preferred command:
 
 ```sh
-cd "$GATE_C_RUN_ROOT/repo/apps/identity"
-pnpm exec wrangler dev --config wrangler.toml --port 8788 --inspector-port 9332
+test -f "${GATE_C_REPO_PATH:?Paste the export command printed in Step 1}/apps/identity/package.json" &&
+  cd "$GATE_C_REPO_PATH/apps/identity" &&
+  pnpm exec wrangler dev --config wrangler.toml --port 8788 --inspector-port 9332
 ```
 
 If `8788` was already occupied, use:
 
 ```sh
-cd "$GATE_C_RUN_ROOT/repo/apps/identity"
-pnpm exec wrangler dev --config wrangler.toml --port 18788 --inspector-port 9332
+test -f "${GATE_C_REPO_PATH:?Paste the export command printed in Step 1}/apps/identity/package.json" &&
+  cd "$GATE_C_REPO_PATH/apps/identity" &&
+  pnpm exec wrangler dev --config wrangler.toml --port 18788 --inspector-port 9332
 ```
 
 Expected: `Ready on http://localhost:8788` or `Ready on http://localhost:18788`.
 
 ### Terminal 2 — Core
 
+In this new terminal, first paste and run the complete `export GATE_C_REPO_PATH=...` command printed in Step 1.
+
 ```sh
-cd "$GATE_C_RUN_ROOT/repo/apps/api"
-pnpm exec wrangler dev --config wrangler.toml --port 8787 --inspector-port 9331
+test -f "${GATE_C_REPO_PATH:?Paste the export command printed in Step 1}/apps/api/package.json" &&
+  cd "$GATE_C_REPO_PATH/apps/api" &&
+  pnpm exec wrangler dev --config wrangler.toml --port 8787 --inspector-port 9331
 ```
 
 Expected: `Ready on http://localhost:8787`, with Identity eventually shown as connected.
 
 ### Terminal 3 — Operator Web
 
+In this new terminal, first paste and run the complete `export GATE_C_REPO_PATH=...` command printed in Step 1.
+
 ```sh
-cd "$GATE_C_RUN_ROOT/repo/apps/operator-web"
-pnpm exec wrangler dev --config wrangler.toml --port 5173 --inspector-port 9333
+test -f "${GATE_C_REPO_PATH:?Paste the export command printed in Step 1}/apps/operator-web/package.json" &&
+  cd "$GATE_C_REPO_PATH/apps/operator-web" &&
+  pnpm exec wrangler dev --config wrangler.toml --port 5173 --inspector-port 9333
 ```
 
 Expected: `Ready on http://localhost:5173`, with Identity and Core shown as connected.
 
 Only `http://localhost:5173` is given to the tester. Ports `8787`, `8788`, and `18788` are private implementation services, not browser entrypoints.
 
+Do not copy `GATE_C_AUTH_SECRET` or `GATE_C_OPERATOR_SECRET` into these terminals. Wrangler loads each Worker's own `.dev.vars` from its Worker directory, so the Worker shells need only `GATE_C_REPO_PATH`.
+
 ## 8. Bootstrap the one root user
 
-In a fourth terminal:
+In a fourth terminal, first paste and run the complete `export GATE_C_REPO_PATH=...` command printed in Step 1. Then run the bootstrap in this subshell so `AUTH_SECRET` cannot remain in the terminal:
 
 ```sh
-cd "$GATE_C_RUN_ROOT/repo"
-set -a
-. apps/identity/.dev.vars
-set +a
-pnpm --filter @incentives/identity exec node src/cli/bootstrap-root-runner.mjs --environment local --email root@gate-c.example
-unset AUTH_SECRET
+(
+  test -f "${GATE_C_REPO_PATH:?Paste the export command printed in Step 1}/apps/identity/.dev.vars" &&
+    cd "$GATE_C_REPO_PATH" &&
+    set -a &&
+    . apps/identity/.dev.vars &&
+    set +a &&
+    pnpm --filter @incentives/identity exec node src/cli/bootstrap-root-runner.mjs --environment local --email root@gate-c.example
+)
 ```
 
 The command prints a one-time activation grant. Treat it like a password:
@@ -202,13 +230,14 @@ Do not share cookies or copy storage between profiles. Each role must sign in th
 
 ## 10. Retrieve a local invitation or sign-in email
 
-Local mode captures messages in Auth D1. When the tester requests an invitation or magic link, run this from the Identity directory, replacing the recipient:
+Local mode captures messages in Auth D1. When the tester requests an invitation or magic link, open a new terminal and first paste and run the complete `export GATE_C_REPO_PATH=...` command printed in Step 1. Then run this guarded command, replacing the recipient:
 
 ```sh
-cd "$GATE_C_RUN_ROOT/repo/apps/identity"
-pnpm exec wrangler d1 execute incentives-auth-local --local --config wrangler.toml \
-  --command "SELECT subject, text_body FROM local_email_capture WHERE recipient='admin@gate-c.example' ORDER BY created_at DESC, id DESC LIMIT 1" \
-  --json
+test -f "${GATE_C_REPO_PATH:?Paste the export command printed in Step 1}/apps/identity/package.json" &&
+  cd "$GATE_C_REPO_PATH/apps/identity" &&
+  pnpm exec wrangler d1 execute incentives-auth-local --local --config wrangler.toml \
+    --command "SELECT subject, text_body FROM local_email_capture WHERE recipient='admin@gate-c.example' ORDER BY created_at DESC, id DESC LIMIT 1" \
+    --json
 ```
 
 Use `operator@gate-c.example` or `viewer@gate-c.example` for those profiles.

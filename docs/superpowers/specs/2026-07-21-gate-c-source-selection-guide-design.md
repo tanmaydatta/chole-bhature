@@ -20,9 +20,11 @@ Before creating a disposable worktree, the procedure will resolve that ref to an
 - `apps/identity/package.json`
 - `apps/operator-web/package.json`
 
-After entering the disposable checkout, the procedure will verify the resolved commit and both application directories again. The developer must stop before dependency installation, migrations, or secret creation if any check fails.
+After entering the disposable checkout, the procedure will verify the resolved commit and both application directories again. It will also verify that no Core or Identity `.wrangler` state exists. The developer must stop before dependency installation, migrations, or secret creation if any check fails and keep the preparation terminal open for cleanup.
 
-The procedure will then print the disposable checkout's absolute, non-sensitive path. Before starting Workers, the developer will copy that value into `GATE_C_REPO_PATH` separately in every new terminal and validate the component directory before changing into it. The Worker terminals do not receive either generated secret: Wrangler reads each Worker's `.dev.vars` from its application directory. The root-bootstrap terminal continues to load `AUTH_SECRET` directly from Identity's `.dev.vars` only for the bootstrap command.
+The procedure will then print a complete, shell-safe `export GATE_C_REPO_PATH=...` command containing the disposable checkout's absolute, non-sensitive path. The developer will paste that command separately into every new terminal used for Identity, Core, Operator Web, root bootstrap, or local-email retrieval. Each command will validate its component directory before changing into it, and each Worker will start only if validation succeeds.
+
+The Worker terminals do not receive either generated secret: Wrangler loads each Worker's own `.dev.vars` from its application directory. The root-bootstrap terminal loads `AUTH_SECRET` directly from Identity's `.dev.vars` inside a subshell containing only the bootstrap command, so the secret cannot remain in the terminal afterward. Generated authentication and Operator-selection secrets are never printed or copied between terminals.
 
 ## Alternatives considered
 
@@ -45,9 +47,12 @@ Only the developer setup guide and its existing Notion mirror will change. The c
 3. add pre-checkout file validation;
 4. add post-checkout commit and directory validation;
 5. print the disposable repository's absolute path before the multi-terminal steps;
-6. initialize and validate `GATE_C_REPO_PATH` independently in every new terminal;
-7. explain which values are intentionally not shared between shells; and
-8. explain the expected result and tell the developer not to continue on failure.
+6. print it as a complete shell-safe `export GATE_C_REPO_PATH=...` command;
+7. initialize and validate `GATE_C_REPO_PATH` independently in every Worker, bootstrap, and local-email terminal;
+8. guard every Worker start behind successful directory validation;
+9. load `AUTH_SECRET` for root bootstrap only inside a subshell;
+10. explain which values are intentionally not shared between shells; and
+11. explain the expected result and tell the developer not to continue on failure.
 
 The non-technical tester guide, product code, database schema, and runtime behavior are out of scope.
 
