@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Status:** In progress
+**Status:** Done
 
 **Notion mirror:** https://app.notion.com/p/3a4e5c7c2b8e818db4a4d406509448bc
 
@@ -231,6 +231,6 @@ Expected: the plan commit succeeds and the feature worktree is clean.
 
   Sync the corrected guide, this in-progress plan, and the Plans index only through the explicitly approved root-run writes. Read back the guide, plan, and Plans page untruncated with no unknown blocks; verify secret-subshell language, the correct parent, and exactly one plan page.
 
-- [ ] **Step 5: Commit and record final completion**
+- [x] **Step 5: Commit and record final completion**
 
   Commit all tracked guide/plan changes. Only after that commit succeeds, check this step, set the plan and Plans-index row to `Done`, and make a follow-up plan-evidence commit. Then have root re-sync the final plan and Plans index and read them back so local and Notion state match. Do not push.
