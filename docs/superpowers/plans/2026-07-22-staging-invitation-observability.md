@@ -325,7 +325,7 @@ git commit -m "docs: record staging invitation incident"
 - Consumes: the fixed Operator Web envelope, generated observability config, and sanitized docs.
 - Produces: a reviewable branch whose automated checks pass and whose Cloudflare changes remain undeployed.
 
-- [ ] **Step 1: Run repository-wide tests**
+- [x] **Step 1: Run repository-wide tests**
 
 Run:
 
@@ -335,7 +335,7 @@ pnpm test
 
 Expected: all workspace tests pass.
 
-- [ ] **Step 2: Run repository-wide typecheck/build and lint**
+- [x] **Step 2: Run repository-wide typecheck/build and lint**
 
 Run:
 
@@ -346,7 +346,7 @@ pnpm lint
 
 Expected: both commands exit 0. The existing dashboard bundle-size warning may appear and is non-blocking; record it without claiming pristine output.
 
-- [ ] **Step 3: Review the exact branch diff and secret safety**
+- [x] **Step 3: Review the exact branch diff and secret safety**
 
 Run:
 
@@ -359,7 +359,7 @@ git diff dev...HEAD -- apps/operator-web/src/routes/team.ts scripts/staging-wran
 
 Expected: only planned files are tracked; `.pnpm-store/` and `CLAUDE.md` remain untracked and untouched; no secret values appear.
 
-- [ ] **Step 4: Request code review before publication**
+- [x] **Step 4: Request code review before publication**
 
 Use `superpowers:requesting-code-review` to review the contract boundary, TOML placement, test strength, documentation accuracy, and secret safety. Address only confirmed findings and re-run affected checks.
 
