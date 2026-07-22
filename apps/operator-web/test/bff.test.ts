@@ -1563,9 +1563,13 @@ describe('assets and deployment topology', () => {
       ),
     ]);
     expect(environmentExample).toContain(
-      'STAGING_API_ORIGIN=https://replace-with-real-staging-api-host',
+      'STAGING_API_ORIGIN=https://api.staging.wastd.dev',
     );
-    expect(operations).toContain('STAGING_API_ORIGIN');
+    expect(environmentExample).toContain(
+      'STAGING_OPERATOR_ORIGIN=https://operator.staging.wastd.dev',
+    );
+    expect(operations).toContain('https://api.staging.wastd.dev');
+    expect(operations).toContain('https://operator.staging.wastd.dev');
     const task8 = trackedPlan.slice(
       trackedPlan.indexOf('### Task 8:'), trackedPlan.indexOf('### Task 9:'),
     );
