@@ -1,0 +1,68 @@
+# Gate C environment-guide corrections
+
+**Status:** Approved design
+
+**Date:** 2026-07-21
+
+## Problem
+
+The local Gate C setup guide has two shell-context defects:
+
+1. It derives its source commit from `git rev-parse HEAD`. A developer following the guide from the `dev` worktree therefore creates a fresh checkout of `dev`, even though that commit does not yet contain `apps/identity` or `apps/operator-web`. The error is discovered only later, when the guide tries to create those applications' `.dev.vars` files.
+2. It exports `GATE_C_RUN_ROOT` in the preparation shell, then tells the developer to open new terminals and use that variable. A separately opened shell does not reliably inherit exports from an existing interactive shell, so its `cd "$GATE_C_RUN_ROOT/..."` commands can resolve to nonexistent paths.
+
+## Decision
+
+The guide will require the developer to select an explicit Git source ref. While Plan 3 remains unmerged, the documented ref is `feat/production-operator-platform`. After the work merges, the developer may replace it with the branch, tag, or commit being verified.
+
+Before creating a disposable worktree, a fail-closed preparation function will resolve that ref to an immutable commit and verify that both of these files exist in the resolved commit:
+
+- `apps/identity/package.json`
+- `apps/operator-web/package.json`
+
+The function returns before calling `mktemp` or `git worktree add` if ref resolution or either immutable-commit path check fails. After entering the disposable checkout, a second fail-closed function will verify the resolved commit and both application directories again. It will also verify that no Core or Identity `.wrangler` state exists. The developer must stop before dependency installation, migrations, or secret creation if any check fails and keep the preparation terminal open for cleanup.
+
+Only after every post-checkout commit, application, and freshness check succeeds will the second function export the disposable checkout's absolute, non-sensitive path and print a complete, shell-safe `export GATE_C_REPO_PATH=...` command. The developer will paste that command separately into every new terminal used for Identity, Core, Operator Web, root bootstrap, or local-email retrieval. Each command will validate its component directory before changing into it, and each Worker will start only if validation succeeds.
+
+The Worker terminals do not receive either generated secret: Wrangler loads each Worker's own `.dev.vars` from its application directory. The root-bootstrap terminal loads `AUTH_SECRET` directly from Identity's `.dev.vars` inside a subshell containing only the bootstrap command, so the secret cannot remain in the terminal afterward. Generated authentication and Operator-selection secrets are never printed or copied between terminals.
+
+## Alternatives considered
+
+1. **Hard-code the feature branch permanently.** This fixes today's error but becomes wrong after the feature is merged or tested from another ref.
+2. **Auto-detect a worktree containing both applications.** This is convenient but can silently choose the wrong branch when several suitable worktrees exist.
+3. **Require an explicit ref and validate it.** This is the selected option because it makes the tested code intentional, supports future refs, and fails before environment state is created.
+
+For new-terminal path handling:
+
+1. **Assume new tabs inherit the preparation shell's exports.** Terminal behavior varies, so this is not reproducible.
+2. **Write and source a shared environment file.** This avoids copying but creates another stateful file containing shell configuration that must be located and cleaned up.
+3. **Copy the printed non-sensitive repository path into each new shell.** This is the selected option because it is explicit, portable, easy to validate, and does not propagate secrets.
+
+## Documentation changes
+
+Only the developer setup guide and its existing Notion mirror will change. The corrections will:
+
+1. replace implicit `HEAD` selection with `GATE_C_SOURCE_REF`;
+2. show the current feature branch value explicitly;
+3. resolve the ref to an immutable commit and fail closed while validating both required paths against it;
+4. mechanically gate temporary-state creation behind successful pre-checkout validation;
+5. add fail-closed post-checkout commit and directory validation;
+6. export and print the disposable repository's absolute path only after all post-checkout checks pass;
+7. print it as a complete shell-safe `export GATE_C_REPO_PATH=...` command;
+8. initialize and validate `GATE_C_REPO_PATH` independently in every Worker, bootstrap, and local-email terminal;
+9. guard every Worker start behind successful directory validation;
+10. load `AUTH_SECRET` for root bootstrap only inside a subshell;
+11. explain which values are intentionally not shared between shells; and
+12. explain the expected result and tell the developer not to continue on failure.
+
+The non-technical tester guide, product code, database schema, and runtime behavior are out of scope.
+
+## Verification
+
+The corrected command sequence will be checked against both relevant cases:
+
+- `dev` (`d8b3cac` at the time of the report) must fail the application-presence validation before secrets are created.
+- `feat/production-operator-platform` must resolve successfully and expose both required application paths in a fresh detached worktree.
+- A clean shell with no `GATE_C_RUN_ROOT`, authentication secret, or Operator-selection secret must reach each Worker directory after setting only the copied `GATE_C_REPO_PATH`.
+
+The local Markdown will pass `git diff --check`. The Notion page will be read back with `truncated: false` and no unknown block IDs.

@@ -1,20 +1,28 @@
 import { describe, expect, test } from 'vitest';
 
 import {
+  ApiCredentialViewSchema,
   ApiErrorSchema,
+  AuditEntrySchema,
   CustomerPatchRequestSchema,
   CustomerSnapshotSchema,
   EvaluationRequestSchema,
   EvaluationResponseSchema,
   IncentiveDecisionSchema,
+  OperatorCallContextSchema,
+  OperatorPrincipalSchema,
   PromoProgramSchema,
+  ProgramLifecycleSchema,
+  ProgramRevisionSchema,
   RedemptionRequestSchema,
   RedemptionResponseSchema,
   VariableDefinitionSchema,
   buildPublishedEvaluationJsonSchema,
 } from './index.js';
 import {
+  canonicalApiCredentialView,
   canonicalApiError,
+  canonicalAuditEntry,
   canonicalCommittedRedemption,
   canonicalCustomer,
   canonicalCustomerPatch,
@@ -23,6 +31,10 @@ import {
   canonicalFallbackResponse,
   canonicalFirstMatchResponse,
   canonicalNoMatchResponse,
+  canonicalOperatorCallContext,
+  canonicalOperatorPrincipal,
+  canonicalProgramLifecycle,
+  canonicalProgramRevision,
   canonicalRedemptionRequest,
   canonicalTwoTierEvaluationRequest,
   canonicalTwoTierPromo,
@@ -40,6 +52,20 @@ describe('core contract documentation examples', () => {
     expect(canonicalVariableDefinitions.map(definition => (
       VariableDefinitionSchema.parse(definition)
     ))).toEqual(canonicalVariableDefinitions);
+  });
+
+  test('validates production operator documentation examples', () => {
+    expect(OperatorPrincipalSchema.parse(canonicalOperatorPrincipal))
+      .toEqual(canonicalOperatorPrincipal);
+    expect(OperatorCallContextSchema.parse(canonicalOperatorCallContext))
+      .toEqual(canonicalOperatorCallContext);
+    expect(ApiCredentialViewSchema.parse(canonicalApiCredentialView))
+      .toEqual(canonicalApiCredentialView);
+    expect(ProgramRevisionSchema.parse(canonicalProgramRevision))
+      .toEqual(canonicalProgramRevision);
+    expect(ProgramLifecycleSchema.parse(canonicalProgramLifecycle))
+      .toEqual(canonicalProgramLifecycle);
+    expect(AuditEntrySchema.parse(canonicalAuditEntry)).toEqual(canonicalAuditEntry);
   });
 
   test('validates every runtime API JSON example against its public schema', () => {

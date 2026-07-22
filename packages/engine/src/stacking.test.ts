@@ -5,6 +5,7 @@ import { resolveDecisionConflicts } from './index.js';
 
 const lowerPriority: ConflictCandidate = {
   programRef: 'lower-priority',
+  programRevision: 1,
   programType: 'promo',
   outcome: 'qualified',
   effects: [{ type: 'free_shipping' }],

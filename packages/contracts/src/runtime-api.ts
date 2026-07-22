@@ -1,4 +1,6 @@
-import { PromoProgramSchema } from './programs.js';
+import { ProgramLifecycleSchema, PromoProgramSchema } from './programs.js';
+import { EvaluationRequestSchema } from './evaluation.js';
+import { OperatorCallContextSchema } from './operator.js';
 import { VariableDefinitionSchema } from './variables.js';
 import { z } from './zod.js';
 
@@ -6,6 +8,11 @@ const UnknownObjectSchema = z.record(z.string(), z.unknown());
 
 export const HealthResponseSchema = z.object({
   status: z.literal('ok'),
+}).strict();
+
+export const OperatorEvaluationRequestSchema = z.object({
+  operatorContext: OperatorCallContextSchema,
+  request: EvaluationRequestSchema,
 }).strict();
 
 export const AccessSummarySchema = z.object({
@@ -35,6 +42,32 @@ export const PublishedSchemaResponseSchema = z.object({
   sample: UnknownObjectSchema,
 }).strict();
 
+export const SchemaLifecycleWarningSchema = z.object({
+  code: z.enum(['REQUIRED_LIVE_FIELD', 'ENUM_VALUE_ADDED']),
+  message: z.string().min(1),
+}).strict();
+
+export const SchemaDefinitionImpactPreviewSchema = z.object({
+  publishedVersions: z.array(z.number().int().positive()),
+  referencedProgramRefs: z.array(z.string().min(1)),
+  storedCustomerCount: z.number().int().nonnegative(),
+  incompatibleCustomerCount: z.number().int().nonnegative(),
+  warnings: z.array(SchemaLifecycleWarningSchema),
+}).strict();
+
+export const SchemaPublicationResultSchema = PublishedSchemaResponseSchema.extend({
+  warnings: z.array(SchemaLifecycleWarningSchema),
+}).strict();
+
+export const ProgramPublicationWarningSchema = z.object({
+  code: z.literal('OVERLAPPING_REWARD_RULES'),
+  message: z.string().min(1),
+}).strict();
+
+export const ProgramPublicationResultSchema = ProgramLifecycleSchema.extend({
+  warnings: z.array(ProgramPublicationWarningSchema),
+}).strict();
+
 export const CustomerPatchRequestSchema = z.object({
   attributes: UnknownObjectSchema,
   expectedVersion: z.number().int().positive().optional(),
@@ -55,5 +88,14 @@ export const OpenApiDocumentResponseSchema = UnknownObjectSchema;
 
 export type CustomerPatchRequest = z.infer<typeof CustomerPatchRequestSchema>;
 export type CustomerRecord = z.infer<typeof CustomerRecordSchema>;
+export type SchemaDefinitionsResponse = z.infer<typeof SchemaDefinitionsResponseSchema>;
 export type PublishedSchemaResponse = z.infer<typeof PublishedSchemaResponseSchema>;
+export type ProgramPublicationResult = z.infer<typeof ProgramPublicationResultSchema>;
+export type ProgramPublicationWarning = z.infer<typeof ProgramPublicationWarningSchema>;
+export type SchemaDefinitionImpactPreview = z.infer<
+  typeof SchemaDefinitionImpactPreviewSchema
+>;
 export type SchemaDefinitionView = z.infer<typeof SchemaDefinitionViewSchema>;
+export type SchemaLifecycleWarning = z.infer<typeof SchemaLifecycleWarningSchema>;
+export type SchemaPublicationResult = z.infer<typeof SchemaPublicationResultSchema>;
+export type OperatorEvaluationRequest = z.infer<typeof OperatorEvaluationRequestSchema>;

@@ -18,10 +18,16 @@ import type {
 
 function baseDecision(config: PromoProgram): Pick<
   ModuleDecision,
-  'programRef' | 'programType' | 'priority' | 'stackable' | 'stackingGroup'
+  | 'programRef'
+  | 'programRevision'
+  | 'programType'
+  | 'priority'
+  | 'stackable'
+  | 'stackingGroup'
 > {
   return {
     programRef: config.id,
+    programRevision: 1,
     programType: 'promo',
     priority: config.priority,
     stackable: config.stackable,

@@ -1,5 +1,11 @@
 # Affiliate Codes Panel & Codes-Only CSV — Implementation Plan
 
+**Status:** Done
+
+**Notion parent:** [Plans](https://app.notion.com/p/Plans-390e5c7c2b8e8165b7f7d77392eab088)
+
+**Notion mirror:** https://app.notion.com/p/390e5c7c2b8e81a48a54ee0f4a2c2d93
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Make the affiliate CSV a plain list of codes, and surface per-code status + usage in the UI via a "Codes" panel on the affiliate detail page (with re-download), capturing `usesPerCode` so multi-use usage is shown.

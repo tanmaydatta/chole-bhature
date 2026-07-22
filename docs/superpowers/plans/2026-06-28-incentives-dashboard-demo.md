@@ -1,5 +1,11 @@
 # Incentives Dashboard Demo — Implementation Plan
 
+**Status:** Done
+
+**Notion parent:** [Plans](https://app.notion.com/p/Plans-390e5c7c2b8e8165b7f7d77392eab088)
+
+**Notion mirror:** https://app.notion.com/p/390e5c7c2b8e81db97bff94f15181a05
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build a static, front-end-only clickable demo of an incentives/promotions dashboard (Promo, Affiliate, Referral, Loyalty + Variables/Events) to validate customer demand.

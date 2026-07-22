@@ -1,5 +1,9 @@
 # Production Operator Platform and Integration Harness Implementation Plan
 
+**Status:** In progress — Tasks 1–9 and Gates A/B are complete. Gate C has reusable developer/non-technical manual guides, but full execution and Task 10 are blocked by the recorded local-startup and invitation issues.
+
+**Notion parent:** [Plans](https://app.notion.com/p/Plans-390e5c7c2b8e8165b7f7d77392eab088)
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Deliver an authenticated, tenant-aware, deployable operator platform and integration harness before committing to any commerce connector.
@@ -46,11 +50,11 @@
 - Produces: `PermissionKeySchema`, `OperatorPrincipalSchema`, `OperatorCallContextSchema`, `ApiCredentialViewSchema`, `ProgramRevisionSchema`, `ProgramLifecycleSchema`, `AuditEntrySchema`.
 - Changes: decisions require `programRevision: number`; operator/public request schemas remain distinct.
 
-- [ ] Write failing schema tests proving invalid permission keys, plaintext credential views, missing program revisions, and browser-supplied operator context are rejected.
-- [ ] Run `pnpm --filter @incentives/contracts test -- production-operator-contracts.test.ts`; expect failures for missing exports.
-- [ ] Implement strict Zod schemas and exported inferred types; extend documentation fixtures with valid examples.
-- [ ] Run contracts tests, typecheck/build, and `pnpm --filter @incentives/contracts test`; expect exit 0.
-- [ ] Commit with `git commit -m "feat: define production operator contracts"`.
+- [x] Write failing schema tests proving invalid permission keys, plaintext credential views, missing program revisions, and browser-supplied operator context are rejected.
+- [x] Run `pnpm --filter @incentives/contracts test -- production-operator-contracts.test.ts`; expect failures for missing exports.
+- [x] Implement strict Zod schemas and exported inferred types; extend documentation fixtures with valid examples.
+- [x] Run contracts tests, typecheck/build, and `pnpm --filter @incentives/contracts test`; expect exit 0.
+- [x] Commit with `git commit -m "feat: define production operator contracts"`.
 
 ### Task 2: Migrate Product D1 from seeded tenancy to merchants, keys, revisions, and audit
 
@@ -66,11 +70,11 @@
 - Produces repositories for merchant provisioning, credential digests, logical programs/revisions/counters, schema deprecation/impact, and product audit.
 - Preserves existing Plan 2 rows as the seeded merchant's revision 1 during migration tests; production completion later removes seeded request fallback.
 
-- [ ] Write a migration test that applies `0001`, inserts representative Plan 2 data, applies `0002`, and asserts preserved schema/customer/evaluation/redemption foreign keys and revision/counter ownership.
-- [ ] Run `pnpm --filter @incentives/api test -- production-migration.test.ts`; expect missing migration failure.
-- [ ] Add forward-only tables/indexes and repository methods using merchant-scoped compound constraints; never reconstruct credential plaintext.
-- [ ] Run repository and migration tests on both clean and upgraded databases; expect exit 0.
-- [ ] Commit with `git commit -m "feat: migrate core tenancy and program revisions"`.
+- [x] Write a migration test that applies `0001`, inserts representative Plan 2 data, applies `0002`, and asserts preserved schema/customer/evaluation/redemption foreign keys and revision/counter ownership.
+- [x] Run `pnpm --filter @incentives/api test -- production-migration.test.ts`; expect missing migration failure.
+- [x] Add forward-only tables/indexes and repository methods using merchant-scoped compound constraints; never reconstruct credential plaintext.
+- [x] Run repository and migration tests on both clean and upgraded databases; expect exit 0.
+- [x] Commit with `git commit -m "feat: migrate core tenancy and program revisions"`.
 
 ### Task 3: Replace static-token scope with internal operator context and merchant credentials
 
@@ -89,11 +93,11 @@
 **Interfaces:**
 - Produces: idempotent merchant provisioning, private `OperatorCallContext`, `pk_`/`sk_` authentication, exact-origin CORS for publishable routes, scope/expiry/revocation checks.
 
-- [ ] Write failing tests for two-merchant isolation, forged operator headers, wrong scopes, revoked/expired keys, allowed/disallowed origins, rotation overlap, and show-once token responses.
-- [ ] Run the two focused test files; expect static seeded merchant behavior to fail isolation assertions.
-- [ ] Implement private and public middleware as separate entry paths; hash random token material and audit safe key metadata.
-- [ ] Run focused tests plus `pnpm --filter @incentives/api test`; expect exit 0 and no seeded request fallback.
-- [ ] Commit with `git commit -m "feat: enforce merchant-scoped core access"`.
+- [x] Write failing tests for two-merchant isolation, forged operator headers, wrong scopes, revoked/expired keys, allowed/disallowed origins, rotation overlap, and show-once token responses.
+- [x] Run the two focused test files; expect static seeded merchant behavior to fail isolation assertions.
+- [x] Implement private and public middleware as separate entry paths; hash random token material and audit safe key metadata.
+- [x] Run focused tests plus `pnpm --filter @incentives/api test`; expect exit 0 and no seeded request fallback.
+- [x] Commit with `git commit -m "feat: enforce merchant-scoped core access"`.
 
 ### Task 4: Complete schema impact/deprecation and immutable Promo revision lifecycles
 
@@ -111,13 +115,13 @@
 **Interfaces:**
 - Produces schema impact preview/deprecation and program draft/publish/schedule/pause/resume/end operations with stable logical reference and revisioned decisions.
 
-- [ ] Write failing tests for published-field immutability, required-customer coverage, draft-only field blocking, deprecation, atomic revision swap, counter continuity, schedule, pause/resume, irreversible end, and old-revision redemption.
-- [ ] Run focused tests; expect missing lifecycle endpoints/repositories.
-- [ ] Implement impact queries and atomic Product D1 transactions; keep advisory reward-rule warnings separate from blocking contract validation.
-- [ ] Run all Core/contract/module tests and the real-D1 full flow; expect exit 0.
-- [ ] Commit with `git commit -m "feat: add safe schema and promo lifecycles"`.
+- [x] Write failing tests for published-field immutability, required-customer coverage, draft-only field blocking, deprecation, atomic revision swap, counter continuity, schedule, pause/resume, irreversible end, and old-revision redemption.
+- [x] Run focused tests; expect missing lifecycle endpoints/repositories.
+- [x] Implement impact queries and atomic Product D1 transactions; keep advisory reward-rule warnings separate from blocking contract validation.
+- [x] Run all Core/contract/module tests and the real-D1 full flow; expect exit 0.
+- [x] Commit with `git commit -m "feat: add safe schema and promo lifecycles"`.
 
-**Gate A review:** Verify public OpenAPI, migration from merged Plan 2, tenant isolation, keys, revision/counter semantics, and all existing conditional-reward behavior before proceeding.
+**Gate A review: complete.** Verified public OpenAPI, migration from merged Plan 2, tenant isolation, keys, revision/counter semantics, and all existing conditional-reward behavior before proceeding.
 
 ---
 
@@ -138,11 +142,11 @@
 **Interfaces:**
 - Produces service-binding auth routes, sessions, passwordless links, passkey root, recovery codes, disabled signup, and injectable local-capture/Resend mail adapters.
 
-- [ ] Add failing tests for blocked signup, unknown-email-safe responses, single-use/expired links, session revocation, root passkey requirement, and secrets absent from logs.
-- [ ] Run `pnpm --filter @incentives/identity test`; expect the workspace/package to be absent.
-- [ ] Install pinned Better Auth dependencies, configure same-origin proxy URLs/cookies, D1 session/rate-limit storage, and mail adapters.
-- [ ] Run Identity tests/build/lint and migration on a clean local Auth D1; expect exit 0.
-- [ ] Commit with `git commit -m "feat: add isolated identity worker"`.
+- [x] Add failing tests for blocked signup, unknown-email-safe responses, single-use/expired links, session revocation, root passkey requirement, and secrets absent from logs.
+- [x] Run `pnpm --filter @incentives/identity test`; expect the workspace/package to be absent.
+- [x] Install pinned Better Auth dependencies, configure same-origin proxy URLs/cookies, D1 session/rate-limit storage, and mail adapters.
+- [x] Run Identity tests/build/lint and migration on a clean local Auth D1; expect exit 0.
+- [x] Commit with `git commit -m "feat: add isolated identity worker"`.
 
 ### Task 6: Add provider-neutral permissions, invitations, and idempotent client provisioning
 
@@ -159,13 +163,13 @@
 **Interfaces:**
 - Produces `authorize(principal, permission, merchantId)`, fixed Admin/Operator/Viewer bundles, root wildcard, invite lifecycle, last-Admin protection, and retryable provisioning state.
 
-- [ ] Write the complete role matrix test plus cross-organization, removed-member, duplicate provisioning, failed/retried provisioning, last-Admin, and second-root tests.
-- [ ] Run focused tests; expect missing registry/services.
-- [ ] Implement deny-by-default registry and idempotent organization/merchant coordination through Core's private service interface.
-- [ ] Run all Identity tests and an Identity/Core contract test; expect exit 0.
-- [ ] Commit with `git commit -m "feat: add invite-only organization authorization"`.
+- [x] Write the complete role matrix test plus cross-organization, removed-member, duplicate provisioning, failed/retried provisioning, last-Admin, and second-root tests.
+- [x] Run focused tests; expect missing registry/services.
+- [x] Implement deny-by-default registry and idempotent organization/merchant coordination through Core's private service interface.
+- [x] Run all Identity tests and an Identity/Core contract test; expect exit 0.
+- [x] Commit with `git commit -m "feat: add invite-only organization authorization"`.
 
-**Gate B review:** Verify no public signup path, no Better Auth role checks in business code, no Product D1 binding, root recovery, and tenant-safe invitations.
+**Gate B review: complete.** Verified no public signup path, no Better Auth role checks in business code, no Product D1 binding, root recovery, and tenant-safe invitations.
 
 ---
 
@@ -190,13 +194,13 @@
 **Interfaces:**
 - Produces same-origin `/auth/*` proxy and `/operator/v1/*` BFF; consumes Identity/Core service bindings; serves `apps/dashboard/dist` assets; has no D1 binding.
 
-- [ ] Write failing tests for unauthenticated/forbidden calls, root merchant selection, forged tenant fields, correlation propagation, safe errors, and absence of production operator redemption route.
-- [ ] Run `pnpm --filter @incentives/operator-web test`; expect missing package.
-- [ ] Implement route-specific permission checks and typed service clients; never forward browser auth/tenant headers to Core.
-- [ ] Run tests/build/lint and inspect generated Wrangler bindings; expect no D1 binding.
-- [ ] Commit with `git commit -m "feat: add operator web gateway"`.
+- [x] Write failing tests for unauthenticated/forbidden calls, root merchant selection, forged tenant fields, correlation propagation, safe errors, and absence of production operator redemption route.
+- [x] Run `pnpm --filter @incentives/operator-web test`; expect missing package.
+- [x] Implement route-specific permission checks and typed service clients; never forward browser auth/tenant headers to Core.
+- [x] Run tests/build/lint and inspect generated Wrangler bindings; expect no D1 binding.
+- [x] Commit with `git commit -m "feat: add operator web gateway"`.
 
-### Task 8: Wire authentication, root, team, credentials, and audit dashboard surfaces
+### Task 8: Wire authentication, root, team, and credential dashboard surfaces
 
 **Files:**
 - Create: `apps/dashboard/src/lib/bff-client.ts`
@@ -204,19 +208,18 @@
 - Create: `apps/dashboard/src/pages/platform/*`
 - Create: `apps/dashboard/src/pages/settings/Team.tsx`
 - Create: `apps/dashboard/src/pages/settings/Credentials.tsx`
-- Create: `apps/dashboard/src/pages/settings/Audit.tsx`
 - Modify: `apps/dashboard/src/App.tsx`
 - Modify: `apps/dashboard/src/components/layout/AppShell.tsx`
 - Test: `apps/dashboard/src/pages/OperatorAccessFlow.test.tsx`
 
 **Interfaces:**
-- Produces invite acceptance/sign-in, root provisioning/merchant switcher/banner, fixed role management, show-once keys, and merged audit views.
+- Produces invite acceptance/sign-in, root provisioning/merchant switcher/banner, fixed role management, and show-once keys.
 
-- [ ] Write mocked-BFF tests for root and each client role, last-Admin errors, key show-once/rotation/revocation, and demo markers.
-- [ ] Run the focused test; expect missing authenticated routes.
-- [ ] Implement canonical typed pages without storing sessions or keys in local storage; preserve current visual system.
-- [ ] Run dashboard tests/build/lint; expect exit 0.
-- [ ] Commit with `git commit -m "feat: add authenticated operator administration"`.
+- [x] Write mocked-BFF tests for root and each client role, last-Admin errors, key show-once/rotation/revocation, and demo markers.
+- [x] Run the focused test; expect missing authenticated routes.
+- [x] Implement canonical typed pages without storing sessions or keys in local storage; preserve current visual system.
+- [x] Run dashboard tests/build/lint; expect exit 0.
+- [x] Commit with `git commit -m "feat: add authenticated operator administration"`.
 
 ### Task 9: Wire schema, customer, and immutable Promo authoring
 
@@ -234,13 +237,15 @@
 **Interfaces:**
 - Produces live schema impact/publish/deprecate, exact customer lookup/update, Promo draft/revision/lifecycle, typed nested conditions, and advisory rule warnings.
 
-- [ ] Write a mocked-BFF journey defining fields, publishing, updating a customer, authoring two ordered rewards/fallback, publishing revision 1, editing/publishing revision 2, and preserving counters.
-- [ ] Run focused tests; expect demo-store behavior to fail network assertions.
-- [ ] Replace store access only on live surfaces; keep future modules visibly demo-only and make nested `ALL`/`ANY` controls functional.
-- [ ] Run dashboard and workspace tests/build/lint; expect exit 0.
-- [ ] Commit with `git commit -m "feat: wire live schema customer and promo operations"`.
+- [x] Write a mocked-BFF journey defining fields, publishing, updating a customer, authoring two ordered rewards/fallback, publishing revision 1, editing/publishing revision 2, and preserving counters.
+- [x] Run focused tests; expect demo-store behavior to fail network assertions.
+- [x] Replace store access only on live surfaces; keep future modules visibly demo-only and make nested `ALL`/`ANY` controls functional.
+- [x] Run dashboard and workspace tests/build/lint; expect exit 0.
+- [x] Commit with `git commit -m "feat: wire live schema customer and promo operations"`.
 
-**Gate C review:** Manually verify role-specific navigation, root context banner, refresh persistence, no browser secrets, real BFF errors, and live/demo separation.
+**Gate C review: in progress.** Code review and automated verification are clean at `791443e`. The stopped browser run verified root passkeys, client switching, root authorization, show-once credentials, browser security metadata, CSRF rejection, and schema lifecycle, but exposed local-startup and invitation contract failures. Reusable developer-setup and non-technical browser guides now define the repeatable handoff. Full client-role, customer, Promo, and demo verification remains pending; Task 10 stays blocked.
+
+Gate C handoff: [developer setup](https://app.notion.com/p/3a4e5c7c2b8e8197b2daf950431552b3) · [non-technical tester guide](https://app.notion.com/p/3a4e5c7c2b8e81a8949cff0b321b04fc) · [stopped run findings](https://app.notion.com/p/3a4e5c7c2b8e81f28b7dd9455e94b71a).
 
 ---
 
@@ -295,16 +300,24 @@
 - Create: `apps/identity/src/services/audit.ts`
 - Create: `apps/api/src/services/audit-service.ts`
 - Create: `apps/operator-web/src/routes/audit.ts`
+- Modify: `apps/dashboard/src/lib/bff-client.ts`
+- Create: `apps/dashboard/src/pages/settings/Audit.tsx`
+- Create: `apps/dashboard/src/pages/settings/Audit.test.tsx`
 - Modify: each Worker request/error middleware
+- Modify: `apps/dashboard/src/App.tsx`
+- Modify: `apps/dashboard/src/components/layout/AppShell.tsx`
 - Test: `apps/operator-web/test/audit.test.ts`
 - Test: `apps/api/test/safe-logging.test.ts`
 
 **Interfaces:**
-- Produces correlated Identity/Product audit queries, root labels, safe structured logs, configurable 12-month retention, and alertable safe events.
+- Produces correlated Identity/Product audit queries, merged live Audit dashboard views, root labels, safe structured logs, configurable 12-month retention, and alertable safe events.
+
+**Sequencing:** Task 8 deliberately ships without a live Audit surface. Task 12 adds the BFF audit contract, merged data, dashboard client, Audit page, and page tests together so the UI cannot precede its authoritative data boundary. Repository documentation synchronization to Notion remains required later in Task 13; this sequencing change does not reduce total scope.
 
 - [ ] Write tests that trace one correlation id across all Workers and reject snapshots containing tokens, links, attributes, carts, conditions, or rewards.
 - [ ] Run focused tests; expect missing audit services.
 - [ ] Implement owning-service audit writes and BFF merge pagination; add retention cleanup and safe event categories.
+- [ ] Implement the typed dashboard audit client and live Audit page only after the merged BFF query is available.
 - [ ] Run all service tests and secret-pattern scans; expect exit 0.
 - [ ] Commit with `git commit -m "feat: add production audit and observability"`.
 

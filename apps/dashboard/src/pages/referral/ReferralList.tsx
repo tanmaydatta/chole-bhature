@@ -5,6 +5,7 @@ import { useProgramStore } from '../../data/store';
 import { PageHeader } from '../../components/common/PageHeader';
 import { SegmentedFilter } from '../../components/common/SegmentedFilter';
 import { StatusBadge } from '../../components/common/StatusBadge';
+import { usePermission } from '../../auth/AuthContext';
 
 type FilterLabel = 'Active' | 'Scheduled' | 'Paused' | 'Ended' | 'Drafts' | 'All';
 
@@ -36,6 +37,7 @@ function rewardDisplay(r: unknown): string {
 }
 
 export default function ReferralList() {
+  const canManage = usePermission('programs:manage');
   const navigate = useNavigate();
   // Default to 'All' so the full ranked + not-ranked story shows up front.
   const [selected, setSelected] = useState<FilterLabel>('All');
@@ -116,7 +118,7 @@ export default function ReferralList() {
     <div className="flex flex-col gap-[20px]">
       <PageHeader
         title="Referral Programs"
-        action={
+        action={canManage ? (
           <button
             className="inline-flex items-center gap-[6px] text-[13px] font-semibold px-[14px] py-[7px] rounded-[8px] bg-[var(--accent)] text-white border-none cursor-pointer"
             type="button"
@@ -124,7 +126,7 @@ export default function ReferralList() {
           >
             ＋ New referral
           </button>
-        }
+        ) : undefined}
       />
 
       <SegmentedFilter
@@ -156,10 +158,10 @@ export default function ReferralList() {
             return (
               <div
                 key={p.id}
-                draggable
-                onDragStart={() => handleDragStart(p.id)}
+                draggable={canManage}
+                onDragStart={() => canManage && handleDragStart(p.id)}
                 onDragOver={e => e.preventDefault()}
-                onDrop={() => handleDrop(p.id)}
+                onDrop={() => canManage && handleDrop(p.id)}
                 onClick={() => navigate(`/referrals/${p.id}`)}
                 className="grid items-center px-[12px] py-[10px] border-b border-[var(--border)] hover:bg-[var(--hover)] cursor-grab"
                 style={{ gridTemplateColumns: ROW_COLS }}
@@ -171,6 +173,7 @@ export default function ReferralList() {
                     min={1}
                     max={ranked.length}
                     value={priority}
+                    disabled={!canManage}
                     onClick={e => e.stopPropagation()}
                     onMouseDown={e => e.stopPropagation()}
                     onKeyDown={e => e.stopPropagation()}

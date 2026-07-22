@@ -1,0 +1,440 @@
+import type { D1Migration } from '@cloudflare/vitest-pool-workers';
+import { applyD1Migrations } from 'cloudflare:test';
+import { env } from 'cloudflare:workers';
+import { expect, test } from 'vitest';
+
+const testEnv = env as typeof env & {
+  DB: D1Database;
+  TEST_MIGRATIONS: D1Migration[];
+};
+
+const createdAt = '2026-07-18T12:00:00.000Z';
+const programConfiguration = {
+  id: 'legacy-welcome',
+  type: 'promo',
+  name: 'Legacy welcome',
+  status: 'active',
+  eligibility: { match: 'ALL', conditions: [] },
+  rewardRules: [{
+    id: 'welcome-reward',
+    name: 'Welcome reward',
+    conditions: { match: 'ALL', conditions: [] },
+    reward: {
+      type: 'order_discount',
+      calculation: 'fixed',
+      amount: { currency: 'GBP', minorUnits: 500 },
+    },
+  }],
+  budget: { currency: 'GBP', minorUnits: 5_000 },
+  usageCap: 10,
+  stackable: false,
+  priority: 10,
+  autoApply: true,
+} as const;
+
+const draftProgramConfiguration = {
+  ...programConfiguration,
+  id: 'legacy-draft',
+  name: 'Legacy draft',
+  status: 'draft',
+} as const;
+
+async function resetToMigrationOne(): Promise<D1Migration> {
+  const migrationOne = testEnv.TEST_MIGRATIONS.find(migration => (
+    migration.name === '0001_core.sql'
+  ));
+  const productionMigration = testEnv.TEST_MIGRATIONS.find(migration => (
+    migration.name === '0002_production_operator.sql'
+  ));
+
+  expect(migrationOne, '0001_core.sql must remain available as the upgrade source').toBeDefined();
+  expect(
+    productionMigration,
+    '0002_production_operator.sql must exist before the Plan 2 upgrade can run',
+  ).toBeDefined();
+
+  const applicationTables = [
+    'product_audit',
+    'credential_rate_limit_windows',
+    'api_credentials',
+    'redemptions',
+    'evaluation_decisions',
+    'program_counters',
+    'program_revisions',
+    'programs',
+    'customers',
+    'schema_versions',
+    'variable_definitions',
+    'merchants',
+  ] as const;
+  for (const name of applicationTables) {
+    await testEnv.DB.prepare(`DROP TABLE IF EXISTS ${name}`).run();
+  }
+  await testEnv.DB.prepare('DELETE FROM d1_migrations').run();
+  await applyD1Migrations(testEnv.DB, [migrationOne!]);
+  return productionMigration!;
+}
+
+async function seedRepresentativePlanTwoData(): Promise<void> {
+  const definition = {
+    key: 'customer.tier',
+    label: 'Customer tier',
+    source: 'customer',
+    type: 'string',
+    required: true,
+  };
+  const request = {
+    customerRef: 'legacy-customer',
+    cart: { currency: 'GBP', subtotal: 5_000, items: [] },
+  };
+  const decisions = [{
+    programRef: 'legacy-welcome',
+    programRevision: 1,
+    programType: 'promo',
+    outcome: 'qualified',
+    rewardRuleRef: 'welcome-reward',
+    effects: [{
+      type: 'order_discount',
+      calculation: 'fixed',
+      amount: { currency: 'GBP', minorUnits: 500 },
+    }],
+    reasonCodes: ['QUALIFIED'],
+    commitRequired: true,
+  }];
+  const redemptionResult = {
+    version: 1,
+    result: {
+      redemptionId: 'legacy-redemption',
+      evaluationId: 'legacy-evaluation',
+      externalOrderRef: 'legacy-order',
+      programRef: 'legacy-welcome',
+      rewardRuleRef: 'welcome-reward',
+      status: 'committed',
+      effects: decisions[0]!.effects,
+    },
+    receiptIntegrityHash: 'a'.repeat(64),
+  };
+
+  await testEnv.DB.batch([
+    testEnv.DB.prepare(`
+      INSERT INTO schema_versions (
+        merchant_id, version, state, published_at, definitions_json
+      ) VALUES ('phase-0-merchant', 1, 'published', ?1, ?2)
+    `).bind(createdAt, JSON.stringify([definition])),
+    testEnv.DB.prepare(`
+      INSERT INTO variable_definitions (
+        id, merchant_id, schema_version, key, label, source, type, required,
+        state, created_at
+      ) VALUES (
+        'legacy-definition', 'phase-0-merchant', 1, 'customer.tier',
+        'Customer tier', 'customer', 'string', 1, 'published', ?1
+      )
+    `).bind(createdAt),
+    testEnv.DB.prepare(`
+      INSERT INTO customers (
+        id, merchant_id, external_ref, attributes_json, version, updated_at
+      ) VALUES (
+        'legacy-customer-row', 'phase-0-merchant', 'legacy-customer',
+        '{"tier":"gold"}', 2, ?1
+      )
+    `).bind(createdAt),
+    testEnv.DB.prepare(`
+      INSERT INTO programs (
+        id, merchant_id, external_ref, type, name, status, config_json,
+        priority, max_uses, usage_count, budget_remaining, created_at, updated_at
+      ) VALUES (
+        'legacy-program-row', 'phase-0-merchant', 'legacy-welcome', 'promo',
+        'Legacy welcome', 'active', ?1, 10, 10, 3, 4500, ?2, ?2
+      )
+    `).bind(JSON.stringify(programConfiguration), createdAt),
+    testEnv.DB.prepare(`
+      INSERT INTO programs (
+        id, merchant_id, external_ref, type, name, status, config_json,
+        priority, max_uses, usage_count, budget_remaining, created_at, updated_at
+      ) VALUES (
+        'legacy-draft-row', 'phase-0-merchant', 'legacy-draft', 'promo',
+        'Legacy draft', 'draft', ?1, 10, 10, 1, 4750, ?2, ?2
+      )
+    `).bind(JSON.stringify(draftProgramConfiguration), createdAt),
+    testEnv.DB.prepare(`
+      INSERT INTO evaluation_decisions (
+        id, merchant_id, customer_ref, customer_version, schema_version,
+        request_json, facts_json, decisions_json, integrity_hash, expires_at, created_at
+      ) VALUES (
+        'legacy-evaluation', 'phase-0-merchant', 'legacy-customer', 2, 1,
+        ?1, ?2, ?3, 'legacy-integrity', '2026-07-18T12:05:00.000Z', ?4
+      )
+    `).bind(
+      JSON.stringify(request),
+      JSON.stringify({ scalar: { 'customer.tier': 'gold' }, lineItems: [], programs: [] }),
+      JSON.stringify(decisions),
+      createdAt,
+    ),
+    testEnv.DB.prepare(`
+      INSERT INTO redemptions (
+        id, merchant_id, external_order_ref, evaluation_id, result_json,
+        discount_minor_units, currency, created_at
+      ) VALUES (
+        'legacy-redemption', 'phase-0-merchant', 'legacy-order',
+        'legacy-evaluation', ?1, 500, 'GBP', ?2
+      )
+    `).bind(JSON.stringify(redemptionResult), createdAt),
+  ]);
+}
+
+test('upgrades a populated Plan 2 database without breaking ownership or history', async () => {
+  const productionMigration = await resetToMigrationOne();
+  await seedRepresentativePlanTwoData();
+
+  await applyD1Migrations(testEnv.DB, [productionMigration]);
+
+  expect(await testEnv.DB.prepare(`
+    SELECT id, name, status FROM merchants WHERE id = 'phase-0-merchant'
+  `).first()).toEqual({
+    id: 'phase-0-merchant',
+    name: 'Phase 0 Merchant',
+    status: 'active',
+  });
+  expect(await testEnv.DB.prepare(`
+    SELECT id, merchant_id, external_ref, type, status, active_revision, draft_revision
+    FROM programs WHERE id = 'legacy-program-row'
+  `).first()).toEqual({
+    id: 'legacy-program-row',
+    merchant_id: 'phase-0-merchant',
+    external_ref: 'legacy-welcome',
+    type: 'promo',
+    status: 'active',
+    active_revision: 1,
+    draft_revision: null,
+  });
+  expect(await testEnv.DB.prepare(`
+    SELECT program_id, merchant_id, revision, config_json, created_at, created_by,
+      published_at, published_by
+    FROM program_revisions
+    WHERE merchant_id = 'phase-0-merchant' AND program_id = 'legacy-program-row'
+  `).first()).toEqual({
+    program_id: 'legacy-program-row',
+    merchant_id: 'phase-0-merchant',
+    revision: 1,
+    config_json: JSON.stringify(programConfiguration),
+    created_at: createdAt,
+    created_by: 'system:migration',
+    published_at: createdAt,
+    published_by: 'system:migration',
+  });
+  expect(await testEnv.DB.prepare(`
+    SELECT id, active_revision, draft_revision
+    FROM programs WHERE id = 'legacy-draft-row'
+  `).first()).toEqual({
+    id: 'legacy-draft-row',
+    active_revision: null,
+    draft_revision: 1,
+  });
+  expect(await testEnv.DB.prepare(`
+    SELECT program_id, revision, config_json, created_at, created_by,
+      published_at, published_by
+    FROM program_revisions
+    WHERE merchant_id = 'phase-0-merchant' AND program_id = 'legacy-draft-row'
+  `).first()).toEqual({
+    program_id: 'legacy-draft-row',
+    revision: 1,
+    config_json: JSON.stringify(draftProgramConfiguration),
+    created_at: createdAt,
+    created_by: 'system:migration',
+    published_at: null,
+    published_by: null,
+  });
+  expect(await testEnv.DB.prepare(`
+    SELECT program_id, merchant_id, max_uses, usage_count, budget_remaining
+    FROM program_counters
+    WHERE merchant_id = 'phase-0-merchant' AND program_id = 'legacy-program-row'
+  `).first()).toEqual({
+    program_id: 'legacy-program-row',
+    merchant_id: 'phase-0-merchant',
+    max_uses: 10,
+    usage_count: 3,
+    budget_remaining: 4500,
+  });
+
+  expect(await testEnv.DB.prepare(`
+    SELECT
+      (SELECT COUNT(*) FROM schema_versions WHERE merchant_id = 'phase-0-merchant') AS schemas,
+      (SELECT COUNT(*) FROM variable_definitions WHERE merchant_id = 'phase-0-merchant') AS definitions,
+      (SELECT COUNT(*) FROM customers WHERE merchant_id = 'phase-0-merchant') AS customers,
+      (SELECT COUNT(*) FROM evaluation_decisions WHERE merchant_id = 'phase-0-merchant') AS evaluations,
+      (SELECT COUNT(*) FROM redemptions WHERE merchant_id = 'phase-0-merchant') AS redemptions
+  `).first()).toEqual({
+    schemas: 1,
+    definitions: 1,
+    customers: 1,
+    evaluations: 1,
+    redemptions: 1,
+  });
+  expect((await testEnv.DB.prepare('PRAGMA foreign_key_check').all()).results).toEqual([]);
+
+  const updatedDraftConfiguration = {
+    ...draftProgramConfiguration,
+    name: 'Legacy draft updated by old worker',
+  };
+  await testEnv.DB.prepare(`
+    UPDATE programs
+    SET config_json = ?1, max_uses = 12, usage_count = 2, budget_remaining = 4250
+    WHERE id = 'legacy-draft-row'
+  `).bind(JSON.stringify(updatedDraftConfiguration)).run();
+  expect(await testEnv.DB.prepare(`
+    SELECT config_json FROM program_revisions
+    WHERE merchant_id = 'phase-0-merchant' AND program_id = 'legacy-draft-row' AND revision = 1
+  `).first()).toEqual({ config_json: JSON.stringify(updatedDraftConfiguration) });
+  expect(await testEnv.DB.prepare(`
+    SELECT max_uses, usage_count, budget_remaining FROM program_counters
+    WHERE merchant_id = 'phase-0-merchant' AND program_id = 'legacy-draft-row'
+  `).first()).toEqual({
+    max_uses: 12,
+    usage_count: 2,
+    budget_remaining: 4250,
+  });
+
+  await testEnv.DB.prepare("DELETE FROM programs WHERE id = 'legacy-draft-row'").run();
+  expect(await testEnv.DB.prepare(`
+    SELECT
+      (SELECT COUNT(*) FROM program_revisions WHERE program_id = 'legacy-draft-row') AS revisions,
+      (SELECT COUNT(*) FROM program_counters WHERE program_id = 'legacy-draft-row') AS counters
+  `).first()).toEqual({ revisions: 0, counters: 0 });
+
+  await testEnv.DB.prepare(`
+    INSERT INTO merchants (id, name, status, created_at, updated_at)
+    VALUES ('other-merchant', 'Other merchant', 'active', ?1, ?1)
+  `).bind(createdAt).run();
+  await expect(testEnv.DB.prepare(`
+    INSERT INTO program_revisions (
+      program_id, merchant_id, revision, config_json, created_at, created_by
+    ) VALUES (
+      'legacy-program-row', 'other-merchant', 2, ?1, ?2, 'other-user'
+    )
+  `).bind(JSON.stringify(programConfiguration), createdAt).run()).rejects.toThrow();
+  await expect(testEnv.DB.prepare(`
+    INSERT INTO program_counters (
+      program_id, merchant_id, max_uses, usage_count, budget_remaining
+    ) VALUES ('legacy-program-row', 'other-merchant', 10, 0, 5000)
+  `).run()).rejects.toThrow();
+});
+
+test('forward-migrates logical committed spend from populated Task 2 counters', async () => {
+  const productionMigration = await resetToMigrationOne();
+  await seedRepresentativePlanTwoData();
+  await applyD1Migrations(testEnv.DB, [productionMigration]);
+  const spendMigration = testEnv.TEST_MIGRATIONS.find(migration => (
+    migration.name === '0004_program_committed_spend.sql'
+  ));
+  expect(spendMigration, 'the committed-spend forward migration must exist').toBeDefined();
+
+  await applyD1Migrations(testEnv.DB, [spendMigration!]);
+
+  expect((await testEnv.DB.prepare(`
+    SELECT program_id AS programId, committed_spend AS committedSpend
+    FROM program_counters WHERE merchant_id = 'phase-0-merchant'
+    ORDER BY program_id
+  `).all()).results).toEqual([
+    { programId: 'legacy-draft-row', committedSpend: 250 },
+    { programId: 'legacy-program-row', committedSpend: 500 },
+  ]);
+});
+
+test('backfills publishable quotas and creates isolated fixed-window state without affecting secrets', async () => {
+  const productionMigration = await resetToMigrationOne();
+  await seedRepresentativePlanTwoData();
+  const originsMigration = testEnv.TEST_MIGRATIONS.find(migration => (
+    migration.name === '0003_credential_origins.sql'
+  ));
+  const spendMigration = testEnv.TEST_MIGRATIONS.find(migration => (
+    migration.name === '0004_program_committed_spend.sql'
+  ));
+  const rateLimitMigration = testEnv.TEST_MIGRATIONS.find(migration => (
+    migration.name === '0005_publishable_rate_limits.sql'
+  ));
+  expect(originsMigration).toBeDefined();
+  expect(spendMigration).toBeDefined();
+  expect(rateLimitMigration, 'the publishable rate-limit migration must exist').toBeDefined();
+  await applyD1Migrations(testEnv.DB, [
+    productionMigration,
+    originsMigration!,
+    spendMigration!,
+  ]);
+  await testEnv.DB.batch([
+    testEnv.DB.prepare(`
+      INSERT INTO api_credentials (
+        id, merchant_id, name, environment, kind, scopes_json,
+        allowed_origins_json, digest, suffix, status, created_at, created_by
+      ) VALUES (
+        'legacy-publishable', 'phase-0-merchant', 'Legacy browser key', 'production',
+        'publishable', '["schema:read"]', '["https://shop.example"]',
+        ?1, 'pub12345', 'active', ?2, 'migration-test'
+      )
+    `).bind('a'.repeat(64), createdAt),
+    testEnv.DB.prepare(`
+      INSERT INTO api_credentials (
+        id, merchant_id, name, environment, kind, scopes_json,
+        allowed_origins_json, digest, suffix, status, created_at, created_by
+      ) VALUES (
+        'legacy-secret', 'phase-0-merchant', 'Legacy server key', 'production',
+        'secret', '["customers:write"]', '[]',
+        ?1, 'sec12345', 'active', ?2, 'migration-test'
+      )
+    `).bind('b'.repeat(64), createdAt),
+  ]);
+
+  await applyD1Migrations(testEnv.DB, [rateLimitMigration!]);
+
+  expect((await testEnv.DB.prepare(`
+    SELECT id, requests_per_minute AS requestsPerMinute
+    FROM api_credentials WHERE id IN ('legacy-publishable', 'legacy-secret')
+    ORDER BY id
+  `).all()).results).toEqual([
+    { id: 'legacy-publishable', requestsPerMinute: 60 },
+    { id: 'legacy-secret', requestsPerMinute: null },
+  ]);
+  expect(await testEnv.DB.prepare(`
+    SELECT COUNT(*) AS count FROM credential_rate_limit_windows
+  `).first()).toEqual({ count: 0 });
+  await expect(testEnv.DB.prepare(`
+    UPDATE api_credentials SET requests_per_minute = 0
+    WHERE id = 'legacy-publishable'
+  `).run()).rejects.toThrow();
+  await expect(testEnv.DB.prepare(`
+    UPDATE api_credentials SET requests_per_minute = 60
+    WHERE id = 'legacy-secret'
+  `).run()).rejects.toThrow();
+});
+
+test('recovers spend from a rolled-back counter-first Worker update sequence', async () => {
+  const productionMigration = await resetToMigrationOne();
+  await seedRepresentativePlanTwoData();
+  await applyD1Migrations(testEnv.DB, [productionMigration]);
+  const spendMigration = testEnv.TEST_MIGRATIONS.find(migration => (
+    migration.name === '0004_program_committed_spend.sql'
+  ));
+  expect(spendMigration).toBeDefined();
+  await applyD1Migrations(testEnv.DB, [spendMigration!]);
+
+  await testEnv.DB.prepare(`
+    UPDATE program_counters
+    SET usage_count = 4, budget_remaining = 4_250
+    WHERE merchant_id = 'phase-0-merchant' AND program_id = 'legacy-program-row'
+  `).run();
+  await testEnv.DB.prepare(`
+    UPDATE programs
+    SET usage_count = 4, budget_remaining = 4_250
+    WHERE merchant_id = 'phase-0-merchant' AND id = 'legacy-program-row'
+  `).run();
+
+  expect(await testEnv.DB.prepare(`
+    SELECT usage_count AS usageCount, budget_remaining AS budgetRemaining,
+      committed_spend AS committedSpend
+    FROM program_counters
+    WHERE merchant_id = 'phase-0-merchant' AND program_id = 'legacy-program-row'
+  `).first()).toEqual({
+    usageCount: 4,
+    budgetRemaining: 4_250,
+    committedSpend: 750,
+  });
+});

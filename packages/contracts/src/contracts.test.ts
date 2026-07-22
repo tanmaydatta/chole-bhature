@@ -240,6 +240,7 @@ describe('canonical contracts', () => {
       expiresAt: '2026-07-18T15:05:00Z',
       decisions: [{
         programRef: 'welcome-10',
+        programRevision: 1,
         programType: 'promo',
         outcome: 'qualified',
         rewardRuleRef: 'default-reward',
@@ -262,6 +263,7 @@ describe('canonical contracts', () => {
       expiresAt: '2026-07-18T15:05:00Z',
       decisions: [{
         programRef: 'welcome-10',
+        programRevision: 1,
         programType: 'promo',
         outcome: 'qualified',
         rewardRuleRef: '',
@@ -280,6 +282,7 @@ describe('canonical contracts', () => {
       expiresAt: '2026-07-18T15:05:00Z',
       decisions: [{
         programRef: 'referral-1',
+        programRevision: 1,
         programType: 'referral',
         outcome: 'not_qualified',
         effects: [],
@@ -332,6 +335,7 @@ describe('canonical contracts', () => {
       expiresAt: '2026-07-18T15:05:00Z',
       decisions: [{
         programRef: 'welcome-10',
+        programRevision: 1,
         programType: 'promo',
         outcome: 'qualified',
         effects: [],
@@ -623,6 +627,10 @@ describe('canonical contracts', () => {
         '/v1/redemptions': { post: {} },
       },
     });
+    expect(document.paths).not.toHaveProperty('/v1/test-publishable');
+    expect(document.paths).not.toHaveProperty('/v1/test-secret');
+    expect(document.paths?.['/v1/schema/published']?.get?.responses).toHaveProperty('429');
+    expect(document.paths?.['/v1/evaluate']?.post?.responses).toHaveProperty('429');
     const effectSchema = document.components?.schemas?.Effect;
     const variants = (effectSchema as { anyOf?: unknown[] } | undefined)?.anyOf;
     expect(variants?.[0]).toMatchObject({
@@ -819,18 +827,13 @@ describe('canonical contracts', () => {
       }>;
     };
     const paths = document.paths as Record<string, Record<string, Operation>>;
-    expect(paths['/v1/programs']?.post?.requestBody?.content?.['application/json']?.schema)
-      .toEqual({ $ref: '#/components/schemas/PromoProgram' });
-    expect(paths['/v1/programs']?.post?.responses?.['201']?.content?.['application/json']?.schema)
-      .toEqual({ $ref: '#/components/schemas/PromoProgram' });
-    expect(paths['/v1/programs/{externalRef}']?.patch?.requestBody
-      ?.content?.['application/json']?.schema)
-      .toEqual({ $ref: '#/components/schemas/PromoProgram' });
-    expect(paths['/v1/programs/{externalRef}']?.patch?.responses?.['200']
-      ?.content?.['application/json']?.schema)
-      .toEqual({ $ref: '#/components/schemas/PromoProgram' });
-    expect(paths['/v1/programs']?.get?.responses?.['200']?.content?.['application/json']?.schema)
-      .toEqual({ $ref: '#/components/schemas/ProgramListResponse' });
+    expect(paths['/v1/programs']).toBeUndefined();
+    expect(paths['/v1/programs/{externalRef}']).toBeUndefined();
+    expect(paths['/v1/schema/definitions']).toBeUndefined();
+    expect(paths['/v1/schema/definitions/{id}']).toBeUndefined();
+    expect(document.components?.parameters?.SchemaDefinitionId).toBeUndefined();
+    expect(document.components?.parameters?.ProgramExternalRef).toBeUndefined();
+    expect(paths['/v1/schema/publish']).toBeUndefined();
 
     const programList = schemas?.ProgramListResponse as {
       properties?: {
@@ -849,10 +852,6 @@ describe('canonical contracts', () => {
       .toEqual([['promo'], ['promo']]);
 
     const liveProgramOperations = JSON.stringify({
-      list: paths['/v1/programs']?.get,
-      create: paths['/v1/programs']?.post,
-      read: paths['/v1/programs/{externalRef}']?.get,
-      replace: paths['/v1/programs/{externalRef}']?.patch,
       listSchema: programList,
     });
     expect(liveProgramOperations).not.toMatch(/AffiliateProgram|ReferralProgram|LoyaltyProgram/);

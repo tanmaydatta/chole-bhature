@@ -3,10 +3,11 @@ import { SELF } from 'cloudflare:test';
 import { env } from 'cloudflare:workers';
 import { beforeEach, describe, expect, test } from 'vitest';
 
-import { SEEDED_MERCHANT_ID } from '../src/auth/static-token.js';
+import { SEEDED_MERCHANT_ID } from './test-credentials.js';
 import { createRepositories } from '../src/repositories/d1-repositories.js';
 import type { SchemaRepository, SchemaVersionRecord } from '../src/repositories/types.js';
 import { createSchemaService } from '../src/services/schema-service.js';
+import { operatorAuthoringRequest } from './operator-authoring-app.js';
 
 type DefinitionView = {
   id: string;
@@ -27,10 +28,10 @@ const channelDefinition = {
 function schemaRequest(
   method: string,
   path: string,
-  token = 'secret-test',
+  token = 'sk_test_secret_credential_material_000000000001',
   body?: unknown,
 ): Promise<Response> {
-  return SELF.fetch(`https://example.test${path}`, {
+  const request = new Request(`https://example.test${path}`, {
     method,
     headers: {
       authorization: `Bearer ${token}`,
@@ -38,12 +39,15 @@ function schemaRequest(
     },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
+  return path === '/v1/schema/published'
+    ? SELF.fetch(request)
+    : operatorAuthoringRequest(request, env);
 }
 
 async function createDefinition(
   definition: VariableDefinition,
 ): Promise<DefinitionView> {
-  const response = await schemaRequest('POST', '/v1/schema/definitions', 'secret-test', definition);
+  const response = await schemaRequest('POST', '/v1/schema/definitions', 'sk_test_secret_credential_material_000000000001', definition);
   expect(response.status).toBe(201);
   return await response.json() as DefinitionView;
 }
@@ -123,7 +127,7 @@ describe('schema registry API', () => {
       sample: { context: { channel: 'web', first_purchase: false } },
     });
 
-    const published = await schemaRequest('GET', '/v1/schema/published', 'publishable-test');
+    const published = await schemaRequest('GET', '/v1/schema/published', 'pk_test_publishable_credential_material_00000001');
     expect(published.status).toBe(200);
     expect(await published.json()).toEqual(second);
 
@@ -181,22 +185,22 @@ describe('schema registry API', () => {
   });
 
   test('rejects invalid definitions, system fields, and reserved canonical facts', async () => {
-    await expectError(await schemaRequest('POST', '/v1/schema/definitions', 'secret-test', {
+    await expectError(await schemaRequest('POST', '/v1/schema/definitions', 'sk_test_secret_credential_material_000000000001', {
       ...channelDefinition,
       key: 'customer.channel',
     }), 400, 'CONTEXT_VALIDATION_FAILED');
-    await expectError(await schemaRequest('POST', '/v1/schema/definitions', 'secret-test', {
+    await expectError(await schemaRequest('POST', '/v1/schema/definitions', 'sk_test_secret_credential_material_000000000001', {
       ...channelDefinition,
       source: 'unknown',
     }), 400, 'CONTEXT_VALIDATION_FAILED');
-    await expectError(await schemaRequest('POST', '/v1/schema/definitions', 'secret-test', {
+    await expectError(await schemaRequest('POST', '/v1/schema/definitions', 'sk_test_secret_credential_material_000000000001', {
       key: 'system.budget_remaining',
       label: 'Budget remaining',
       source: 'system',
       type: 'number',
       required: false,
     }), 409, 'SCHEMA_CONFLICT');
-    await expectError(await schemaRequest('POST', '/v1/schema/definitions', 'secret-test', {
+    await expectError(await schemaRequest('POST', '/v1/schema/definitions', 'sk_test_secret_credential_material_000000000001', {
       key: 'cart.subtotal',
       label: 'Subtotal override',
       source: 'cart',
@@ -206,25 +210,32 @@ describe('schema registry API', () => {
     await expectError(await schemaRequest(
       'PATCH',
       '/v1/schema/definitions/canonical%3Acart.subtotal',
-      'secret-test',
+      'sk_test_secret_credential_material_000000000001',
       { key: 'cart.subtotal', label: 'Changed', source: 'cart', type: 'number', required: true },
     ), 409, 'SCHEMA_CONFLICT');
   });
 
-  test('rejects required additions after publication and leaves the published snapshot unchanged', async () => {
+  test('allows required live additions after publication for operator warning handling', async () => {
     await createDefinition(channelDefinition);
     expect((await schemaRequest('POST', '/v1/schema/publish')).status).toBe(201);
 
-    await expectError(await schemaRequest('POST', '/v1/schema/definitions', 'secret-test', {
+    expect((await schemaRequest('POST', '/v1/schema/definitions', 'sk_test_secret_credential_material_000000000001', {
       key: 'context.locale',
       label: 'Locale',
       source: 'context',
       type: 'string',
       required: true,
-    }), 409, 'SCHEMA_CONFLICT');
+    })).status).toBe(201);
+    expect((await schemaRequest('POST', '/v1/schema/publish')).status).toBe(201);
 
-    const published = await schemaRequest('GET', '/v1/schema/published', 'publishable-test');
-    expect(await published.json()).toMatchObject({ version: 1, definitions: [channelDefinition] });
+    const published = await schemaRequest('GET', '/v1/schema/published', 'pk_test_publishable_credential_material_00000001');
+    expect(await published.json()).toMatchObject({
+      version: 2,
+      definitions: expect.arrayContaining([
+        channelDefinition,
+        expect.objectContaining({ key: 'context.locale', required: true }),
+      ]),
+    });
   });
 
   test('lists, updates, and deletes an unreferenced draft definition', async () => {
@@ -238,7 +249,7 @@ describe('schema registry API', () => {
     const update = await schemaRequest(
       'PATCH',
       `/v1/schema/definitions/${created.id}`,
-      'secret-test',
+      'sk_test_secret_credential_material_000000000001',
       { ...created.definition, label: 'Customer tier' },
     );
     expect(update.status).toBe(200);
@@ -319,7 +330,7 @@ describe('schema registry API', () => {
     `).bind(definitionsJson, SEEDED_MERCHANT_ID).run();
 
     const error = await expectError(
-      await schemaRequest('GET', '/v1/schema/published', 'publishable-test'),
+      await schemaRequest('GET', '/v1/schema/published', 'pk_test_publishable_credential_material_00000001'),
       503,
       'EVALUATION_UNAVAILABLE',
     );
@@ -391,7 +402,7 @@ describe('schema registry API', () => {
       await expectError(await schemaRequest(
         'PATCH',
         `/v1/schema/definitions/${created.id}`,
-        'secret-test',
+        'sk_test_secret_credential_material_000000000001',
         { ...created.definition, key: 'customer.segment', type: 'string', enumValues: undefined },
       ), 409, 'SCHEMA_CONFLICT');
       await expectError(await schemaRequest(
@@ -419,7 +430,7 @@ describe('schema registry API', () => {
     const response = await schemaRequest(
       'PATCH',
       `/v1/schema/definitions/${created.id}`,
-      'secret-test',
+      'sk_test_secret_credential_material_000000000001',
       { ...created.definition, label: 'Membership tier' },
     );
 
@@ -434,30 +445,31 @@ describe('schema registry API', () => {
     await expectError(await schemaRequest(
       'POST',
       '/v1/schema/definitions',
-      'publishable-test',
+      'pk_test_publishable_credential_material_00000001',
       channelDefinition,
     ), 403, 'FORBIDDEN');
-    await expectError(await schemaRequest('POST', '/v1/schema/publish', 'publishable-test'), 403, 'FORBIDDEN');
-    await expectError(await schemaRequest('GET', '/v1/schema/published', 'publishable-test'), 404, 'SCHEMA_NOT_PUBLISHED');
-    await expectError(await schemaRequest('GET', '/v1/schema/published', 'secret-test'), 404, 'SCHEMA_NOT_PUBLISHED');
+    await expectError(await schemaRequest('POST', '/v1/schema/publish', 'pk_test_publishable_credential_material_00000001'), 403, 'FORBIDDEN');
+    await expectError(await schemaRequest('GET', '/v1/schema/published', 'pk_test_publishable_credential_material_00000001'), 404, 'SCHEMA_NOT_PUBLISHED');
+    await expectError(await schemaRequest('GET', '/v1/schema/published', 'sk_test_secret_credential_material_000000000001'), 404, 'SCHEMA_NOT_PUBLISHED');
   });
 
   test('malformed JSON returns a stable canonical client error', async () => {
-    const response = await SELF.fetch('https://example.test/v1/schema/definitions', {
+    const response = await operatorAuthoringRequest(new Request(
+      'https://operator.test/v1/schema/definitions', {
       method: 'POST',
       headers: {
-        authorization: 'Bearer secret-test',
+        authorization: 'Bearer sk_test_secret_credential_material_000000000001',
         'content-type': 'application/json',
       },
       body: '{"key":',
-    });
+    }), env);
     await expectError(response, 400, 'CONTEXT_VALIDATION_FAILED');
   });
 
   test('simultaneous duplicate creates return one success and one canonical conflict', async () => {
     const responses = await Promise.all([
-      schemaRequest('POST', '/v1/schema/definitions', 'secret-test', channelDefinition),
-      schemaRequest('POST', '/v1/schema/definitions', 'secret-test', channelDefinition),
+      schemaRequest('POST', '/v1/schema/definitions', 'sk_test_secret_credential_material_000000000001', channelDefinition),
+      schemaRequest('POST', '/v1/schema/definitions', 'sk_test_secret_credential_material_000000000001', channelDefinition),
     ]);
     expect(responses.map(response => response.status).sort()).toEqual([201, 409]);
     const conflict = responses.find(response => response.status === 409)!;
@@ -483,7 +495,7 @@ describe('schema registry API', () => {
     )).resolves.toMatchObject({ publishedAt: published.publishedAt });
   });
 
-  test('PATCHing a published id removed from the current draft returns a canonical conflict', async () => {
+  test('requires deprecation instead of deleting a published id from the current draft', async () => {
     const original = await createDefinition(channelDefinition);
     expect((await schemaRequest('POST', '/v1/schema/publish')).status).toBe(201);
     await createDefinition({
@@ -493,14 +505,22 @@ describe('schema registry API', () => {
       type: 'string',
       required: false,
     });
-    expect((await schemaRequest('DELETE', `/v1/schema/definitions/${original.id}`)).status).toBe(204);
+    await expectError(
+      await schemaRequest('DELETE', `/v1/schema/definitions/${original.id}`),
+      409,
+      'SCHEMA_CONFLICT',
+    );
 
-    await expectError(await schemaRequest(
+    const presentationUpdate = await schemaRequest(
       'PATCH',
       `/v1/schema/definitions/${original.id}`,
-      'secret-test',
+      'sk_test_secret_credential_material_000000000001',
       { ...channelDefinition, label: 'Restored' },
-    ), 409, 'SCHEMA_CONFLICT');
+    );
+    expect(presentationUpdate.status).toBe(200);
+    expect(await presentationUpdate.json()).toMatchObject({
+      definition: { key: channelDefinition.key, label: 'Restored' },
+    });
   });
 
   test.each([
@@ -510,7 +530,7 @@ describe('schema registry API', () => {
     await expectError(await schemaRequest(
       'PATCH',
       `/v1/schema/definitions/${encodeURIComponent(id)}`,
-      'secret-test',
+      'sk_test_secret_credential_material_000000000001',
       channelDefinition,
     ), 409, 'SCHEMA_CONFLICT');
     await expectError(await schemaRequest(
@@ -535,7 +555,7 @@ describe('schema registry API', () => {
     await expectError(await schemaRequest(
       'PATCH',
       `/v1/schema/definitions/${created.id}`,
-      'secret-test',
+      'sk_test_secret_credential_material_000000000001',
       { ...created.definition, source: 'context' },
     ), 400, 'CONTEXT_VALIDATION_FAILED');
   });
@@ -586,7 +606,7 @@ describe('schema registry API', () => {
     const response = await schemaRequest(
       'PATCH',
       `/v1/schema/definitions/${created.id}`,
-      'secret-test',
+      'sk_test_secret_credential_material_000000000001',
       { ...created.definition, key: 'customer.segment' },
     );
     expect(response.status).toBe(200);

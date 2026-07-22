@@ -1,4 +1,5 @@
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { useState } from 'react';
 import { ConditionBuilder } from './ConditionBuilder';
 import type { ConditionGroup, Variable } from '../../lib/types';
@@ -22,6 +23,16 @@ const SAMPLE_VARIABLES: Variable[] = [
     type: 'number',
     origin: 'system',
     defaultMessage: 'This offer has ended — check back soon!',
+  },
+  {
+    name: 'context.channel',
+    type: 'string',
+    origin: 'dynamic',
+  },
+  {
+    name: 'customer.birthday',
+    type: 'date',
+    origin: 'user',
   },
 ];
 
@@ -127,4 +138,156 @@ test('condition with an existing custom message shows the editor open with that 
   const msgInput = screen.getByRole('textbox', { name: /message/i });
   expect(msgInput).toBeInTheDocument();
   expect(msgInput).toHaveValue('Spend a bit more to qualify!');
+});
+
+test('adds one contract-supported nested ALL/ANY group and keeps condition ids unique', () => {
+  let latest: ConditionGroup = { match: 'ALL', conditions: [] };
+  function NestedWrapper() {
+    const [value, setValue] = useState(latest);
+    return <ConditionBuilder value={value} variables={SAMPLE_VARIABLES} onChange={(next) => {
+      latest = next;
+      setValue(next);
+    }} />;
+  }
+  render(<NestedWrapper />);
+
+  fireEvent.click(screen.getByText('＋ Add nested group (AND / OR)'));
+  fireEvent.change(screen.getByLabelText('Nested group match 1'), { target: { value: 'ANY' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Add condition to nested group 1' }));
+  fireEvent.click(screen.getByText('basket_value'));
+  fireEvent.click(screen.getAllByText('＋ Add condition')[0]!);
+  fireEvent.click(screen.getAllByText('basket_value')[0]!);
+
+  expect(latest.groups).toHaveLength(1);
+  expect(latest.groups?.[0]?.match).toBe('ANY');
+  expect(latest.groups?.[0]?.conditions).toHaveLength(1);
+  const ids = [
+    ...latest.conditions.map(condition => condition.id),
+    ...(latest.groups ?? []).flatMap(group => group.conditions.map(condition => condition.id)),
+  ];
+  expect(new Set(ids).size).toBe(ids.length);
+});
+
+test('emits true numbers and booleans instead of display strings', () => {
+  let latest: ConditionGroup = {
+    match: 'ALL',
+    conditions: [{ id: 'number-condition', variable: 'basket_value', operator: 'gte', value: 0 }],
+  };
+  const { rerender } = render(
+    <ConditionBuilder value={latest} variables={SAMPLE_VARIABLES} onChange={next => { latest = next; }} />,
+  );
+  fireEvent.change(screen.getByLabelText('value'), { target: { value: '125.5' } });
+  expect(latest.conditions[0]?.value).toBe(125.5);
+
+  latest = {
+    match: 'ALL',
+    conditions: [{ id: 'boolean-condition', variable: 'customer_tier', operator: 'eq', value: 'gold' }],
+  };
+  const booleanVariables: Variable[] = [{ name: 'customer.active', type: 'boolean', origin: 'user' }];
+  latest = {
+    match: 'ALL',
+    conditions: [{ id: 'boolean-condition', variable: 'customer.active', operator: 'is', value: true }],
+  };
+  rerender(<ConditionBuilder value={latest} variables={booleanVariables} onChange={next => { latest = next; }} />);
+  fireEvent.change(screen.getByLabelText('value'), { target: { value: 'false' } });
+  expect(latest.conditions[0]?.value).toBe(false);
+});
+
+test('authors string and enum in-values as arrays and normalizes when the operator changes', async () => {
+  let latest: ConditionGroup = {
+    match: 'ALL',
+    conditions: [{ id: 'enum-in', variable: 'customer_tier', operator: 'eq', value: 'gold' }],
+  };
+  function Capture({ initial }: { initial: ConditionGroup }) {
+    const [value, setValue] = useState(initial);
+    return <ConditionBuilder value={value} variables={SAMPLE_VARIABLES} onChange={next => { latest = next; setValue(next); }} />;
+  }
+  const { rerender } = render(<Capture initial={latest}/>);
+  fireEvent.change(screen.getByLabelText('operator'), { target: { value: 'in' } });
+  expect(latest.conditions[0]?.value).toEqual(['gold']);
+  await userEvent.selectOptions(screen.getByLabelText('values'), ['gold', 'silver']);
+  expect(latest.conditions[0]?.value).toEqual(['gold', 'silver']);
+
+  latest = {
+    match: 'ALL',
+    conditions: [{ id: 'string-in', variable: 'context.channel', operator: 'in', value: ['store'] }],
+  };
+  rerender(<Capture key="string-in" initial={latest}/>);
+  fireEvent.change(screen.getByLabelText('values'), { target: { value: 'store, web' } });
+  expect(latest.conditions[0]?.value).toEqual(['store', 'web']);
+});
+
+test('authors typed number and nested date between bounds and normalizes on operator change', () => {
+  let latest: ConditionGroup = {
+    match: 'ALL',
+    conditions: [{ id: 'number-between', variable: 'basket_value', operator: 'gte', value: 10 }],
+    groups: [{
+      match: 'ANY',
+      conditions: [{
+        id: 'date-between', variable: 'customer.birthday', operator: 'between',
+        value: ['1990-01-01', '2000-12-31'],
+      }],
+    }],
+  };
+  function Capture() {
+    const [value, setValue] = useState(latest);
+    return <ConditionBuilder value={value} variables={SAMPLE_VARIABLES} onChange={next => { latest = next; setValue(next); }} />;
+  }
+  render(<Capture/>);
+  const rows = screen.getAllByLabelText('operator').map(control => control.closest('div')!);
+  fireEvent.change(within(rows[0]!).getByLabelText('operator'), { target: { value: 'between' } });
+  expect(latest.conditions[0]?.value).toEqual([10, 10]);
+  const minimums = screen.getAllByLabelText('minimum value');
+  const maximums = screen.getAllByLabelText('maximum value');
+  fireEvent.change(minimums[0]!, { target: { value: '25' } });
+  fireEvent.change(maximums[0]!, { target: { value: '75' } });
+  expect(latest.conditions[0]?.value).toEqual([25, 75]);
+  fireEvent.change(minimums[1]!, { target: { value: '1995-02-03' } });
+  fireEvent.change(maximums[1]!, { target: { value: '2001-04-05' } });
+  expect(latest.groups?.[0]?.conditions[0]?.value).toEqual(['1995-02-03', '2001-04-05']);
+});
+
+test('keeps unresolved and incompatible top-level and nested conditions visible and editable', async () => {
+  let latest: ConditionGroup = {
+    match: 'ALL',
+    conditions: [
+      { id: 'deprecated-top', variable: 'customer.deprecated', operator: 'eq', value: 'legacy' },
+      { id: 'wrong-operator', variable: 'context.channel', operator: 'gt', value: 'store' },
+    ],
+    groups: [{
+      match: 'ANY',
+      conditions: [{ id: 'missing-nested', variable: 'context.missing', operator: 'in', value: ['web'] }],
+    }],
+  };
+  function InvalidWrapper() {
+    const [value, setValue] = useState(latest);
+    const [valid, setValid] = useState(true);
+    return <>
+      <output aria-label="condition validity">{String(valid)}</output>
+      <ConditionBuilder
+        value={value}
+        variables={SAMPLE_VARIABLES}
+        onChange={next => { latest = next; setValue(next); }}
+        onValidityChange={setValid}
+      />
+    </>;
+  }
+  render(<InvalidWrapper />);
+
+  await waitFor(() => expect(screen.getByLabelText('condition validity')).toHaveTextContent('false'));
+  const top = screen.getByRole('group', { name: 'Unresolved condition customer.deprecated' });
+  expect(within(top).getByText('customer.deprecated')).toBeInTheDocument();
+  expect(within(top).getByText('eq')).toBeInTheDocument();
+  expect(within(top).getByText('legacy')).toBeInTheDocument();
+  expect(screen.getByText('Missing variable definition for customer.deprecated.')).toBeInTheDocument();
+  expect(screen.getByText('Missing variable definition for context.missing.')).toBeInTheDocument();
+  expect(screen.getByText('Operator “gt” is not valid for context.channel.')).toBeInTheDocument();
+
+  await userEvent.click(within(top).getByRole('button', { name: 'Replace customer.deprecated' }));
+  await userEvent.click(within(top).getByText('customer_tier'));
+  expect(latest.conditions[0]).toMatchObject({
+    id: 'deprecated-top', variable: 'customer_tier', operator: 'eq', value: 'gold',
+  });
+  await userEvent.click(screen.getByRole('button', { name: 'Remove context.missing' }));
+  expect(latest.groups?.[0]?.conditions).toEqual([]);
 });

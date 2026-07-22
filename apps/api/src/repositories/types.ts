@@ -1,13 +1,26 @@
 import type {
+  ApiCredentialKind,
+  ApiCredentialScope,
+  ApiCredentialView,
+  AuditEntry,
   CustomerSnapshot,
+  DeploymentEnvironment,
   EvaluationRequest,
   IncentiveDecision,
+  MerchantActivationRequest,
+  MerchantActivationResult,
+  MerchantProvisionRequest,
+  MerchantProvisionResult,
   PromoProgram,
+  ProgramLifecycle,
+  ProgramStatus,
+  ProgramRevision,
   RedemptionResponse,
   VariableDefinition,
 } from '@incentives/contracts';
 
 export type SchemaState = 'draft' | 'published';
+export type DefinitionState = SchemaState | 'deprecated';
 
 export interface VariableDefinitionCreate {
   id: string;
@@ -18,7 +31,26 @@ export interface VariableDefinitionCreate {
   createdAt?: string;
 }
 
-export interface VariableDefinitionRecord extends Required<VariableDefinitionCreate> {}
+type VariableDefinitionRecordBase = Omit<Required<VariableDefinitionCreate>, 'state'>;
+
+export type VariableDefinitionRecord = VariableDefinitionRecordBase & (
+  | { state: SchemaState; deprecatedAt?: never; deprecatedBy?: never }
+  | { state: 'deprecated'; deprecatedAt: string; deprecatedBy: string }
+);
+
+export interface SchemaDefinitionImpact {
+  publishedVersions: number[];
+  referencedProgramRefs: string[];
+  storedCustomerCount: number;
+}
+
+export interface SchemaDefinitionDeprecation {
+  merchantId: string;
+  id: string;
+  schemaVersion: number;
+  deprecatedAt: string;
+  deprecatedBy: string;
+}
 
 export interface SchemaVersionRecord {
   merchantId: string;
@@ -58,6 +90,79 @@ export interface SchemaRepository {
     definitions: VariableDefinition[],
     publishedAt: string,
   ): Promise<SchemaVersionRecord>;
+  getDefinitionImpact(merchantId: string, key: string): Promise<SchemaDefinitionImpact>;
+  countIncompatibleCustomers(
+    merchantId: string,
+    definition: VariableDefinition,
+  ): Promise<number>;
+  listDeprecatedKeys(merchantId: string): Promise<Set<string>>;
+  deprecateDefinition(input: SchemaDefinitionDeprecation): Promise<void>;
+}
+
+export type MerchantProvision = MerchantProvisionRequest & { createdAt?: string };
+export type MerchantStatus = 'provisioning' | 'active';
+export interface MerchantRecord {
+  id: string;
+  name: string;
+  status: MerchantStatus;
+  provisioningId?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface MerchantRepository {
+  provision(input: MerchantProvision): Promise<MerchantProvisionResult>;
+  get(id: string): Promise<MerchantRecord | null>;
+  activate(
+    input: MerchantActivationRequest,
+    updatedAt: string,
+  ): Promise<MerchantActivationResult>;
+}
+
+export interface CredentialCreate {
+  id: string;
+  merchantId: string;
+  name: string;
+  environment: DeploymentEnvironment;
+  kind: ApiCredentialKind;
+  scopes: ApiCredentialScope[];
+  allowedOrigins?: string[];
+  requestsPerMinute?: number;
+  digest: string;
+  suffix: string;
+  expiresAt?: string;
+  createdAt?: string;
+  createdBy: string;
+}
+
+export interface CredentialAuthenticationRecord {
+  credential: ApiCredentialView;
+  allowedOrigins: string[];
+}
+
+export interface CredentialRepository {
+  createWithAudit(input: CredentialCreate, audit: AuditEntry): Promise<ApiCredentialView>;
+  findByDigest(digest: string): Promise<ApiCredentialView | null>;
+  authenticateByDigest(digest: string): Promise<CredentialAuthenticationRecord | null>;
+  hasAllowedPublishableOrigin(
+    origin: string,
+    scope: ApiCredentialScope,
+    checkedAt: string,
+  ): Promise<boolean>;
+  list(merchantId: string): Promise<ApiCredentialView[]>;
+  revokeWithAudit(
+    merchantId: string,
+    id: string,
+    revokedAt: string,
+    revokedBy: string,
+    audit: AuditEntry,
+  ): Promise<ApiCredentialView | null>;
+  markUsed(id: string, usedAt: string): Promise<void>;
+  consumePublishableRateLimit(
+    credentialId: string,
+    requestsPerMinute: number,
+    windowStartedAt: number,
+  ): Promise<boolean>;
 }
 
 export interface CustomerRecord {
@@ -79,6 +184,7 @@ export interface CustomerRepository {
   create(merchantId: string, customer: CustomerSnapshot): Promise<CustomerRecord>;
   get(merchantId: string, externalRef: string): Promise<CustomerRecord | null>;
   upsert(input: CustomerUpsert): Promise<CustomerRecord>;
+  upsertWithAudit(input: CustomerUpsert, audit: AuditEntry): Promise<CustomerRecord>;
 }
 
 export interface ProgramCreate {
@@ -103,18 +209,59 @@ export interface ProgramRecord {
   merchantId: string;
   externalRef: string;
   program: PromoProgram;
+  revision: number;
+  activeRevision?: number;
+  draftRevision?: number;
   usageCount: number;
   budgetRemaining?: number;
+  committedSpend: number;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface ProgramRevisionRecord extends ProgramRevision {
+  merchantId: string;
+  programId: string;
+}
+
+export interface ProgramCounterRecord {
+  programId: string;
+  merchantId: string;
+  maxUses?: number;
+  usageCount: number;
+  budgetRemaining?: number;
+  committedSpend: number;
 }
 
 export interface ProgramRepository {
   create(input: ProgramCreate): Promise<ProgramRecord>;
   get(merchantId: string, externalRef: string): Promise<ProgramRecord | null>;
+  getActive(merchantId: string, externalRef: string): Promise<ProgramRecord | null>;
   list(merchantId: string): Promise<ProgramRecord[]>;
+  listActive(merchantId: string): Promise<ProgramRecord[]>;
   updateDraft(input: ProgramUpdate): Promise<ProgramRecord>;
+  publishDraft(input: {
+    merchantId: string;
+    externalRef: string;
+    expectedDraftRevision: number;
+    status: Exclude<ProgramStatus, 'draft'>;
+    publishedAt: string;
+    publishedBy: string;
+  }): Promise<ProgramRecord>;
+  updateLifecycle(input: {
+    merchantId: string;
+    externalRef: string;
+    expectedStatus: ProgramStatus;
+    status: Exclude<ProgramStatus, 'draft'>;
+    updatedAt: string;
+  }): Promise<ProgramLifecycle>;
   listReferencedVariableKeys(merchantId: string): Promise<Set<string>>;
+  getRevision(
+    merchantId: string,
+    externalRef: string,
+    revision: number,
+  ): Promise<ProgramRevisionRecord | null>;
+  getCounters(merchantId: string, externalRef: string): Promise<ProgramCounterRecord | null>;
 }
 
 export interface EvaluationDecisionRecord {
@@ -162,6 +309,7 @@ export interface RedemptionCreate {
 export interface AtomicRedemptionCommit extends RedemptionCreate {
   programId: string;
   programRef: string;
+  expectedActiveRevision: number;
   expectedProgram: PromoProgram;
   customerRef?: string;
   perCustomerCap?: number;
@@ -202,11 +350,19 @@ export interface RedemptionRepository {
 }
 
 export interface Repositories {
+  merchants: MerchantRepository;
+  credentials: CredentialRepository;
   schemas: SchemaRepository;
   customers: CustomerRepository;
   programs: ProgramRepository;
   decisions: DecisionRepository;
   redemptions: RedemptionRepository;
+  audit: ProductAuditRepository;
+}
+
+export interface ProductAuditRepository {
+  append(entry: AuditEntry): Promise<void>;
+  list(merchantId: string): Promise<AuditEntry[]>;
 }
 
 export class OptimisticVersionConflictError extends Error {

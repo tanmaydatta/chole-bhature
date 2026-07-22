@@ -1,13 +1,18 @@
 export { AffiliateProgramSchema } from './affiliate-program.js';
 export type { AffiliateProgram } from './affiliate-program.js';
 export * from './commerce.js';
+export * from './credentials.js';
 export * from './conditions.js';
 export * from './errors.js';
 export * from './evaluation.js';
+export * from './audit.js';
 export { LoyaltyProgramSchema } from './loyalty-program.js';
 export type { LoyaltyProgram } from './loyalty-program.js';
 export * from './money.js';
 export * from './openapi.js';
+export * from './operator.js';
+export * from './operator-bff.js';
+export * from './paths.js';
 export * from './programs.js';
 export { ReferralProgramSchema } from './referral-program.js';
 export type { ReferralProgram } from './referral-program.js';

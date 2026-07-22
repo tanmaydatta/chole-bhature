@@ -12,7 +12,10 @@ build/
 # Env / local
 .env
 .env.local
+.env.*
+!.env.staging.example
 *.local
+.dev.vars
 
 # OS / editor
 .DS_Store

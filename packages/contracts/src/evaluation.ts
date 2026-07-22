@@ -113,6 +113,7 @@ export const ProgramTypeSchema = z.enum([
 
 export const IncentiveDecisionSchema = z.object({
   programRef: z.string().min(1),
+  programRevision: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
   programType: ProgramTypeSchema,
   outcome: DecisionOutcomeSchema,
   rewardRuleRef: z.string().min(1).optional(),

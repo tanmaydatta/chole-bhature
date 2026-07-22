@@ -16,8 +16,6 @@ export default defineConfig(async () => {
         miniflare: {
           bindings: {
             TEST_MIGRATIONS: migrations,
-            PUBLISHABLE_TOKEN: 'publishable-test',
-            SECRET_TOKEN: 'secret-test',
             DECISION_SIGNING_SECRET: 'decision-signing-test-secret',
           },
         },

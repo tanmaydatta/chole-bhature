@@ -2,6 +2,7 @@ import { useState, Fragment } from 'react';
 import type { Origin, Variable } from '../../lib/types';
 import { useVariablesStore } from '../../data/variablesStore';
 import { PageHeader } from '../../components/common/PageHeader';
+import { usePermission } from '../../auth/AuthContext';
 import { SegmentedFilter } from '../../components/common/SegmentedFilter';
 import { VariablePanel } from '../../components/setup/VariablePanel';
 
@@ -58,6 +59,7 @@ function typeLabel(v: Variable): string {
 type PanelMode = 'view' | 'edit' | 'create';
 
 export default function Variables() {
+  const canManage = usePermission('schemas:manage');
   const variables = useVariablesStore(s => s.variables);
   const [filter, setFilter] = useState<FilterOption>('All');
   const [panelVariable, setPanelVariable] = useState<Variable | null>(null);
@@ -97,14 +99,14 @@ export default function Variables() {
       <div className="mb-4">
         <PageHeader
           title="Variables"
-          action={
+          action={canManage ? (
             <button
               className="border-none px-[14px] py-[8px] rounded-[8px] font-semibold text-[13px] cursor-pointer bg-[var(--accent)] text-white"
               onClick={() => openPanel(null, 'create')}
             >
               ＋ New variable
             </button>
-          }
+          ) : undefined}
         />
       </div>
 
@@ -161,10 +163,10 @@ export default function Variables() {
                     <tr
                       key={v.name}
                       className="border-b border-[var(--border)] last:border-b-0 hover:bg-[var(--hover)] cursor-pointer"
-                      onClick={() => openPanel(v, v.readOnly ? 'view' : 'edit')}
+                      onClick={() => openPanel(v, v.readOnly || !canManage ? 'view' : 'edit')}
                       onKeyDown={(e) => {
                         if (e.key === 'Enter' || e.key === ' ') {
-                          openPanel(v, v.readOnly ? 'view' : 'edit');
+                          openPanel(v, v.readOnly || !canManage ? 'view' : 'edit');
                         }
                       }}
                       tabIndex={0}

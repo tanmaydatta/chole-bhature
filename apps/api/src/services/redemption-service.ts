@@ -30,6 +30,7 @@ import {
   signRedemptionReceipt,
   verifyRedemptionReceipt,
 } from './redemption-receipt.js';
+import { effectiveProgramStatus, programCurrency } from './program-runtime.js';
 
 const SigningSecretSchema = z.string().min(16).max(4_096);
 
@@ -213,18 +214,33 @@ export function createRedemptionService(repositories: Repositories, env: Env) {
         if (canonicalJson(decision.effects) !== canonicalJson([snapshotReward])) {
           throw new VersionConflictError('The signed selected reward does not match its rule');
         }
-        const program = await repositories.programs.get(merchantId, request.programRef);
-        if (program === null || program.program.status !== 'active') throw new ExhaustedError();
-        const currentReward = rewardByRef(program.program, decision.rewardRuleRef);
-        if (canonicalJson(decision.effects) !== canonicalJson([currentReward])) {
-          throw new VersionConflictError('The program reward changed after evaluation');
+        const [program, revision] = await Promise.all([
+          repositories.programs.getActive(merchantId, request.programRef),
+          repositories.programs.getRevision(
+            merchantId,
+            request.programRef,
+            decision.programRevision,
+          ),
+        ]);
+        const redemptionNow = new Date();
+        if (
+          program === null
+          || program.activeRevision === undefined
+          || effectiveProgramStatus(program.program, redemptionNow) !== 'active'
+        ) throw new ExhaustedError();
+        if (revision?.publishedAt === undefined) {
+          throw new VersionConflictError('The evaluated program revision is not published');
+        }
+        const revisionReward = rewardByRef(revision.configuration, decision.rewardRuleRef);
+        if (canonicalJson(decision.effects) !== canonicalJson([revisionReward])) {
+          throw new VersionConflictError('The selected reward does not match its revision');
         }
         const cartCurrency = record.request.cart.currency;
         if (
-          ('amount' in currentReward
-            && currentReward.amount.currency !== cartCurrency)
-          || (program.program.budget !== undefined
-            && program.program.budget.currency !== cartCurrency)
+          ('amount' in revisionReward
+            && revisionReward.amount.currency !== cartCurrency)
+          || (programCurrency(program.program) !== undefined
+            && programCurrency(program.program) !== cartCurrency)
         ) {
           throw new VersionConflictError('The program currency changed after evaluation');
         }
@@ -273,9 +289,10 @@ export function createRedemptionService(repositories: Repositories, env: Env) {
           result,
           discountMinorUnits,
           currency: cartCurrency,
-          createdAt: new Date().toISOString(),
+          createdAt: redemptionNow.toISOString(),
           programId: program.id,
           programRef: request.programRef,
+          expectedActiveRevision: program.activeRevision,
           expectedProgram: program.program,
           ...(record.customerRef === undefined ? {} : { customerRef: record.customerRef }),
           ...(program.program.perCustomerCap === undefined

@@ -3,6 +3,7 @@ import { MemoryRouter } from 'react-router-dom';
 import Variables from './Variables';
 import { useVariablesStore } from '../../data/variablesStore';
 import { VARIABLES } from '../../data/variables';
+import { TestAuth } from '../../test/TestAuth';
 
 beforeEach(() => {
   useVariablesStore.setState({ variables: VARIABLES.map(v => ({ ...v })) });
@@ -10,9 +11,9 @@ beforeEach(() => {
 
 function renderVariables() {
   return render(
-    <MemoryRouter>
+    <TestAuth><MemoryRouter>
       <Variables />
-    </MemoryRouter>
+    </MemoryRouter></TestAuth>
   );
 }
 

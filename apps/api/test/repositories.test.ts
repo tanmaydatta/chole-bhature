@@ -43,6 +43,7 @@ const request: EvaluationRequest = {
 
 const incentiveDecision: IncentiveDecision = {
   programRef: 'welcome-10',
+  programRevision: 1,
   programType: 'promo',
   outcome: 'qualified',
   rewardRuleRef: 'default-reward',
@@ -221,8 +222,12 @@ async function seedCommittedRedemption() {
 describe('D1 repositories', () => {
   beforeEach(async () => {
     await env.DB.batch([
+      env.DB.prepare('DELETE FROM product_audit'),
+      env.DB.prepare('DELETE FROM api_credentials'),
       env.DB.prepare('DELETE FROM redemptions'),
       env.DB.prepare('DELETE FROM evaluation_decisions'),
+      env.DB.prepare('DELETE FROM program_counters'),
+      env.DB.prepare('DELETE FROM program_revisions'),
       env.DB.prepare('DELETE FROM programs'),
       env.DB.prepare('DELETE FROM customers'),
       env.DB.prepare('DELETE FROM schema_versions'),
@@ -429,8 +434,14 @@ describe('D1 repositories', () => {
       schema: await repositories.schemas.getLatestVersion('merchant-a', 'published'),
       createdAt,
     });
-    await env.DB.prepare(`UPDATE programs SET ${mutation} WHERE merchant_id = 'merchant-a'`)
-      .run();
+    await env.DB.exec('PRAGMA ignore_check_constraints = ON');
+    try {
+      await env.DB.prepare(`
+        UPDATE program_counters SET ${mutation} WHERE merchant_id = 'merchant-a'
+      `).run();
+    } finally {
+      await env.DB.exec('PRAGMA ignore_check_constraints = OFF');
+    }
 
     await expect(repositories.programs.get('merchant-a', program.id))
       .rejects.toThrow('Stored program is not canonical');
@@ -450,8 +461,9 @@ describe('D1 repositories', () => {
       schema: await repositories.schemas.getLatestVersion('merchant-a', 'published'),
       createdAt,
     });
-    await env.DB.prepare(`UPDATE programs SET ${mutation} WHERE merchant_id = 'merchant-a'`)
-      .run();
+    await env.DB.prepare(`
+      UPDATE program_counters SET ${mutation} WHERE merchant_id = 'merchant-a'
+    `).run();
 
     await expect(repositories.programs.get('merchant-a', program.id))
       .rejects.toThrow('Stored program is not canonical');
@@ -917,5 +929,400 @@ describe('D1 repositories', () => {
       'merchant-b', 'shared-key',
       verifyHistoricalIntegrity.verifyReceipt,
     ))?.merchantId).toBe('merchant-b');
+  });
+
+  test('merchant provisioning is idempotent by stable provisioning identity', async () => {
+    const repositories = createRepositories({ DB: env.DB });
+    const input = {
+      id: 'merchant-provisioned',
+      name: 'Provisioned merchant',
+      provisioningId: 'provisioning-123',
+      createdAt,
+    };
+
+    const first = await repositories.merchants.provision(input);
+    const retry = await repositories.merchants.provision(input);
+
+    expect(first).toEqual({
+      ...input,
+      status: 'provisioning',
+      updatedAt: createdAt,
+    });
+    expect(retry).toEqual(first);
+    expect(await repositories.merchants.get('merchant-provisioned')).toEqual(first);
+    expect(await env.DB.prepare(`
+      SELECT COUNT(*) AS count FROM merchants WHERE provisioning_id = 'provisioning-123'
+    `).first()).toEqual({ count: 1 });
+  });
+
+  test('concurrent merchant provisioning converges on one stable identity', async () => {
+    const repositories = createRepositories({ DB: env.DB });
+    const input = {
+      id: 'merchant-concurrent',
+      name: 'Concurrent merchant',
+      provisioningId: 'provisioning-concurrent',
+      createdAt,
+    };
+
+    const attempts = await Promise.all(
+      Array.from({ length: 8 }, () => repositories.merchants.provision(input)),
+    );
+
+    expect(attempts).toEqual(Array.from({ length: 8 }, () => attempts[0]));
+    expect(attempts[0]).toEqual({
+      ...input,
+      status: 'provisioning',
+      updatedAt: createdAt,
+    });
+    expect(await env.DB.prepare(`
+      SELECT COUNT(*) AS count FROM merchants WHERE provisioning_id = 'provisioning-concurrent'
+    `).first()).toEqual({ count: 1 });
+  });
+
+  test('credential repositories store digests only and keep views merchant scoped', async () => {
+    await seedMerchant('merchant-a');
+    await seedMerchant('merchant-b');
+    const repositories = createRepositories({ DB: env.DB });
+    const digest = 'b'.repeat(64);
+    const view = await repositories.credentials.createWithAudit({
+      id: 'credential-a',
+      merchantId: 'merchant-a',
+      name: 'Storefront publishable',
+      environment: 'production',
+      kind: 'publishable',
+      scopes: ['schema:read', 'evaluations:write'],
+      allowedOrigins: [],
+      requestsPerMinute: 240,
+      digest,
+      suffix: 'abc123',
+      createdAt,
+      createdBy: 'user-123',
+    }, {
+      id: 'credential-a-created-audit',
+      occurredAt: createdAt,
+      actorKind: 'member',
+      actorId: 'user-123',
+      merchantId: 'merchant-a',
+      action: 'credential.created',
+      targetType: 'credential',
+      targetId: 'credential-a',
+      outcome: 'succeeded',
+      correlationId: 'credential-a-created-correlation',
+      metadata: { kind: 'publishable', suffix: 'abc123' },
+    });
+
+    expect(view).toEqual({
+      id: 'credential-a',
+      merchantId: 'merchant-a',
+      name: 'Storefront publishable',
+      environment: 'production',
+      kind: 'publishable',
+      scopes: ['schema:read', 'evaluations:write'],
+      allowedOrigins: [],
+      requestsPerMinute: 240,
+      suffix: 'abc123',
+      createdAt,
+      createdBy: 'user-123',
+      status: 'active',
+    });
+    expect(view).not.toHaveProperty('digest');
+    expect(view).not.toHaveProperty('token');
+    expect(await repositories.credentials.findByDigest(digest)).toEqual(view);
+    expect(await repositories.credentials.list('merchant-b')).toEqual([]);
+
+    await env.DB.prepare(`
+      UPDATE api_credentials SET expires_at = '2000-01-01T00:00:00.000Z'
+      WHERE id = 'credential-a'
+    `).run();
+    expect(await repositories.credentials.findByDigest(digest)).toMatchObject({
+      id: 'credential-a', status: 'expired',
+    });
+    expect(await repositories.credentials.list('merchant-a')).toEqual([
+      expect.objectContaining({ id: 'credential-a', status: 'expired' }),
+    ]);
+
+    await env.DB.prepare(`
+      UPDATE api_credentials
+      SET status = 'revoked', revoked_at = '2026-07-20T00:00:00.000Z', revoked_by = 'user-123'
+      WHERE id = 'credential-a'
+    `).run();
+    expect(await repositories.credentials.findByDigest(digest)).toMatchObject({
+      id: 'credential-a', status: 'revoked',
+    });
+
+    const columns = await env.DB.prepare(
+      "SELECT name FROM pragma_table_info('api_credentials') ORDER BY cid",
+    ).all<{ name: string }>();
+    expect(columns.results.map(column => column.name)).toContain('digest');
+    expect(columns.results.map(column => column.name)).not.toContain('token');
+    expect(columns.results.map(column => column.name)).not.toContain('plaintext');
+    expect(await env.DB.prepare(`
+      SELECT digest FROM api_credentials
+      WHERE merchant_id = 'merchant-a' AND id = 'credential-a'
+    `).first()).toEqual({ digest });
+  });
+
+  test('logical programs own immutable revisions and counters within merchant scope', async () => {
+    await seedMerchant('merchant-a');
+    await seedPublishedSchema('merchant-a');
+    const repositories = createRepositories({ DB: env.DB });
+
+    const stored = await repositories.programs.create({
+      merchantId: 'merchant-a',
+      program,
+      schema: await repositories.schemas.getLatestVersion('merchant-a', 'published'),
+      createdAt,
+    });
+
+    expect(await repositories.programs.getRevision('merchant-a', program.id, 1)).toMatchObject({
+      programRef: program.id,
+      revision: 1,
+      configuration: program,
+      createdAt,
+      createdBy: 'system:legacy-api',
+      publishedAt: createdAt,
+      publishedBy: 'system:legacy-api',
+    });
+    expect(await repositories.programs.getCounters('merchant-a', program.id)).toEqual({
+      programId: stored.id,
+      merchantId: 'merchant-a',
+      maxUses: program.usageCap,
+      usageCount: 0,
+      budgetRemaining: program.budget?.minorUnits,
+      committedSpend: 0,
+    });
+    expect(await repositories.programs.getRevision('merchant-b', program.id, 1)).toBeNull();
+    expect(await repositories.programs.getCounters('merchant-b', program.id)).toBeNull();
+  });
+
+  test('program reads prefer owned revision and counter rows over legacy shadows', async () => {
+    await seedMerchant('merchant-a');
+    await seedPublishedSchema('merchant-a');
+    const repositories = createRepositories({ DB: env.DB });
+    const stored = await repositories.programs.create({
+      merchantId: 'merchant-a',
+      program,
+      schema: await repositories.schemas.getLatestVersion('merchant-a', 'published'),
+      createdAt,
+    });
+    const ownedConfiguration = {
+      ...program,
+      name: 'Owned revision wins',
+    };
+
+    await env.DB.batch([
+      env.DB.prepare(`
+        UPDATE programs SET name = ?1
+        WHERE merchant_id = 'merchant-a' AND id = ?2
+      `).bind(ownedConfiguration.name, stored.id),
+      env.DB.prepare(`
+        UPDATE program_revisions SET config_json = ?1
+        WHERE merchant_id = 'merchant-a' AND program_id = ?2 AND revision = 1
+      `).bind(JSON.stringify(ownedConfiguration), stored.id),
+      env.DB.prepare(`
+        UPDATE program_counters
+        SET usage_count = 2, budget_remaining = 8000
+        WHERE merchant_id = 'merchant-a' AND program_id = ?1
+      `).bind(stored.id),
+    ]);
+
+    expect(await repositories.programs.get('merchant-a', program.id)).toMatchObject({
+      program: ownedConfiguration,
+      usageCount: 2,
+      budgetRemaining: 8000,
+    });
+    expect(await repositories.programs.list('merchant-a')).toEqual([
+      expect.objectContaining({
+        program: ownedConfiguration,
+        usageCount: 2,
+        budgetRemaining: 8000,
+      }),
+    ]);
+  });
+
+  test('deployed D1 constraints reject invalid program pointers and credential or audit enums', async () => {
+    await seedMerchant('merchant-a');
+    await seedPublishedSchema('merchant-a');
+    const repositories = createRepositories({ DB: env.DB });
+    await repositories.programs.create({
+      merchantId: 'merchant-a',
+      program,
+      schema: await repositories.schemas.getLatestVersion('merchant-a', 'published'),
+      createdAt,
+    });
+
+    await expect(env.DB.prepare(`
+      UPDATE programs SET active_revision = 0
+      WHERE merchant_id = 'merchant-a' AND external_ref = ?1
+    `).bind(program.id).run()).rejects.toThrow();
+    await expect(env.DB.prepare(`
+      UPDATE programs SET draft_revision = -1
+      WHERE merchant_id = 'merchant-a' AND external_ref = ?1
+    `).bind(program.id).run()).rejects.toThrow();
+    await expect(env.DB.prepare(`
+      INSERT INTO api_credentials (
+        id, merchant_id, name, environment, kind, scopes_json, digest, suffix,
+        status, created_at, created_by
+      ) VALUES (
+        'invalid-credential', 'merchant-a', 'Invalid', 'preview', 'secret', '[]',
+        ?1, 'suffix', 'active', ?2, 'user-123'
+      )
+    `).bind('c'.repeat(64), createdAt).run()).rejects.toThrow();
+    await expect(env.DB.prepare(`
+      INSERT INTO product_audit (
+        id, occurred_at, actor_kind, actor_id, merchant_id, action,
+        target_type, target_id, outcome, correlation_id
+      ) VALUES (
+        'invalid-audit', ?1, 'anonymous', 'unknown', 'merchant-a', 'invalid',
+        'merchant', 'merchant-a', 'ignored', 'correlation-invalid'
+      )
+    `).bind(createdAt).run()).rejects.toThrow();
+  });
+
+  test('schema repository exposes merchant-scoped definition impact and deprecation', async () => {
+    await seedMerchant('merchant-a');
+    const repositories = createRepositories({ DB: env.DB });
+    const draft = await repositories.schemas.createNextDraft('merchant-a');
+    await repositories.schemas.createDraftDefinition({
+      id: 'definition-impact',
+      merchantId: 'merchant-a',
+      schemaVersion: draft.version,
+      state: 'draft',
+      definition,
+      createdAt,
+    }, [], [definition]);
+    await repositories.schemas.publishDraft('merchant-a', draft.version, [definition], createdAt);
+    await repositories.customers.create('merchant-a', customer('impact-customer', {
+      tier: 'gold',
+    }));
+    await repositories.programs.create({
+      merchantId: 'merchant-a',
+      program: {
+        ...program,
+        eligibility: {
+          match: 'ALL',
+          conditions: [{
+            id: 'tier-condition',
+            variable: definition.key,
+            operator: 'eq',
+            value: 'gold',
+          }],
+        },
+      },
+      schema: await repositories.schemas.getLatestVersion('merchant-a', 'published'),
+      createdAt,
+    });
+
+    expect(await repositories.schemas.getDefinitionImpact(
+      'merchant-a',
+      definition.key,
+    )).toEqual({
+      publishedVersions: [1],
+      referencedProgramRefs: [program.id],
+      storedCustomerCount: 1,
+    });
+    expect(await repositories.schemas.getDefinitionImpact(
+      'missing-merchant',
+      definition.key,
+    )).toEqual({
+      publishedVersions: [],
+      referencedProgramRefs: [],
+      storedCustomerCount: 0,
+    });
+
+    await repositories.schemas.deprecateDefinition({
+      merchantId: 'merchant-a',
+      id: 'definition-impact',
+      schemaVersion: 1,
+      deprecatedAt: '2026-07-18T13:00:00.000Z',
+      deprecatedBy: 'user-123',
+    });
+    await expect(repositories.schemas.getDefinition('merchant-a', 'definition-impact'))
+      .resolves.toMatchObject({
+        state: 'deprecated',
+        deprecatedAt: '2026-07-18T13:00:00.000Z',
+        deprecatedBy: 'user-123',
+      });
+  });
+
+  test('D1 enforces deprecation state, timestamp, and actor as one invariant', async () => {
+    await seedMerchant('merchant-a');
+    await env.DB.prepare(`
+      INSERT INTO variable_definitions (
+        id, merchant_id, schema_version, key, label, source, type, required,
+        state, created_at
+      ) VALUES (
+        'definition-invariant', 'merchant-a', 1, 'customer.tier', 'Customer tier',
+        'customer', 'string', 1, 'published', ?1
+      )
+    `).bind(createdAt).run();
+
+    await expect(env.DB.prepare(`
+      UPDATE variable_definitions
+      SET deprecated_at = ?1, deprecated_by = 'user-123'
+      WHERE id = 'definition-invariant'
+    `).bind(createdAt).run()).rejects.toThrow();
+    await expect(env.DB.prepare(`
+      UPDATE variable_definitions
+      SET state = 'deprecated', deprecated_at = ?1, deprecated_by = NULL
+      WHERE id = 'definition-invariant'
+    `).bind(createdAt).run()).rejects.toThrow();
+    await expect(env.DB.prepare(`
+      UPDATE variable_definitions
+      SET state = 'deprecated', deprecated_at = NULL, deprecated_by = 'user-123'
+      WHERE id = 'definition-invariant'
+    `).run()).rejects.toThrow();
+  });
+
+  test('schema repository rejects stored definitions with partial deprecation provenance', async () => {
+    await seedMerchant('merchant-a');
+    await env.DB.prepare(`
+      INSERT INTO variable_definitions (
+        id, merchant_id, schema_version, key, label, source, type, required,
+        state, created_at
+      ) VALUES (
+        'definition-corrupt', 'merchant-a', 1, 'customer.tier', 'Customer tier',
+        'customer', 'string', 1, 'published', ?1
+      )
+    `).bind(createdAt).run();
+    await env.DB.prepare('DROP TRIGGER IF EXISTS variable_definitions_validate_deprecation_update')
+      .run();
+    await env.DB.prepare(`
+      UPDATE variable_definitions SET deprecated_at = ?1
+      WHERE id = 'definition-corrupt'
+    `).bind(createdAt).run();
+
+    const repositories = createRepositories({ DB: env.DB });
+    await expect(repositories.schemas.getDefinition('merchant-a', 'definition-corrupt'))
+      .rejects.toThrow('Stored schema definition is not canonical');
+  });
+
+  test('product audit persists only canonical safe audit records in merchant scope', async () => {
+    await seedMerchant('merchant-a');
+    await seedMerchant('merchant-b');
+    const repositories = createRepositories({ DB: env.DB });
+    const entry = {
+      id: 'audit-123',
+      occurredAt: createdAt,
+      actorKind: 'member' as const,
+      actorId: 'user-123',
+      merchantId: 'merchant-a',
+      action: 'program.published',
+      targetType: 'program',
+      targetId: program.id,
+      outcome: 'succeeded' as const,
+      correlationId: 'correlation-123',
+      metadata: { programRevision: 1, status: 'active' },
+    };
+
+    await repositories.audit.append(entry);
+
+    expect(await repositories.audit.list('merchant-a')).toEqual([entry]);
+    expect(await repositories.audit.list('merchant-b')).toEqual([]);
+    await expect(repositories.audit.append({
+      ...entry,
+      id: 'unsafe-audit',
+      metadata: { token: { plaintext: 'sk_never-store-this' } },
+    } as never)).rejects.toThrow();
   });
 });

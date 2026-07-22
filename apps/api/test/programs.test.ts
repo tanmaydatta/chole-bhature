@@ -7,9 +7,10 @@ import { SELF } from 'cloudflare:test';
 import { env } from 'cloudflare:workers';
 import { beforeEach, describe, expect, test } from 'vitest';
 
-import { SEEDED_MERCHANT_ID } from '../src/auth/static-token.js';
+import { SEEDED_MERCHANT_ID } from './test-credentials.js';
 import { createRepositories } from '../src/repositories/d1-repositories.js';
 import { createProgramService } from '../src/services/program-service.js';
+import { operatorAuthoringRequest } from './operator-authoring-app.js';
 
 const publishedAt = '2026-07-18T12:00:00.000Z';
 
@@ -85,17 +86,17 @@ function promo(
 function programRequest(
   method: 'GET' | 'POST' | 'PATCH',
   path = '',
-  token = 'secret-test',
+  token = 'sk_test_secret_credential_material_000000000001',
   body?: unknown,
 ): Promise<Response> {
-  return SELF.fetch(`https://example.test/v1/programs${path}`, {
+  return operatorAuthoringRequest(new Request(`https://operator.test/v1/programs${path}`, {
     method,
     headers: {
       authorization: `Bearer ${token}`,
       ...(body === undefined ? {} : { 'content-type': 'application/json' }),
     },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  }), env);
 }
 
 async function expectError(
@@ -111,7 +112,7 @@ async function expectError(
 }
 
 async function createProgram(program: PromoProgram): Promise<PromoProgram> {
-  const response = await programRequest('POST', '', 'secret-test', program);
+  const response = await programRequest('POST', '', 'sk_test_secret_credential_material_000000000001', program);
   expect(response.status).toBe(201);
   return await response.json() as PromoProgram;
 }
@@ -191,7 +192,7 @@ describe('Promo program API', () => {
     const updatedResponse = await programRequest(
       'PATCH',
       '/welcome-10',
-      'secret-test',
+      'sk_test_secret_credential_material_000000000001',
       replacement,
     );
     expect(updatedResponse.status).toBe(200);
@@ -235,7 +236,7 @@ describe('Promo program API', () => {
       autoApply: true,
     };
 
-    const response = await programRequest('PATCH', '/replace-all', 'secret-test', replacement);
+    const response = await programRequest('PATCH', '/replace-all', 'sk_test_secret_credential_material_000000000001', replacement);
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual(replacement);
     expect((await createRepositories({ DB: env.DB }).programs.get(
@@ -252,7 +253,7 @@ describe('Promo program API', () => {
     };
 
     await expectError(
-      await programRequest('PATCH', '/shipping-budget-update', 'secret-test', replacement),
+      await programRequest('PATCH', '/shipping-budget-update', 'sk_test_secret_credential_material_000000000001', replacement),
       400,
       'CONTEXT_VALIDATION_FAILED',
     );
@@ -264,7 +265,7 @@ describe('Promo program API', () => {
 
   test.each(['.', '..'])('rejects the unaddressable external reference %s', async (externalRef) => {
     await expectError(
-      await programRequest('POST', '', 'secret-test', promo(externalRef)),
+      await programRequest('POST', '', 'sk_test_secret_credential_material_000000000001', promo(externalRef)),
       400,
       'CONTEXT_VALIDATION_FAILED',
     );
@@ -289,7 +290,7 @@ describe('Promo program API', () => {
 
     expect(await (await programRequest('GET', path)).json()).toEqual(created);
     const replacement = { ...created, name: 'Encoded ref updated' };
-    const update = await programRequest('PATCH', path, 'secret-test', replacement);
+    const update = await programRequest('PATCH', path, 'sk_test_secret_credential_material_000000000001', replacement);
     expect(update.status).toBe(200);
     expect(await update.json()).toEqual(replacement);
   });
@@ -322,7 +323,7 @@ describe('Promo program API', () => {
     ['customer cap above total cap', { usageCap: 2, perCustomerCap: 3 }],
   ])('rejects invalid reward/currency/cap configuration: %s', async (_name, override) => {
     await expectError(
-      await programRequest('POST', '', 'secret-test', { ...promo(`invalid-${_name}`), ...override }),
+      await programRequest('POST', '', 'sk_test_secret_credential_material_000000000001', { ...promo(`invalid-${_name}`), ...override }),
       400,
       'CONTEXT_VALIDATION_FAILED',
     );
@@ -333,7 +334,7 @@ describe('Promo program API', () => {
     delete (input as { rewardRules?: unknown }).rewardRules;
 
     const error = await expectError(
-      await programRequest('POST', '', 'secret-test', input),
+      await programRequest('POST', '', 'sk_test_secret_credential_material_000000000001', input),
       400,
       'CONTEXT_VALIDATION_FAILED',
     );
@@ -364,7 +365,7 @@ describe('Promo program API', () => {
     });
 
     const error = await expectError(
-      await programRequest('POST', '', 'secret-test', input),
+      await programRequest('POST', '', 'sk_test_secret_credential_material_000000000001', input),
       400,
       'CONTEXT_VALIDATION_FAILED',
     );
@@ -415,7 +416,7 @@ describe('Promo program API', () => {
     } as Partial<PromoProgram>);
 
     const error = await expectError(
-      await programRequest('POST', '', 'secret-test', input),
+      await programRequest('POST', '', 'sk_test_secret_credential_material_000000000001', input),
       400,
       'CONTEXT_VALIDATION_FAILED',
     );
@@ -425,7 +426,7 @@ describe('Promo program API', () => {
   });
 
   test('validates all selectable reward currencies and fallback budget compatibility', async () => {
-    await expectError(await programRequest('POST', '', 'secret-test', promo('mixed-currency', {
+    await expectError(await programRequest('POST', '', 'sk_test_secret_credential_material_000000000001', promo('mixed-currency', {
       rewardRules: [
         promo('source').rewardRules[0]!,
         rewardRule({
@@ -437,7 +438,7 @@ describe('Promo program API', () => {
       ],
     })), 400, 'CONTEXT_VALIDATION_FAILED');
 
-    await expectError(await programRequest('POST', '', 'secret-test', promo('fallback-shipping', {
+    await expectError(await programRequest('POST', '', 'sk_test_secret_credential_material_000000000001', promo('fallback-shipping', {
       fallbackReward: {
         id: 'shipping',
         name: 'Shipping',
@@ -474,7 +475,7 @@ describe('Promo program API', () => {
       .toEqual(['default-reward', 'higher']);
 
     const replacement = { ...created, rewardRules: [higher, lower] };
-    const response = await programRequest('PATCH', '/ordered-rules', 'secret-test', replacement);
+    const response = await programRequest('PATCH', '/ordered-rules', 'sk_test_secret_credential_material_000000000001', replacement);
     expect(response.status).toBe(200);
     expect((await response.json() as PromoProgram).rewardRules.map(rule => rule.id))
       .toEqual(['higher', 'default-reward']);
@@ -495,7 +496,7 @@ describe('Promo program API', () => {
     }],
   ])('rejects an undefined %s condition variable', async (_location, eligibility) => {
     await expectError(
-      await programRequest('POST', '', 'secret-test', {
+      await programRequest('POST', '', 'sk_test_secret_credential_material_000000000001', {
         ...promo(`undefined-${_location}`),
         eligibility,
       }),
@@ -565,7 +566,7 @@ describe('Promo program API', () => {
     });
 
     await expectError(
-      await programRequest('POST', '', 'secret-test', draftOnlyProgram),
+      await programRequest('POST', '', 'sk_test_secret_credential_material_000000000001', draftOnlyProgram),
       400,
       'CONTEXT_VALIDATION_FAILED',
     );
@@ -673,7 +674,7 @@ describe('Promo program API', () => {
     });
     await createProgram(draftProgram);
 
-    await expectError(await programRequest('PATCH', '/draft-transition', 'secret-test', {
+    await expectError(await programRequest('PATCH', '/draft-transition', 'sk_test_secret_credential_material_000000000001', {
       ...draftProgram,
       status: 'active',
     }), 400, 'CONTEXT_VALIDATION_FAILED');
@@ -703,7 +704,7 @@ describe('Promo program API', () => {
       await seedPublishedSchema(SEEDED_MERCHANT_ID, definitions);
     }
 
-    await expectError(await programRequest('POST', '', 'secret-test', {
+    await expectError(await programRequest('POST', '', 'sk_test_secret_credential_material_000000000001', {
       ...promo(`bad-operator-${_type}`),
       eligibility: {
         match: 'ALL',
@@ -713,7 +714,7 @@ describe('Promo program API', () => {
   });
 
   test.each(['affiliate', 'referral', 'loyalty'])('rejects a %s program', async (type) => {
-    await expectError(await programRequest('POST', '', 'secret-test', {
+    await expectError(await programRequest('POST', '', 'sk_test_secret_credential_material_000000000001', {
       ...promo(`not-${type}`),
       type,
     }), 400, 'CONTEXT_VALIDATION_FAILED');
@@ -739,10 +740,11 @@ describe('Promo program API', () => {
   });
 
   test('a merchant field referenced by a draft program is protected by schema edits', async () => {
-    const definitionResponse = await SELF.fetch('https://example.test/v1/schema/definitions', {
+    const definitionResponse = await operatorAuthoringRequest(new Request(
+      'https://operator.test/v1/schema/definitions', {
       method: 'POST',
       headers: {
-        authorization: 'Bearer secret-test',
+        authorization: 'Bearer sk_test_secret_credential_material_000000000001',
         'content-type': 'application/json',
       },
       body: JSON.stringify({
@@ -752,7 +754,7 @@ describe('Promo program API', () => {
         type: 'string',
         required: false,
       }),
-    });
+    }), env);
     expect(definitionResponse.status).toBe(201);
     const definition = await definitionResponse.json() as { id: string; definition: VariableDefinition };
 
@@ -768,34 +770,33 @@ describe('Promo program API', () => {
       },
     }));
 
-    const edit = await SELF.fetch(
-      `https://example.test/v1/schema/definitions/${definition.id}`,
+    const edit = await operatorAuthoringRequest(new Request(
+      `https://operator.test/v1/schema/definitions/${definition.id}`,
       {
         method: 'PATCH',
         headers: {
-          authorization: 'Bearer secret-test',
+          authorization: 'Bearer sk_test_secret_credential_material_000000000001',
           'content-type': 'application/json',
         },
         body: JSON.stringify({ ...definition.definition, type: 'number' }),
-      },
-    );
+      }), env);
     await expectError(edit, 409, 'SCHEMA_CONFLICT');
   });
 
   test('keeps the external reference immutable and rejects edits after leaving draft', async () => {
     await createProgram(promo('immutable'));
 
-    await expectError(await programRequest('PATCH', '/immutable', 'secret-test', {
+    await expectError(await programRequest('PATCH', '/immutable', 'sk_test_secret_credential_material_000000000001', {
       ...promo('renamed'),
     }), 409, 'PROGRAM_CONFLICT');
 
-    const activation = await programRequest('PATCH', '/immutable', 'secret-test', {
+    const activation = await programRequest('PATCH', '/immutable', 'sk_test_secret_credential_material_000000000001', {
       ...promo('immutable'),
       status: 'active',
     });
     expect(activation.status).toBe(200);
 
-    await expectError(await programRequest('PATCH', '/immutable', 'secret-test', {
+    await expectError(await programRequest('PATCH', '/immutable', 'sk_test_secret_credential_material_000000000001', {
       ...promo('immutable'),
       name: 'Cannot change active program',
       status: 'active',
@@ -1001,27 +1002,34 @@ describe('Promo program API', () => {
   test.each(['draft', 'scheduled', 'active', 'paused', 'ended'] as const)(
     'accepts the %s lifecycle status',
     async (status) => {
-      expect((await programRequest('POST', '', 'secret-test', promo(`status-${status}`, { status }))).status)
+      expect((await programRequest('POST', '', 'sk_test_secret_credential_material_000000000001', promo(`status-${status}`, { status }))).status)
         .toBe(201);
     },
   );
 
   test('rejects statuses outside the first-build lifecycle', async () => {
-    await expectError(await programRequest('POST', '', 'secret-test', {
+    await expectError(await programRequest('POST', '', 'sk_test_secret_credential_material_000000000001', {
       ...promo('retired'),
       status: 'retired',
     }), 400, 'CONTEXT_VALIDATION_FAILED');
   });
 
-  test.each(['GET', 'POST', 'PATCH'] as const)('requires a secret credential for %s', async (method) => {
+  test.each(['GET', 'POST', 'PATCH'] as const)(
+    'does not expose %s program authoring on public fetch',
+    async (method) => {
     const path = method === 'GET' ? '' : method === 'PATCH' ? '/secret-only' : '';
     const body = method === 'GET' ? undefined : method === 'POST'
       ? promo('secret-only')
       : { name: 'No access' };
-    await expectError(
-      await programRequest(method, path, 'publishable-test', body),
-      403,
-      'FORBIDDEN',
-    );
-  });
+      const response = await SELF.fetch(`https://example.test/v1/programs${path}`, {
+        method,
+        headers: {
+          authorization: 'Bearer sk_test_secret_credential_material_000000000001',
+          ...(body === undefined ? {} : { 'content-type': 'application/json' }),
+        },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
+      await expectError(response, 404, 'NOT_FOUND');
+    },
+  );
 });

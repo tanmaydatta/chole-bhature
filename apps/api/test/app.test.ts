@@ -8,8 +8,7 @@ import { createApp } from '../src/app.js';
 import {
   requirePublishable,
   requireSecret,
-  SEEDED_MERCHANT_ID,
-} from '../src/auth/static-token.js';
+} from '../src/auth/api-credentials.js';
 import type { Env } from '../src/env.js';
 import {
   DecisionExpiredError,
@@ -17,6 +16,8 @@ import {
   NotFoundError,
 } from '../src/errors.js';
 import { OptimisticVersionConflictError } from '../src/repositories/types.js';
+import { SEEDED_MERCHANT_ID } from './test-credentials.js';
+import workerSource from '../src/worker.ts?raw';
 import wranglerConfiguration from '../wrangler.toml?raw';
 
 const correlationHeader = 'x-correlation-id';
@@ -52,34 +53,53 @@ async function expectCanonicalError(
 async function requestApp(
   path: string,
   bindings: Env,
-  authorization = 'Bearer publishable-test',
+  authorization = 'Bearer pk_test_publishable_credential_material_00000001',
+  correlationId?: string,
 ): Promise<Response> {
   const app = createApp();
-  app.get('/v1/config-test', requirePublishable, (context) => context.json({ ok: true }));
+  app.get('/__test/config', requirePublishable, (context) => context.json({
+    merchantId: context.get('merchantId'),
+    correlationId: context.get('correlationId'),
+    repositories: context.get('repositories') !== undefined,
+  }));
+  const headers = new Headers({ authorization });
+  if (correlationId !== undefined) headers.set(correlationHeader, correlationId);
   return app.request(
     `https://example.test${path}`,
-    { headers: { authorization } },
+    { headers },
     bindings,
   );
 }
 
 describe('Worker API composition', () => {
-  test('configures Wrangler with the default-only Worker service entrypoint', async () => {
+  test('configures Wrangler with public fetch and a named private operator entrypoint', async () => {
     const configuredMain = /^main\s*=\s*"([^"]+)"$/mu.exec(wranglerConfiguration)?.[1];
     const workerEntrypoint = await import('../src/worker.js');
 
     expect(configuredMain).toBe('src/worker.ts');
-    expect(Object.keys(workerEntrypoint)).toEqual(['default']);
+    expect(Object.keys(workerEntrypoint).sort()).toEqual(['CoreOperatorService', 'default']);
     expect(workerEntrypoint.default).toBeDefined();
+  });
+
+  test('keeps every private Worker method on canonical typed RPC boundaries', () => {
+    const serviceSource = /export class CoreOperatorService[\s\S]*?\n\}\n\nexport default/u
+      .exec(workerSource)?.[0];
+    expect(serviceSource).toBeDefined();
+    expect(serviceSource).not.toContain('input: unknown');
+    expect(serviceSource).not.toContain('Parameters<typeof');
+    expect(serviceSource).not.toContain("from './repositories/types.js'");
+    expect(serviceSource).toContain('MerchantProvisionRequest');
+    expect(serviceSource).toContain('MerchantActivationRequest');
+    expect(serviceSource).toContain('ApiCredentialCreateInput');
   });
 
   test.each([
     ['/v1/health', undefined, 200],
-    ['/v1/test-publishable', undefined, 401],
-    ['/v1/test-publishable', 'publishable-test', 200],
-    ['/v1/test-publishable', 'secret-test', 200],
-    ['/v1/test-secret', 'publishable-test', 403],
-    ['/v1/test-secret', 'secret-test', 200],
+    ['/v1/schema/published', undefined, 401],
+    ['/v1/schema/published', 'pk_test_publishable_credential_material_00000001', 404],
+    ['/v1/schema/published', 'sk_test_secret_credential_material_000000000001', 404],
+    ['/v1/customers/missing', 'pk_test_publishable_credential_material_00000001', 403],
+    ['/v1/customers/missing', 'sk_test_secret_credential_material_000000000001', 404],
   ])('%s enforces key kind for %s', async (path, token, expected) => {
     const response = await request(path, token);
     expect(response.status).toBe(expected);
@@ -87,7 +107,12 @@ describe('Worker API composition', () => {
 
   test('request context contains merchant, repositories, and the response correlation id', async () => {
     const correlationId = 'corr-from-request';
-    const response = await request('/v1/test-publishable', 'publishable-test', correlationId);
+    const response = await requestApp(
+      '/__test/config',
+      { DB: env.DB },
+      'Bearer pk_test_publishable_credential_material_00000001',
+      correlationId,
+    );
 
     expect(response.headers.get(correlationHeader)).toBe(correlationId);
     expect(await response.json()).toMatchObject({
@@ -95,6 +120,20 @@ describe('Worker API composition', () => {
       correlationId,
       repositories: true,
     });
+  });
+
+  test('does not expose diagnostic credential probes in production or OpenAPI', async () => {
+    for (const path of ['/v1/test-publishable', '/v1/test-secret']) {
+      expect((await request(
+        path,
+        'sk_test_secret_credential_material_000000000001',
+      )).status).toBe(404);
+    }
+    const document = await (await request('/v1/openapi.json')).json() as {
+      paths?: Record<string, unknown>;
+    };
+    expect(document.paths).not.toHaveProperty('/v1/test-publishable');
+    expect(document.paths).not.toHaveProperty('/v1/test-secret');
   });
 
   test('the migrated merchant supports authenticated request-scoped repository writes', async () => {
@@ -122,12 +161,10 @@ describe('Worker API composition', () => {
       'https://example.test/v1/request-scoped-customer',
       {
         method: 'POST',
-        headers: { authorization: 'Bearer secret-test' },
+        headers: { authorization: 'Bearer sk_test_secret_credential_material_000000000001' },
       },
       {
         DB: env.DB,
-        PUBLISHABLE_TOKEN: 'publishable-test',
-        SECRET_TOKEN: 'secret-test',
       },
     );
 
@@ -146,53 +183,24 @@ describe('Worker API composition', () => {
   test.each([
     [undefined, 401, 'UNAUTHORIZED'],
     ['not-a-token', 401, 'UNAUTHORIZED'],
-    ['publishable-test', 403, 'FORBIDDEN'],
+    ['pk_test_publishable_credential_material_00000001', 403, 'FORBIDDEN'],
   ])('auth failures use canonical errors without leaking credentials', async (token, status, code) => {
-    const response = await request('/v1/test-secret', token, 'corr-auth');
+    const response = await request('/v1/customers/missing', token, 'corr-auth');
     const body = await expectCanonicalError(response, { status, code, retryable: false });
 
-    expect(JSON.stringify(body)).not.toContain(token ?? 'secret-test');
+    expect(JSON.stringify(body)).not.toContain(token ?? 'sk_test_secret_credential_material_000000000001');
   });
 
   test.each([
-    ['', 'secret-test'],
-    ['publishable-test', ''],
-    ['publishable-test', 'publishable-test'],
-    ['short', 'secret-test'],
-    ['publishable-test', 'short'],
-    [' publishable-test', 'secret-test'],
-    ['publishable-test', `${'x'.repeat(513)}`],
-  ])('invalid static-token configuration fails closed', async (publishable, secret) => {
-    const response = await requestApp('/v1/config-test', {
-      DB: env.DB,
-      PUBLISHABLE_TOKEN: publishable,
-      SECRET_TOKEN: secret,
-    });
-    const body = await expectCanonicalError(response, {
-      status: 503,
-      code: 'EVALUATION_UNAVAILABLE',
-      retryable: true,
-    });
-
-    for (const configuredToken of [publishable, secret]) {
-      if (configuredToken.length > 0) {
-        expect(JSON.stringify(body)).not.toContain(configuredToken);
-      }
-    }
-  });
-
-  test.each([
-    ['Basic publishable-test'],
+    ['Basic pk_test_publishable_credential_material_00000001'],
     ['Bearer'],
-    ['Bearer publishable-test suffix'],
+    ['Bearer pk_test_publishable_credential_material_00000001 suffix'],
     [`Bearer ${'x'.repeat(513)}`],
   ])('malformed or oversized authorization is rejected', async (authorization) => {
     const response = await requestApp(
-      '/v1/config-test',
+      '/__test/config',
       {
         DB: env.DB,
-        PUBLISHABLE_TOKEN: 'publishable-test',
-        SECRET_TOKEN: 'secret-test',
       },
       authorization,
     );
@@ -245,20 +253,18 @@ describe('Worker API composition', () => {
       'https://example.test/v1/error-test',
       {
         headers: {
-          authorization: 'Bearer publishable-test',
+          authorization: 'Bearer pk_test_publishable_credential_material_00000001',
           [correlationHeader]: 'corr-error',
         },
       },
       {
         DB: env.DB,
-        PUBLISHABLE_TOKEN: 'publishable-test',
-        SECRET_TOKEN: 'secret-test',
       },
     );
 
     const body = await expectCanonicalError(response, expected);
     expect(JSON.stringify(body)).not.toContain('private failure detail');
-    expect(JSON.stringify(body)).not.toContain('secret-test');
-    expect(JSON.stringify(body)).not.toContain('publishable-test');
+    expect(JSON.stringify(body)).not.toContain('sk_test_secret_credential_material_000000000001');
+    expect(JSON.stringify(body)).not.toContain('pk_test_publishable_credential_material_00000001');
   });
 });

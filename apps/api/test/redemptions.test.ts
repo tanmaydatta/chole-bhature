@@ -11,7 +11,7 @@ import { SELF } from 'cloudflare:test';
 import { env } from 'cloudflare:workers';
 import { beforeEach, describe, expect, test } from 'vitest';
 
-import { SEEDED_MERCHANT_ID } from '../src/auth/static-token.js';
+import { SEEDED_MERCHANT_ID } from './test-credentials.js';
 import { createApp } from '../src/app.js';
 import { createRepositories } from '../src/repositories/d1-repositories.js';
 import { signDecisionSnapshot } from '../src/services/evaluation-service.js';
@@ -107,14 +107,14 @@ function evaluateRaw(request: EvaluationRequest = baseRequest): Promise<Response
   return SELF.fetch('https://example.test/v1/evaluate', {
     method: 'POST',
     headers: {
-      authorization: 'Bearer publishable-test',
+      authorization: 'Bearer pk_test_publishable_credential_material_00000001',
       'content-type': 'application/json',
     },
     body: JSON.stringify(request),
   });
 }
 
-function redeemRaw(body: unknown, token = 'secret-test'): Promise<Response> {
+function redeemRaw(body: unknown, token = 'sk_test_secret_credential_material_000000000001'): Promise<Response> {
   return SELF.fetch('https://example.test/v1/redemptions', {
     method: 'POST',
     headers: {
@@ -172,14 +172,12 @@ describe('POST /v1/redemptions', () => {
     const response = await createApp().request('https://example.test/v1/redemptions', {
       method: 'POST',
       headers: {
-        authorization: 'Bearer secret-test',
+        authorization: 'Bearer sk_test_secret_credential_material_000000000001',
         'content-type': 'application/json',
       },
       body: JSON.stringify({ evaluationId: 'missing-program-and-identifier' }),
     }, {
       DB: env.DB,
-      PUBLISHABLE_TOKEN: 'publishable-test',
-      SECRET_TOKEN: 'secret-test',
       DECISION_SIGNING_SECRET: 'weak',
     });
     await expectError(response, 400, 'CONTEXT_VALIDATION_FAILED');
@@ -189,7 +187,7 @@ describe('POST /v1/redemptions', () => {
     const response = await createApp().request('https://example.test/v1/redemptions', {
       method: 'POST',
       headers: {
-        authorization: 'Bearer secret-test',
+        authorization: 'Bearer sk_test_secret_credential_material_000000000001',
         'content-type': 'application/json',
       },
       body: JSON.stringify({
@@ -199,8 +197,6 @@ describe('POST /v1/redemptions', () => {
       }),
     }, {
       DB: env.DB,
-      PUBLISHABLE_TOKEN: 'publishable-test',
-      SECRET_TOKEN: 'secret-test',
       DECISION_SIGNING_SECRET: 'weak',
     });
     const error = await expectError(response, 503, 'EVALUATION_UNAVAILABLE');
@@ -211,7 +207,7 @@ describe('POST /v1/redemptions', () => {
   test.each([
     ['stored decision', 'evaluation_decisions', "decisions_json = '[{\"programRef\":\"welcome\"}]'"],
     ['stored redemption retry', 'redemptions', "result_json = '{\"programRef\":\"welcome\"}'"],
-    ['stored program', 'programs', "config_json = '{\"id\":\"welcome\"}'"],
+    ['stored program', 'program_revisions', "config_json = '{\"id\":\"welcome\"}'"],
   ])('maps a schema-invalid %s row to a generic retryable 503', async (
     _name,
     table,
@@ -226,8 +222,13 @@ describe('POST /v1/redemptions', () => {
         externalOrderRef: 'corrupt-retry',
       });
     }
-    await env.DB.prepare(`UPDATE ${table} SET ${mutation} WHERE merchant_id = ?1`)
-      .bind(SEEDED_MERCHANT_ID).run();
+    await env.DB.prepare(`
+      UPDATE ${table} SET ${mutation} WHERE merchant_id = ?1
+        ${table === 'program_revisions' ? `AND revision = (
+          SELECT active_revision FROM programs
+          WHERE merchant_id = ?1 AND external_ref = 'welcome'
+        )` : ''}
+    `).bind(SEEDED_MERCHANT_ID).run();
 
     const response = await redeemRaw({
       evaluationId: evaluation.evaluationId,
@@ -451,7 +452,7 @@ describe('POST /v1/redemptions', () => {
       'CONTEXT_VALIDATION_FAILED');
     await expectError(await redeemRaw({
       evaluationId: 'e', programRef: 'p', externalOrderRef: 'o',
-    }, 'publishable-test'), 403, 'FORBIDDEN');
+    }, 'pk_test_publishable_credential_material_00000001'), 403, 'FORBIDDEN');
   });
 
   test('conflicting identifier reuse returns VERSION_CONFLICT', async () => {
@@ -541,11 +542,19 @@ describe('POST /v1/redemptions', () => {
   ])('fails closed without mutation when program relational %s', async (_name, mutation) => {
     await seedProgram(promo('relational-corruption'));
     const evaluation = await evaluate();
-    await env.DB.prepare(`
-      UPDATE programs SET ${mutation} WHERE merchant_id = ?1 AND external_ref = ?2
-    `).bind(SEEDED_MERCHANT_ID, 'relational-corruption').run();
+    await env.DB.exec('PRAGMA ignore_check_constraints = ON');
+    try {
+      await env.DB.prepare(`
+        UPDATE program_counters SET ${mutation}
+        WHERE merchant_id = ?1 AND program_id = (
+          SELECT id FROM programs WHERE merchant_id = ?1 AND external_ref = ?2
+        )
+      `).bind(SEEDED_MERCHANT_ID, 'relational-corruption').run();
+    } finally {
+      await env.DB.exec('PRAGMA ignore_check_constraints = OFF');
+    }
     const counterBefore = await env.DB.prepare(`
-      SELECT usage_count, budget_remaining FROM programs
+      SELECT usage_count, budget_remaining FROM program_counters
     `).first();
 
     await expectError(await redeemRaw({
@@ -553,8 +562,9 @@ describe('POST /v1/redemptions', () => {
       programRef: 'relational-corruption',
       externalOrderRef: `corrupt-${_name}`,
     }), 503, 'EVALUATION_UNAVAILABLE');
-    expect(await env.DB.prepare('SELECT usage_count, budget_remaining FROM programs').first())
-      .toEqual(counterBefore);
+    expect(await env.DB.prepare(`
+      SELECT usage_count, budget_remaining FROM program_counters
+    `).first()).toEqual(counterBefore);
     expect(await env.DB.prepare('SELECT COUNT(*) AS count FROM redemptions').first())
       .toEqual({ count: 0 });
   });
@@ -696,7 +706,13 @@ describe('POST /v1/redemptions', () => {
       },
     });
     await env.DB.prepare(`
-      UPDATE programs SET config_json = ?1 WHERE merchant_id = ?2 AND external_ref = 'welcome'
+      UPDATE program_revisions SET config_json = ?1
+      WHERE merchant_id = ?2 AND revision = (
+        SELECT active_revision FROM programs
+        WHERE merchant_id = ?2 AND external_ref = 'welcome'
+      ) AND program_id = (
+        SELECT id FROM programs WHERE merchant_id = ?2 AND external_ref = 'welcome'
+      )
     `).bind(JSON.stringify(changed), SEEDED_MERCHANT_ID).run();
 
     await expectError(await redeemRaw({
@@ -807,9 +823,15 @@ describe('POST /v1/redemptions', () => {
     await seedProgram(promo('changed-rule-id'));
     const evaluation = await evaluate();
     await env.DB.prepare(`
-      UPDATE programs
+      UPDATE program_revisions
       SET config_json = json_set(config_json, '$.rewardRules[0].id', 'renamed-rule')
-      WHERE merchant_id = ?1 AND external_ref = 'changed-rule-id'
+      WHERE merchant_id = ?1 AND revision = (
+        SELECT active_revision FROM programs
+        WHERE merchant_id = ?1 AND external_ref = 'changed-rule-id'
+      ) AND program_id = (
+        SELECT id FROM programs
+        WHERE merchant_id = ?1 AND external_ref = 'changed-rule-id'
+      )
     `).bind(SEEDED_MERCHANT_ID).run();
 
     await expectError(await redeemRaw({
@@ -823,13 +845,19 @@ describe('POST /v1/redemptions', () => {
     await seedProgram(promo('no-reevaluation'));
     const evaluation = await evaluate();
     await env.DB.prepare(`
-      UPDATE programs
+      UPDATE program_revisions
       SET config_json = json_set(
         config_json,
         '$.rewardRules[0].conditions.conditions[0].value',
         100000
       )
-      WHERE merchant_id = ?1 AND external_ref = 'no-reevaluation'
+      WHERE merchant_id = ?1 AND revision = (
+        SELECT active_revision FROM programs
+        WHERE merchant_id = ?1 AND external_ref = 'no-reevaluation'
+      ) AND program_id = (
+        SELECT id FROM programs
+        WHERE merchant_id = ?1 AND external_ref = 'no-reevaluation'
+      )
     `).bind(SEEDED_MERCHANT_ID).run();
 
     await expect(redeem({

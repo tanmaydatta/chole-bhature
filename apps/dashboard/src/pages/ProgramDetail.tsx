@@ -12,6 +12,7 @@ import { typeToSegment } from '../lib/routes';
 import type { Program, Reward } from '../lib/types';
 import { buildCodeRows, toCSV, downloadCSV } from '../lib/codes';
 import type { CodeStatus } from '../lib/codes';
+import { usePermission } from '../auth/AuthContext';
 
 function codePrefixFor(program: Program): string {
   const upper = program.name.replace(/[^A-Z0-9]/gi, '').toUpperCase();
@@ -58,6 +59,7 @@ function SectionCard({ title, children }: { title: string; children: React.React
 }
 
 export default function ProgramDetail() {
+  const canManage = usePermission('programs:manage');
   const { id } = useParams<{ id: string }>();
   const programs = useProgramStore(s => s.programs);
   const variables = useVariablesStore(s => s.variables);
@@ -95,16 +97,16 @@ export default function ProgramDetail() {
       <PageHeader
         title={program.name}
         action={
-          program.status === 'draft' ? (
+          program.status === 'draft' && canManage ? (
             <Link
               to={`/${segment}/${program.id}/edit`}
               className="inline-flex items-center gap-[6px] text-[13px] font-semibold px-[14px] py-[7px] rounded-[8px] bg-[var(--accent)] text-white no-underline"
             >
               Edit
             </Link>
-          ) : (
+          ) : program.status !== 'draft' ? (
             <span className="text-[13px] text-[var(--muted)] italic">Only drafts can be edited</span>
-          )
+          ) : undefined
         }
       />
 

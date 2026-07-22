@@ -24,6 +24,7 @@ import type {
 } from '../repositories/types.js';
 import { BUILTIN_VARIABLE_DEFINITIONS } from './schema-service.js';
 import { validateCustomerAttributes } from './customer-service.js';
+import { effectiveProgram } from './program-runtime.js';
 import { verifyRedemptionReceipt } from './redemption-receipt.js';
 
 const DEFAULT_TTL_SECONDS = 300;
@@ -320,12 +321,18 @@ export function projectedDiscountMinorUnits(
 
 type PromoDecision = Awaited<ReturnType<typeof PromoModule.evaluate>>[number];
 
-function baseProgramDecision(program: PromoProgram): Pick<
+function baseProgramDecision(program: PromoProgram, revision = 1): Pick<
   PromoDecision,
-  'programRef' | 'programType' | 'priority' | 'stackable' | 'stackingGroup'
+  | 'programRef'
+  | 'programRevision'
+  | 'programType'
+  | 'priority'
+  | 'stackable'
+  | 'stackingGroup'
 > {
   return {
     programRef: program.id,
+    programRevision: revision,
     programType: 'promo',
     priority: program.priority,
     stackable: program.stackable,
@@ -360,9 +367,9 @@ function exhaustedDecision(
   };
 }
 
-function customerRequiredDecision(program: PromoProgram): PromoDecision {
+function customerRequiredDecision(program: PromoProgram, revision: number): PromoDecision {
   return {
-    ...baseProgramDecision(program),
+    ...baseProgramDecision(program, revision),
     outcome: 'not_qualified',
     effects: [],
     reasonCodes: ['CUSTOMER_REQUIRED'],
@@ -445,7 +452,7 @@ export function createEvaluationService(repositories: Repositories, env: Env) {
           ),
         };
 
-        const programs = await repositories.programs.list(merchantId);
+        const programs = await repositories.programs.listActive(merchantId);
         const now = new Date();
         const evaluationId = crypto.randomUUID();
         const liveFacts = factInputs(request);
@@ -466,6 +473,7 @@ export function createEvaluationService(repositories: Repositories, env: Env) {
         const moduleDecisions = [];
 
         for (const record of programs) {
+          const runtimeProgram = effectiveProgram(record.program, now);
           const customerUsesCount = customer === null
             ? 0
             : await repositories.redemptions.countCommittedForCustomerProgram(
@@ -485,7 +493,7 @@ export function createEvaluationService(repositories: Repositories, env: Env) {
           facts.programs.push({
             programRef: record.externalRef,
             system,
-            config: record.program,
+            config: runtimeProgram,
           });
           const programFacts = assembleFacts({
             ...(customer === null ? {} : { customer: customer.attributes }),
@@ -493,23 +501,26 @@ export function createEvaluationService(repositories: Repositories, env: Env) {
             ...liveFacts,
             system,
           });
-          const moduleEvaluated = await PromoModule.evaluate({
+          const moduleEvaluated = (await PromoModule.evaluate({
             merchantId,
             evaluationId,
             now,
             request,
             facts: programFacts,
             definitions,
-          }, record.program);
+          }, runtimeProgram)).map(decision => ({
+            ...decision,
+            programRevision: record.revision,
+          }));
           const currencyChecked = moduleEvaluated.map(decision => (
             decision.outcome === 'qualified'
-            && selectedCurrencyMismatch(record.program, decision, request.cart.currency)
+            && selectedCurrencyMismatch(runtimeProgram, decision, request.cart.currency)
               ? currencyMismatchDecision(decision)
               : decision
           ));
-          const evaluated = customer === null && record.program.perCustomerCap !== undefined
+          const evaluated = customer === null && runtimeProgram.perCustomerCap !== undefined
             ? currencyChecked.map(decision => decision.outcome === 'qualified'
-              ? customerRequiredDecision(record.program)
+              ? customerRequiredDecision(runtimeProgram, record.revision)
               : decision)
             : currencyChecked;
           for (const decision of evaluated) {
@@ -519,12 +530,12 @@ export function createEvaluationService(repositories: Repositories, env: Env) {
             }
             const projectedCost = projectedDiscountMinorUnits(decision.effects, request.cart);
             const exhaustionReasons = [
-              ...(record.program.usageCap !== undefined
-                && record.usageCount >= record.program.usageCap
+              ...(runtimeProgram.usageCap !== undefined
+                && record.usageCount >= runtimeProgram.usageCap
                 ? ['USAGE_CAP_EXHAUSTED']
                 : []),
-              ...(record.program.perCustomerCap !== undefined
-                && customerUsesCount >= record.program.perCustomerCap
+              ...(runtimeProgram.perCustomerCap !== undefined
+                && customerUsesCount >= runtimeProgram.perCustomerCap
                 ? ['PER_CUSTOMER_CAP_EXHAUSTED']
                 : []),
               ...(record.budgetRemaining !== undefined

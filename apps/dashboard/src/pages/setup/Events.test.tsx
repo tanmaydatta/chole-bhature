@@ -3,6 +3,7 @@ import { MemoryRouter } from 'react-router-dom';
 import Events from './Events';
 import { useEventsStore } from '../../data/eventsStore';
 import { EVENTS } from '../../data/events';
+import { TestAuth } from '../../test/TestAuth';
 
 beforeEach(() => {
   useEventsStore.setState({ events: EVENTS.map(e => ({ ...e })) });
@@ -10,9 +11,9 @@ beforeEach(() => {
 
 function renderEvents() {
   return render(
-    <MemoryRouter>
+    <TestAuth><MemoryRouter>
       <Events />
-    </MemoryRouter>
+    </MemoryRouter></TestAuth>
   );
 }
 

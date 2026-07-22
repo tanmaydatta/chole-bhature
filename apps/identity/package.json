@@ -1,0 +1,33 @@
+{
+  "name": "@incentives/identity",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run && vitest run --config vitest.node.config.ts",
+    "lint": "oxlint src test test-node vitest.config.ts vitest.node.config.ts",
+    "bootstrap:root": "node src/cli/bootstrap-root-runner.mjs",
+    "predev:local": "pnpm --filter @incentives/contracts build",
+    "dev:local": "wrangler dev --config wrangler.toml",
+    "predev:staging": "pnpm --filter @incentives/contracts build",
+    "dev:staging": "node ../../scripts/staging-wrangler-runner.mjs identity dev",
+    "predeploy:staging": "pnpm --filter @incentives/contracts build",
+    "deploy:staging": "node ../../scripts/staging-wrangler-runner.mjs identity deploy",
+    "db:migrate:local": "wrangler d1 migrations apply incentives-auth-local --local --config wrangler.toml",
+    "db:migrate:staging": "node ../../scripts/staging-wrangler-runner.mjs identity migrate"
+  },
+  "dependencies": {
+    "@better-auth/passkey": "1.6.23",
+    "@incentives/contracts": "workspace:*",
+    "better-auth": "1.6.23"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "0.18.6",
+    "@cloudflare/workers-types": "5.20260717.1",
+    "oxlint": "1.69.0",
+    "typescript": "6.0.2",
+    "vitest": "4.1.10",
+    "wrangler": "4.112.0"
+  }
+}

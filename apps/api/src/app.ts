@@ -1,7 +1,5 @@
 import { Hono } from 'hono';
-import type { Context, MiddlewareHandler } from 'hono';
-
-import { requirePublishable, requireSecret, SEEDED_MERCHANT_ID } from './auth/static-token.js';
+import type { MiddlewareHandler } from 'hono';
 import type { AppEnvironment } from './env.js';
 import {
   apiErrorResponse,
@@ -10,7 +8,6 @@ import {
 } from './errors.js';
 import { createRepositories } from './repositories/d1-repositories.js';
 import { createCustomerRoutes } from './routes/customers.js';
-import { createProgramRoutes } from './routes/programs.js';
 import { createEvaluationRoutes } from './routes/evaluate.js';
 import { createOpenApiRoutes } from './routes/openapi.js';
 import { createRedemptionRoutes } from './routes/redemptions.js';
@@ -31,18 +28,9 @@ const correlationId: MiddlewareHandler<AppEnvironment> = async (context, next) =
 };
 
 const requestScope: MiddlewareHandler<AppEnvironment> = async (context, next) => {
-  context.set('merchantId', SEEDED_MERCHANT_ID);
   context.set('repositories', createRepositories(context.env));
   await next();
 };
-
-function contextSummary(context: Context<AppEnvironment>) {
-  return context.json({
-    merchantId: context.get('merchantId'),
-    correlationId: context.get('correlationId'),
-    repositories: context.get('repositories') !== undefined,
-  });
-}
 
 export function createApp(): Hono<AppEnvironment> {
   const app = new Hono<AppEnvironment>();
@@ -53,10 +41,7 @@ export function createApp(): Hono<AppEnvironment> {
   app.notFound((context) => apiErrorResponse(context, new NotFoundError()));
 
   app.get('/v1/health', (context) => context.json({ status: 'ok' }));
-  app.get('/v1/test-publishable', requirePublishable, contextSummary);
-  app.get('/v1/test-secret', requireSecret, contextSummary);
   app.route('/v1/customers', createCustomerRoutes());
-  app.route('/v1/programs', createProgramRoutes());
   app.route('/v1/schema', createSchemaRoutes());
   app.route('/v1/evaluate', createEvaluationRoutes());
   app.route('/v1/redemptions', createRedemptionRoutes());

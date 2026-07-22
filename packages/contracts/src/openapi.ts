@@ -21,7 +21,6 @@ import {
   PromoRewardRuleSchema,
 } from './reward-rules.js';
 import {
-  AccessSummarySchema,
   CustomerPatchRequestSchema,
   CustomerRecordSchema,
   HealthResponseSchema,
@@ -45,22 +44,15 @@ export function buildOpenApiDocument(): OpenApiDocument {
   registry.registerComponent('securitySchemes', 'publishableBearer', {
     type: 'http',
     scheme: 'bearer',
-    description: 'Publishable static token. Secret tokens are also accepted on publishable routes.',
+    description: 'Merchant publishable credential. Scoped secret credentials are also accepted.',
   });
   registry.registerComponent('securitySchemes', 'secretBearer', {
     type: 'http',
     scheme: 'bearer',
-    description: 'Secret static token for configuration, customer writes, and redemptions.',
+    description: 'Merchant secret credential for scoped customer, evaluation, and redemption access.',
   });
   registry.registerComponent('headers', 'CorrelationId', {
     description: 'Request correlation identifier returned by the runtime',
-    schema: { type: 'string', minLength: 1 },
-  });
-  registry.registerComponent('parameters', 'SchemaDefinitionId', {
-    name: 'id',
-    in: 'path',
-    required: true,
-    description: 'Definition identifier returned by the list/create API',
     schema: { type: 'string', minLength: 1 },
   });
   registry.registerComponent('parameters', 'CustomerRef', {
@@ -70,16 +62,9 @@ export function buildOpenApiDocument(): OpenApiDocument {
     description: 'Opaque client customer reference',
     schema: { type: 'string', minLength: 1 },
   });
-  registry.registerComponent('parameters', 'ProgramExternalRef', {
-    name: 'externalRef',
-    in: 'path',
-    required: true,
-    description: 'Immutable Promo program reference',
-    schema: { type: 'string', minLength: 1 },
-  });
 
   registry.register('Money', MoneySchema);
-  const variableDefinition = registry.register('VariableDefinition', VariableDefinitionSchema);
+  registry.register('VariableDefinition', VariableDefinitionSchema);
   registry.register('Effect', EffectSchema);
   registry.register('CommerceReward', CommerceRewardSchema);
   registry.register('RewardRule', PromoRewardRuleSchema);
@@ -88,14 +73,13 @@ export function buildOpenApiDocument(): OpenApiDocument {
   const redemptionRequest = registry.register('RedemptionRequest', RedemptionRequestSchema);
   const redemptionResponse = registry.register('RedemptionResponse', RedemptionResponseSchema);
   const apiError = registry.register('ApiError', ApiErrorSchema);
-  const promoProgram = registry.register('PromoProgram', PromoProgramSchema);
+  registry.register('PromoProgram', PromoProgramSchema);
   registry.register('AffiliateProgram', AffiliateProgramSchema);
   registry.register('ReferralProgram', ReferralProgramSchema);
   registry.register('LoyaltyProgram', LoyaltyProgramSchema);
   const healthResponse = registry.register('HealthResponse', HealthResponseSchema);
-  const accessSummary = registry.register('AccessSummary', AccessSummarySchema);
-  const definitionView = registry.register('SchemaDefinitionView', SchemaDefinitionViewSchema);
-  const definitionsResponse = registry.register(
+  registry.register('SchemaDefinitionView', SchemaDefinitionViewSchema);
+  registry.register(
     'SchemaDefinitionsResponse',
     SchemaDefinitionsResponseSchema,
   );
@@ -105,7 +89,7 @@ export function buildOpenApiDocument(): OpenApiDocument {
   );
   const customerPatch = registry.register('CustomerPatchRequest', CustomerPatchRequestSchema);
   const customerRecord = registry.register('CustomerRecord', CustomerRecordSchema);
-  const programList = registry.register('ProgramListResponse', ProgramListResponseSchema);
+  registry.register('ProgramListResponse', ProgramListResponseSchema);
   const openApiDocument = registry.register(
     'OpenApiDocument',
     OpenApiDocumentResponseSchema,
@@ -130,11 +114,10 @@ export function buildOpenApiDocument(): OpenApiDocument {
     404: errorResponse('The merchant-scoped resource was not found'),
     409: errorResponse('The requested mutation conflicts or capacity is exhausted'),
     410: errorResponse('The evaluation decision has expired'),
+    429: errorResponse('The publishable credential request quota is exhausted'),
     503: errorResponse('The runtime is temporarily unavailable; inspect retryable'),
   };
-  const schemaDefinitionId = { $ref: '#/components/parameters/SchemaDefinitionId' };
   const customerRef = { $ref: '#/components/parameters/CustomerRef' };
-  const programExternalRef = { $ref: '#/components/parameters/ProgramExternalRef' };
 
   registry.registerPath({
     method: 'get',
@@ -154,104 +137,6 @@ export function buildOpenApiDocument(): OpenApiDocument {
   });
   registry.registerPath({
     method: 'get',
-    path: '/v1/test-publishable',
-    summary: 'Verify publishable-or-secret credential access',
-    security: publishableSecurity,
-    responses: {
-      200: { description: 'Resolved request scope', content: jsonContent(accessSummary) },
-      401: errors[401],
-      503: errors[503],
-    },
-  });
-  registry.registerPath({
-    method: 'get',
-    path: '/v1/test-secret',
-    summary: 'Verify secret credential access',
-    security: secretSecurity,
-    responses: {
-      200: { description: 'Resolved request scope', content: jsonContent(accessSummary) },
-      401: errors[401],
-      403: errors[403],
-      503: errors[503],
-    },
-  });
-
-  registry.registerPath({
-    method: 'get',
-    path: '/v1/schema/definitions',
-    summary: 'List editable and built-in typed fields',
-    security: secretSecurity,
-    responses: {
-      200: { description: 'Schema definitions and revision versions', content: jsonContent(definitionsResponse) },
-      401: errors[401],
-      403: errors[403],
-      503: errors[503],
-    },
-  });
-  registry.registerPath({
-    method: 'post',
-    path: '/v1/schema/definitions',
-    summary: 'Create a typed field in the current draft',
-    security: secretSecurity,
-    request: { body: { required: true, content: jsonContent(variableDefinition) } },
-    responses: {
-      201: { description: 'Draft field created', content: jsonContent(definitionView) },
-      400: errors[400],
-      401: errors[401],
-      403: errors[403],
-      409: errors[409],
-      503: errors[503],
-    },
-  });
-  registry.registerPath({
-    method: 'patch',
-    path: '/v1/schema/definitions/{id}',
-    summary: 'Replace a typed draft field definition',
-    security: secretSecurity,
-    request: {
-      body: { required: true, content: jsonContent(variableDefinition) },
-    },
-    parameters: [schemaDefinitionId],
-    responses: {
-      200: { description: 'Draft field replaced', content: jsonContent(definitionView) },
-      400: errors[400],
-      401: errors[401],
-      403: errors[403],
-      404: errors[404],
-      409: errors[409],
-      503: errors[503],
-    },
-  });
-  registry.registerPath({
-    method: 'delete',
-    path: '/v1/schema/definitions/{id}',
-    summary: 'Delete an unreferenced typed draft field',
-    security: secretSecurity,
-    parameters: [schemaDefinitionId],
-    responses: {
-      204: { description: 'Draft field deleted' },
-      401: errors[401],
-      403: errors[403],
-      404: errors[404],
-      409: errors[409],
-      503: errors[503],
-    },
-  });
-  registry.registerPath({
-    method: 'post',
-    path: '/v1/schema/publish',
-    summary: 'Publish the current immutable schema version',
-    security: secretSecurity,
-    responses: {
-      201: { description: 'Schema version published', content: jsonContent(publishedSchema) },
-      401: errors[401],
-      403: errors[403],
-      409: errors[409],
-      503: errors[503],
-    },
-  });
-  registry.registerPath({
-    method: 'get',
     path: '/v1/schema/published',
     summary: 'Fetch the active typed schema, JSON Schema, and sample',
     security: publishableSecurity,
@@ -259,6 +144,7 @@ export function buildOpenApiDocument(): OpenApiDocument {
       200: { description: 'Current published schema', content: jsonContent(publishedSchema) },
       401: errors[401],
       404: errors[404],
+      429: errors[429],
       503: errors[503],
     },
   });
@@ -296,65 +182,6 @@ export function buildOpenApiDocument(): OpenApiDocument {
   });
 
   registry.registerPath({
-    method: 'get',
-    path: '/v1/programs',
-    summary: 'List Promo programs',
-    security: secretSecurity,
-    responses: {
-      200: { description: 'Merchant Promo programs', content: jsonContent(programList) },
-      401: errors[401],
-      403: errors[403],
-      503: errors[503],
-    },
-  });
-  registry.registerPath({
-    method: 'post',
-    path: '/v1/programs',
-    summary: 'Create a validated Promo program',
-    security: secretSecurity,
-    request: { body: { required: true, content: jsonContent(promoProgram) } },
-    responses: {
-      201: { description: 'Promo program created', content: jsonContent(promoProgram) },
-      400: errors[400],
-      401: errors[401],
-      403: errors[403],
-      409: errors[409],
-      503: errors[503],
-    },
-  });
-  registry.registerPath({
-    method: 'get',
-    path: '/v1/programs/{externalRef}',
-    summary: 'Fetch a Promo program',
-    security: secretSecurity,
-    parameters: [programExternalRef],
-    responses: {
-      200: { description: 'Promo program', content: jsonContent(promoProgram) },
-      401: errors[401],
-      403: errors[403],
-      404: errors[404],
-      503: errors[503],
-    },
-  });
-  registry.registerPath({
-    method: 'patch',
-    path: '/v1/programs/{externalRef}',
-    summary: 'Replace an editable draft Promo program',
-    security: secretSecurity,
-    parameters: [programExternalRef],
-    request: { body: { required: true, content: jsonContent(promoProgram) } },
-    responses: {
-      200: { description: 'Promo program replaced', content: jsonContent(promoProgram) },
-      400: errors[400],
-      401: errors[401],
-      403: errors[403],
-      404: errors[404],
-      409: errors[409],
-      503: errors[503],
-    },
-  });
-
-  registry.registerPath({
     method: 'post',
     path: '/v1/evaluate',
     summary: 'Evaluate configured incentive programs',
@@ -365,6 +192,7 @@ export function buildOpenApiDocument(): OpenApiDocument {
       400: errors[400],
       401: errors[401],
       404: errors[404],
+      429: errors[429],
       503: errors[503],
     },
   });

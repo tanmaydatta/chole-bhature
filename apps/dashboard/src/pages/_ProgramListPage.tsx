@@ -8,6 +8,7 @@ import { DataTable } from '../components/common/DataTable';
 import { TypePill } from '../components/common/TypePill';
 import { StatusBadge } from '../components/common/StatusBadge';
 import { typeToSegment } from '../lib/routes';
+import { usePermission } from '../auth/AuthContext';
 
 const TYPE_CREATE_ROUTE: Record<ProgramType, string> = {
   promo: '/promo/new',
@@ -36,6 +37,7 @@ const FILTER_TO_STATUS: Record<FilterLabel, Status | null> = {
 const FILTER_LABELS: FilterLabel[] = ['Active', 'Scheduled', 'Paused', 'Ended', 'Drafts', 'All'];
 
 export default function ProgramListPage({ type, title, newLabel }: ProgramListPageProps) {
+  const canManage = usePermission('programs:manage');
   const navigate = useNavigate();
   const [selected, setSelected] = useState<FilterLabel>('Active');
   // Subscribe to programs (the data) so the list re-renders when it changes
@@ -88,7 +90,7 @@ export default function ProgramListPage({ type, title, newLabel }: ProgramListPa
     <div className="flex flex-col gap-[20px]">
       <PageHeader
         title={title}
-        action={
+        action={canManage ? (
           <button
             className="inline-flex items-center gap-[6px] text-[13px] font-semibold px-[14px] py-[7px] rounded-[8px] bg-[var(--accent)] text-white border-none cursor-pointer"
             type="button"
@@ -96,7 +98,7 @@ export default function ProgramListPage({ type, title, newLabel }: ProgramListPa
           >
             ＋ {newLabel}
           </button>
-        }
+        ) : undefined}
       />
       <SegmentedFilter
         options={options}

@@ -8,6 +8,7 @@ import { useEventsStore } from '../data/eventsStore';
 import { PROGRAMS } from '../data/programs';
 import { VARIABLES } from '../data/variables';
 import { EVENTS } from '../data/events';
+import { TestAuth } from '../test/TestAuth';
 
 vi.mock('../lib/codes', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../lib/codes')>();
@@ -21,12 +22,12 @@ import { downloadCSV } from '../lib/codes';
 
 function renderAt(path: string, routePattern: string) {
   return render(
-    <MemoryRouter initialEntries={[path]}>
+    <TestAuth><MemoryRouter initialEntries={[path]}>
       <Routes>
         <Route path={routePattern} element={<ProgramDetail />} />
         <Route path="/promo" element={<div data-testid="promo-list">Promo List</div>} />
       </Routes>
-    </MemoryRouter>
+    </MemoryRouter></TestAuth>
   );
 }
 
@@ -150,8 +151,10 @@ test('affiliate detail Download CSV downloads codes-only', () => {
   renderAt('/affiliates/aff-codes-60', '/affiliates/:id');
   fireEvent.click(screen.getByRole('button', { name: /download csv/i }));
   const csv = (downloadCSV as Mock).mock.calls[0][1] as string;
-  expect(csv.split('\n')[0]).toBe('code');
-  expect(csv).not.toMatch(/status|uses/i);
+  const [header, ...rows] = csv.trimEnd().split('\n');
+  expect(header).toBe('code');
+  expect(rows).toHaveLength(60);
+  expect(rows.every(row => !row.includes(','))).toBe(true);
 });
 
 test('affiliate detail single-use codes show — in Uses column', () => {
