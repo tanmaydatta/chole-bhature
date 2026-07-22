@@ -60,6 +60,9 @@ describe('repository deployment policy', () => {
     expect(workflow).toContain('pnpm build');
     expect(workflow).toContain('pnpm lint');
     expect(workflow).toContain('pnpm test');
+    expect(workflow).toContain('actions/checkout@v6');
+    expect(workflow).toContain('pnpm/action-setup@v6');
+    expect(workflow).toContain('actions/setup-node@v6');
     expect(workflow).not.toMatch(/wrangler|deploy:staging|CLOUDFLARE_/iu);
   });
 });
@@ -100,11 +103,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v6
         with:
           version: 11.14.0
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 22
           cache: pnpm
@@ -431,16 +434,27 @@ gh pr checks 6 --watch
 
 Expected: the repository `CI` check passes and no new Cloudflare deployment is attempted by the workflow.
 
+- [ ] **Step 6: Merge PR #6 into `dev`**
+
+Verify the current PR head is mergeable and all required checks pass, then merge through PR #6.
+Do not push directly to `dev`, and do not delete the feature worktree until the merge is confirmed.
+
+- [ ] **Step 7: Prepare a fresh checkout of merged `dev` for activation**
+
+Fetch the remote after the merge and create or update an isolated checkout at the exact merged
+`origin/dev` commit. Run the sanitized preflight and all user-run staging commands from that checkout,
+never from the pre-merge feature branch.
+
 ---
 
-### Task 5: Activate staging one user-run Cloudflare command at a time
+### Task 5: Activate staging from merged `dev`, one user-run Cloudflare command at a time
 
 **Files:**
 - Local-only: `.env.staging` (git-ignored; never stage or print)
 - No tracked file changes until results are documented
 
 **Interfaces:**
-- Consumes: the already-created `incentives-staging` and `incentives-auth-staging` D1 databases, the owned domains, a user-approved staging email, and Resend credentials.
+- Consumes: the fresh merged-`dev` checkout from Task 4, the already-created `incentives-staging` and `incentives-auth-staging` D1 databases, the owned domains, a user-approved staging email, and Resend credentials.
 - Produces: two migrated D1 databases and three deployed Workers with the fixed bindings and routes.
 
 - [ ] **Step 1: Collect the staging recipient without putting it in chat or Git**
@@ -535,7 +549,7 @@ Use read-only Wrangler deployment and D1 migration listings to verify names, cur
 
 ---
 
-### Task 6: Bootstrap, smoke test, document, and integrate
+### Task 6: Bootstrap, smoke test, document, and integrate the activation evidence
 
 **Files:**
 - Modify: `docs/integration/staging-operations.md` only if verified behavior differs from the written procedure
@@ -545,7 +559,7 @@ Use read-only Wrangler deployment and D1 migration listings to verify names, cur
 
 **Interfaces:**
 - Consumes: an activated staging environment.
-- Produces: a verified root session, staging smoke evidence, documented deviations, a mergeable PR, and latest-`dev` manual testing instructions.
+- Produces: a verified root session, staging smoke evidence, documented deviations, a follow-up documentation PR, and latest-`dev` manual testing instructions.
 
 - [ ] **Step 1: Bootstrap the root as a user-run D1 mutation**
 
@@ -585,7 +599,13 @@ git diff --check
 
 Expected: all commands exit 0.
 
-- [ ] **Step 5: Commit documentation and update Notion status**
+- [ ] **Step 5: Refresh manual instructions from merged `dev`**
+
+Create a documentation branch from the latest remote `dev`. Update the developer and non-technical
+testing guides so their source selection and staging instructions match the deployed merged commit,
+and include any verified deviations from the activation run.
+
+- [ ] **Step 6: Commit documentation and update Notion status**
 
 ```bash
 git add docs/integration/staging-operations.md \
@@ -596,10 +616,7 @@ git commit -m "docs: record staging activation evidence"
 
 Set this plan to `Done` only when every completion criterion in the design is met; otherwise keep it `In progress` and list blockers.
 
-- [ ] **Step 6: Push, review, and merge PR #6 into `dev`**
+- [ ] **Step 7: Push, review, and merge the follow-up documentation PR into `dev`**
 
-Push the final branch, verify all GitHub checks, request code review, and merge through the PR. Do not push directly to `dev`.
-
-- [ ] **Step 7: Refresh manual instructions from merged `dev`**
-
-Create a new documentation branch from the latest remote `dev`, update the developer and non-technical testing guides so their source selection and staging instructions match merged reality, mirror them to Notion, open a separate PR, verify it, and merge it into `dev`.
+Push the documentation branch, verify all GitHub checks, request code review, and merge through its
+separate PR. Do not push directly to `dev`.

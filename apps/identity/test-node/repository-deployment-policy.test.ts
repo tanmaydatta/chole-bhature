@@ -19,6 +19,9 @@ describe('repository deployment policy', () => {
     expect(workflow).toContain('pnpm build');
     expect(workflow).toContain('pnpm lint');
     expect(workflow).toContain('pnpm test');
+    expect(workflow).toContain('actions/checkout@v6');
+    expect(workflow).toContain('pnpm/action-setup@v6');
+    expect(workflow).toContain('actions/setup-node@v6');
     expect(workflow).not.toMatch(/wrangler|deploy:staging|CLOUDFLARE_/iu);
   });
 
