@@ -42,6 +42,7 @@ describe('repository deployment policy', () => {
     expect(operations).toContain('pnpm --filter @incentives/identity db:migrate:staging');
     expect(operations).toContain('--name incentives-identity-staging');
     expect(operations).toContain('--name incentives-operator-web-staging');
+    expect(operations).toContain('demo/*');
     expect(operations).toContain('The assistant must not run these Cloudflare-changing commands');
   });
 });

@@ -81,6 +81,17 @@ The preflight output is deliberately sanitized. It lists resource names, public 
 passkey RP ID, and an allowed-recipient count. It does not contain D1 UUIDs, addresses, or secrets.
 Stop if any precondition fails.
 
+### Legacy demo build isolation
+
+The `vanshit-lakshay` demo Worker remains connected to its repository, but its Cloudflare Workers
+Builds include path is exactly `demo/*` and its exclude paths are empty. The pattern is relative to
+the repository root and has no leading slash. Demo files can still trigger demo deployments;
+platform-only changes do not target the demo Worker.
+
+Cloudflare can bypass path matching for an empty push, a push containing at least 3,000 changed
+files, or a push containing at least 20 commits. Treat those cases as exceptional and inspect the
+demo build before allowing it to deploy.
+
 ### User-controlled Cloudflare activation
 
 The assistant must not run these Cloudflare-changing commands. The user runs exactly one command,

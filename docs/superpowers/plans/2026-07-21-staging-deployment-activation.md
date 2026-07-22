@@ -415,9 +415,12 @@ Expected: every command exits 0. If any fails, use systematic debugging and do n
 
 Update the plan page under `Plans` to `In progress`, and edit the design mirror under `Specs` from the checked-in Markdown. Ensure the Plans index contains a status row and link for this plan.
 
-- [ ] **Step 4: Ask the user to disable the legacy demo repository build**
+- [x] **Step 4: Restrict the legacy demo repository build to `demo/*`**
 
-Give only the dashboard instructions for disconnecting automatic Git builds from `vanshit-lakshay`. The user confirms the last demo deployment remains reachable. This changes Cloudflare configuration, so the assistant does not perform it.
+Give only the dashboard instructions for setting the `vanshit-lakshay` Workers Builds include path
+to `demo/*`, with empty exclude paths. The user performs and confirms the change. This preserves
+demo builds while preventing platform-only changes from targeting the demo Worker. The assistant
+does not perform the Cloudflare configuration change.
 
 - [ ] **Step 5: Push the branch and verify the replacement CI**
 

@@ -98,10 +98,11 @@ The failed `Workers Builds: vanshit-lakshay` PR check belongs to the static demo
 single-Worker repository connection. The monorepo root now contains three applications, so a root
 Wrangler deployment fails application detection before upload.
 
-The user will disconnect or disable automatic repository builds for the legacy demo Worker while
-leaving its last successful deployment online. Pull requests will use repository build, lint, and
-test checks only. Staging Cloudflare deployment remains a deliberate user-run operation until the
-user separately approves automatic Cloudflare writes.
+The legacy demo Worker remains connected to the repository, with its Workers Builds include path
+set to exactly `demo/*` and its exclude paths empty. Demo changes can still publish the demo, while
+platform-only changes do not target that Worker. Pull requests use repository build, lint, and test
+checks for platform changes. Staging Cloudflare deployment remains a deliberate user-run operation
+until the user separately approves automatic Cloudflare writes.
 
 ## 7. Error handling and rollback
 
