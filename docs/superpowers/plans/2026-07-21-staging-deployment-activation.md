@@ -36,7 +36,7 @@
 - Consumes: root scripts `build`, `lint`, and `test` from `package.json`.
 - Produces: a `CI` GitHub check for pull requests and pushes to `dev`; it has read-only repository permissions and no Cloudflare deployment capability.
 
-- [ ] **Step 1: Write the failing repository-policy test**
+- [x] **Step 1: Write the failing repository-policy test**
 
 ```ts
 import { readFile } from 'node:fs/promises';
@@ -65,7 +65,7 @@ describe('repository deployment policy', () => {
 });
 ```
 
-- [ ] **Step 2: Run the test and verify RED**
+- [x] **Step 2: Run the test and verify RED**
 
 Run:
 
@@ -76,7 +76,7 @@ pnpm --filter @incentives/identity exec vitest run \
 
 Expected: FAIL with `ENOENT` for `.github/workflows/ci.yml`.
 
-- [ ] **Step 3: Add the minimal non-deploying workflow**
+- [x] **Step 3: Add the minimal non-deploying workflow**
 
 Create `.github/workflows/ci.yml`:
 
@@ -114,13 +114,13 @@ jobs:
       - run: pnpm test
 ```
 
-- [ ] **Step 4: Run the targeted test and verify GREEN**
+- [x] **Step 4: Run the targeted test and verify GREEN**
 
 Run the Step 2 command again.
 
 Expected: PASS, with no Cloudflare API calls.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add .github/workflows/ci.yml apps/identity/test-node/repository-deployment-policy.test.ts
