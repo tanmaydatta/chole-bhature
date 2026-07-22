@@ -152,6 +152,9 @@ describe('staging Wrangler runner', () => {
     expect(result.stderr).toBe('');
     expect(capture.args.slice(0, prefix.length)).toEqual(prefix);
     expect(capture.args.slice(-2)).toEqual(['--config', capture.configPath]);
+    expect(capture.config).toContain(`[observability]
+enabled = true
+head_sampling_rate = 1`);
     expect(capture.mode).toBe(0o600);
     expect(capture.hasAuthSecret).toBe(false);
     expect(capture.hasResendApiKey).toBe(false);

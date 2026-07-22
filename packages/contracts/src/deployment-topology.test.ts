@@ -76,6 +76,10 @@ describe('local and staging worker topology', () => {
       'operator-web', configuration, '/repository',
     );
 
+    for (const generated of [apiStaging, identityStaging, operatorStaging]) {
+      expect(section(generated, 'observability')).toContain('enabled = true');
+      expect(section(generated, 'observability')).toContain('head_sampling_rate = 1');
+    }
     expect(value(apiStaging, 'name')).toBe('incentives-api-staging');
     expect(value(identityStaging, 'name')).toBe('incentives-identity-staging');
     expect(value(section(apiStaging, '[d1_databases]'), 'database_name'))

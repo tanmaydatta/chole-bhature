@@ -68,7 +68,8 @@ export const teamRoutes: readonly ProtectedRoute[] = [
     invoke(context) {
       const body = OperatorInvitationCreateRequestSchema.parse(context.body);
       return context.env.IDENTITY.createInvitation({
-        ...identityRequest(context),
+        sessionId: context.principal.sessionId,
+        selectedMerchantId: context.operator.merchantId,
         input: {
           organizationId: organizationId(context),
           ...body,
