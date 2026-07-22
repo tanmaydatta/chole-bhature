@@ -509,12 +509,21 @@ describe('live session and tenant boundary', () => {
       method: 'POST', body: JSON.stringify({ email: 'new@example.test', role: 'admin' }),
     }, cookie), env);
     expect(created?.status).toBe(201);
-    expect(env.IDENTITY.createInvitation).toHaveBeenCalledWith(expect.objectContaining({
+    const invitationRequest = env.IDENTITY.createInvitation.mock.calls[0]?.[0];
+    expect(contracts.IdentityCreateInvitationRequestSchema.safeParse(invitationRequest).success)
+      .toBe(true);
+    expect(invitationRequest).toEqual({
+      sessionId: 'session-root',
       selectedMerchantId: 'merchant-a',
-      input: expect.objectContaining({
-        organizationId: 'org-a', email: 'new@example.test', role: 'admin',
-      }),
-    }));
+      input: {
+        organizationId: 'org-a',
+        email: 'new@example.test',
+        role: 'admin',
+        expiresInSeconds: 86400,
+        correlationId,
+      },
+    });
+    expect(invitationRequest).not.toHaveProperty('correlationId');
     const browserBody = JSON.parse(String((await request('/operator/v1/team/invitations', {
       method: 'POST', body: JSON.stringify({ email: 'new@example.test', role: 'admin' }),
     }).text()))) as Record<string, unknown>;
