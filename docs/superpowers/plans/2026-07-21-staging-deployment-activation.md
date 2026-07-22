@@ -141,7 +141,7 @@ git commit -m "ci: verify repository without staging writes"
 - Produces: `stagingPreflightSummary(environment)` and root command `pnpm staging:preflight`.
 - Security boundary: output contains Worker/database names, public origins, RP ID, and recipient count, but no D1 UUID, email address, or secret.
 
-- [ ] **Step 1: Write the failing preflight test**
+- [x] **Step 1: Write the failing preflight test**
 
 ```ts
 import { describe, expect, test } from 'vitest';
@@ -185,7 +185,7 @@ describe('staging deployment preflight', () => {
 });
 ```
 
-- [ ] **Step 2: Run the test and verify RED**
+- [x] **Step 2: Run the test and verify RED**
 
 Run:
 
@@ -196,7 +196,7 @@ pnpm --filter @incentives/identity exec vitest run \
 
 Expected: FAIL because `scripts/staging-preflight.mjs` does not exist.
 
-- [ ] **Step 3: Implement the minimal preflight**
+- [x] **Step 3: Implement the minimal preflight**
 
 Create `scripts/staging-preflight.mjs`:
 
@@ -248,13 +248,13 @@ Add to root `package.json` scripts:
 "staging:preflight": "node scripts/staging-preflight.mjs"
 ```
 
-- [ ] **Step 4: Run the test and verify GREEN**
+- [x] **Step 4: Run the test and verify GREEN**
 
 Run the Step 2 command again.
 
 Expected: PASS and no Cloudflare call.
 
-- [ ] **Step 5: Verify invalid configuration fails before Wrangler**
+- [x] **Step 5: Verify invalid configuration fails before Wrangler**
 
 Run:
 
@@ -264,7 +264,7 @@ env -u STAGING_ENVIRONMENT pnpm staging:preflight
 
 Expected: exit 1 with `Staging preflight failed: STAGING_ENVIRONMENT is required.`
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add package.json scripts/staging-preflight.mjs apps/identity/test-node/staging-preflight.test.ts
