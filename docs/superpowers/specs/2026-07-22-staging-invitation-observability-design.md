@@ -1,6 +1,6 @@
 # Staging invitation contract fix and Worker observability design
 
-**Date:** 2026-07-22  
+**Date:** 2026-07-22
 **Status:** Approved
 **Notion:** https://app.notion.com/p/3a5e5c7c2b8e81ee9e6cf9ecb72d3363
 
