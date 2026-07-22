@@ -387,7 +387,7 @@ git commit -m "docs: pin manual staging activation procedure"
 - Consumes: Tasks 1–3.
 - Produces: evidence that local code and CI policy are safe before the user performs staging writes.
 
-- [ ] **Step 1: Run targeted staging tests**
+- [x] **Step 1: Run targeted staging tests**
 
 ```bash
 pnpm --filter @incentives/identity exec vitest run --config vitest.node.config.ts \
@@ -399,7 +399,7 @@ pnpm --filter @incentives/identity exec vitest run --config vitest.node.config.t
 
 Expected: PASS.
 
-- [ ] **Step 2: Run repository verification**
+- [x] **Step 2: Run repository verification**
 
 ```bash
 pnpm build
@@ -411,7 +411,7 @@ git diff --check
 
 Expected: every command exits 0. If any fails, use systematic debugging and do not ask the user to mutate Cloudflare.
 
-- [ ] **Step 3: Mirror the checked plan and design status to Notion**
+- [x] **Step 3: Mirror the checked plan and design status to Notion**
 
 Update the plan page under `Plans` to `In progress`, and edit the design mirror under `Specs` from the checked-in Markdown. Ensure the Plans index contains a status row and link for this plan.
 

@@ -1,5 +1,7 @@
 # Staging Worker operations
 
+**Notion mirror:** https://app.notion.com/p/3a5e5c7c2b8e81bd810ce6fe5fc3d355
+
 ## Local three-Worker stack
 
 Run the complete local stack from the repository root:
