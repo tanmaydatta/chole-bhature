@@ -425,7 +425,7 @@ to `demo/*`, with empty exclude paths. The user performs and confirms the change
 demo builds while preventing platform-only changes from targeting the demo Worker. The assistant
 does not perform the Cloudflare configuration change.
 
-- [ ] **Step 5: Push the branch and verify the replacement CI**
+- [x] **Step 5: Push the branch and verify the replacement CI**
 
 ```bash
 git push origin feat/production-operator-platform
