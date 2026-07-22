@@ -14,13 +14,11 @@ This guide prepares the real local Operator Web, Identity, and Core Workers with
 
 ## Current readiness note — 2026-07-21
 
-Three known product blockers affect the current branch:
+Two known local-startup blockers affect the current branch:
 
 1. The documented `pnpm dev:local` command omits the engine, module-kit, and Promo builds. This guide uses separate build commands as a temporary setup workaround.
 2. The local runner does not give its concurrent Workers distinct inspector ports. This guide starts each Worker separately with an explicit inspector port as a temporary setup workaround.
-3. The Team invitation envelope includes a forbidden top-level `correlationId` and currently returns `400 INVALID_REQUEST`, so Admin/Operator/Viewer onboarding cannot complete until `GATE-C-ISSUE-003` in the stopped run report is fixed.
-
-The workarounds change no product source. They only let root-capable journeys run. Do not report a successful full end-to-end test while any blocker remains open.
+The workarounds change no product source. They prepare the local stack so every browser journey can be tested. Record any remaining setup or product failure rather than working around it silently.
 
 ## What the developer needs
 

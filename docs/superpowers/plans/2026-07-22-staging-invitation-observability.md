@@ -30,7 +30,7 @@
 - `apps/operator-web/test/bff.test.ts`: browser-to-BFF regression proving the emitted invitation RPC satisfies the strict shared contract.
 - `apps/operator-web/src/routes/team.ts`: narrow create-invitation request construction fix.
 - `apps/identity/test-node/staging-wrangler-runner.test.ts`: generated-config regression for every supported staging action.
-- `apps/identity/test-node/staging-wrangler-resolution.test.ts`: topology-level assertion that all three staging Workers enable 100% observability.
+- `packages/contracts/src/deployment-topology.test.ts`: topology-level assertion that all three staging Workers enable 100% observability.
 - `scripts/staging-wrangler-config.mjs`: protected generated staging Wrangler configuration source of truth.
 - `docs/testing/staging-activation-run-2026-07-21.md`: sanitized staging execution evidence and remaining manual checks.
 - `docs/testing/runs/2026-07-20-gate-c-playwright-run.md`: historical issue resolution annotation without rewriting the original failed result.
@@ -49,7 +49,7 @@
 - Consumes: `contracts.IdentityCreateInvitationRequestSchema.safeParse(value)` and the existing `ProtectedRoute` context.
 - Produces: `IDENTITY.createInvitation({ sessionId, selectedMerchantId, input })`, where `input.correlationId` is present and top-level `correlationId` is absent.
 
-- [ ] **Step 1: Strengthen the selected-root invitation test against the real strict contract**
+- [x] **Step 1: Strengthen the selected-root invitation test against the real strict contract**
 
 In `lets selected root manage the client team with server-resolved organization authority`, replace the loose `expect.objectContaining` assertion for `createInvitation` with:
 
@@ -71,7 +71,7 @@ In `lets selected root manage the client team with server-resolved organization 
     expect(invitationRequest).not.toHaveProperty('correlationId');
 ```
 
-- [ ] **Step 2: Run the focused test and verify RED**
+- [x] **Step 2: Run the focused test and verify RED**
 
 Run:
 
@@ -82,7 +82,7 @@ pnpm --filter @incentives/operator-web exec vitest run test/bff.test.ts -t "lets
 
 Expected: FAIL because strict parsing returns `false`, the actual request contains a top-level `correlationId`, or the exact-envelope assertion reports that extra property.
 
-- [ ] **Step 3: Construct the create-invitation envelope without the generic helper**
+- [x] **Step 3: Construct the create-invitation envelope without the generic helper**
 
 In `apps/operator-web/src/routes/team.ts`, replace the current `createInvitation` call with:
 
@@ -100,7 +100,7 @@ In `apps/operator-web/src/routes/team.ts`, replace the current `createInvitation
 
 Do not modify `identityRequest`; list, retry, role-change, and member-removal calls require its top-level correlation ID.
 
-- [ ] **Step 4: Run the focused test and verify GREEN**
+- [x] **Step 4: Run the focused test and verify GREEN**
 
 Run:
 
@@ -110,7 +110,7 @@ pnpm --filter @incentives/operator-web exec vitest run test/bff.test.ts -t "lets
 
 Expected: one passing test and no failures.
 
-- [ ] **Step 5: Run the complete Operator Web test and typecheck gates**
+- [x] **Step 5: Run the complete Operator Web test and typecheck gates**
 
 Run:
 
@@ -122,7 +122,7 @@ pnpm --filter @incentives/operator-web lint
 
 Expected: every command exits 0.
 
-- [ ] **Step 6: Commit the isolated invitation repair**
+- [x] **Step 6: Commit the isolated invitation repair**
 
 ```bash
 git add apps/operator-web/test/bff.test.ts apps/operator-web/src/routes/team.ts
@@ -135,14 +135,14 @@ git commit -m "fix: send valid invitation rpc envelope"
 
 **Files:**
 - Modify: `apps/identity/test-node/staging-wrangler-runner.test.ts`
-- Modify: `apps/identity/test-node/staging-wrangler-resolution.test.ts`
+- Modify: `packages/contracts/src/deployment-topology.test.ts`
 - Modify: `scripts/staging-wrangler-config.mjs`
 
 **Interfaces:**
 - Consumes: `renderStagingWranglerConfig(app, configuration, repositoryRoot)` for `api`, `identity`, and `operator-web`.
 - Produces: a top-level TOML `[observability]` table with `enabled = true` and `head_sampling_rate = 1` in every generated staging config.
 
-- [ ] **Step 1: Add the runner-level generated-config assertion**
+- [x] **Step 1: Add the runner-level generated-config assertion**
 
 Inside the parameterized `renders and cleans a protected %s %s config` test, after the config-path assertions, add:
 
@@ -154,7 +154,7 @@ head_sampling_rate = 1`);
 
 This covers every supported API, Identity, and Operator Web staging dev, migrate, and deploy path.
 
-- [ ] **Step 2: Add topology-level assertions for all three Workers**
+- [x] **Step 2: Add topology-level assertions for all three Workers**
 
 In `generates the complete staging topology from validated inputs`, after creating `operatorStaging`, add:
 
@@ -165,17 +165,18 @@ In `generates the complete staging topology from validated inputs`, after creati
     }
 ```
 
-- [ ] **Step 3: Run both focused tests and verify RED**
+- [x] **Step 3: Run both focused tests and verify RED**
 
 Run:
 
 ```bash
-pnpm --filter @incentives/identity exec vitest run --config vitest.node.config.ts test-node/staging-wrangler-runner.test.ts test-node/staging-wrangler-resolution.test.ts
+pnpm --filter @incentives/identity exec vitest run --config vitest.node.config.ts test-node/staging-wrangler-runner.test.ts
+pnpm --filter @incentives/contracts exec vitest run src/deployment-topology.test.ts
 ```
 
 Expected: FAIL because generated configs do not contain an `observability` table.
 
-- [ ] **Step 4: Add one reusable staging observability fragment**
+- [x] **Step 4: Add one reusable staging observability fragment**
 
 Near the existing staging constants in `scripts/staging-wrangler-config.mjs`, add:
 
@@ -187,17 +188,18 @@ head_sampling_rate = 1`;
 
 Insert `${STAGING_OBSERVABILITY_TOML}` once in each returned API, Identity, and Operator Web template. For API and Operator Web, keep the top-level `routes = [...]` line before the fragment. Put the fragment before the next TOML table (`[[d1_databases]]` or `[vars]`) so `routes` and other top-level keys cannot accidentally become observability properties.
 
-- [ ] **Step 5: Run the focused tests and verify GREEN**
+- [x] **Step 5: Run the focused tests and verify GREEN**
 
 Run:
 
 ```bash
-pnpm --filter @incentives/identity exec vitest run --config vitest.node.config.ts test-node/staging-wrangler-runner.test.ts test-node/staging-wrangler-resolution.test.ts
+pnpm --filter @incentives/identity exec vitest run --config vitest.node.config.ts test-node/staging-wrangler-runner.test.ts
+pnpm --filter @incentives/contracts exec vitest run src/deployment-topology.test.ts
 ```
 
 Expected: all focused tests pass.
 
-- [ ] **Step 6: Run the staging generator lint and complete Identity Node tests**
+- [x] **Step 6: Run the staging generator lint and complete Identity Node tests**
 
 Run:
 
@@ -208,10 +210,10 @@ pnpm --filter @incentives/identity exec vitest run --config vitest.node.config.t
 
 Expected: both commands exit 0.
 
-- [ ] **Step 7: Commit the isolated observability configuration**
+- [x] **Step 7: Commit the isolated observability configuration**
 
 ```bash
-git add scripts/staging-wrangler-config.mjs apps/identity/test-node/staging-wrangler-runner.test.ts apps/identity/test-node/staging-wrangler-resolution.test.ts
+git add scripts/staging-wrangler-config.mjs apps/identity/test-node/staging-wrangler-runner.test.ts packages/contracts/src/deployment-topology.test.ts
 git commit -m "feat: persist all staging worker logs"
 ```
 
@@ -230,7 +232,7 @@ git commit -m "feat: persist all staging worker logs"
 - Consumes: sanitized root/client/manual results already observed and the automated verification output from Tasks 1–2.
 - Produces: a safe activation record that tells the next tester exactly what passed, failed, was fixed, and still needs manual staging verification.
 
-- [ ] **Step 1: Create the sanitized staging activation run report**
+- [x] **Step 1: Create the sanitized staging activation run report**
 
 Create `docs/testing/staging-activation-run-2026-07-21.md` with these sections and facts:
 
@@ -278,7 +280,7 @@ Create `docs/testing/staging-activation-run-2026-07-21.md` with these sections a
 Do not add recipient addresses, secrets, cookies, links containing tokens, activation grants, or recovery-code text.
 ```
 
-- [ ] **Step 2: Annotate the historical Gate C issue without rewriting history**
+- [x] **Step 2: Annotate the historical Gate C issue without rewriting history**
 
 Under `GATE-C-ISSUE-003` in `docs/testing/runs/2026-07-20-gate-c-playwright-run.md`, add:
 
@@ -286,11 +288,11 @@ Under `GATE-C-ISSUE-003` in `docs/testing/runs/2026-07-20-gate-c-playwright-run.
 - Resolution on 2026-07-22: The same contract mismatch was reproduced in staging. Operator Web sent a forbidden top-level `correlationId` to the strict Identity create-invitation RPC. The regression fix constructs the contract-specific envelope and keeps the correlation ID inside `input`. The original run remains Fail; end-to-end closure requires redeployment and a fresh manual invitation.
 ```
 
-- [ ] **Step 3: Remove obsolete expected-blocker wording from current guides**
+- [x] **Step 3: Remove obsolete expected-blocker wording from current guides**
 
 In `docs/testing/gate-c-local-environment-setup.md`, remove the prerequisite statement that invitations currently return `INVALID_REQUEST`. In `docs/testing/gate-c-non-technical-manual-guide.md`, change the status to `Ready to use after developer setup` and remove sentences saying invitation testing is currently expected to be blocked. Retain the troubleshooting instruction that tells a tester to record any future `Request validation failed` response as a failure.
 
-- [ ] **Step 4: Validate documentation safety and formatting**
+- [x] **Step 4: Validate documentation safety and formatting**
 
 Run:
 
@@ -301,11 +303,11 @@ git diff --check
 
 Expected: the secret/recipient scan prints no matches and `git diff --check` exits 0.
 
-- [ ] **Step 5: Sync the plan status and testing documents to Notion**
+- [x] **Step 5: Sync the plan status and testing documents to Notion**
 
 Use `ntn pages edit` for the existing Gate C run (`3a4e5c7c-2b8e-81f2-8b7d-d9455e94b71a`), local setup (`3a4e5c7c-2b8e-8197-b2da-f950431552b3`), and non-technical guide (`3a4e5c7c-2b8e-81a8-949c-ff0b321b04fc`). Create the staging activation report below the platform documentation page (`2fce5c7c-2b8e-8070-b865-daaa741e7370`). Confirm the Plans index still links this plan with `In progress`. Do not include any excluded evidence.
 
-- [ ] **Step 6: Check off completed plan boxes and commit documentation**
+- [x] **Step 6: Check off completed plan boxes and commit documentation**
 
 ```bash
 git add docs/testing/staging-activation-run-2026-07-21.md docs/testing/runs/2026-07-20-gate-c-playwright-run.md docs/testing/gate-c-local-environment-setup.md docs/testing/gate-c-non-technical-manual-guide.md docs/superpowers/plans/2026-07-22-staging-invitation-observability.md

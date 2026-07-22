@@ -100,7 +100,8 @@ Result counts: **8 Pass, 2 Fail, 4 Blocked, 4 Not run**. Open findings: `GATE-C-
 - Safe HTTP/code/correlation evidence: Submitted synthetic shape was `{ email, role, expiresInSeconds }` with the documented values; HTTP `400`, code `INVALID_REQUEST`, `retryable=false`, correlation identifier present. No token existed.
 - Dependent cases: Admin/Operator/Viewer onboarding and authorization matrices are blocked; root-capable product cases remain independent.
 - Proposed follow-up: In separately approved product work, remove or relocate the extra top-level correlation field passed by the protected team route so `IdentityCreateInvitationRequestSchema` receives exactly its strict contract, then add a real Worker integration regression test.
-- Status: Open
+- Resolution on 2026-07-22: The same contract mismatch was reproduced in staging. Operator Web sent a forbidden top-level `correlationId` to the strict Identity create-invitation RPC. The regression fix constructs the contract-specific envelope and keeps the correlation ID inside `input`. The original run remains Fail; end-to-end closure requires redeployment and a fresh manual invitation.
+- Status: Fixed in code; awaiting staging redeployment and fresh manual verification
 
 ## Gate C verdict
 

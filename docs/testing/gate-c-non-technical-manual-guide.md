@@ -1,6 +1,6 @@
 # Non-technical end-to-end testing guide
 
-**Status:** Ready to use after developer setup; full completion is currently blocked by known invitation and local-startup issues.
+**Status:** Ready to use after developer setup.
 
 **Audience:** A client, product manager, operations person, or other tester who should use only the browser.
 
@@ -18,7 +18,7 @@ Ask the developer for:
 
 - the test URL, normally `http://localhost:5173`;
 - a browser profile already prepared for Root;
-- separate Admin, Operator, and Viewer browser profiles when invitation onboarding is available;
+- separate Admin, Operator, and Viewer browser profiles;
 - access to the three test inboxes, or a developer who will open local one-time links in the correct profile;
 - confirmation that this is a fresh test environment;
 - the list of known blockers for this test run.
@@ -89,8 +89,6 @@ Record: **Pass / Fail / Blocked / Not tested**.
 
 ## 2. Invite and sign in as the client Admin
 
-This section is currently expected to be blocked by the known invitation issue until it is fixed.
-
 1. While Root has `Gate C Beta` selected, open **Team**.
 2. Enter `admin@gate-c.example` in **Invite email**.
 3. Choose `admin` in **Invite role**.
@@ -110,7 +108,7 @@ Expected result:
 - the Admin enters only the `Gate C Beta` company;
 - one-time links disappear after use and cannot be reused.
 
-If **Invite user** shows **Request validation failed**, record **Fail**, reference the known invitation blocker, and mark Sections 3 and 8 role checks **Blocked**.
+If **Invite user** shows **Request validation failed**, record **Fail** and mark Sections 3 and 8 role checks **Blocked**.
 
 Record: **Pass / Fail / Blocked / Not tested**.
 
