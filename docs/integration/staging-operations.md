@@ -17,21 +17,46 @@ service dependencies rather than browser entrypoints.
 
 ## Staging
 
-Staging commands deliberately do not use the placeholder values in the checked-in local
-Wrangler files. They require real Cloudflare D1 identifiers and the real HTTPS Operator
-host through the process environment, then generate a protected temporary Wrangler config.
-The runner validates the selected app's installed Wrangler JavaScript entrypoint and launches it
-with the current absolute Node executable, without a package-manager shell shim or PATH lookup.
-It deletes the temporary config whether Wrangler succeeds or fails.
+### Fixed resources and boundaries
 
-Copy `.env.staging.example` to the git-ignored `.env.staging` and replace every value. The
-Product and Auth D1 UUIDs must be real, distinct Cloudflare resources. `STAGING_OPERATOR_ORIGIN`
-and `STAGING_API_ORIGIN` must be distinct exact HTTPS origins on real hosts. The generated
-Operator and Core configs each publish exactly that origin as one custom-domain route, while
-Identity remains service-only. The passkey RP ID must exactly equal the Operator hostname, and
-the recipient list must contain at least one real staging email address.
+The staging platform is separate from the existing `vanshit-lakshay` static demo. These commands
+must never deploy to, bind a database to, attach a route to, roll back, or delete that demo Worker.
 
-Load the values into the current shell without printing them:
+Staging contains:
+
+- `incentives-api-staging` at `https://api.staging.wastd.dev`;
+- private `incentives-identity-staging`, with no public route;
+- `incentives-operator-web-staging` at `https://operator.staging.wastd.dev`;
+- Product D1 `incentives-staging`; and
+- Auth D1 `incentives-auth-staging`.
+
+Operator Web reaches Identity and Core through service bindings. Identity reaches Core through a
+service binding. Only the API and Operator Web Workers receive custom-domain routes.
+
+### Prepare the ignored environment file
+
+Copy `.env.staging.example` to `.env.staging` with owner-only permissions. Replace the two D1
+instructions with the distinct UUIDs returned when the databases were created. Replace the
+recipient instruction with a JSON array containing only real addresses approved for staging
+email. Replace the four secret instructions locally; never commit, print, or paste those values
+into chat.
+
+```sh
+umask 077
+cp -n .env.staging.example .env.staging
+chmod 600 .env.staging
+${EDITOR:-vi} .env.staging
+```
+
+The fixed public values are:
+
+```dotenv
+STAGING_OPERATOR_ORIGIN=https://operator.staging.wastd.dev
+STAGING_API_ORIGIN=https://api.staging.wastd.dev
+STAGING_PASSKEY_RP_ID=operator.staging.wastd.dev
+```
+
+Load the file into the current shell without printing it:
 
 ```sh
 set -a
@@ -39,35 +64,86 @@ set -a
 set +a
 ```
 
-Then use the app-specific commands:
+### Read-only preconditions
+
+Run these before any Cloudflare change:
 
 ```sh
-pnpm --filter @incentives/api dev:staging
+pnpm staging:preflight
+pnpm build
+pnpm lint
+CI=true pnpm test
+```
+
+The preflight output is deliberately sanitized. It lists resource names, public origins, the
+passkey RP ID, and an allowed-recipient count. It does not contain D1 UUIDs, addresses, or secrets.
+Stop if any precondition fails.
+
+### User-controlled Cloudflare activation
+
+The assistant must not run these Cloudflare-changing commands. The user runs exactly one command,
+checks its result, and only then moves to the next command.
+
+First apply the forward-only Product migrations:
+
+```sh
 pnpm --filter @incentives/api db:migrate:staging
-pnpm --filter @incentives/api deploy:staging
+```
 
-pnpm --filter @incentives/identity dev:staging
+Then apply the forward-only Auth migrations:
+
+```sh
 pnpm --filter @incentives/identity db:migrate:staging
-pnpm --filter @incentives/identity deploy:staging
+```
 
-pnpm --filter @incentives/operator-web dev:staging
+Deploy Core and attach its API custom domain:
+
+```sh
+pnpm --filter @incentives/api deploy:staging
+```
+
+Deploy private Identity. This config has no route and publishes no `workers.dev` hostname:
+
+```sh
+pnpm --filter @incentives/identity deploy:staging
+```
+
+Enter each Identity value only at Wrangler's hidden prompt. Do not include a value in the command
+or paste one into chat:
+
+```sh
+pnpm --filter @incentives/identity exec wrangler secret put AUTH_SECRET \
+  --name incentives-identity-staging
+pnpm --filter @incentives/identity exec wrangler secret put RESEND_API_KEY \
+  --name incentives-identity-staging
+pnpm --filter @incentives/identity exec wrangler secret put RESEND_FROM \
+  --name incentives-identity-staging
+```
+
+Deploy Operator Web and attach its custom domain:
+
+```sh
 pnpm --filter @incentives/operator-web deploy:staging
 ```
 
-Identity staging development additionally requires `AUTH_SECRET`, `RESEND_API_KEY`, and
-`RESEND_FROM` in the launching environment. The runner writes them to a separate mode-`0600`
-`.dev.vars` beside its temporary Identity config because Wrangler development does not expose
-deployed Worker secrets. It removes both temporary files on success or failure and does not
-forward those values through the Wrangler child environment. Product staging development and
-both apps' migrate/deploy commands do not require these local application secrets.
+Enter the Operator selection secret only at Wrangler's hidden prompt:
 
-Operator Web staging development similarly requires `OPERATOR_SELECTION_SECRET`. The runner
-writes it only to the protected temporary `.dev.vars`, removes it in `finally`, and strips it
-from the Wrangler child environment. Configure the deployed Worker secret separately before
-deploying Operator Web.
+```sh
+pnpm --filter @incentives/operator-web exec wrangler secret put OPERATOR_SELECTION_SECRET \
+  --name incentives-operator-web-staging
+```
 
-Set Worker secrets such as `AUTH_SECRET`, `RESEND_API_KEY`, `RESEND_FROM`, and
-`OPERATOR_SELECTION_SECRET` with Wrangler's
-secret management before deployment. The staging runner neither writes those secrets into the
-temporary TOML config nor forwards application secrets to its Wrangler child process. Cloudflare
-authentication variables remain available so Wrangler can access the account.
+The staging runner generates a mode-`0600` temporary Wrangler config for the selected app, invokes
+that app's installed Wrangler entrypoint through the current absolute Node executable, removes the
+temporary files on success or failure, and strips application secrets and `STAGING_*` inputs from
+the Wrangler child environment. Staging `dev` commands may create a temporary `.dev.vars`; migrate
+and deploy commands never put application secrets in the generated TOML.
+
+### Failure and rollback rules
+
+- A failed migration stops activation. Never attempt a destructive D1 downgrade.
+- A failed Worker deployment leaves its previous deployed version active.
+- Worker rollback is a separate Cloudflare mutation and must be run by the user only after the
+  target Worker and version are confirmed with read-only commands.
+- Identity must remain private. Stop if Cloudflare shows a public Identity route or hostname.
+- The static demo is never an operator-platform rollback target and remains unchanged.

@@ -284,7 +284,7 @@ git commit -m "feat: add redacted staging preflight"
 - Consumes: the preflight and existing app-specific migrate/deploy commands.
 - Produces: a repeatable operator procedure using the two owned custom domains, explicit secret commands, and no checked-in resource IDs or secrets.
 
-- [ ] **Step 1: Extend the policy test for the environment template and operations guide**
+- [x] **Step 1: Extend the policy test for the environment template and operations guide**
 
 Append inside the existing `describe` block:
 
@@ -313,13 +313,13 @@ test('pins owned domains while keeping deploy-specific values out of Git', async
 });
 ```
 
-- [ ] **Step 2: Run the test and verify RED**
+- [x] **Step 2: Run the test and verify RED**
 
 Run the Task 1 targeted test command.
 
 Expected: FAIL because the example still contains generic host placeholders and the operations guide does not yet state the manual-control policy.
 
-- [ ] **Step 3: Pin only the non-sensitive domain values in the example**
+- [x] **Step 3: Pin only the non-sensitive domain values in the example**
 
 Set these lines in `.env.staging.example`:
 
@@ -331,7 +331,7 @@ STAGING_PASSKEY_RP_ID=operator.staging.wastd.dev
 
 Keep both D1 IDs, allowed recipients, and all four secrets as non-deployable instructional values.
 
-- [ ] **Step 4: Rewrite the staging activation section as an exact ordered procedure**
+- [x] **Step 4: Rewrite the staging activation section as an exact ordered procedure**
 
 The guide must state:
 
@@ -361,13 +361,13 @@ It must also state that migration failure stops activation, database migrations 
 back destructively, Worker rollback is a separate user-run Wrangler mutation, Identity must remain
 private, and the static demo is never a rollback target.
 
-- [ ] **Step 5: Run the policy test and verify GREEN**
+- [x] **Step 5: Run the policy test and verify GREEN**
 
 Run the Task 1 targeted test command.
 
 Expected: both policy tests PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add .env.staging.example docs/integration/staging-operations.md \
