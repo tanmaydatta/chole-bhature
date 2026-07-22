@@ -9,6 +9,9 @@ const SENTINEL_DATABASE_IDS = new Set([
   '20000000-0000-0000-0000-000000000002',
   '30000000-0000-0000-0000-000000000003',
 ]);
+const STAGING_OBSERVABILITY_TOML = `[observability]
+enabled = true
+head_sampling_rate = 1`;
 
 function required(environment, key) {
   const value = environment[key];
@@ -153,6 +156,8 @@ workers_dev = false
 preview_urls = false
 routes = [{ pattern = ${tomlString(new URL(configuration.apiOrigin).hostname)}, custom_domain = true }]
 
+${STAGING_OBSERVABILITY_TOML}
+
 [[d1_databases]]
 binding = "DB"
 database_name = "incentives-staging"
@@ -167,6 +172,8 @@ compatibility_date = "2026-07-20"
 workers_dev = false
 preview_urls = false
 routes = [{ pattern = ${tomlString(new URL(configuration.operatorOrigin).hostname)}, custom_domain = true }]
+
+${STAGING_OBSERVABILITY_TOML}
 
 [vars]
 APP_ENV = "staging"
@@ -200,6 +207,8 @@ compatibility_date = "2026-07-20"
 compatibility_flags = ["nodejs_compat"]
 workers_dev = false
 preview_urls = false
+
+${STAGING_OBSERVABILITY_TOML}
 
 [vars]
 APP_ENV = "staging"
