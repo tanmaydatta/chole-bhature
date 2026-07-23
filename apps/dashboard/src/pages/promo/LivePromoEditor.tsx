@@ -159,6 +159,14 @@ export default function LivePromoEditor() {
   const [saving, setSaving] = useState(false);
   const [comparisonLoading, setComparisonLoading] = useState(false);
   const validation = useMemo(() => OperatorProgramDraftRequestSchema.safeParse(program), [program]);
+  const budgetCurrencyInvalid = program.budget !== undefined
+    && !/^[A-Z]{3}$/u.test(program.budget.currency);
+  const budgetMinorUnitsInvalid = program.budget !== undefined
+    && (!Number.isInteger(program.budget.minorUnits) || program.budget.minorUnits < 0);
+  const freeShippingBudgetConflict = program.budget !== undefined && (
+    program.rewardRules.some(rule => rule.reward.type === 'free_shipping')
+    || program.fallbackReward?.reward.type === 'free_shipping'
+  );
   const conditionsValid = useMemo(() => (
     conditionGroupIsAuthorable(program.eligibility, variables)
     && program.rewardRules.every(rule => conditionGroupIsAuthorable(rule.conditions, variables))
@@ -224,8 +232,17 @@ export default function LivePromoEditor() {
     <section><h2>Eligibility</h2><ConditionBuilder value={program.eligibility} variables={variables} onChange={eligibility => setProgram({ ...program, eligibility })}/></section>
     <RewardRules program={program} variables={variables} change={setProgram}/>
     <section className="grid grid-cols-2 gap-3"><h2 className="col-span-2">Limits, schedule, and stacking</h2>
-      <label>Budget currency<input value={program.budget?.currency ?? ''} onChange={event => setProgram({ ...program, budget: { currency: event.target.value, minorUnits: program.budget?.minorUnits ?? 0 } })}/></label>
-      <label>Budget minor units<input type="number" value={program.budget?.minorUnits ?? ''} onChange={event => setProgram({ ...program, budget: { currency: program.budget?.currency ?? 'GBP', minorUnits: Number(event.target.value) } })}/></label>
+      {program.budget
+        ? <>
+          <label>Budget currency<input aria-invalid={budgetCurrencyInvalid} value={program.budget.currency} onChange={event => setProgram({ ...program, budget: { ...program.budget!, currency: event.target.value } })}/>
+            {budgetCurrencyInvalid && <span role="alert">Budget currency must be exactly three uppercase letters.</span>}
+          </label>
+          <label>Budget minor units<input aria-invalid={budgetMinorUnitsInvalid} type="number" value={program.budget.minorUnits} onChange={event => setProgram({ ...program, budget: { ...program.budget!, minorUnits: Number(event.target.value) } })}/>
+            {budgetMinorUnitsInvalid && <span role="alert">Budget minor units must be a non-negative whole number.</span>}
+          </label>
+          <button type="button" className="col-span-2" onClick={() => setProgram({ ...program, budget: undefined })}>Remove budget</button>
+        </>
+        : <button type="button" className="col-span-2" onClick={() => setProgram({ ...program, budget: { currency: 'GBP', minorUnits: 0 } })}>Add budget</button>}
       <label>Usage cap<input type="number" value={program.usageCap ?? ''} onChange={event => setProgram({ ...program, usageCap: event.target.value ? Number(event.target.value) : undefined })}/></label>
       <label>Per customer cap<input type="number" value={program.perCustomerCap ?? ''} onChange={event => setProgram({ ...program, perCustomerCap: event.target.value ? Number(event.target.value) : undefined })}/></label>
       <label>Start date<input type="date" value={program.startDate ?? ''} onChange={event => setProgram({ ...program, startDate: event.target.value || undefined })}/></label>
@@ -234,6 +251,7 @@ export default function LivePromoEditor() {
       <label>Stacking group<input value={program.stackingGroup ?? ''} onChange={event => setProgram({ ...program, stackingGroup: event.target.value || undefined })}/></label>
       <label><input type="checkbox" checked={program.stackable} onChange={event => setProgram({ ...program, stackable: event.target.checked })}/>Stackable</label>
     </section>
+    {freeShippingBudgetConflict && <p role="alert">Remove the monetary budget before saving a free-shipping reward.</p>}
     {!validation.success && <p role="alert">Complete every required field and ensure each conditional rule has a condition.</p>}
     {!conditionsValid && <p role="alert">Resolve every missing field and incompatible condition before saving.</p>}
     {saveError && <section className="flex flex-col gap-2">
@@ -254,6 +272,6 @@ export default function LivePromoEditor() {
         setSaveError(null);
       }}>Replace authored draft with server version</button>
     </section>}
-    <button type="button" disabled={!validation.success || !conditionsValid || saving} onClick={() => void save()}>{saving ? 'Saving…' : 'Save draft'}</button>
+    <button type="button" disabled={!validation.success || !conditionsValid || freeShippingBudgetConflict || saving} onClick={() => void save()}>{saving ? 'Saving…' : 'Save draft'}</button>
   </main>;
 }
