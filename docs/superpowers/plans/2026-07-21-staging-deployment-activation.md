@@ -2,7 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Status:** In progress
+**Status:** In progress — all three isolated staging Workers, both D1 databases,
+custom domains, email delivery, and persisted logs are active; final Gate C
+acceptance remains in progress.
 
 **Notion mirror:** https://app.notion.com/p/3a4e5c7c2b8e8110863ccf7895cabebd
 
@@ -439,7 +441,7 @@ Expected: the repository `CI` check passes and no new Cloudflare deployment is a
 Verify the current PR head is mergeable and all required checks pass, then merge through PR #6.
 Do not push directly to `dev`, and do not delete the feature worktree until the merge is confirmed.
 
-- [ ] **Step 7: Prepare a fresh checkout of merged `dev` for activation**
+- [x] **Step 7: Prepare a fresh checkout of merged `dev` for activation**
 
 Fetch the remote after the merge and create or update an isolated checkout at the exact merged
 `origin/dev` commit. Run the sanitized preflight and all user-run staging commands from that checkout,
@@ -457,7 +459,7 @@ never from the pre-merge feature branch.
 - Consumes: the fresh merged-`dev` checkout from Task 4, the already-created `incentives-staging` and `incentives-auth-staging` D1 databases, the owned domains, a user-approved staging email, and Resend credentials.
 - Produces: two migrated D1 databases and three deployed Workers with the fixed bindings and routes.
 
-- [ ] **Step 1: Collect the staging recipient without putting it in chat or Git**
+- [x] **Step 1: Collect the staging recipient without putting it in chat or Git**
 
 Ask the user to edit `.env.staging` locally from `.env.staging.example`, using the two D1 UUIDs returned by their create commands and their chosen test email. Confirm only that the file exists and has mode `0600`; do not print its contents.
 
@@ -470,11 +472,11 @@ ${EDITOR:-vi} .env.staging
 
 Expected: `.env.staging` exists with mode `0600`, remains ignored by Git, and contains no instructional values.
 
-- [ ] **Step 2: Generate local application secrets without printing them**
+- [x] **Step 2: Generate local application secrets without printing them**
 
 The user stores two independent random 32-byte hex values as `AUTH_SECRET` and `OPERATOR_SELECTION_SECRET` in `.env.staging`, then adds their Resend key and verified From identity. No value is pasted into chat.
 
-- [ ] **Step 3: Load and validate the ignored file locally**
+- [x] **Step 3: Load and validate the ignored file locally**
 
 ```bash
 set -a
@@ -485,7 +487,7 @@ pnpm staging:preflight
 
 Expected: sanitized JSON lists the three Worker names, two database names, exact domains, recipient count, and `cloudflareWrites: false`; it contains no UUID, email, or secret.
 
-- [ ] **Step 4: Apply Product migrations**
+- [x] **Step 4: Apply Product migrations**
 
 Ask the user to run only:
 
@@ -495,7 +497,7 @@ pnpm --filter @incentives/api db:migrate:staging
 
 Wait. Expected: Wrangler reports all Product migrations applied to `incentives-staging` remotely.
 
-- [ ] **Step 5: Apply Auth migrations**
+- [x] **Step 5: Apply Auth migrations**
 
 Only after Step 4 succeeds, ask the user to run:
 
@@ -505,7 +507,7 @@ pnpm --filter @incentives/identity db:migrate:staging
 
 Wait. Expected: Wrangler reports all Identity migrations applied to `incentives-auth-staging` remotely.
 
-- [ ] **Step 6: Deploy Core API**
+- [x] **Step 6: Deploy Core API**
 
 Ask the user to run:
 
@@ -515,7 +517,7 @@ pnpm --filter @incentives/api deploy:staging
 
 Wait. Expected: `incentives-api-staging` is deployed and `https://api.staging.wastd.dev` is attached.
 
-- [ ] **Step 7: Deploy private Identity**
+- [x] **Step 7: Deploy private Identity**
 
 Ask the user to run:
 
@@ -525,11 +527,11 @@ pnpm --filter @incentives/identity deploy:staging
 
 Wait. Expected: `incentives-identity-staging` is deployed with no public route and a service binding to Core.
 
-- [ ] **Step 8: Configure Identity secrets individually**
+- [x] **Step 8: Configure Identity secrets individually**
 
 Ask the user to run the three Identity `wrangler secret put` commands from Task 3, one at a time. Wrangler prompts for each value; the user does not paste the values into chat. Wait for success after each command.
 
-- [ ] **Step 9: Deploy Operator Web**
+- [x] **Step 9: Deploy Operator Web**
 
 Ask the user to run:
 
@@ -539,11 +541,11 @@ pnpm --filter @incentives/operator-web deploy:staging
 
 Wait. Expected: `incentives-operator-web-staging` is deployed, both private service bindings resolve, and `https://operator.staging.wastd.dev` is attached.
 
-- [ ] **Step 10: Configure the Operator selection secret**
+- [x] **Step 10: Configure the Operator selection secret**
 
 Ask the user to run the Operator `wrangler secret put` command from Task 3. Wait for success.
 
-- [ ] **Step 11: Perform read-only resource verification**
+- [x] **Step 11: Perform read-only resource verification**
 
 Use read-only Wrangler deployment and D1 migration listings to verify names, current versions, and applied migrations. Fetch both public HTTPS health surfaces without credentials. Confirm there is no Identity public hostname and the demo URL is unchanged.
 
@@ -561,7 +563,7 @@ Use read-only Wrangler deployment and D1 migration listings to verify names, cur
 - Consumes: an activated staging environment.
 - Produces: a verified root session, staging smoke evidence, documented deviations, a follow-up documentation PR, and latest-`dev` manual testing instructions.
 
-- [ ] **Step 1: Bootstrap the root as a user-run D1 mutation**
+- [x] **Step 1: Bootstrap the root as a user-run D1 mutation**
 
 The user runs the existing bootstrap runner with their root email while `AUTH_SECRET` is loaded from `.env.staging`:
 
@@ -583,11 +585,11 @@ Expected: one pending root and one short-lived activation grant are created. The
 
 Follow the existing non-technical manual guide against the staging origin and record Pass/Fail/Blocked for root access, client provisioning, invitation, role enforcement, schema publication, customer update, conditional Promo evaluation, redemption, idempotent retry, and exhaustion. Record deviations before fixing anything.
 
-- [ ] **Step 3: Write the sanitized activation report**
+- [x] **Step 3: Write the sanitized activation report**
 
 The report includes commit SHA, Worker/database names, domains, migration counts, test cases, safe status/error codes, correlation IDs, expected versus actual behavior, and final verdict. It excludes D1 UUIDs, email addresses, activation grants, recovery codes, magic links, cookies, credentials, complete customer attributes, condition trees, and reward payloads.
 
-- [ ] **Step 4: Re-run verification after any approved fixes**
+- [x] **Step 4: Re-run verification after any approved fixes**
 
 ```bash
 pnpm build
@@ -599,7 +601,7 @@ git diff --check
 
 Expected: all commands exit 0.
 
-- [ ] **Step 5: Refresh manual instructions from merged `dev`**
+- [x] **Step 5: Refresh manual instructions from merged `dev`**
 
 Create a documentation branch from the latest remote `dev`. Update the developer and non-technical
 testing guides so their source selection and staging instructions match the deployed merged commit,

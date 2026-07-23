@@ -1,6 +1,8 @@
 # Staging activation run — 2026-07-21
 
-**Status:** In progress — access roles, schema, customer, and Promo lifecycle verified; free-shipping authoring blocks the remaining incentive checks
+**Status:** In progress — access roles, schema, customer, and Promo lifecycle
+verified; the free-shipping authoring fix is merged and awaits Operator Web
+redeployment/retest before the remaining incentive checks
 
 **Notion:** https://app.notion.com/p/3a5e5c7c2b8e81739dfed75f998e6489
 
@@ -67,7 +69,8 @@
 - Test result: Fail. The free-shipping create/publish/reload portion of `PROMO-02` is blocked through the client-facing UI.
 - Required fix: represent “no budget” explicitly in the editor, allow an existing/default budget to be removed atomically, show field-specific validation, and add a browser-level regression covering a no-budget free-shipping save.
 - Local resolution: implemented explicit **Add budget**/**Remove budget** actions, field-specific invalid-budget feedback, pre-submit free-shipping/budget conflict guidance, and a regression that verifies the saved request omits `budget`.
-- Retest status: Pending merge, Operator Web staging redeployment, and repetition of the manual create/publish/hard-refresh case.
+- Retest status: PR #8 is merged into `dev`; Operator Web staging redeployment
+  and repetition of the manual create/publish/hard-refresh case remain pending.
 
 ## Invitation incident
 

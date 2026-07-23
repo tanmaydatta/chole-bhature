@@ -17,7 +17,7 @@ recorded reason.
 
 | ID | Status | Finding | Disposition |
 |---|---|---|---|
-| `GAP-001` | Fix ready; staging retest pending | The Promo editor could not remove an existing/sample budget, so a no-budget free-shipping Promo could not be saved. Validation was generic rather than identifying the budget field or the free-shipping conflict. | The branch now provides explicit Add/Remove budget actions, budget field errors, pre-submit free-shipping conflict guidance, and regression coverage. Deploy, then repeat the free-shipping create/publish/reload case before marking Done. |
+| `GAP-001` | Merged; staging redeploy and retest pending | The Promo editor could not remove an existing/sample budget, so a no-budget free-shipping Promo could not be saved. Validation was generic rather than identifying the budget field or the free-shipping conflict. | PR #8 merged the explicit Add/Remove budget actions, budget field errors, pre-submit free-shipping conflict guidance, and regression coverage into `dev`. Redeploy Operator Web, then repeat the free-shipping create/publish/reload case before marking Done. |
 | `GAP-002` | Open decision | Deprecating a published definition marks the definition row deprecated but does not immediately create or display the next draft schema. | Prefer creating visible draft version 2 immediately; otherwise specify and clearly render the lazy-draft lifecycle. Reverify after the decision. |
 
 ## Client-readiness UX and operator gaps

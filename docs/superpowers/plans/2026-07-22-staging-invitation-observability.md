@@ -2,7 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Status:** In progress
+**Status:** Done — PR #7 merged and deployed; invitations were manually verified
+through delivery, acceptance, membership activation, and fresh sign-in, and all
+three staging Workers persist logs at 100% sampling.
 
 **Notion:** https://app.notion.com/p/3a5e5c7c2b8e81e984a5c732810e7588
 
@@ -363,7 +365,7 @@ Expected: only planned files are tracked; `.pnpm-store/` and `CLAUDE.md` remain 
 
 Use `superpowers:requesting-code-review` to review the contract boundary, TOML placement, test strength, documentation accuracy, and secret safety. Address only confirmed findings and re-run affected checks.
 
-- [ ] **Step 5: Push the branch and open a PR targeting `dev`**
+- [x] **Step 5: Push the branch and open a PR targeting `dev`**
 
 ```bash
 git push -u origin fix/staging-invitation-observability
@@ -372,7 +374,7 @@ gh pr create --base dev --head fix/staging-invitation-observability --title "Fix
 
 The PR body must summarize the root cause, 100% staging logs across three Workers, automated verification, manual redeployment requirement, and absence of Cloudflare mutations by Codex.
 
-- [ ] **Step 6: Merge only after CI passes, then hand off operator redeployment**
+- [x] **Step 6: Merge only after CI passes, then hand off operator redeployment**
 
 After CI and review pass, run `gh pr merge --merge --delete-branch` to merge the current branch into `dev`. Do not deploy. Give the operator these three commands, one at a time, waiting for completion after each:
 
@@ -403,6 +405,10 @@ After CI and review pass, run `gh pr merge --merge --delete-branch` to merge the
 )
 ```
 
-- [ ] **Step 7: Resume manual testing and close documentation only after evidence**
+- [x] **Step 7: Resume manual testing and close documentation only after evidence**
 
-After the operator redeploys, verify an invitation reaches the allowlisted client admin and is accepted in a fresh browser profile. Update the activation report and Notion plan from `In progress` to `Done` only after the remaining manual checks required by the staging activation plan are complete; otherwise leave it `In progress` with exact Pass/Fail/Blocked results.
+After the operator redeploys, verify an invitation reaches the allowlisted
+client admin and is accepted in a fresh browser profile. Mark this focused plan
+Done after invitation delivery/acceptance and 100% persisted logs are verified.
+Keep the broader staging-activation plan In progress until its remaining Gate C
+checks pass.
