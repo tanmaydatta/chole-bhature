@@ -397,6 +397,51 @@ describe('live operator authoring journey', () => {
     expect(screen.getAllByText('Free shipping has no amount fields.')).toHaveLength(2);
   });
 
+  test('creates a conditional free-shipping Promo without a monetary budget', async () => {
+    const server = installLiveBff();
+    renderApp('/promo/new');
+    await userEvent.type(await screen.findByLabelText('External reference'), 'gold-launch');
+    await userEvent.type(screen.getByLabelText('Promo name'), 'Free shipping');
+    await userEvent.click(screen.getByRole('button', { name: 'Use complete authoring example' }));
+
+    await userEvent.selectOptions(screen.getAllByLabelText('Reward type')[0]!, 'free_shipping');
+    await userEvent.click(screen.getAllByRole('button', { name: 'Remove rule' })[1]!);
+    await userEvent.click(screen.getByRole('button', { name: 'Remove fallback' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Remove budget' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Save draft' }));
+
+    const created = server.calls.find(call => (
+      call.path === '/operator/v1/programs' && call.method === 'POST'
+    ));
+    expect(created?.body).toMatchObject({
+      id: 'gold-launch',
+      rewardRules: [{ reward: { type: 'free_shipping' } }],
+    });
+    expect(created?.body).not.toHaveProperty('budget');
+  });
+
+  test('identifies an invalid budget field instead of relying on the generic form error', async () => {
+    installLiveBff();
+    renderApp('/promo/new');
+    await userEvent.click(await screen.findByRole('button', { name: 'Use complete authoring example' }));
+
+    await userEvent.clear(screen.getByLabelText('Budget currency'));
+
+    expect(screen.getByText('Budget currency must be exactly three uppercase letters.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Save draft' })).toBeDisabled();
+  });
+
+  test('identifies the free-shipping budget conflict before submission', async () => {
+    installLiveBff();
+    renderApp('/promo/new');
+    await userEvent.click(await screen.findByRole('button', { name: 'Use complete authoring example' }));
+
+    await userEvent.selectOptions(screen.getAllByLabelText('Reward type')[0]!, 'free_shipping');
+
+    expect(screen.getByText('Remove the monetary budget before saving a free-shipping reward.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Save draft' })).toBeDisabled();
+  });
+
   test('shows schema impact before choosing delete or deprecate, then reloads canonical versions', async () => {
     const calls: Array<{ path: string; method: string }> = [];
     let removed = false;
