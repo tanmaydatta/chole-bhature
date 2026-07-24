@@ -1,8 +1,8 @@
 # Gate C manual end-to-end test
 
-**Status:** Ready to run
+**Status:** Ready to run after the owner-controlled local or staging deployment
 
-**Scope:** Chromium against the real local Operator Web, Identity, and Core Workers with fresh local Auth and Product D1 databases.
+**Scope:** Chromium against the real local Operator Web, Identity, and Core Workers with fresh local Auth and Product D1 databases, followed by the same public Core selection/redemption calls against owner-approved staging.
 
 **Notion mirror:** https://app.notion.com/p/3a3e5c7c2b8e8155aa10c869b97b7e5a
 
@@ -39,6 +39,27 @@ This is the canonical human procedure for Gate C. A Playwright-assisted run must
 | Context variable | `context.channel`: required enum `web`, `mobile` |
 | Main Promo reference | `gate-c-promo` |
 | Free-shipping Promo reference | `gate-c-free-shipping` |
+| Automatic winner references | `gate-c-auto-high`, `gate-c-auto-low` |
+| Stackable coded references | `gate-c-code-15`, `gate-c-vip-20` |
+| Non-stackable coded reference | `gate-c-exclusive` |
+| All-or-nothing references | `gate-c-cap-a`, `gate-c-budget-b` |
+
+For the public API cases below, the account owner supplies the approved local
+or staging URL and a newly created disposable secret credential with
+`evaluations:write` and `redemptions:write`. Load them without printing them:
+
+```sh
+read -r -p 'Approved Core URL: ' GATE_C_API_URL
+read -r -s -p 'Disposable scoped API token: ' GATE_C_API_TOKEN
+printf '\n'
+export GATE_C_API_URL GATE_C_API_TOKEN
+```
+
+Never paste the token into this guide or a report. Every `curl --include`
+command below prints the safe response headers and body; record
+`x-correlation-id`, then redact the terminal before moving to the next case.
+Replace only the explicitly marked evaluation IDs and unique order/key
+suffixes. Do not reuse examples from another run.
 
 ## Role contract
 
@@ -398,6 +419,324 @@ Use `operator@gate-c.example` or `viewer@gate-c.example` for their flows. A Play
 
 **Safe evidence:** References, revision/lifecycle sequence, selector-coverage list, order-change boolean, free-shipping persistence. Do not record complete authored payloads.
 
+### SELECT-AUTO-01 — Highest-priority automatic winner
+
+**Prerequisites:** `SCHEMA-01` and `CUSTOMER-01` passed. In **Customers**, look
+up `gate-c-customer`, select Tier `gold`, save with the displayed current
+version, and confirm the next version. In **Promos**, create, save, review, and
+publish two Automatic Promos. Configure
+`gate-c-auto-high` at Priority `300` and `gate-c-auto-low` at Priority `200`;
+both must qualify for a gold customer on web with subtotal GBP 125.00. Confirm
+the publication review says Automatic and does not show Code or Stackable.
+
+**Exact action:**
+
+```sh
+curl --silent --show-error --include --request POST \
+  "$GATE_C_API_URL/v1/evaluate" \
+  --header "Authorization: Bearer $GATE_C_API_TOKEN" \
+  --header 'Content-Type: application/json' \
+  --data '{"customerRef":"gate-c-customer","cart":{"currency":"GBP","subtotal":12500,"items":[]},"context":{"channel":"web"}}'
+```
+
+**Expected HTTP/body:** `200`; `decisions` contains exactly one qualified
+entry with `programRef: "gate-c-auto-high"` and a positive
+`programRevision`. `codeResults` is absent. Neither `gate-c-auto-low` nor any
+unrelated automatic/coded reference appears anywhere in the body.
+
+**Correlation to record:** the response `x-correlation-id`, paired with the
+returned `evaluationId`.
+
+### SELECT-AUTO-02 — Lower-priority automatic fallback
+
+**Prerequisites:** `SELECT-AUTO-01`. Edit and publish a new revision of
+`gate-c-auto-high` whose eligibility requires subtotal at least GBP 200.00.
+Leave `gate-c-auto-low` eligible at GBP 125.00 and Active.
+
+**Exact action:** repeat the exact `curl` from `SELECT-AUTO-01` without adding
+`codes`.
+
+**Expected HTTP/body:** `200`; exactly one qualified decision for
+`gate-c-auto-low`. The failed higher-priority reference and its failure reason
+must not be disclosed, and `codeResults` remains absent.
+
+**Correlation to record:** the new response `x-correlation-id` and
+`evaluationId`.
+
+### SELECT-AUTO-03 — No eligible automatic Promo
+
+**Prerequisites:** `SELECT-AUTO-02`. Edit/publish or pause
+`gate-c-auto-low` so it also cannot qualify for the same GBP 125.00 request.
+
+**Exact action:** repeat the exact `curl` from `SELECT-AUTO-01`.
+
+**Expected HTTP/body:** `200`; `decisions` is exactly `[]`, `codeResults` is
+absent, and neither automatic reference appears in the body.
+
+**Correlation to record:** the response `x-correlation-id` and
+`evaluationId`.
+
+### SELECT-CODE-01 — Correct, incorrect, duplicate, case, and whitespace codes
+
+**Prerequisites:** In **Promos**, create, save, review, and publish
+`gate-c-code-15` as Code-triggered, Code `GATEC15`, Priority `200`, Stackable
+checked; publish `gate-c-vip-20` with Code `VIP20`, Priority `300`, Stackable
+checked. Both qualify for the fixed request. Keep automatic Promos present to
+prove coded mode suppresses them.
+
+**Exact action:**
+
+```sh
+curl --silent --show-error --include --request POST \
+  "$GATE_C_API_URL/v1/evaluate" \
+  --header "Authorization: Bearer $GATE_C_API_TOKEN" \
+  --header 'Content-Type: application/json' \
+  --data '{"codes":[" gatec15 ","WRONG","GATEC15","vip20"],"customerRef":"gate-c-customer","cart":{"currency":"GBP","subtotal":12500,"items":[]},"context":{"channel":"web"}}'
+```
+
+**Expected HTTP/body:** `200`; three `codeResults` in first-distinct order:
+trimmed display `gatec15`/normalized `GATEC15` selected for
+`gate-c-code-15`, `WRONG`/`WRONG` with `invalid_code` and
+`INVALID_PROMO_CODE`, then `vip20`/`VIP20` selected for `gate-c-vip-20`.
+There is no second `GATEC15` result. `decisions` contains exactly the two
+qualified coded Promos in Priority order (`gate-c-vip-20`, then
+`gate-c-code-15`) and exposes no automatic or unsubmitted coded Promo.
+
+**Correlation to record:** the response `x-correlation-id` and
+`evaluationId`.
+
+### SELECT-CODE-02 — Mixed valid and invalid stackable codes
+
+**Prerequisites:** `SELECT-CODE-01`; both coded Promos remain Active and
+stackable.
+
+**Exact action:**
+
+```sh
+curl --silent --show-error --include --request POST \
+  "$GATE_C_API_URL/v1/evaluate" \
+  --header "Authorization: Bearer $GATE_C_API_TOKEN" \
+  --header 'Content-Type: application/json' \
+  --data '{"codes":["GATEC15","MISSING","VIP20"],"customerRef":"gate-c-customer","cart":{"currency":"GBP","subtotal":12500,"items":[]},"context":{"channel":"web"}}'
+```
+
+**Expected HTTP/body:** `200`; `decisions` contains both valid Promos in
+Priority order. `codeResults` contains selected, `invalid_code`, selected in
+submitted order; `MISSING` has `INVALID_PROMO_CODE` and no `programRef`. The
+invalid code does not remove either valid decision.
+
+**Correlation to record:** the response `x-correlation-id` and
+`evaluationId`.
+
+### SELECT-CODE-03 — One non-stackable code succeeds
+
+**Prerequisites:** Publish `gate-c-exclusive` as Code-triggered, Code
+`EXCLUSIVE`, Priority `100`, Stackable unchecked, eligible for the fixed
+request.
+
+**Exact action:**
+
+```sh
+curl --silent --show-error --include --request POST \
+  "$GATE_C_API_URL/v1/evaluate" \
+  --header "Authorization: Bearer $GATE_C_API_TOKEN" \
+  --header 'Content-Type: application/json' \
+  --data '{"codes":["EXCLUSIVE"],"customerRef":"gate-c-customer","cart":{"currency":"GBP","subtotal":12500,"items":[]},"context":{"channel":"web"}}'
+```
+
+**Expected HTTP/body:** `200`; one qualified decision for
+`gate-c-exclusive` and one `codeResults` entry with `outcome: "selected"`.
+
+**Correlation to record:** the response `x-correlation-id` and
+`evaluationId`.
+
+### SELECT-CODE-04 — Multi-code non-stackable rejection
+
+**Prerequisites:** `SELECT-CODE-02` and `SELECT-CODE-03`; `GATEC15` remains
+stackable and `EXCLUSIVE` remains non-stackable.
+
+**Exact action:**
+
+```sh
+curl --silent --show-error --include --request POST \
+  "$GATE_C_API_URL/v1/evaluate" \
+  --header "Authorization: Bearer $GATE_C_API_TOKEN" \
+  --header 'Content-Type: application/json' \
+  --data '{"codes":["GATEC15","MISSING","EXCLUSIVE"],"customerRef":"gate-c-customer","cart":{"currency":"GBP","subtotal":12500,"items":[]},"context":{"channel":"web"}}'
+```
+
+**Expected HTTP/body:** `200`; `decisions` is exactly `[]`. The `GATEC15` and
+`EXCLUSIVE` diagnostics are `combination_rejected`, each with
+`CODE_COMBINATION_NOT_ALLOWED`; `MISSING` remains `invalid_code` with
+`INVALID_PROMO_CODE`.
+
+**Correlation to record:** the response `x-correlation-id` and
+`evaluationId`.
+
+### REDEEM-BUNDLE-01 — Exact bundle retry
+
+**Prerequisites:** Run `SELECT-CODE-02` again with fresh availability and copy
+only its safe `evaluationId` into `EVALUATION_ID`. Choose new unique identifiers
+for this run.
+
+**Exact actions:**
+
+```sh
+EVALUATION_ID='<evaluation-id-from-fresh-SELECT-CODE-02>'
+ORDER_REF='gate-c-bundle-order-01'
+IDEMPOTENCY_KEY='gate-c-bundle-key-01'
+
+curl --silent --show-error --include --request POST \
+  "$GATE_C_API_URL/v1/redemptions" \
+  --header "Authorization: Bearer $GATE_C_API_TOKEN" \
+  --header 'Content-Type: application/json' \
+  --data "{\"evaluationId\":\"$EVALUATION_ID\",\"externalOrderRef\":\"$ORDER_REF\",\"idempotencyKey\":\"$IDEMPOTENCY_KEY\"}"
+
+curl --silent --show-error --include --request POST \
+  "$GATE_C_API_URL/v1/redemptions" \
+  --header "Authorization: Bearer $GATE_C_API_TOKEN" \
+  --header 'Content-Type: application/json' \
+  --data "{\"evaluationId\":\"$EVALUATION_ID\",\"externalOrderRef\":\"$ORDER_REF\",\"idempotencyKey\":\"$IDEMPOTENCY_KEY\"}"
+```
+
+**Expected HTTP/body:** both calls return `200` with structurally identical
+canonical bodies: the same `redemptionId`, `evaluationId`, order, key, `status:
+"committed"`, and the same two ordered `entries`
+(`gate-c-vip-20`, then `gate-c-code-15`). No use or budget is consumed twice.
+
+**Correlation to record:** both response `x-correlation-id` values plus the
+shared `redemptionId`; correlation IDs may differ by request.
+
+### REDEEM-BUNDLE-02 — Changed idempotency-key reuse
+
+**Prerequisites:** `REDEEM-BUNDLE-01` passed.
+
+**Exact action:**
+
+```sh
+curl --silent --show-error --include --request POST \
+  "$GATE_C_API_URL/v1/redemptions" \
+  --header "Authorization: Bearer $GATE_C_API_TOKEN" \
+  --header 'Content-Type: application/json' \
+  --data "{\"evaluationId\":\"$EVALUATION_ID\",\"externalOrderRef\":\"gate-c-bundle-order-changed\",\"idempotencyKey\":\"$IDEMPOTENCY_KEY\"}"
+```
+
+**Expected HTTP/body:** `409`; the body has
+`error.code: "VERSION_CONFLICT"`, `retryable: false`, a non-empty safe
+`message`, and `error.correlationId` equal to the `x-correlation-id` header.
+The original committed bundle remains unchanged.
+
+**Correlation to record:** the matching header/body correlation ID.
+
+### REDEEM-BUNDLE-03 — Budget failure rolls back the complete bundle
+
+**Prerequisites:** Publish two eligible stackable coded Promos:
+`gate-c-cap-a` with Code `CAPA`, Priority `200`, a GBP 5.00 fixed reward and GBP
+5.00 budget; `gate-c-budget-b` with Code `BUDGETB`, Priority `100`, the same
+reward and budget. Leave usage and per-customer caps absent. Create both
+evaluations exactly:
+
+```sh
+BUNDLE_EVALUATION="$(curl --silent --show-error --request POST \
+  "$GATE_C_API_URL/v1/evaluate" \
+  --header "Authorization: Bearer $GATE_C_API_TOKEN" \
+  --header 'Content-Type: application/json' \
+  --data '{"codes":["CAPA","BUDGETB"],"customerRef":"gate-c-customer","cart":{"currency":"GBP","subtotal":12500,"items":[]},"context":{"channel":"web"}}')"
+BUNDLE_EVALUATION_ID="$(node -e 'process.stdout.write(JSON.parse(process.argv[1]).evaluationId)' "$BUNDLE_EVALUATION")"
+
+BUDGET_B_EVALUATION="$(curl --silent --show-error --request POST \
+  "$GATE_C_API_URL/v1/evaluate" \
+  --header "Authorization: Bearer $GATE_C_API_TOKEN" \
+  --header 'Content-Type: application/json' \
+  --data '{"codes":["BUDGETB"],"customerRef":"gate-c-customer","cart":{"currency":"GBP","subtotal":12500,"items":[]},"context":{"channel":"web"}}')"
+BUDGET_B_EVALUATION_ID="$(node -e 'process.stdout.write(JSON.parse(process.argv[1]).evaluationId)' "$BUDGET_B_EVALUATION")"
+
+curl --silent --show-error --include --request POST \
+  "$GATE_C_API_URL/v1/redemptions" \
+  --header "Authorization: Bearer $GATE_C_API_TOKEN" \
+  --header 'Content-Type: application/json' \
+  --data "{\"evaluationId\":\"$BUDGET_B_EVALUATION_ID\",\"externalOrderRef\":\"gate-c-budget-b-consume-order-01\",\"idempotencyKey\":\"gate-c-budget-b-consume-key-01\"}"
+```
+
+The setup redemption must return `200`, consuming B's complete budget.
+
+**Exact action:** redeem the earlier two-code evaluation:
+
+```sh
+curl --silent --show-error --include --request POST \
+  "$GATE_C_API_URL/v1/redemptions" \
+  --header "Authorization: Bearer $GATE_C_API_TOKEN" \
+  --header 'Content-Type: application/json' \
+  --data "{\"evaluationId\":\"$BUNDLE_EVALUATION_ID\",\"externalOrderRef\":\"gate-c-rollback-order-01\",\"idempotencyKey\":\"gate-c-rollback-key-01\"}"
+```
+
+Then evaluate only `CAPA` once more using the `SELECT-CODE-03` request shape
+with `codes: ["CAPA"]`.
+
+**Expected HTTP/body:** redemption returns `409` with
+`error.code: "BUDGET_EXHAUSTED"`, `retryable: false`, and matching
+header/body correlation IDs. The follow-up CAPA evaluation returns `200` with
+CAPA still `selected`, proving the earlier child did not consume its GBP 5.00
+budget when B failed. No redemption response or partial `entries` is returned.
+
+**Correlation to record:** the failed redemption correlation ID and the
+follow-up evaluation correlation ID.
+
+### TENANT-API-01 — Submitted codes remain tenant-isolated
+
+**Prerequisites:** In `Gate C Alpha`, publish a Code-triggered Promo with Code
+`ALPHAONLY`; create one disposable scoped token for Alpha. In `Gate C Beta`,
+ensure no Promo owns that normalized code and create a distinct Beta token.
+Load the tokens without printing them as `GATE_C_ALPHA_TOKEN` and
+`GATE_C_BETA_TOKEN`.
+
+**Exact actions:**
+
+```sh
+curl --silent --show-error --include --request POST \
+  "$GATE_C_API_URL/v1/evaluate" \
+  --header "Authorization: Bearer $GATE_C_BETA_TOKEN" \
+  --header 'Content-Type: application/json' \
+  --data '{"codes":["ALPHAONLY"],"cart":{"currency":"GBP","subtotal":12500,"items":[]},"context":{"channel":"web"}}'
+
+curl --silent --show-error --include --request POST \
+  "$GATE_C_API_URL/v1/evaluate" \
+  --header "Authorization: Bearer $GATE_C_ALPHA_TOKEN" \
+  --header 'Content-Type: application/json' \
+  --data '{"codes":["ALPHAONLY"],"cart":{"currency":"GBP","subtotal":12500,"items":[]},"context":{"channel":"web"}}'
+```
+
+**Expected HTTP/body:** both return `200`. Beta receives `decisions: []` and
+one `invalid_code` diagnostic with `INVALID_PROMO_CODE` and no `programRef`;
+its body does not reveal the Alpha Promo reference. Alpha receives one selected
+diagnostic and its own qualified decision.
+
+**Correlation to record:** both `x-correlation-id` values with safe labels
+Beta-miss and Alpha-hit; never record either token.
+
+### OBS-API-01 — Cloudflare log lookup by correlation ID
+
+**Prerequisites:** Owner-controlled staging deployment has 100% API log
+sampling. `REDEEM-BUNDLE-02` produced a fresh `VERSION_CONFLICT`; do not use a
+credential, request body, or customer data as the search term.
+
+**Exact actions:** repeat `REDEEM-BUNDLE-02` once with a fresh conflicting
+order suffix. Confirm HTTP `409` and copy only the response
+`x-correlation-id`. In the Cloudflare dashboard, open the staging API Worker,
+open **Logs**, set the time range to the request window, and search the exact
+correlation ID.
+
+**Expected HTTP/body and log:** the response body has
+`error.code: "VERSION_CONFLICT"`, `retryable: false`, and the same correlation
+ID. Exactly one sanitized `api_request_failed` event is locatable with that ID,
+route `/v1/redemptions`, method `POST`, code `VERSION_CONFLICT`, status `409`,
+and safe tenant/credential identifiers. It contains no Authorization value,
+token, submitted code, request body, customer attributes, evaluation/order/key
+value, SQL, or dependency stack.
+
+**Correlation to record:** the one ID shared by response header, response body,
+and sanitized log event.
+
 ### DEMO-01 — Retained module markers and zero live mutations
 
 **Starting state:** Any authenticated Beta actor with navigation access. **Depends on:** authentication only.
@@ -463,7 +802,7 @@ Create an issue entry immediately when actual behavior differs from expected. Co
 
 ## Final Gate C decision
 
-- `Done`: all 18 required cases are `Pass`, all temporary artifacts are cleaned up, the local report and Notion mirror match, and the Plans page/status are updated.
+- `Done`: all 30 required cases are `Pass`, all temporary artifacts are cleaned up, the local report and Notion mirror match, and the Plans page/status are updated.
 - `In progress`: any required case is `Fail`, `Blocked`, or `Not run`, or cleanup/synchronization is incomplete.
 - `Killed`: the approved scope is deliberately abandoned and the reason is recorded; this is not a substitute for a failure.
 

@@ -2,7 +2,7 @@
 
 **Updated:** 2026-07-24
 
-**Status:** Active — Gate C exposed a product-contract correction; approved implementation plan ready
+**Status:** Active — clean-break correction implemented locally through Task 9; Task 10 staging evidence pending
 
 **Notion mirror:** https://app.notion.com/p/Product-Current-State-and-Roadmap-3a6e5c7c2b8e81f6b412c45a2bc7b344
 
@@ -23,12 +23,13 @@ deferred issue remains in the
 | Question | Current answer |
 |---|---|
 | Overall phase | Production Operator Platform, Delivery Gate C |
-| Current activity | Implement the approved Promo selection, coded stacking, and atomic bundle-redemption correction discovered during staging |
+| Current activity | Finish verification/review, then have the owner deploy and manually verify the clean-break Promo selection and atomic bundle correction |
 | Current product-code baseline | PR #8 merge commit `e15cbba` on `dev` |
-| Current deployment gap | None for PR #8; its free-shipping regression passed after deployment |
-| Current blocker | Evaluation exposes unrelated Promo decisions, automatic mode may select several programs, and the singular-program redemption contract cannot atomically commit a valid coded stack |
-| Gate C finish line | Land the approved correction, redeploy under user control, repeat automatic/coded selection and atomic bundle tests, and close the remaining tenant-isolation/security evidence |
-| Next plan work | Execute the Promo selection/code-stacking plan, close Gate C, then write the approved free-shipping financial-authority implementation plan |
+| Local feature state | Promo-selection plan Tasks 1–9 implemented; Task 10/full review and staging evidence remain open |
+| Current deployment gap | The new migration/API/operator build is not deployed; staging still runs the historical singular selection/redemption contract |
+| Current blocker | Owner-controlled staging deployment and the 12 documented selection/bundle/tenant/log cases have not run |
+| Gate C finish line | Complete Task 10, merge by reviewed PR, deploy one owner-run command at a time, pass all manual cases, and close remaining tenant/security evidence |
+| Next plan work | Close Gate C, then write the approved free-shipping financial-authority implementation plan |
 
 ## Source-of-truth map
 
@@ -60,8 +61,10 @@ test observations to make the current state look cleaner.
   pure evaluation engine, module extension point, and connector conformance
   boundary.
 - The persistent Core runtime is complete: D1-backed schema publication,
-  stored customer attributes, evaluation decision snapshots, and atomic
-  idempotent Promo redemption.
+  stored customer attributes, private automatic/coded evaluation snapshots, and
+  provider-neutral atomic/idempotent Promo bundle redemption. D1 is the initial
+  atomic coordinator adapter because all current counters and ledger state live
+  in one database.
 - Ordered conditional reward rules are complete for Promo. Reusable
   configuration contracts exist for Affiliate, Referral, and Loyalty, but
   their production runtimes are deliberately deferred.
@@ -109,28 +112,30 @@ manually:
 
 Staging proved the existing credential, schema, customer, Promo lifecycle,
 redemption-idempotency, and cap behavior. It also exposed a deeper product
-contract problem:
+contract problem in the deployed build: unrelated Promo outcomes, ambiguous
+automatic stacking, and singular child selection at redemption. This work is
+the next clean-break runtime correction before any client commerce integration
+is allowed to depend on that old boundary.
 
-- automatic evaluation returns unrelated Promo outcomes instead of privately
-  choosing at most one winner;
-- supplying one code still returns unrelated automatic and coded Promo
-  outcomes;
-- `stackable` does not define a safe way to select and commit a complete
-  multi-code result; and
-- the public redemption request still commits one caller-selected program
-  rather than the signed selected bundle.
-
-The product behavior is now approved in the
+The approved behavior is recorded in the
 [Promo Selection, Code Stacking, and Atomic Redemption design](../superpowers/specs/2026-07-23-promo-selection-code-stacking-design.md).
-Its implementation-ready
+Its
 [plan](../superpowers/plans/2026-07-24-promo-selection-code-stacking.md)
-is `Todo`.
+is `In progress`: Tasks 1–9 are implemented and focused verification passes
+locally. The public request uses `codes[]`; automatic evaluation returns zero or
+one private winner; coded evaluation returns submitted-code diagnostics;
+compatible coded Promos can combine; the signed ordered set commits through a
+provider-neutral atomic coordinator; D1 is its initial adapter; and sanitized
+failure logs carry the client-visible correlation ID. The design is not marked
+implemented because Task 10, reviewed merge, owner-controlled staging
+deployment, and manual evidence remain incomplete.
 
 The immediate sequence is:
 
-1. Execute the Promo selection/code-stacking plan on a feature branch.
+1. Run Task 10 full verification, compatibility/security inspection, and code
+   review on the feature branch.
 2. Merge through a reviewed PR into `dev`; never push directly to `dev`.
-3. The user applies any staging migration and deployments one command at a
+3. The account owner applies the staging migration and deployments one command at a
    time.
 4. Repeat the documented automatic, coded, stacking, bundle-idempotency, and
    concurrency cases with fresh references.
@@ -139,8 +144,9 @@ The immediate sequence is:
    and their Notion mirrors with the final Gate C result.
 
 No assistant-run Cloudflare mutation is permitted. The assistant supplies one
-command at a time; the user runs every deployment, migration, secret, domain,
-or other Cloudflare write.
+command at a time; the account owner runs every deployment, migration, secret,
+domain, or other Cloudflare write. External deployment scope is local/staging
+only until separately approved; no production rollout is implied.
 
 ## What happens after Gate C
 
@@ -169,6 +175,14 @@ free-shipping financial authority. The implementation must preserve:
 - provider-neutral ports so Cloudflare Durable Objects/SQLite can be replaced
   without changing domain callsites.
 
+The future distributed free-shipping authority implements the same
+`AtomicRedemptionCoordinator` port and stable failure semantics as the current
+D1 adapter. Budget and per-order cap stay optional; the client supplies actual
+shipping cost; the decision is a full waiver or none; reservation TTL is
+configurable with a 15-minute default; expiry and recovery are treated as money;
+and currency must match exactly with no conversion. Event-driven reversals and
+future event-triggered incentives remain planned work.
+
 This plan is created after Gate C so the current verification result remains
 clear. Its execution does not silently expand Gate C.
 
@@ -188,9 +202,10 @@ existing plan, continue in this order:
 
 Only after the shared platform reaches its acceptance gate—or a real client
 creates a justified earlier constraint—choose Shopify or a manual/custom
-connector. The canonical contracts, connector conformance boundary, typed
-customer/context schema, conditional rewards, and provider-neutral financial
-authority are designed to remain common across those integrations.
+connector. That choice remains uncommitted. The canonical contracts, connector
+conformance boundary, typed customer/context schema, conditional rewards, and
+provider-neutral financial authority are designed to remain common across
+those integrations.
 
 ## Known gaps and deferred work
 
@@ -201,12 +216,8 @@ must be updated whenever a finding changes state. It currently preserves:
   Overview, and live-page styling;
 - member passkeys/MFA and safer invitation account handoff;
 - schema deprecation, stale impact state, and lifecycle presentation;
-- Promo active-vs-draft comparison, revision history, deliberate single-draft
-  semantics, silent sample seeding, missing manual-code/application-mode
-  review, and catalog mapping for `productRef`;
-- the approved automatic/coded Promo selection boundary, deterministic
-  priority behavior, race-safe code ownership, compatible coded stacking, and
-  atomic bundle redemption;
+- Promo active-vs-draft full comparison, revision history/rollback, deliberate
+  single-draft semantics, and catalog mapping for `productRef`;
 - client-facing percentage entry instead of exposing internal basis points;
 - the complete approved free-shipping financial-authority design;
 - future event ingestion/mapping and event-triggered Loyalty, Referral, and
@@ -217,8 +228,8 @@ must be updated whenever a finding changes state. It currently preserves:
 - Affiliate/Referral production runtimes;
 - custom role composition;
 - integration-specific incurred-cost mapping; and
-- sanitized structured public-API error logging so a correlation ID returned
-  to a client reliably identifies the corresponding failure record.
+- staging verification that the now-implemented sanitized structured public-API
+  error event is locatable by the correlation ID returned to a client.
 
 Nothing in those categories should be considered forgotten merely because it
 does not block the current Gate C test.

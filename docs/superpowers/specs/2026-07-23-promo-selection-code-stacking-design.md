@@ -4,6 +4,11 @@
 
 **Status:** Approved; implementation plan ready
 
+**Implementation state:** Tasks 1–9 are implemented and focused verification
+passes locally. Task 10 review, owner-controlled staging deployment, and all
+documented manual evidence remain open, so this design is not yet marked
+implemented.
+
 **Implementation plan:** [Repository](../plans/2026-07-24-promo-selection-code-stacking.md) · [Notion](https://app.notion.com/p/Promo-Selection-Code-Stacking-and-Atomic-Redemption-Implementation-Plan-3a7e5c7c2b8e811791dee0d21803c8e2)
 
 **Notion mirror:** https://app.notion.com/p/Promo-Selection-Code-Stacking-and-Atomic-Redemption-Design-Spec-3a6e5c7c2b8e81549b6adc7f3d096455
@@ -506,6 +511,14 @@ callsite remain unchanged.
 This is externally atomic authorization, not a false claim of a distributed
 ACID transaction.
 
+The approved financial behavior remains separate future work: campaign budget
+and per-order cap are optional; the client supplies authoritative actual
+shipping cost; a checkout receives the full waiver or none; reservation TTL is
+configurable and defaults to 15 minutes; expiry and failure recovery are money
+movements; and currency must match exactly with no conversion. Event-driven
+reversals and future event-triggered incentives remain planned rather than
+implemented by this correction.
+
 ## 13. Idempotency and concurrency
 
 Idempotency applies to the whole bundle.
@@ -563,9 +576,10 @@ response.
 
 The same correlation ID must propagate through the operator Worker, identity
 Worker, Core service, module evaluation, persistence adapter, and structured
-Cloudflare logs. The missing correlation ID observed in the staging evaluation
-failure logs is a tracked defect and is in scope for the observability part of
-implementation.
+Cloudflare logs. Task 7 implements this locally: focused tests prove the
+response header, error body, signed snapshot where applicable, and sanitized
+failure event share one ID. The Task 10 staging log lookup remains required
+before acceptance.
 
 ## 15. Error model
 
@@ -679,19 +693,21 @@ than silently inventing product intent.
 
 ### Manual staging verification
 
-The non-technical and developer staging guides will include repeatable cases
+The canonical manual guide now includes repeatable cases
 for:
 
 1. automatic highest-priority selection;
 2. automatic fallback to a lower-priority qualified Promo;
-3. no unrelated public decisions;
-4. correct, incorrect, duplicate, and case-varied codes;
+3. no eligible automatic Promo and no unrelated public decisions;
+4. correct, incorrect, duplicate, case-varied, and whitespace-varied codes;
 5. mixed valid and invalid stackable codes;
-6. non-stackable combination rejection;
-7. atomic multi-code redemption;
-8. exact and conflicting idempotent retries;
-9. cap and budget concurrency; and
-10. tenant isolation.
+6. one non-stackable code;
+7. non-stackable combination rejection;
+8. atomic multi-code redemption and exact retry;
+9. conflicting idempotency-key reuse;
+10. cap/budget all-or-nothing failure;
+11. tenant isolation; and
+12. Cloudflare log lookup by correlation ID.
 
 Each run records expected and actual output, correlation IDs, and any product
 or observability gap in the staging activation record and follow-up register.
@@ -721,6 +737,11 @@ Rollout order:
 7. execute the documented manual staging cases; and
 8. only then mark the corresponding plan tasks done.
 
+The implementation through Task 9 is complete locally. External rollout steps
+remain owner-controlled local/staging work; no Cloudflare migration,
+deployment, or secret action is authorized in this implementation session, and
+no production deployment is approved.
+
 ## 19. Explicit non-goals
 
 This delivery does not add:
@@ -738,6 +759,7 @@ This delivery does not add:
 
 Loyalty award effects, operator revision history, multiple drafts, and broader
 event-triggered incentives remain recorded follow-up work.
+Shopify versus manual/custom commerce integration also remains uncommitted.
 
 ## 20. Acceptance criteria
 

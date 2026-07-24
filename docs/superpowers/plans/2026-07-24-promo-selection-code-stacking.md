@@ -8,7 +8,7 @@
 
 **Tech Stack:** TypeScript, Zod, Hono, Cloudflare Workers, D1/Drizzle, React, React Router, Vitest, Testing Library, pnpm.
 
-**Status:** Todo — implementation-ready
+**Status:** In progress — Tasks 1–9 implemented locally; Task 10 and staging evidence pending
 
 **Notion mirror:** https://app.notion.com/p/Promo-Selection-Code-Stacking-and-Atomic-Redemption-Implementation-Plan-3a7e5c7c2b8e811791dee0d21803c8e2
 
@@ -66,7 +66,7 @@
 - Test: `packages/contracts/src/documentation-examples.test.ts`
 - Test fixture: `packages/contracts/test-fixtures/documentation-examples.ts`
 
-- [ ] **Step 1: Add failing normalization and request-shape tests**
+- [x] **Step 1: Add failing normalization and request-shape tests**
 
 Add contract tests for:
 
@@ -110,7 +110,7 @@ pnpm --filter @incentives/contracts test
 
 Expected: FAIL because the shared normalization helpers and `codes` contract do not exist.
 
-- [ ] **Step 2: Add failing strict Promo-trigger tests**
+- [x] **Step 2: Add failing strict Promo-trigger tests**
 
 Pin the discriminated union:
 
@@ -151,7 +151,7 @@ expect(PromoProgramSchema.safeParse({
 
 Run the same contracts test command and confirm it fails on the current permissive automatic shape and retained `stackingGroup`.
 
-- [ ] **Step 3: Add failing response and redemption-bundle tests**
+- [x] **Step 3: Add failing response and redemption-bundle tests**
 
 Define the coded diagnostic outcomes and the bundle response before implementation:
 
@@ -198,7 +198,7 @@ expect(() => RedemptionRequestSchema.parse({
 
 The new response has one bundle ID and ordered `entries`; it has no top-level `programRef`, `rewardRuleRef`, or `effects`.
 
-- [ ] **Step 4: Implement shared code normalization**
+- [x] **Step 4: Implement shared code normalization**
 
 Create `packages/contracts/src/promo-codes.ts`:
 
@@ -252,7 +252,7 @@ Catch that domain `RangeError` inside the evaluation schema's `superRefine` and
 add one issue at `codes`. Keep the ten-code rule in shared contract code; do not
 replace it with route-local validation.
 
-- [ ] **Step 5: Implement the strict trigger union and clean-break API schemas**
+- [x] **Step 5: Implement the strict trigger union and clean-break API schemas**
 
 In `programs.ts`:
 
@@ -300,7 +300,7 @@ export const RedemptionRequestSchema = z.object({
 
 Make `codeResults` absent in automatic responses and required by service behavior in coded responses. Export all inferred types and update OpenAPI/documentation fixtures.
 
-- [ ] **Step 6: Run contract verification**
+- [x] **Step 6: Run contract verification**
 
 ```bash
 pnpm --filter @incentives/contracts test
@@ -310,7 +310,7 @@ pnpm --filter @incentives/contracts lint
 
 Expected: all pass.
 
-- [ ] **Step 7: Commit Task 1**
+- [x] **Step 7: Commit Task 1**
 
 ```bash
 git add packages/contracts
@@ -332,7 +332,7 @@ git commit -m "feat(contracts): define promo selection and bundle redemption"
 - Modify: `packages/modules/promo/src/promo-module.ts`
 - Modify: `packages/modules/promo/src/promo-module.test.ts`
 
-- [ ] **Step 1: Write failing comparator and automatic-selection tests**
+- [x] **Step 1: Write failing comparator and automatic-selection tests**
 
 Export one binary comparator and use it in selection:
 
@@ -368,7 +368,7 @@ pnpm --filter @incentives/engine test
 
 Expected: FAIL because the shared comparator and automatic selector are not exported.
 
-- [ ] **Step 2: Write failing coded-combination tests**
+- [x] **Step 2: Write failing coded-combination tests**
 
 Cover:
 
@@ -393,7 +393,7 @@ expect(selectCodedDecisionCombination([
 });
 ```
 
-- [ ] **Step 3: Remove code matching and stacking groups from the module boundary**
+- [x] **Step 3: Remove code matching and stacking groups from the module boundary**
 
 The API resolves a submitted normalized code to one tenant-owned program before calling the Promo module. The module evaluates eligibility and reward rules; it must not scan `request.codes`.
 
@@ -410,7 +410,7 @@ Remove `stackingGroup` from conformance fixtures and `PromoModule` output. Delet
 
 Add a Promo-module test proving a coded configuration evaluates normally once the orchestrator has selected it.
 
-- [ ] **Step 4: Implement explicit selection functions**
+- [x] **Step 4: Implement explicit selection functions**
 
 Replace `resolveDecisionConflicts` with:
 
@@ -461,7 +461,7 @@ export function selectCodedDecisionCombination(
 
 Keep these functions Promo-oriented in naming or module placement. Do not route future Loyalty decisions through them accidentally.
 
-- [ ] **Step 5: Run engine and module verification**
+- [x] **Step 5: Run engine and module verification**
 
 ```bash
 pnpm --filter @incentives/engine test
@@ -474,7 +474,7 @@ pnpm --filter @incentives/promo build
 
 Expected: all pass.
 
-- [ ] **Step 6: Commit Task 2**
+- [x] **Step 6: Commit Task 2**
 
 ```bash
 git add packages/engine packages/module-kit packages/modules/promo
@@ -494,7 +494,7 @@ git commit -m "feat(engine): select automatic and coded promo decisions"
 - Test: `apps/api/test/production-migration.test.ts`
 - Test: `apps/api/test/repositories.test.ts`
 
-- [ ] **Step 1: Write failing production-migration assertions**
+- [x] **Step 1: Write failing production-migration assertions**
 
 Require these tables/columns:
 
@@ -542,7 +542,7 @@ pnpm --filter @incentives/api test -- production-migration.test.ts
 
 Expected: FAIL because migration `0006` does not exist.
 
-- [ ] **Step 2: Write failing repository round-trip tests**
+- [x] **Step 2: Write failing repository round-trip tests**
 
 Pin record types:
 
@@ -586,7 +586,7 @@ export interface RedemptionBundleCreate {
 
 Test evaluation round-trip retains ordered submitted codes and code results. Test bundle round-trip retains authoritative child order.
 
-- [ ] **Step 3: Create the migration**
+- [x] **Step 3: Create the migration**
 
 The migration should:
 
@@ -662,13 +662,13 @@ CREATE TABLE redemption_commit_guards (
 
 An interval cannot be protected by a simple unique index. Publication must use an atomic conditional claim in Task 4.
 
-- [ ] **Step 4: Update Drizzle and repository serialization**
+- [x] **Step 4: Update Drizzle and repository serialization**
 
 Add typed schema definitions, deterministic JSON parsing, and strict contract parsing. Reject malformed migrated rows rather than returning partially trusted records.
 
 Update receipt serialization so bundle-level identity and ordered entries are signed. Keep a private legacy reader for migrated staging records.
 
-- [ ] **Step 5: Run migration and repository verification**
+- [x] **Step 5: Run migration and repository verification**
 
 ```bash
 pnpm --filter @incentives/api test -- production-migration.test.ts repositories.test.ts
@@ -678,7 +678,7 @@ pnpm --filter @incentives/api lint
 
 Expected: all pass.
 
-- [ ] **Step 6: Commit Task 3**
+- [x] **Step 6: Commit Task 3**
 
 ```bash
 git add apps/api/migrations apps/api/src/db apps/api/src/repositories apps/api/test/production-migration.test.ts apps/api/test/repositories.test.ts
@@ -700,7 +700,7 @@ git commit -m "feat(api): persist promo claims and redemption bundles"
 - Test: `apps/api/test/program-revisions.test.ts`
 - Test: `apps/api/test/repositories.test.ts`
 
-- [ ] **Step 1: Write failing overlap-policy tests**
+- [x] **Step 1: Write failing overlap-policy tests**
 
 Cover tenant scoping and interval behavior:
 
@@ -734,7 +734,7 @@ pnpm --filter @incentives/api test -- programs.test.ts program-revisions.test.ts
 
 Expected: FAIL because publication does not claim normalized codes.
 
-- [ ] **Step 2: Add repository operations for claim lookup and atomic publication**
+- [x] **Step 2: Add repository operations for claim lookup and atomic publication**
 
 Add domain input:
 
@@ -767,7 +767,7 @@ interface ProgramRepository {
 
 The service must not perform a separate conflict read followed by an insert.
 
-- [ ] **Step 3: Implement the D1 conditional claim batch**
+- [x] **Step 3: Implement the D1 conditional claim batch**
 
 Use `env.DB.batch` so publication, claim insertion, counter activation, and previous-claim release share one transactional unit.
 
@@ -786,11 +786,11 @@ AND COALESCE(:ends_at, '9999-12-31T23:59:59.999Z')
 
 The conditional insert must report zero changes when a conflict exists. Convert that known outcome to `PromoCodeConflictError`. Do not rely on SQLite `NOCASE`; normalized code identity comes from the shared TypeScript helper.
 
-- [ ] **Step 4: Release claims only when reuse is safe**
+- [x] **Step 4: Release claims only when reuse is safe**
 
 Ending a Promo releases the claim in the same lifecycle batch. Pausing does not release it because the Promo can resume. Publishing an automatic replacement releases the old coded claim only after the new active revision is durable.
 
-- [ ] **Step 5: Map a precise public error**
+- [x] **Step 5: Map a precise public error**
 
 Add:
 
@@ -805,7 +805,7 @@ export class PromoCodeConflictError extends Error {
 
 Map it to `PROMO_CODE_CONFLICT`, HTTP 409, non-retryable. Only an authorized operator response may identify the conflicting Promo; the public runtime must not.
 
-- [ ] **Step 6: Run publication verification**
+- [x] **Step 6: Run publication verification**
 
 ```bash
 pnpm --filter @incentives/api test -- programs.test.ts program-revisions.test.ts repositories.test.ts
@@ -814,7 +814,7 @@ pnpm --filter @incentives/api build
 
 Expected: all pass, including the concurrent publication case.
 
-- [ ] **Step 7: Commit Task 4**
+- [x] **Step 7: Commit Task 4**
 
 ```bash
 git add apps/api/src apps/api/test/programs.test.ts apps/api/test/program-revisions.test.ts apps/api/test/repositories.test.ts
@@ -834,7 +834,7 @@ git commit -m "feat(api): claim promo codes atomically on publish"
 - Test: `apps/api/test/evaluate.test.ts`
 - Test: `apps/api/test/full-flow.test.ts`
 
-- [ ] **Step 1: Add failing automatic-mode tests**
+- [x] **Step 1: Add failing automatic-mode tests**
 
 Test the public response:
 
@@ -850,7 +850,7 @@ Test the public response:
 
 Use an evaluator spy to assert short-circuiting.
 
-- [ ] **Step 2: Add failing coded-mode tests**
+- [x] **Step 2: Add failing coded-mode tests**
 
 Test:
 
@@ -899,7 +899,7 @@ pnpm --filter @incentives/api test -- evaluate.test.ts
 
 Expected: FAIL because evaluation still loads and returns every active Promo.
 
-- [ ] **Step 3: Introduce a mode-specific candidate pipeline**
+- [x] **Step 3: Introduce a mode-specific candidate pipeline**
 
 Create small internal functions:
 
@@ -931,13 +931,13 @@ published Promo remains resolved and returns `unavailable`; only a code with no
 unreleased published claim is `invalid_code`. Never scan unrelated coded
 programs to construct the public response.
 
-- [ ] **Step 4: Reuse one program-evaluation helper**
+- [x] **Step 4: Reuse one program-evaluation helper**
 
 Extract the existing customer facts, counters, cap, currency, availability, and projected-cost logic into one helper that evaluates a single resolved program. Automatic mode calls it sequentially and stops at the first qualified decision. Coded mode calls it once per resolved distinct code.
 
 Do not duplicate cap or budget logic between modes.
 
-- [ ] **Step 5: Persist complete signed selection identity**
+- [x] **Step 5: Persist complete signed selection identity**
 
 Add to `decisionSnapshot` and the HMAC payload:
 
@@ -969,13 +969,13 @@ evaluate(
 ): Promise<EvaluationResponse>
 ```
 
-- [ ] **Step 6: Handle rejected reservation cleanup through a narrow hook**
+- [x] **Step 6: Handle rejected reservation cleanup through a narrow hook**
 
 If evaluation-time availability creates reservations, keep their opaque cancellation handles outside public decisions. When stacking rejects the final coded set, cancel all prepared handles. A failed cancellation is logged and recovered conservatively; it does not restore decisions to the rejected response.
 
 For the current D1-only implementation, provide a no-op/default handle path so the orchestration contract is ready without pretending the distributed free-shipping authority already exists.
 
-- [ ] **Step 7: Run evaluation and flow verification**
+- [x] **Step 7: Run evaluation and flow verification**
 
 ```bash
 pnpm --filter @incentives/api test -- evaluate.test.ts full-flow.test.ts
@@ -984,7 +984,7 @@ pnpm --filter @incentives/api build
 
 Expected: all pass.
 
-- [ ] **Step 8: Commit Task 5**
+- [x] **Step 8: Commit Task 5**
 
 ```bash
 git add apps/api/src/services/evaluation-service.ts apps/api/src/routes/evaluate.ts apps/api/src/repositories apps/api/test/evaluate.test.ts apps/api/test/full-flow.test.ts
@@ -1010,7 +1010,7 @@ git commit -m "feat(api): select private automatic and coded evaluations"
 - Test: `apps/api/test/repositories.test.ts`
 - Test: `apps/api/test/full-flow.test.ts`
 
-- [ ] **Step 1: Write failing port contract tests**
+- [x] **Step 1: Write failing port contract tests**
 
 Define the provider-neutral port:
 
@@ -1062,7 +1062,7 @@ export interface AtomicRedemptionCoordinator {
 
 Create a reusable contract test suite that an in-memory test adapter and the D1 adapter both pass. The port must not import D1, Durable Objects, Worker RPC, alarms, or Cloudflare-specific error types.
 
-- [ ] **Step 2: Add failing redemption behavior tests**
+- [x] **Step 2: Add failing redemption behavior tests**
 
 Cover:
 
@@ -1089,7 +1089,7 @@ pnpm --filter @incentives/api test -- redemptions.test.ts
 
 Expected: FAIL because the service still requires one `programRef`.
 
-- [ ] **Step 3: Compute one canonical bundle digest**
+- [x] **Step 3: Compute one canonical bundle digest**
 
 Bind:
 
@@ -1111,7 +1111,7 @@ const requestDigest = await sha256(canonicalJson({
 
 The exact selected order is part of the digest. Do not sort again at redemption time.
 
-- [ ] **Step 4: Implement the D1 transactional adapter**
+- [x] **Step 4: Implement the D1 transactional adapter**
 
 Acquire or load one `redemption_operations` row first. An exact pending retry
 reconciles by checking for the committed bundle before attempting the same
@@ -1147,7 +1147,7 @@ Do not ask the caller to invent a new idempotency key.
 
 Update per-customer counts and committed-spend queries to use `redemption_entries`. Retain a private read path for migrated legacy rows.
 
-- [ ] **Step 5: Refactor the service to depend only on the port**
+- [x] **Step 5: Refactor the service to depend only on the port**
 
 Construction:
 
@@ -1171,7 +1171,7 @@ export function createRedemptionService(
 
 Add `atomicRedemptions` to request-scoped variables and construct `createD1AtomicRedemptionCoordinator(context.env)` in middleware. Callsites must not know which adapter is installed.
 
-- [ ] **Step 6: Sign bundle receipts**
+- [x] **Step 6: Sign bundle receipts**
 
 Change receipt material to:
 
@@ -1192,11 +1192,11 @@ Change receipt material to:
 
 Verification must fail if a child is added, removed, mutated, or reordered.
 
-- [ ] **Step 7: Document the future distributed adapter boundary in code**
+- [x] **Step 7: Document the future distributed adapter boundary in code**
 
 Add interface comments describing durable prepare/authorize/finalize semantics and stable failure results. Do not add a Cloudflare Durable Object implementation in this task.
 
-- [ ] **Step 8: Run redemption verification**
+- [x] **Step 8: Run redemption verification**
 
 ```bash
 pnpm --filter @incentives/api test -- redemptions.test.ts repositories.test.ts full-flow.test.ts
@@ -1206,7 +1206,7 @@ pnpm --filter @incentives/api lint
 
 Expected: all pass.
 
-- [ ] **Step 9: Commit Task 6**
+- [x] **Step 9: Commit Task 6**
 
 ```bash
 git add apps/api/src/redemption apps/api/src/services/redemption-service.ts apps/api/src/services/redemption-receipt.ts apps/api/src/repositories apps/api/src/routes/redemptions.ts apps/api/src/env.ts apps/api/src/app.ts apps/api/test
@@ -1228,7 +1228,7 @@ git commit -m "feat(api): commit selected promos as atomic bundles"
 - Test: `apps/api/test/evaluate.test.ts`
 - Test: `apps/api/test/redemptions.test.ts`
 
-- [ ] **Step 1: Add failing structured-log tests**
+- [x] **Step 1: Add failing structured-log tests**
 
 Spy on `console.error` and force an evaluation dependency failure. Assert one JSON event contains:
 
@@ -1263,7 +1263,7 @@ pnpm --filter @incentives/api test -- app.test.ts evaluate.test.ts redemptions.t
 
 Expected: FAIL because the current error boundary returns a correlation ID but does not log it.
 
-- [ ] **Step 2: Implement a sanitized event writer**
+- [x] **Step 2: Implement a sanitized event writer**
 
 Create:
 
@@ -1288,17 +1288,17 @@ export function logApiFailure(input: ApiFailureLog): void {
 
 Only pass already-sanitized scalar fields. Do not pass arbitrary error objects into the logger.
 
-- [ ] **Step 3: Log at the centralized error boundary**
+- [x] **Step 3: Log at the centralized error boundary**
 
 Refactor mapping so `apiErrorResponse` can log the final stable code/status exactly once. Include merchant and credential IDs only after successful authentication populated them.
 
 Known program outcomes remain decision results and are not error logs. Dependency failures use stable categories such as `d1`, `decision_integrity`, or `atomic_redemption`.
 
-- [ ] **Step 4: Propagate correlation IDs into services and adapters**
+- [x] **Step 4: Propagate correlation IDs into services and adapters**
 
 Routes pass `context.get('correlationId')`. Evaluation snapshots store it. Bundle coordinator input carries it. Internal traces use it. The response header remains `x-correlation-id`.
 
-- [ ] **Step 5: Run observability verification**
+- [x] **Step 5: Run observability verification**
 
 ```bash
 pnpm --filter @incentives/api test -- app.test.ts evaluate.test.ts redemptions.test.ts
@@ -1307,7 +1307,7 @@ pnpm --filter @incentives/api build
 
 Expected: all pass, closing the staging gap where evaluation failures lacked their correlation ID in Cloudflare logs.
 
-- [ ] **Step 6: Commit Task 7**
+- [x] **Step 6: Commit Task 7**
 
 ```bash
 git add apps/api/src/observability.ts apps/api/src/app.ts apps/api/src/errors.ts apps/api/src/routes apps/api/test
@@ -1331,7 +1331,7 @@ git commit -m "fix(api): correlate and sanitize runtime failure logs"
 - Modify: `apps/dashboard/src/pages/promo/LivePromoList.tsx`
 - Modify: `apps/dashboard/src/pages/LiveOperatorJourney.test.tsx`
 
-- [ ] **Step 1: Add failing operator-view contract tests**
+- [x] **Step 1: Add failing operator-view contract tests**
 
 The operator needs to distinguish active and draft configuration:
 
@@ -1352,7 +1352,7 @@ Pin invariants:
 - an authorized operator can see display code;
 - runtime responses never use this operator view.
 
-- [ ] **Step 2: Add failing editor interaction tests**
+- [x] **Step 2: Add failing editor interaction tests**
 
 Testing Library cases:
 
@@ -1375,7 +1375,7 @@ pnpm --filter @incentives/dashboard test -- LiveOperatorJourney.test.tsx
 
 Expected: FAIL because the editor uses a checkbox, silently preloads the full example, and renders stacking group.
 
-- [ ] **Step 3: Add failing detail and pre-publication tests**
+- [x] **Step 3: Add failing detail and pre-publication tests**
 
 The detail/review must show:
 
@@ -1389,7 +1389,7 @@ The detail/review must show:
 
 Do not implement full history, arbitrary revision diff, rollback, or multiple drafts here.
 
-- [ ] **Step 4: Implement explicit mode transitions**
+- [x] **Step 4: Implement explicit mode transitions**
 
 Use explicit controls:
 
@@ -1419,19 +1419,19 @@ function toCoded(program: PromoProgram): PromoProgram {
 
 Type narrowing may require constructing from shared base fields rather than spreading the union. Preserve the core rule: no hidden stale code or stackability survives a switch to Automatic.
 
-- [ ] **Step 5: Return active and draft configurations from the operator service**
+- [x] **Step 5: Return active and draft configurations from the operator service**
 
 Load the exact active and draft revisions identified by lifecycle. Do not infer active configuration from current mutable fields.
 
 The publish action first shows a review card with trigger, code, stacking, priority, active revision, and draft revision. The user then explicitly confirms publication.
 
-- [ ] **Step 6: Update list and detail presentation**
+- [x] **Step 6: Update list and detail presentation**
 
 Add trigger badges to the list. Replace raw JSON-only configuration where practical with labeled reward summaries while retaining exact reward details for debugging.
 
 Do not address the separate percentage-input UX or Loyalty-reward authoring gap in this task; keep both in the follow-up register.
 
-- [ ] **Step 7: Run operator verification**
+- [x] **Step 7: Run operator verification**
 
 ```bash
 pnpm --filter @incentives/contracts test -- production-operator-contracts.test.ts
@@ -1443,7 +1443,7 @@ pnpm --filter @incentives/api test -- program-revisions.test.ts
 
 Expected: all pass.
 
-- [ ] **Step 8: Commit Task 8**
+- [x] **Step 8: Commit Task 8**
 
 ```bash
 git add packages/contracts/src/operator-bff.ts packages/contracts/src/production-operator-contracts.test.ts apps/api/src/services/program-service.ts apps/api/test/program-revisions.test.ts apps/dashboard
@@ -1465,7 +1465,7 @@ git commit -m "feat(operator): author and review promo trigger modes"
 - Modify: `docs/superpowers/specs/2026-07-23-promo-selection-code-stacking-design.md`
 - Modify: `docs/superpowers/plans/2026-07-24-promo-selection-code-stacking.md`
 
-- [ ] **Step 1: Make contract documentation executable**
+- [x] **Step 1: Make contract documentation executable**
 
 Replace singular-code and singular-redemption examples with:
 
@@ -1496,7 +1496,7 @@ and:
 
 Document automatic zero-or-one behavior, coded diagnostics, stacking rejection, ordered bundle entries, idempotency, retry rules, and code privacy.
 
-- [ ] **Step 2: Add repeatable manual staging cases**
+- [x] **Step 2: Add repeatable manual staging cases**
 
 For each case, include prerequisites, exact operator actions or `curl`, expected HTTP status, expected body, and which correlation ID to record:
 
@@ -1515,7 +1515,7 @@ For each case, include prerequisites, exact operator actions or `curl`, expected
 
 Do not put secrets or real API tokens into the guide.
 
-- [ ] **Step 3: Update the current-state roadmap**
+- [x] **Step 3: Update the current-state roadmap**
 
 Record:
 
@@ -1525,7 +1525,7 @@ Record:
 - external deployment remains local/staging only until separately approved; and
 - Shopify/manual integration remains uncommitted.
 
-- [ ] **Step 4: Reconcile the follow-up register**
+- [x] **Step 4: Reconcile the follow-up register**
 
 Close only gaps actually fixed by this implementation:
 
@@ -1544,7 +1544,7 @@ Keep these open:
 - non-root passkeys/MFA; and
 - free-shipping distributed budget authority and reversal lifecycle.
 
-- [ ] **Step 5: Update design and plan statuses**
+- [x] **Step 5: Update design and plan statuses**
 
 Mark the design implemented only after all automated and manual staging evidence exists. Until then use:
 
@@ -1554,7 +1554,7 @@ Mark the design implemented only after all automated and manual staging evidence
 
 Track this plan with checkbox completion. Keep its Notion mirror under the Plans page and keep the status next to its link on the parent Plans page.
 
-- [ ] **Step 6: Run documentation fixture verification**
+- [x] **Step 6: Run documentation fixture verification**
 
 ```bash
 pnpm --filter @incentives/contracts test -- documentation-examples.test.ts
@@ -1566,7 +1566,7 @@ Expected:
 - documentation tests pass;
 - remaining singular `code`, public redemption `programRef`, or `stackingGroup` matches are explicitly historical/deprecation notes, not current instructions.
 
-- [ ] **Step 7: Commit Task 9**
+- [x] **Step 7: Commit Task 9**
 
 ```bash
 git add docs packages/contracts/test-fixtures/documentation-examples.ts

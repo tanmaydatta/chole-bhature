@@ -2,7 +2,7 @@
 
 **Notion mirror:** https://app.notion.com/p/Integration-Ready-Core-Contracts-3a1e5c7c2b8e81e4afe0ef82709f8d13
 
-**Mirror state:** Repository and Notion copies synchronized and read back successfully on 2026-07-19.
+**Mirror state:** Repository and Notion copies synchronized and read back successfully on 2026-07-24.
 
 The foundation exposes platform-neutral TypeScript and Zod contracts for typed data, evaluation, decisions, modules, and connectors. It is deliberately independent of Shopify, a custom checkout, HTTP framework, database, and UI.
 
@@ -14,7 +14,7 @@ Customer attributes and live facts have different lifecycles:
 - `context.*`, `cart.*`, and `line_item.*` arrive with the live evaluation request.
 - `event.*` belongs to a commerce event, while `system.*` is read-only engine state.
 
-`EvaluationRequestSchema` accepts `customerRef`, optional `code`, `cart`, and optional `context`. It never accepts customer attributes as an override. A request containing a top-level `customer` property is rejected.
+`EvaluationRequestSchema` accepts `customerRef`, optional `codes`, `cart`, and optional `context`. Omitting `codes` or sending `codes: []` selects automatic mode; a non-empty array selects coded mode. It never accepts customer attributes as an override. A request containing a top-level `customer` property or the removed singular `code` field is rejected.
 
 The schema registry supports `string`, `number`, `boolean`, `enum`, and ISO-date definitions. Keys must use their source namespace, such as `customer.tier` with `source: 'customer'`. Enum definitions require non-empty `enumValues`; other types forbid them. `buildPublishedEvaluationJsonSchema()` emits only live context, cart-attribute, and line-item-attribute extensions. Its generated objects reject unknown fields.
 
@@ -61,7 +61,7 @@ Canonical customer, evaluation, cart, line-item, order, response, and redemption
 
 All money uses an uppercase three-letter currency and integer minor units. Cart/order schemas additionally require non-negative `subtotal`, `unitPrice`, and `total`; monetary effects use `{ currency, minorUnits }`. Floating-point major-unit values such as `10.50` are not canonical.
 
-These complete examples are copied from the executable fixtures. Notice that the stored customer has attributes, while the live request has only its reference and transaction facts.
+These independently executable examples are copied from the fixtures. The stored customer shape contains attributes; the live coded-evaluation shape contains only a customer reference and transaction facts.
 
 ```ts
 export const canonicalCustomer = {
@@ -73,19 +73,12 @@ export const canonicalCustomer = {
 } as const satisfies CustomerSnapshot;
 
 export const canonicalEvaluationRequest = {
-  customerRef: 'customer-123',
-  code: 'WELCOME10',
+  codes: ['GATEC15', 'VIP20'],
+  customerRef: 'customer-1',
   cart: {
     currency: 'GBP',
-    subtotal: 6_500,
-    items: [{
-      productRef: 'product-456',
-      variantRef: 'variant-789',
-      quantity: 1,
-      unitPrice: 6_500,
-      attributes: { category: 'shoes' },
-    }],
-    attributes: { delivery_country: 'GB' },
+    subtotal: 12_500,
+    items: [],
   },
   context: { channel: 'web' },
 } as const satisfies EvaluationRequest;
@@ -111,6 +104,7 @@ The executable qualified decision is:
 ```ts
 export const canonicalDecision = {
   programRef: 'welcome-10',
+  programRevision: 1,
   programType: 'promo',
   outcome: 'qualified',
   rewardRuleRef: 'default-reward',
@@ -134,15 +128,33 @@ Each selected rule or fallback has a stable `id`. Qualified evaluation and commi
 
 The schema-validated `canonicalTwoTierPromo` fixture demonstrates two ordered rules plus a fallback. The runtime guide reproduces that fixture and validated first-match, fallback, no-match, and committed-redemption examples.
 
-## Redemption idempotency identifiers
+## Promo selection and code privacy
 
-`RedemptionRequest` structurally requires at least one idempotency identifier: `externalOrderRef` or `idempotencyKey`. A client may send either identifier alone or both together. Sending neither is invalid. `RedemptionResponse` follows the same rule and echoes at least one identifier, so a client can correlate a committed result using the mode it supplied.
+Automatic evaluation considers only automatic Promos in private priority order and returns zero or one qualified decision. A failed higher-priority candidate permits the next eligible automatic Promo to win; no rejected automatic candidate is exposed.
 
-The generated OpenAPI components model these alternatives as structural variants rather than documenting an invariant that runtime validation cannot prove. Plan 2 persistence therefore stores both references as nullable, enforces a database check that at least one is present, and applies independent merchant-scoped uniqueness constraints to each non-null identifier.
+Coded evaluation suppresses automatic Promos and resolves only submitted distinct normalized codes. Codes are trimmed, uppercased with locale-independent Unicode default case conversion, deduplicated by normalized value while preserving the first display value, and limited to ten distinct values. `codeResults` remains in first-submitted order and reports `selected`, `invalid_code`, `not_qualified`, `unavailable`, `exhausted`, or `combination_rejected` with stable reason codes. It never reveals a code or program that the caller did not submit.
+
+One qualified non-stackable coded Promo is valid. Several qualified Promos combine only when all are stackable. Otherwise the response contains no decisions, and every otherwise-qualified member is marked `combination_rejected` with `CODE_COMBINATION_NOT_ALLOWED`. Selected decisions are ordered by descending priority, then immutable `programRef` ascending; input code order controls neither application order nor the later bundle-entry order.
+
+## Atomic bundle redemption and idempotency
+
+`RedemptionRequest` requires exactly the evaluation identity plus both client-owned identifiers:
+
+```ts
+export const canonicalRedemptionRequest = {
+  evaluationId: 'evaluation-123',
+  externalOrderRef: 'order-456',
+  idempotencyKey: 'checkout-789',
+} as const satisfies RedemptionRequest;
+```
+
+Redemption commits every selected committable decision in its signed order or commits none. `RedemptionResponse.entries` preserves that authoritative bundle order and records each `programRef`, `programRevision`, optional `rewardRuleRef`, and effects. The initial D1 coordinator makes the header, ordered entries, counters, and budget changes one atomic database operation.
+
+An exact retry returns the original committed bundle without consuming caps or budget again. Reusing an idempotency key or external order reference for a different evaluation, order, key, or bundle digest returns `409 VERSION_CONFLICT`. A stable non-retryable rejection such as `BUDGET_EXHAUSTED` is also replayed for an exact retry. A retryable `503 REDEMPTION_UNAVAILABLE` means the coordinator could not safely determine or finish the result: retry the identical request and never mint new identifiers merely because a response was lost.
 
 ## Module seam and dependency rule
 
-Clients integrate with one canonical contract; modules are an internal extension point. `IncentiveModule<TConfig>` has a required pure `evaluate(context, config)` method and optional `commit(context, decision)` and `handleEvent(event, config)` methods. A `ModuleDecision` adds integer `priority`, boolean `stackable`, and optional `stackingGroup` for central conflict resolution.
+Clients integrate with one canonical contract; modules are an internal extension point. `IncentiveModule<TConfig>` has a required pure `evaluate(context, config)` method and optional `commit(context, decision)` and `handleEvent(event, config)` methods. Selection receives integer `priority` and boolean `stackable` from strict Promo configuration. The historical `stackingGroup` field has been removed; current requests and configurations containing it are rejected.
 
 Dependencies point inward: `contracts` has validation dependencies only; `engine` depends on contracts; `module-kit` depends on contracts and engine; production modules may depend on those three. Core packages must not import React, HTTP frameworks, Cloudflare bindings, persistence, or connector implementations.
 
@@ -150,7 +162,7 @@ Dependencies point inward: `contracts` has validation dependencies only; `engine
 
 The foundation includes canonical schemas/OpenAPI generation, typed fact assembly and conditions, deterministic conflict resolution, the module contract/conformance suite, a pure Promo module, and the connector contract/conformance suite. Promo can produce fixed/percent order or line-item discounts and free shipping from parsed configuration.
 
-The Runtime is implemented and verified: D1 persistence, HTTP routes, static merchant/auth boundaries, customer storage, schema publication, Promo configuration, structured signed decision snapshots, mutable caps, and atomic/idempotent redemption are available through the platform-neutral API. Commerce-platform effect application, event processing, production Shopify/manual connectors, and the Operator UI remain deferred.
+The Runtime is implemented and locally verified: D1 persistence, HTTP routes, credential-derived merchant boundaries, customer storage, schema publication, immutable Promo revisions, private automatic/coded selection, structured signed decision snapshots, mutable caps, and atomic/idempotent bundle redemption are available through the platform-neutral API. The production Operator UI supports the current schema, customer, and Promo workflows. Commerce-platform effect application, event processing, and production Shopify/manual connectors remain deferred.
 
 `AffiliateProgram`, `ReferralProgram`, and `LoyaltyProgram` are concrete future configuration contracts published in OpenAPI for integration planning only. They are not accepted by the live `/v1/programs` routes and have no evaluation, persistence, or redemption runtime. Wallet, points, attribution, affiliate, referral, and loyalty shapes likewise reserve shared semantics without claiming runtime support. In Loyalty configuration, `assetRef` is an opaque identifier that must be preserved exactly; the Wallet Asset Catalog that will define and resolve those identifiers is explicitly deferred.
 

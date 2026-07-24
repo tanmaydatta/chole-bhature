@@ -1,8 +1,8 @@
 # Staging activation run — 2026-07-21
 
-**Status:** In progress — planned Gate C flows are verified through manual-code
-evaluation, but staging exposed an approved Promo-selection and atomic
-bundle-redemption contract correction that must land before final closeout
+**Status:** In progress — Tasks 1–9 of the Promo-selection correction are
+implemented and verified locally, but the owner-controlled staging
+migration/deployment and every new Task 10 manual case remain unrun
 
 **Notion:** https://app.notion.com/p/3a5e5c7c2b8e81739dfed75f998e6489
 
@@ -65,6 +65,13 @@ bundle-redemption contract correction that must land before final closeout
 - Manual-code evaluation with the correct code: Pass (the manual Promo qualified and returned the configured 20% order-discount effect)
 - Product-selection acceptance: Fail for the desired client contract (each response also exposed unrelated automatic/coded Promo outcomes, and the current redemption request commits one caller-selected program rather than a signed selected bundle)
 
+The product-selection failure above is historical evidence from the deployed
+2026-07-21 build, not the current local contract. Tasks 1–9 now implement the
+clean-break `codes[]` request, private automatic/coded selection, ordered atomic
+bundle redemption, structured failure logs, and explicit operator trigger
+review locally. No staging pass is claimed until Task 10 is deployed and run by
+the account owner.
+
 ## Schema deprecation discrepancy
 
 - Manual expectation: deprecating `context.channel` after publishing version 1 creates draft version 2 while published version 1 remains unchanged.
@@ -107,13 +114,17 @@ bundle-redemption contract correction that must land before final closeout
 - Confirmed runtime cause: `incentives-api-staging` had no
   `DECISION_SIGNING_SECRET`; credential generation and schema reads do not
   require that separate decision-integrity secret.
-- Observability finding: the public API error boundary converts handled
-  exceptions into safe canonical responses but does not explicitly emit a
+- Historical observability finding: the public API error boundary converted handled
+  exceptions into safe canonical responses but did not explicitly emit a
   sanitized structured error log. The returned correlation ID therefore does
   not reliably locate the underlying exception in persisted Worker logs.
-- Required fix: implement `GAP-022` from the Product follow-up register,
-  preserving the correlation ID across the response and log while excluding
-  secrets and sensitive request data.
+- Local code resolution: Task 7 added the centralized sanitized
+  `api_request_failed` event and tests proving that the response header, error
+  body, signed evaluation snapshot, and log event share the correlation ID.
+  Tests also reject Authorization values, credentials, submitted codes, request
+  bodies, customer attributes, decision/order/key identifiers, SQL details,
+  and dependency stacks from production logs. `GAP-022` is fixed in code but
+  awaits the Task 10 staging lookup in `OBS-API-01`.
 - Runtime resolution: a fresh `DECISION_SIGNING_SECRET` was generated locally,
   uploaded to the staging API Worker as a secret, and the same
   credential-authenticated evaluation then succeeded.
@@ -134,7 +145,10 @@ bundle-redemption contract correction that must land before final closeout
   automatic candidates and resolves only submitted distinct normalized codes;
   compatible coded Promos may stack; and redemption commits the complete signed
   selected bundle atomically.
-- Status: `GAP-026` is approved with an implementation-ready
+- Local implementation status: Tasks 1–9 of `GAP-026` are implemented and
+  focused verification passes. The design remains **Approved; implementation
+  plan ready**, and the plan remains **In progress**, because owner-controlled
+  staging deployment and manual evidence do not yet exist. See the
   [design](../superpowers/specs/2026-07-23-promo-selection-code-stacking-design.md)
   and [plan](../superpowers/plans/2026-07-24-promo-selection-code-stacking.md).
 - Retest requirement: after a reviewed merge and user-controlled staging
@@ -155,11 +169,11 @@ bundle-redemption contract correction that must land before final closeout
 - Promo detail shows active and draft revision numbers but provides no comparison between their configurations. Add a pre-publication review that highlights changed metadata, conditions, reward order/effects, fallback, limits, schedule, and stacking.
 - Historical Promo revisions are retained in Product D1 with author/publication metadata, but the current operator contracts and UI expose only the active and single draft pointers. Add a read-only revision history with configuration inspection and clear active/draft markers before client use.
 - The Promo lifecycle intentionally permits only one next draft per logical external reference. Keep this simple model for the first client unless parallel proposal/approval workflows become a demonstrated requirement; multiple named drafts would require explicit branching, ownership, comparison, and publish-selection semantics.
-- A brand-new Promo editor is already populated with the complete sample configuration before the user selects **Use complete authoring example**. Start new Promos with an intentional blank/minimal state, or explicitly identify and require selection of a template; never silently seed client drafts with sample rules, limits, or budget values.
-- The Promo budget controls cannot express the optional “no budget” state after a budget exists: clearing the inputs leaves an invalid object. Add an explicit budget enable/remove control and field-level errors; this currently blocks free-shipping authoring.
+- A brand-new Promo editor was already populated with the complete sample configuration before the user selected **Use complete authoring example**. Task 8 now starts from an intentional minimal draft and makes the complete example an explicit action; staging verification remains pending.
+- The Promo budget controls originally could not express the optional “no budget” state after a budget existed. PR #8 added explicit budget enable/remove controls and field-level errors, and the staging retest passed.
 - `productRef` is an opaque technical value with no catalog lookup or integration mapping help. Keep the canonical reference but add a connector-backed selector/validation when the first commerce integration is chosen.
 - Percentage reward fields expose internal basis points (`2000` for `20%`). Render a client-facing percentage control and perform the exact basis-point conversion at the boundary.
-- Promo detail omits both application mode and the configured manual code, so an operator cannot verify that a draft is code-triggered or review its code before publishing. Show both on detail and pre-publication comparison surfaces.
+- Promo detail omitted both application mode and the configured manual code. Task 8 now shows Automatic/Code-triggered mode, authorized code visibility, stacking, priority, active/draft revision identity, and an explicit pre-publication review; staging verification remains pending.
 - The live Promo selector cannot grant a Loyalty wallet asset. Future contracts can represent wallet accrual, but production publication must wait for a real ledger/fulfilment runtime; afterward, conditional Promos should be able to grant a merchant-configured Points/Credits/Miles/Stars/Cashback asset without coupling Promo to a specific Loyalty implementation.
 - Accepting an invitation in a browser with another active account consumes the invitation and redirects without explaining the accepted identity or account handoff. Require or guide an isolated handoff and show an explicit success state.
 
@@ -172,19 +186,30 @@ deferrals are in the linked Product follow-up register.
 - The immediate Gate C fix is limited to representing and saving an optional absent budget, with field-specific validation.
 - Optional free-shipping campaign budget, per-order cap, authoritative shipping costs, reservations, final commit, reversal, and provider-neutral storage are a separate follow-on design:
   `docs/superpowers/specs/2026-07-23-free-shipping-budget-authority-design.md`.
+- That approved follow-on keeps budget and per-order cap optional, requires the
+  client to supply actual shipping cost, permits a full waiver or none, uses a
+  configurable reservation TTL defaulting to 15 minutes, treats
+  expiry/failure recovery as money, and requires exact currency with no
+  conversion. It will implement the same provider-neutral atomic coordinator
+  port through a distributed adapter. Event-driven reversals and future
+  event-triggered incentives remain planned, not implemented.
 - Future event definitions/mappings and event-triggered Loyalty, Referral, and Affiliate behavior are preserved in that design but do not block Gate C.
 
 ## Remaining manual continuation
 
-1. Implement and merge the approved `GAP-026` correction through a PR into
-   `dev`.
-2. Have the user apply the reviewed staging migration/deployments one command
+1. Finish Task 10 verification and review for the locally implemented
+   `GAP-026` correction, then merge it through a PR into `dev`.
+2. Have the account owner apply the reviewed staging migration/deployments one command
    at a time.
 3. Repeat the automatic, coded, stacking, atomic-bundle, idempotency, and
    concurrency cases with fresh identifiers.
 4. Complete the remaining tenant-isolation and security closeout checks.
 5. Reconcile the canonical manual procedure, current-state roadmap, follow-up
    register, active plans, and their Notion mirrors with the final result.
+
+External scope remains local/staging until separately approved. No production
+deployment is authorized, and Shopify/manual commerce integration remains
+uncommitted.
 
 ## Evidence policy
 
