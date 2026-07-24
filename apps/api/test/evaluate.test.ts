@@ -1,19 +1,22 @@
 import {
   ApiErrorSchema,
   EvaluationResponseSchema,
+  normalizePromoCode,
   type CommerceReward,
   type EvaluationRequest,
   type PromoProgram,
   type VariableDefinition,
 } from '@incentives/contracts';
+import { PromoModule } from '@incentives/promo';
 import { SELF } from 'cloudflare:test';
 import { env } from 'cloudflare:workers';
-import { beforeEach, describe, expect, test } from 'vitest';
+import { beforeEach, describe, expect, test, vi } from 'vitest';
 
 import { createApp } from '../src/app.js';
 import { SEEDED_MERCHANT_ID } from './test-credentials.js';
 import { createRepositories } from '../src/repositories/d1-repositories.js';
 import {
+  createEvaluationService,
   formatMinorUnits,
   projectedDiscountMinorUnits,
   signDecisionSnapshot,
@@ -96,6 +99,19 @@ function promo(id: string, overrides: PromoOverrides = {}): PromoProgram {
   } as PromoProgram;
 }
 
+function codedPromo(
+  id: string,
+  code: string,
+  overrides: PromoOverrides = {},
+): PromoProgram {
+  return promo(id, {
+    ...overrides,
+    autoApply: false,
+    code,
+    stackable: overrides.stackable ?? true,
+  });
+}
+
 async function seedPublishedSchema(
   merchantId = SEEDED_MERCHANT_ID,
   schemaDefinitions: readonly VariableDefinition[] = definitions,
@@ -124,24 +140,47 @@ async function seedProgram(
   merchantId = SEEDED_MERCHANT_ID,
 ): Promise<void> {
   const repositories = createRepositories({ DB: env.DB });
-  await repositories.programs.create({
+  const stored = await repositories.programs.create({
     merchantId,
     program,
     schema: await repositories.schemas.getLatestVersion(merchantId, 'published'),
     createdAt: publishedAt,
   });
+  if (!program.autoApply && program.status !== 'draft' && program.status !== 'ended') {
+    const code = normalizePromoCode(program.code);
+    await env.DB.prepare(`
+      INSERT INTO promo_code_claims (
+        id, merchant_id, program_id, program_ref, active_revision,
+        display_code, normalized_code, starts_at, ends_at, created_at
+      ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+    `).bind(
+      crypto.randomUUID(),
+      merchantId,
+      stored.id,
+      stored.externalRef,
+      stored.revision,
+      code.display,
+      code.normalized,
+      program.startDate ?? null,
+      program.endDate ?? null,
+      publishedAt,
+    ).run();
+  }
 }
 
 function evaluateRaw(
   body: unknown,
   token = 'pk_test_publishable_credential_material_00000001',
+  correlationId?: string,
 ): Promise<Response> {
+  const headers = new Headers({
+    authorization: `Bearer ${token}`,
+    'content-type': 'application/json',
+  });
+  if (correlationId !== undefined) headers.set('x-correlation-id', correlationId);
   return SELF.fetch('https://example.test/v1/evaluate', {
     method: 'POST',
-    headers: {
-      authorization: `Bearer ${token}`,
-      'content-type': 'application/json',
-    },
+    headers,
     body: JSON.stringify(body),
   });
 }
@@ -171,6 +210,8 @@ async function expectError(
 
 async function resetEvaluationData(): Promise<void> {
   await env.DB.batch([
+    env.DB.prepare('DELETE FROM redemption_operations'),
+    env.DB.prepare('DELETE FROM redemption_entries'),
     env.DB.prepare('DELETE FROM redemptions'),
     env.DB.prepare('DELETE FROM evaluation_decisions'),
     env.DB.prepare('DELETE FROM programs'),
@@ -185,6 +226,11 @@ async function resetEvaluationData(): Promise<void> {
 type DecisionRow = {
   id: string;
   merchant_id: string;
+  mode: string;
+  submitted_codes_json: string;
+  code_results_json: string;
+  request_digest: string;
+  correlation_id: string;
   customer_ref: string | null;
   customer_version: number | null;
   schema_version: number;
@@ -198,7 +244,8 @@ type DecisionRow = {
 
 async function storedDecision(evaluationId: string): Promise<DecisionRow> {
   const row = await env.DB.prepare(`
-    SELECT id, merchant_id, customer_ref, customer_version, schema_version,
+    SELECT id, merchant_id, mode, submitted_codes_json, code_results_json,
+      request_digest, correlation_id, customer_ref, customer_version, schema_version,
       request_json, facts_json, decisions_json, integrity_hash, expires_at, created_at
     FROM evaluation_decisions WHERE merchant_id = ?1 AND id = ?2
   `).bind(SEEDED_MERCHANT_ID, evaluationId).first<DecisionRow>();
@@ -212,22 +259,39 @@ async function commitDecision(
   effects: CommerceReward[],
   suffix = '1',
 ): Promise<void> {
-  const unsigned = {
-    redemptionId: `redemption-${suffix}`,
-    merchantId: SEEDED_MERCHANT_ID,
-    externalOrderRef: `order-${suffix}`,
-    evaluationId,
-    result: {
-      redemptionId: `redemption-${suffix}`,
-      evaluationId,
-      programRef,
-      rewardRuleRef: 'default-reward',
-      externalOrderRef: `order-${suffix}`,
-      status: 'committed',
-      effects,
-    },
+  const redemptionId = `redemption-${suffix}`;
+  const externalOrderRef = `order-${suffix}`;
+  const idempotencyKey = `attempt-${suffix}`;
+  const entries = [{
+    position: 0,
+    programRef,
+    programRevision: 1,
+    rewardRuleRef: 'default-reward',
+    effects,
     discountMinorUnits: 1_000,
     currency: 'GBP',
+  }];
+  const unsigned = {
+    redemptionId,
+    merchantId: SEEDED_MERCHANT_ID,
+    externalOrderRef,
+    idempotencyKey,
+    evaluationId,
+    requestDigest: 'a'.repeat(64),
+    result: {
+      redemptionId,
+      evaluationId,
+      externalOrderRef,
+      status: 'committed',
+      entries: entries.map(({
+        position: _position,
+        discountMinorUnits: _discountMinorUnits,
+        currency: _currency,
+        ...entry
+      }) => entry),
+      idempotencyKey,
+    },
+    entries,
     createdAt: publishedAt,
   };
   await createRepositories({ DB: env.DB }).redemptions.create({
@@ -260,8 +324,21 @@ async function hmac(value: unknown): Promise<string> {
     .join('');
 }
 
+async function sha256(value: unknown): Promise<string> {
+  const bytes = await crypto.subtle.digest(
+    'SHA-256',
+    new TextEncoder().encode(canonicalJson(value)),
+  );
+  return [...new Uint8Array(bytes)]
+    .map(byte => byte.toString(16).padStart(2, '0'))
+    .join('');
+}
+
 describe('POST /v1/evaluate', () => {
-  beforeEach(resetEvaluationData);
+  beforeEach(async () => {
+    vi.restoreAllMocks();
+    await resetEvaluationData();
+  });
 
   test.each([
     ['GBP', 'GBP 90,071,992,547,409.91'],
@@ -308,6 +385,99 @@ describe('POST /v1/evaluate', () => {
       expect((await evaluate(baseRequest, token)).decisions[0]?.outcome).toBe('qualified');
     },
   );
+
+  test.each([
+    ['omitted codes', baseRequest],
+    ['empty codes', { ...baseRequest, codes: [] }],
+  ])(
+    'selects the first ranked qualified effective automatic Promo for %s and short-circuits',
+    async (_label, request) => {
+      await seedCustomer();
+      await seedProgram(codedPromo('private-coded-inventory', 'PRIVATE', { priority: 1_000 }));
+      await seedProgram(promo('paused-automatic', { status: 'paused', priority: 900 }));
+      await seedProgram(promo('future-automatic', {
+        status: 'active',
+        startDate: '2999-01-01',
+        priority: 800,
+      }));
+      await seedProgram(promo('higher-rejected', {
+        priority: 100,
+        eligibility: {
+          match: 'ALL',
+          conditions: [{
+            id: 'impossible-subtotal',
+            variable: 'cart.subtotal',
+            operator: 'gte',
+            value: 100_000,
+          }],
+        },
+      }));
+      await seedProgram(promo('A-binary-winner', { priority: 50 }));
+      await seedProgram(promo('a-binary-later', { priority: 50 }));
+
+      await env.DB.prepare(`
+        INSERT INTO merchants (id, name, created_at)
+        VALUES ('other-merchant', 'Other merchant', ?1)
+      `).bind(publishedAt).run();
+      await seedPublishedSchema('other-merchant');
+      await seedProgram(promo('other-tenant-private', { priority: 2_000 }), 'other-merchant');
+
+      const evaluator = vi.spyOn(PromoModule, 'evaluate');
+      const result = await evaluate(request);
+
+      expect(result.decisions).toEqual([
+        expect.objectContaining({
+          programRef: 'A-binary-winner',
+          outcome: 'qualified',
+        }),
+      ]);
+      expect(result).not.toHaveProperty('codeResults');
+      expect(evaluator.mock.calls.map(([, program]) => program.id)).toEqual([
+        'higher-rejected',
+        'A-binary-winner',
+      ]);
+    },
+  );
+
+  test('returns no automatic diagnostics when every effective automatic candidate is rejected', async () => {
+    await seedCustomer();
+    await seedProgram(promo('ineligible-private', {
+      priority: 30,
+      eligibility: {
+        match: 'ALL',
+        conditions: [{
+          id: 'large-cart',
+          variable: 'cart.subtotal',
+          operator: 'gte',
+          value: 100_000,
+        }],
+      },
+    }));
+    await seedProgram(promo('currency-private', {
+      priority: 20,
+      reward: {
+        type: 'order_discount',
+        calculation: 'fixed',
+        amount: { currency: 'USD', minorUnits: 1_000 },
+      },
+    }));
+    await seedProgram(promo('exhausted-private', {
+      priority: 10,
+      usageCap: 1,
+    }));
+    await env.DB.prepare(`
+      UPDATE programs SET usage_count = 1
+      WHERE merchant_id = ?1 AND external_ref = 'exhausted-private'
+    `).bind(SEEDED_MERCHANT_ID).run();
+
+    const result = await evaluate();
+
+    expect(result.decisions).toEqual([]);
+    expect(result).not.toHaveProperty('codeResults');
+    expect(JSON.stringify(result)).not.toContain('ineligible-private');
+    expect(JSON.stringify(result)).not.toContain('currency-private');
+    expect(JSON.stringify(result)).not.toContain('exhausted-private');
+  });
 
   test.each([
     [{ ...baseRequest, customer: { tier: 'gold' } }, 'customer'],
@@ -467,7 +637,7 @@ describe('POST /v1/evaluate', () => {
       .not.toContainEqual(expect.objectContaining({ effects: [higherReward] }));
   });
 
-  test('returns selected fallback and no-match semantics through HTTP', async () => {
+  test('returns the selected automatic fallback without leaking a lower no-match candidate', async () => {
     await seedCustomer();
     const impossibleRule = {
       ...conditionalRule({ type: 'free_shipping' }, 'impossible'),
@@ -483,7 +653,6 @@ describe('POST /v1/evaluate', () => {
     };
     await seedProgram(promo('fallback-http', {
       priority: 20,
-      stackable: true,
       rewardRules: [impossibleRule],
       fallbackReward: {
         id: 'fallback',
@@ -493,7 +662,6 @@ describe('POST /v1/evaluate', () => {
     }));
     await seedProgram(promo('no-match-http', {
       priority: 10,
-      stackable: true,
       rewardRules: [impossibleRule],
     }));
 
@@ -505,17 +673,8 @@ describe('POST /v1/evaluate', () => {
         rewardRuleRef: 'fallback',
         effects: [{ type: 'free_shipping' }],
       }),
-      expect.objectContaining({
-        programRef: 'no-match-http',
-        outcome: 'not_qualified',
-        effects: [],
-        reasonCodes: ['NO_REWARD_RULE_MATCHED'],
-        message: 'No reward rule matched.',
-        commitRequired: false,
-        eligible: false,
-      }),
     ]);
-    expect(result.decisions[1]).not.toHaveProperty('rewardRuleRef');
+    expect(JSON.stringify(result)).not.toContain('no-match-http');
   });
 
   test('uses only the selected rule cost for multi-rule budget exhaustion', async () => {
@@ -541,12 +700,13 @@ describe('POST /v1/evaluate', () => {
       calculation: 'fixed',
       amount: { currency: 'GBP', minorUnits: 500 },
     }, 'selected-cheap');
-    await seedProgram(promo('selected-budget', {
+    await seedProgram(codedPromo('selected-budget', 'SELECTED-BUDGET', {
       rewardRules: [expensive, selected],
       budget: { currency: 'GBP', minorUnits: 500 },
     }));
 
-    expect((await evaluate()).decisions[0]).toMatchObject({
+    const request = { ...baseRequest, codes: ['selected-budget'] };
+    expect((await evaluate(request)).decisions[0]).toMatchObject({
       outcome: 'qualified',
       rewardRuleRef: 'selected-cheap',
       effects: [selected.reward],
@@ -555,9 +715,10 @@ describe('POST /v1/evaluate', () => {
       UPDATE programs SET budget_remaining = 499
       WHERE merchant_id = ?1 AND external_ref = 'selected-budget'
     `).bind(SEEDED_MERCHANT_ID).run();
-    expect((await evaluate()).decisions[0]).toMatchObject({
+    const exhausted = await evaluate(request);
+    expect(exhausted.decisions).toEqual([]);
+    expect(exhausted.codeResults?.[0]).toMatchObject({
       outcome: 'exhausted',
-      rewardRuleRef: 'selected-cheap',
       reasonCodes: ['BUDGET_EXHAUSTED'],
     });
   });
@@ -575,11 +736,7 @@ describe('POST /v1/evaluate', () => {
     }), 400, 'CONTEXT_VALIDATION_FAILED');
 
     const result = await evaluate(baseRequest);
-    expect(result.decisions[0]).toMatchObject({
-      outcome: 'not_qualified',
-      reasonCodes: ['CONDITION_NOT_MET'],
-      message: 'This offer is only for gold members.',
-    });
+    expect(result.decisions).toEqual([]);
   });
 
   test('supports anonymous evaluation only when customerRef is omitted', async () => {
@@ -591,10 +748,7 @@ describe('POST /v1/evaluate', () => {
 
     expect(result).not.toHaveProperty('customerRef');
     expect(result).not.toHaveProperty('customerVersion');
-    expect(result.decisions[0]).toMatchObject({
-      outcome: 'not_qualified',
-      reasonCodes: ['ATTRIBUTE_MISSING'],
-    });
+    expect(result.decisions).toEqual([]);
     const stored = await storedDecision(result.evaluationId);
     expect(stored.customer_ref).toBeNull();
     expect(stored.customer_version).toBeNull();
@@ -662,11 +816,171 @@ describe('POST /v1/evaluate', () => {
     },
   );
 
-  test('emits qualified, not-qualified, invalid-code, and unavailable decisions with stable messages', async () => {
+  test('evaluates only distinct submitted normalized codes and keeps diagnostics in input order', async () => {
     await seedCustomer();
-    await seedProgram(promo('qualified', { priority: 40, stackable: true }));
-    await seedProgram(promo('not-qualified', {
+    await seedProgram(promo('suppressed-automatic', { priority: 1_000 }));
+    await seedProgram(codedPromo('unrelated-coded', 'PRIVATE', { priority: 900 }));
+    await seedProgram(codedPromo('promo-b', 'VIP20', { priority: 20 }));
+    await seedProgram(codedPromo('promo-a', 'SAVE10', { priority: 20 }));
+
+    const evaluator = vi.spyOn(PromoModule, 'evaluate');
+    const result = await evaluate({
+      ...baseRequest,
+      codes: ['vip20', 'unknown', ' VIP20 ', 'save10'],
+    });
+
+    expect(result.decisions).toEqual([
+      expect.objectContaining({
+        programRef: 'promo-a',
+        outcome: 'qualified',
+      }),
+      expect.objectContaining({
+        programRef: 'promo-b',
+        outcome: 'qualified',
+      }),
+    ]);
+    expect(result.codeResults).toEqual([
+      {
+        code: 'vip20',
+        normalizedCode: 'VIP20',
+        outcome: 'selected',
+        programRef: 'promo-b',
+        reasonCodes: [],
+      },
+      {
+        code: 'unknown',
+        normalizedCode: 'UNKNOWN',
+        outcome: 'invalid_code',
+        reasonCodes: ['INVALID_PROMO_CODE'],
+      },
+      {
+        code: 'save10',
+        normalizedCode: 'SAVE10',
+        outcome: 'selected',
+        programRef: 'promo-a',
+        reasonCodes: [],
+      },
+    ]);
+    expect(evaluator.mock.calls.map(([, program]) => program.id)).toEqual([
+      'promo-b',
+      'promo-a',
+    ]);
+    expect(JSON.stringify(result)).not.toContain('suppressed-automatic');
+    expect(JSON.stringify(result)).not.toContain('unrelated-coded');
+    expect(JSON.stringify(result)).not.toContain('PRIVATE');
+  });
+
+  test('keeps resolved failures diagnostic without blocking a valid stackable code', async () => {
+    await seedCustomer();
+    await seedProgram(codedPromo('selected-code', 'SELECTED', { priority: 10 }));
+    await seedProgram(codedPromo('ineligible-code', 'INELIGIBLE', {
+      priority: 50,
+      eligibility: {
+        match: 'ALL',
+        conditions: [{
+          id: 'minimum-cart',
+          variable: 'cart.subtotal',
+          operator: 'gte',
+          value: 100_000,
+        }],
+      },
+    }));
+    await seedProgram(codedPromo('paused-code', 'PAUSED', {
+      status: 'paused',
+      priority: 40,
+    }));
+    await seedProgram(codedPromo('scheduled-code', 'SCHEDULED', {
+      status: 'active',
+      startDate: '2999-01-01',
       priority: 30,
+    }));
+    await seedProgram(codedPromo('exhausted-code', 'EXHAUSTED', {
+      priority: 20,
+      usageCap: 1,
+    }));
+    await env.DB.prepare(`
+      UPDATE programs SET usage_count = 1
+      WHERE merchant_id = ?1 AND external_ref = 'exhausted-code'
+    `).bind(SEEDED_MERCHANT_ID).run();
+
+    const result = await evaluate({
+      ...baseRequest,
+      codes: ['missing', 'INELIGIBLE', 'PAUSED', 'SCHEDULED', 'EXHAUSTED', 'SELECTED'],
+    });
+
+    expect(result.decisions).toEqual([
+      expect.objectContaining({
+        programRef: 'selected-code',
+        outcome: 'qualified',
+      }),
+    ]);
+    expect(result.codeResults).toEqual([
+      {
+        code: 'missing',
+        normalizedCode: 'MISSING',
+        outcome: 'invalid_code',
+        reasonCodes: ['INVALID_PROMO_CODE'],
+      },
+      expect.objectContaining({
+        code: 'INELIGIBLE',
+        outcome: 'not_qualified',
+        programRef: 'ineligible-code',
+      }),
+      expect.objectContaining({
+        code: 'PAUSED',
+        outcome: 'unavailable',
+        programRef: 'paused-code',
+      }),
+      expect.objectContaining({
+        code: 'SCHEDULED',
+        outcome: 'unavailable',
+        programRef: 'scheduled-code',
+      }),
+      expect.objectContaining({
+        code: 'EXHAUSTED',
+        outcome: 'exhausted',
+        programRef: 'exhausted-code',
+      }),
+      expect.objectContaining({
+        code: 'SELECTED',
+        outcome: 'selected',
+        programRef: 'selected-code',
+      }),
+    ]);
+  });
+
+  test('selects one qualified non-stackable submitted code', async () => {
+    await seedCustomer();
+    await seedProgram(codedPromo('solo', 'SOLO', { stackable: false }));
+
+    const result = await evaluate({ ...baseRequest, codes: ['solo'] });
+    expect(result.decisions).toEqual([
+      expect.objectContaining({
+        programRef: 'solo',
+        outcome: 'qualified',
+      }),
+    ]);
+    expect(result.codeResults).toEqual([
+      expect.objectContaining({
+        code: 'solo',
+        outcome: 'selected',
+        programRef: 'solo',
+      }),
+    ]);
+  });
+
+  test('rejects a mixed qualified combination and rewrites only qualified diagnostics', async () => {
+    await seedCustomer();
+    await seedProgram(codedPromo('stackable-qualified', 'STACK', {
+      priority: 30,
+      stackable: true,
+    }));
+    await seedProgram(codedPromo('exclusive-qualified', 'EXCLUSIVE', {
+      priority: 20,
+      stackable: false,
+    }));
+    await seedProgram(codedPromo('ineligible-preserved', 'NOPE', {
+      priority: 10,
       stackable: true,
       eligibility: {
         match: 'ALL',
@@ -674,69 +988,100 @@ describe('POST /v1/evaluate', () => {
           id: 'minimum-cart',
           variable: 'cart.subtotal',
           operator: 'gte',
-          value: 10_000,
-          message: 'Spend at least GBP 100.00.',
+          value: 100_000,
         }],
       },
     }));
-    await seedProgram(promo('invalid-code', {
-      priority: 20,
-      stackable: true,
-      autoApply: false,
-      code: 'RIGHTCODE',
-    }));
-    await seedProgram(promo('unavailable', {
-      priority: 10,
-      stackable: true,
-      status: 'paused',
-    }));
 
-    const result = await evaluate({ ...baseRequest, code: 'WRONGCODE' });
-    expect(result.decisions).toEqual([
+    const result = await evaluate({
+      ...baseRequest,
+      codes: ['NOPE', 'STACK', 'missing', 'EXCLUSIVE'],
+    });
+
+    expect(result.decisions).toEqual([]);
+    expect(result.codeResults).toEqual([
       expect.objectContaining({
-        programRef: 'qualified',
-        outcome: 'qualified',
-        message: 'You received GBP 10.00 off.',
-      }),
-      expect.objectContaining({
-        programRef: 'not-qualified',
+        code: 'NOPE',
         outcome: 'not_qualified',
-        message: 'Spend at least GBP 100.00.',
+        programRef: 'ineligible-preserved',
       }),
-      expect.objectContaining({
-        programRef: 'invalid-code',
+      {
+        code: 'STACK',
+        normalizedCode: 'STACK',
+        outcome: 'combination_rejected',
+        programRef: 'stackable-qualified',
+        reasonCodes: ['CODE_COMBINATION_NOT_ALLOWED'],
+      },
+      {
+        code: 'missing',
+        normalizedCode: 'MISSING',
         outcome: 'invalid_code',
-        message: 'This promotion code is invalid.',
-      }),
-      expect.objectContaining({
-        programRef: 'unavailable',
-        outcome: 'unavailable',
-        message: 'This promotion is unavailable.',
-      }),
+        reasonCodes: ['INVALID_PROMO_CODE'],
+      },
+      {
+        code: 'EXCLUSIVE',
+        normalizedCode: 'EXCLUSIVE',
+        outcome: 'combination_rejected',
+        programRef: 'exclusive-qualified',
+        reasonCodes: ['CODE_COMBINATION_NOT_ALLOWED'],
+      },
     ]);
   });
 
-  test('resolves non-stacking conflicts centrally with deterministic messages', async () => {
+  test('cancels every prepared reservation after combination rejection and stays rejected on cleanup failure', async () => {
     await seedCustomer();
-    await seedProgram(promo('lower', { priority: 10 }));
-    await seedProgram(promo('higher', { priority: 20 }));
+    await seedProgram(codedPromo('cleanup-stackable', 'CLEANUP-STACK', {
+      priority: 20,
+      stackable: true,
+    }));
+    await seedProgram(codedPromo('cleanup-exclusive', 'CLEANUP-EXCLUSIVE', {
+      priority: 10,
+      stackable: false,
+    }));
+    const cancelled: unknown[] = [];
+    const cleanupFailure = vi.fn();
+    const service = createEvaluationService(
+      createRepositories({ DB: env.DB }),
+      env,
+      {
+        reservations: {
+          prepare: async ({ decision }) => ({ programRef: decision.programRef }),
+          cancel: async (handle) => {
+            cancelled.push(handle);
+            if ((handle as { programRef: string }).programRef === 'cleanup-stackable') {
+              throw new Error('simulated cancellation uncertainty');
+            }
+          },
+          onCleanupFailure: cleanupFailure,
+        },
+      },
+    );
 
-    const result = await evaluate();
-    expect(result.decisions).toEqual([
-      expect.objectContaining({
-        programRef: 'higher',
-        outcome: 'qualified',
-        rewardRuleRef: 'default-reward',
-        message: 'You received GBP 10.00 off.',
-      }),
-      expect.objectContaining({
-        programRef: 'lower',
-        outcome: 'conflict',
-        rewardRuleRef: 'default-reward',
-        reasonCodes: ['STACKING_CONFLICT'],
-        message: 'This promotion cannot be combined with another offer.',
-      }),
+    const result = await service.evaluate(
+      SEEDED_MERCHANT_ID,
+      {
+        ...baseRequest,
+        codes: ['cleanup-stack', 'cleanup-exclusive'],
+      },
+      'reservation-cleanup-correlation',
+    );
+
+    expect(result.decisions).toEqual([]);
+    expect(result.codeResults?.map(({ outcome }) => outcome)).toEqual([
+      'combination_rejected',
+      'combination_rejected',
     ]);
+    expect(cancelled).toEqual([
+      { programRef: 'cleanup-stackable' },
+      { programRef: 'cleanup-exclusive' },
+    ]);
+    expect(cleanupFailure).toHaveBeenCalledWith(
+      expect.objectContaining({
+        correlationId: 'reservation-cleanup-correlation',
+        programRef: 'cleanup-stackable',
+      }),
+      expect.any(Error),
+    );
   });
 
   test.each([
@@ -748,7 +1093,7 @@ describe('POST /v1/evaluate', () => {
     reasonCode,
   ) => {
     await seedCustomer();
-    await seedProgram(promo('limited', overrides));
+    await seedProgram(codedPromo('limited', 'LIMITED', overrides));
     if ('usageCap' in overrides) {
       await env.DB.prepare(`
         UPDATE programs SET usage_count = ?1
@@ -756,24 +1101,21 @@ describe('POST /v1/evaluate', () => {
       `).bind(overrides.usageCap, SEEDED_MERCHANT_ID).run();
     }
 
-    const result = await evaluate();
-    expect(result.decisions[0]).toEqual(expect.objectContaining({
+    const result = await evaluate({ ...baseRequest, codes: ['limited'] });
+    expect(result.decisions).toEqual([]);
+    expect(result.codeResults?.[0]).toEqual(expect.objectContaining({
       programRef: 'limited',
       outcome: 'exhausted',
-      rewardRuleRef: 'default-reward',
-      effects: [],
       reasonCodes: [reasonCode],
-      message: 'This promotion has been exhausted.',
-      commitRequired: false,
-      eligible: false,
     }));
   });
 
   test('enforces per-customer caps from committed tenant-scoped redemptions', async () => {
     await seedCustomer();
-    const program = promo('once-per-customer', { perCustomerCap: 1 });
+    const program = codedPromo('once-per-customer', 'ONCE', { perCustomerCap: 1 });
     await seedProgram(program);
-    const first = await evaluate();
+    const request = { ...baseRequest, codes: ['once'] };
+    const first = await evaluate(request);
     await commitDecision(
       first.evaluationId,
       program.id,
@@ -781,13 +1123,11 @@ describe('POST /v1/evaluate', () => {
       'per-customer',
     );
 
-    const second = await evaluate();
-    expect(second.decisions[0]).toEqual(expect.objectContaining({
+    const second = await evaluate(request);
+    expect(second.decisions).toEqual([]);
+    expect(second.codeResults?.[0]).toEqual(expect.objectContaining({
       outcome: 'exhausted',
-      effects: [],
       reasonCodes: ['PER_CUSTOMER_CAP_EXHAUSTED'],
-      commitRequired: false,
-      eligible: false,
     }));
     const stored = await storedDecision(second.evaluationId);
     expect(JSON.parse(stored.facts_json)).toMatchObject({
@@ -800,9 +1140,10 @@ describe('POST /v1/evaluate', () => {
 
   test('returns retryable 503 for coordinated history tampering without a valid HMAC', async () => {
     await seedCustomer();
-    const program = promo('corrupt-customer-count', { perCustomerCap: 2 });
+    const program = codedPromo('corrupt-customer-count', 'CORRUPT', { perCustomerCap: 2 });
     await seedProgram(program);
-    const first = await evaluate();
+    const request = { ...baseRequest, codes: ['corrupt'] };
+    const first = await evaluate(request);
     await commitDecision(
       first.evaluationId,
       program.id,
@@ -831,7 +1172,7 @@ describe('POST /v1/evaluate', () => {
     ]);
 
     const error = await expectError(
-      await evaluateRaw(baseRequest),
+      await evaluateRaw(request),
       503,
       'EVALUATION_UNAVAILABLE',
     );
@@ -839,28 +1180,28 @@ describe('POST /v1/evaluate', () => {
   });
 
   test('fails an anonymous per-customer-capped program closed before qualification', async () => {
-    await seedProgram(promo('customer-required', {
+    await seedProgram(codedPromo('customer-required', 'CUSTOMER', {
       eligibility: { match: 'ALL', conditions: [] },
       perCustomerCap: 1,
     }));
 
     const result = await evaluate({
+      codes: ['customer'],
       cart: baseRequest.cart,
       context: baseRequest.context,
     });
-    expect(result.decisions[0]).toEqual(expect.objectContaining({
+    expect(result.decisions).toEqual([]);
+    expect(result.codeResults?.[0]).toEqual(expect.objectContaining({
       programRef: 'customer-required',
       outcome: 'not_qualified',
-      effects: [],
       reasonCodes: ['CUSTOMER_REQUIRED'],
-      commitRequired: false,
-      eligible: false,
     }));
   });
 
   test.each([
     [
       'paused availability',
+      'PAUSED',
       {
         status: 'paused',
         eligibility: { match: 'ALL', conditions: [] },
@@ -870,18 +1211,8 @@ describe('POST /v1/evaluate', () => {
       'PROGRAM_UNAVAILABLE',
     ],
     [
-      'missing manual code',
-      {
-        eligibility: { match: 'ALL', conditions: [] },
-        perCustomerCap: 1,
-        autoApply: false,
-        code: 'REQUIRED',
-      },
-      'invalid_code',
-      'INVALID_PROMO_CODE',
-    ],
-    [
       'independent condition failure',
+      'CONDITION',
       {
         eligibility: {
           match: 'ALL',
@@ -899,19 +1230,22 @@ describe('POST /v1/evaluate', () => {
     ],
   ] as const)(
     'preserves %s before applying anonymous per-customer requirements',
-    async (_name, overrides, outcome, reasonCode) => {
-      await seedProgram(promo(`anonymous-${outcome}`, overrides as Partial<PromoProgram>));
+    async (_name, code, overrides, outcome, reasonCode) => {
+      await seedProgram(codedPromo(
+        `anonymous-${outcome}`,
+        code,
+        overrides as Partial<PromoProgram>,
+      ));
 
       const result = await evaluate({
+        codes: [code],
         cart: baseRequest.cart,
         context: baseRequest.context,
       });
-      expect(result.decisions[0]).toEqual(expect.objectContaining({
+      expect(result.decisions).toEqual([]);
+      expect(result.codeResults?.[0]).toEqual(expect.objectContaining({
         outcome,
-        effects: [],
         reasonCodes: [reasonCode],
-        commitRequired: false,
-        eligible: false,
       }));
     },
   );
@@ -955,6 +1289,7 @@ describe('POST /v1/evaluate', () => {
     await seedCustomer();
     const request = {
       ...baseRequest,
+      codes: ['projected'],
       cart: {
         currency: 'GBP',
         subtotal: 6_500,
@@ -964,7 +1299,7 @@ describe('POST /v1/evaluate', () => {
         ],
       },
     } satisfies EvaluationRequest;
-    await seedProgram(promo('projected', {
+    await seedProgram(codedPromo('projected', 'PROJECTED', {
       reward: reward as CommerceReward,
       budget: { currency: 'GBP', minorUnits: projectedCost },
     }));
@@ -974,7 +1309,9 @@ describe('POST /v1/evaluate', () => {
       UPDATE programs SET budget_remaining = ?1
       WHERE merchant_id = ?2 AND external_ref = 'projected'
     `).bind(projectedCost - 1, SEEDED_MERCHANT_ID).run();
-    expect((await evaluate(request)).decisions[0]).toMatchObject({
+    const exhausted = await evaluate(request);
+    expect(exhausted.decisions).toEqual([]);
+    expect(exhausted.codeResults?.[0]).toMatchObject({
       outcome: 'exhausted',
       reasonCodes: ['BUDGET_EXHAUSTED'],
     });
@@ -1024,27 +1361,25 @@ describe('POST /v1/evaluate', () => {
     'returns a deterministic unavailable decision when $type reward currency differs from cart',
     async (reward) => {
       await seedCustomer();
-      await seedProgram(promo('wrong-currency', {
+      await seedProgram(codedPromo('wrong-currency', 'WRONG-CURRENCY', {
         reward,
       }));
       const result = await evaluate({
         ...baseRequest,
+        codes: ['wrong-currency'],
         cart: { ...baseRequest.cart, currency: 'USD' },
       });
-      expect(result.decisions[0]).toEqual(expect.objectContaining({
+      expect(result.decisions).toEqual([]);
+      expect(result.codeResults?.[0]).toEqual(expect.objectContaining({
         outcome: 'unavailable',
-        effects: [],
         reasonCodes: ['CURRENCY_MISMATCH'],
-        message: 'This promotion is unavailable for this currency.',
-        commitRequired: false,
-        eligible: false,
       }));
     },
   );
 
   test('preserves global eligibility failure before selected-reward currency checks', async () => {
     await seedCustomer('customer-1', { tier: 'silver' });
-    await seedProgram(promo('percent-budget-currency', {
+    await seedProgram(codedPromo('percent-budget-currency', 'PERCENT-BUDGET', {
       reward: {
         type: 'order_discount',
         calculation: 'percent',
@@ -1055,20 +1390,19 @@ describe('POST /v1/evaluate', () => {
 
     const result = await evaluate({
       ...baseRequest,
+      codes: ['percent-budget'],
       cart: { ...baseRequest.cart, currency: 'USD' },
     });
-    expect(result.decisions[0]).toEqual(expect.objectContaining({
+    expect(result.decisions).toEqual([]);
+    expect(result.codeResults?.[0]).toEqual(expect.objectContaining({
       outcome: 'not_qualified',
-      effects: [],
       reasonCodes: ['CONDITION_NOT_MET'],
-      commitRequired: false,
-      eligible: false,
     }));
   });
 
   test('does not let a matching budget mask a fixed reward currency mismatch', async () => {
     await seedCustomer();
-    await seedProgram(promo('masked-reward-currency', {
+    await seedProgram(codedPromo('masked-reward-currency', 'MASKED', {
       reward: {
         type: 'order_discount',
         calculation: 'fixed',
@@ -1077,13 +1411,11 @@ describe('POST /v1/evaluate', () => {
       budget: { currency: 'GBP', minorUnits: 10_000 },
     }));
 
-    const result = await evaluate();
-    expect(result.decisions[0]).toEqual(expect.objectContaining({
+    const result = await evaluate({ ...baseRequest, codes: ['masked'] });
+    expect(result.decisions).toEqual([]);
+    expect(result.codeResults?.[0]).toEqual(expect.objectContaining({
       outcome: 'unavailable',
-      effects: [],
       reasonCodes: ['CURRENCY_MISMATCH'],
-      commitRequired: false,
-      eligible: false,
     }));
   });
 
@@ -1296,10 +1628,41 @@ describe('POST /v1/evaluate', () => {
 
   test('persists an immutable tenant-scoped snapshot signed over all canonical fields', async () => {
     await seedCustomer();
-    await seedProgram(promo('signed'));
-    const result = await evaluate();
+    await seedProgram(codedPromo('signed', 'SIGNED'));
+    const request = {
+      ...baseRequest,
+      codes: [' signed ', 'missing', 'SIGNED'],
+    };
+    const response = await evaluateRaw(
+      request,
+      'pk_test_publishable_credential_material_00000001',
+      'task-5-correlation',
+    );
+    expect(response.status).toBe(200);
+    expect(response.headers.get('x-correlation-id')).toBe('task-5-correlation');
+    const result = EvaluationResponseSchema.parse(await response.json());
     const row = await storedDecision(result.evaluationId);
+    const submittedCodes = JSON.parse(row.submitted_codes_json);
+    const codeResults = JSON.parse(row.code_results_json);
+    expect(row).toMatchObject({
+      mode: 'coded',
+      correlation_id: 'task-5-correlation',
+    });
+    expect(submittedCodes).toEqual(['signed', 'missing']);
+    expect(codeResults).toEqual(result.codeResults);
+    expect(row.request_digest).toBe(await sha256({
+      mode: 'coded',
+      request: {
+        ...baseRequest,
+        codes: ['SIGNED', 'MISSING'],
+      },
+    }));
     const snapshot = {
+      mode: row.mode,
+      submittedCodes,
+      codeResults,
+      requestDigest: row.request_digest,
+      correlationId: row.correlation_id,
       customerRef: row.customer_ref ?? undefined,
       customerVersion: row.customer_version ?? undefined,
       schemaVersion: row.schema_version,
@@ -1319,6 +1682,7 @@ describe('POST /v1/evaluate', () => {
       ...signedPayload,
       snapshot: {
         ...snapshot,
+        codeResults: [...snapshot.codeResults].reverse(),
         facts: {
           ...snapshot.facts,
           scalar: { ...snapshot.facts.scalar, 'customer.tier': 'silver' },
@@ -1339,6 +1703,9 @@ describe('POST /v1/evaluate', () => {
     const tamperedConfig = structuredClone(persisted!);
     tamperedConfig.facts.programs[0]!.config.rewardRules[0]!.name = 'Tampered reward';
     expect(await verifyDecisionIntegrity(tamperedConfig, signingSecret)).toBe(false);
+    const tamperedOrder = structuredClone(persisted!);
+    tamperedOrder.codeResults.reverse();
+    expect(await verifyDecisionIntegrity(tamperedOrder, signingSecret)).toBe(false);
 
     await env.DB.prepare(
       "INSERT INTO merchants (id, name, created_at) VALUES ('merchant-b', 'Merchant B', ?1)",

@@ -30,6 +30,7 @@ export function createEvaluationRoutes(): Hono<AppEnvironment> {
     return context.json(await service.evaluate(
       context.get('merchantId'),
       await requestJson(context),
+      context.get('correlationId'),
     ));
   });
 
