@@ -24,12 +24,12 @@ deferred issue remains in the
 | Question | Current answer |
 |---|---|
 | Overall phase | Production Operator Platform, Delivery Gate C |
-| Current activity | Finalize the protected rollout commit, then have the owner run the cutover and manually verify the clean-break Promo selection and atomic bundle correction before reviewed PR/merge |
+| Current activity | Merge the protected rollout commit through a reviewed PR, then have the owner run the cutover from merged `dev` and manually verify the clean-break Promo selection and atomic bundle correction |
 | Current product-code baseline | PR #8 merge commit `e15cbba` on `dev` |
 | Local feature state | Promo-selection plan Tasks 1–9 and Task 10 review remediation are implemented and verified locally; protected rollout tooling, migration prechecks, compatibility proof, and recovery guidance are prepared; merge and staging evidence remain open |
 | Current deployment gap | The new migration/API/operator build is not deployed; staging still runs the historical singular selection/redemption contract |
 | Current blocker | Owner-controlled staging deployment and the 12 documented selection/bundle/tenant/log cases have not run |
-| Gate C finish line | Execute the protected owner-run cutover one command at a time from the approved commit, pass all manual cases, merge by reviewed PR, and close remaining tenant/security evidence |
+| Gate C finish line | Merge by reviewed PR, execute the protected owner-run cutover one command at a time from the exact merged `dev` commit, pass all manual cases, and close remaining tenant/security evidence |
 | Next plan work | Close Gate C, then write the approved free-shipping financial-authority implementation plan |
 
 ## Source-of-truth map
@@ -153,16 +153,18 @@ The immediate sequence is:
 
 1. Commit and approve the locally verified Task 10 rollout candidate; never
    push directly to `dev`.
-2. Confirm that exact source and protected-runner revision before staging.
-3. The account owner follows the protected cutover guide one command at a
+2. Merge the candidate into `dev` through a reviewed PR.
+3. Confirm the exact merged `dev` commit and protected-runner revision before
+   staging.
+4. The account owner follows the protected cutover guide one command at a
    time: continuous quiet window, Product-D1 confirmation/prechecks, exact
    pre-migration Time Travel bookmark, migration, pre-deployment health, API
    deployment, and Operator deployment. Identity is not part of this cutover.
-4. Repeat the documented automatic, coded, stacking, bundle-idempotency, and
+5. Repeat the documented automatic, coded, stacking, bundle-idempotency, and
    concurrency cases with fresh references.
-5. Record the staging evidence, merge the reviewed PR into `dev`, and then
-   complete the remaining tenant-isolation and security closeout checks.
-6. Reconcile the staging report, follow-up register, active plans, this page,
+6. Record the staging evidence and complete the remaining tenant-isolation and
+   security closeout checks.
+7. Reconcile the staging report, follow-up register, active plans, this page,
    and their Notion mirrors with the final Gate C result.
 
 No assistant-run Cloudflare mutation is permitted. The assistant supplies one

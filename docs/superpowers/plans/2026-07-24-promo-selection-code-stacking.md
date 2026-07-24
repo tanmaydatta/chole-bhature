@@ -1672,21 +1672,20 @@ approves the destructive restore.
 
 The implementation agent does not execute these external writes.
 
-- [ ] **Step 6: Run the documented manual staging guide**
+- [ ] **Step 6: Finish and merge the development branch**
 
-The account owner generates one new `RUN_SUFFIX` for the complete staging run
-and follows the Gate C manual's derived-value table. Every client identity,
-program reference, Promo code, customer reference, credential label, external
-order reference, and idempotency key uses that suffix consistently; generated
-evaluation/redemption IDs are copied from the current run. Do not reuse a
-suffix or refresh only a subset of the references. Record:
+Use `superpowers:verification-before-completion`, then
+`superpowers:finishing-a-development-branch`. Create a reviewed PR into `dev`
+and merge it; never push directly to `dev`. Confirm that the merged `dev`
+commit contains the protected runner revision that passed local verification.
 
-- expected versus actual result;
-- HTTP status;
-- evaluation/redemption ID;
-- correlation ID;
-- deployed Worker version IDs; and
-- any new gap with severity and follow-up owner.
+Merge evidence must include:
+
+- focused and full test output;
+- migration verification;
+- remaining follow-ups;
+- PR URL and merge commit; and
+- confirmation that repository and Notion plan statuses match.
 
 - [x] **Step 7: Request code review**
 
@@ -1705,15 +1704,19 @@ Use `superpowers:requesting-code-review`. Review specifically for:
 
 Use `superpowers:receiving-code-review` for actionable feedback, then repeat Steps 1–4. Do not mark this plan done on the strength of an earlier run.
 
-- [ ] **Step 9: Finish the development branch**
+- [ ] **Step 9: Run the documented manual staging guide from merged `dev`**
 
-Use `superpowers:verification-before-completion`, then `superpowers:finishing-a-development-branch`. Create a PR into `dev`; never push directly to `dev`.
+The account owner checks out the exact merged `dev` commit, generates one new
+`RUN_SUFFIX` for the complete staging run, and follows the Gate C manual's
+derived-value table. Every client identity, program reference, Promo code,
+customer reference, credential label, external order reference, and
+idempotency key uses that suffix consistently; generated
+evaluation/redemption IDs are copied from the current run. Do not reuse a
+suffix or refresh only a subset of the references. Record:
 
-Final evidence must include:
-
-- focused and full test output;
-- migration verification;
-- manual staging results;
-- remaining follow-ups;
-- PR URL; and
-- confirmation that repository and Notion plan statuses match.
+- expected versus actual result;
+- HTTP status;
+- evaluation/redemption ID;
+- correlation ID;
+- deployed Worker version IDs; and
+- any new gap with severity and follow-up owner.
