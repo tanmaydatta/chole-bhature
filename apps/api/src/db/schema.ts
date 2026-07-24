@@ -273,6 +273,11 @@ export const evaluationDecisions = sqliteTable('evaluation_decisions', {
   requestJson: text('request_json').notNull(),
   factsJson: text('facts_json').notNull(),
   decisionsJson: text('decisions_json').notNull(),
+  mode: text('mode').notNull().default('automatic'),
+  submittedCodesJson: text('submitted_codes_json').notNull().default('[]'),
+  codeResultsJson: text('code_results_json').notNull().default('[]'),
+  requestDigest: text('request_digest').notNull().default('legacy:unknown'),
+  correlationId: text('correlation_id').notNull().default('migration:unknown'),
   integrityHash: text('integrity_hash').notNull(),
   expiresAt: text('expires_at').notNull(),
   createdAt: text('created_at').notNull(),
@@ -286,6 +291,28 @@ export const evaluationDecisions = sqliteTable('evaluation_decisions', {
     columns: [table.merchantId, table.customerRef],
     foreignColumns: [customers.merchantId, customers.externalRef],
   }),
+  check('evaluation_decisions_mode_valid', sql`${table.mode} IN ('automatic', 'coded')`),
+  check(
+    'evaluation_decisions_submitted_codes_json_valid',
+    sql`json_valid(${table.submittedCodesJson}) AND json_type(${table.submittedCodesJson}) = 'array'`,
+  ),
+  check(
+    'evaluation_decisions_code_results_json_valid',
+    sql`json_valid(${table.codeResultsJson}) AND json_type(${table.codeResultsJson}) = 'array'`,
+  ),
+  check(
+    'evaluation_decisions_request_digest_nonempty',
+    sql`length(${table.requestDigest}) > 0`,
+  ),
+  check(
+    'evaluation_decisions_correlation_id_nonempty',
+    sql`length(${table.correlationId}) > 0`,
+  ),
+  index('evaluation_decisions_merchant_created_index').on(
+    table.merchantId,
+    table.createdAt,
+    table.id,
+  ),
 ]);
 
 export const redemptions = sqliteTable('redemptions', {
@@ -298,21 +325,197 @@ export const redemptions = sqliteTable('redemptions', {
   discountMinorUnits: integer('discount_minor_units').notNull(),
   currency: text('currency').notNull(),
   createdAt: text('created_at').notNull(),
+  requestDigest: text('request_digest').notNull().default('legacy:unknown'),
 }, table => [
   check(
     'redemptions_identifier_required',
     sql`${table.externalOrderRef} IS NOT NULL OR ${table.idempotencyKey} IS NOT NULL`,
   ),
+  check('redemptions_request_digest_nonempty', sql`length(${table.requestDigest}) > 0`),
   uniqueIndex('redemptions_merchant_external_order_ref_unique')
     .on(table.merchantId, table.externalOrderRef)
     .where(sql`${table.externalOrderRef} IS NOT NULL`),
   uniqueIndex('redemptions_merchant_idempotency_key_unique')
     .on(table.merchantId, table.idempotencyKey)
     .where(sql`${table.idempotencyKey} IS NOT NULL`),
+  uniqueIndex('redemptions_merchant_id_unique').on(table.merchantId, table.id),
+  index('redemptions_merchant_evaluation_index').on(
+    table.merchantId,
+    table.evaluationId,
+    table.createdAt,
+    table.id,
+  ),
   foreignKey({
     columns: [table.merchantId, table.evaluationId],
     foreignColumns: [evaluationDecisions.merchantId, evaluationDecisions.id],
   }),
+]);
+
+export const promoCodeClaims = sqliteTable('promo_code_claims', {
+  id: text('id').primaryKey(),
+  merchantId: text('merchant_id').notNull().references(() => merchants.id),
+  programId: text('program_id').notNull(),
+  programRef: text('program_ref').notNull(),
+  activeRevision: integer('active_revision').notNull(),
+  displayCode: text('display_code').notNull(),
+  normalizedCode: text('normalized_code').notNull(),
+  startsAt: text('starts_at'),
+  endsAt: text('ends_at'),
+  releasedAt: text('released_at'),
+  createdAt: text('created_at').notNull(),
+}, table => [
+  foreignKey({
+    columns: [table.merchantId, table.programId],
+    foreignColumns: [programs.merchantId, programs.id],
+  }).onDelete('cascade'),
+  foreignKey({
+    columns: [table.merchantId, table.programId, table.activeRevision],
+    foreignColumns: [
+      programRevisions.merchantId,
+      programRevisions.programId,
+      programRevisions.revision,
+    ],
+  }).onDelete('cascade'),
+  check('promo_code_claims_revision_positive', sql`${table.activeRevision} > 0`),
+  check('promo_code_claims_display_code_nonempty', sql`length(${table.displayCode}) > 0`),
+  check(
+    'promo_code_claims_normalized_code_nonempty',
+    sql`length(${table.normalizedCode}) > 0`,
+  ),
+  index('promo_code_claims_lookup').on(
+    table.merchantId,
+    table.normalizedCode,
+    table.releasedAt,
+  ),
+  index('promo_code_claims_program_index').on(
+    table.merchantId,
+    table.programId,
+    table.activeRevision,
+  ),
+]);
+
+export const redemptionOperations = sqliteTable('redemption_operations', {
+  merchantId: text('merchant_id').notNull().references(() => merchants.id),
+  idempotencyKey: text('idempotency_key').notNull(),
+  externalOrderRef: text('external_order_ref').notNull(),
+  evaluationId: text('evaluation_id').notNull(),
+  requestDigest: text('request_digest').notNull(),
+  state: text('state').notNull(),
+  terminalErrorCode: text('terminal_error_code'),
+  retryable: integer('retryable', { mode: 'boolean' }),
+  redemptionId: text('redemption_id'),
+  createdAt: text('created_at').notNull(),
+  updatedAt: text('updated_at').notNull(),
+}, table => [
+  primaryKey({ columns: [table.merchantId, table.idempotencyKey] }),
+  foreignKey({
+    columns: [table.merchantId, table.evaluationId],
+    foreignColumns: [evaluationDecisions.merchantId, evaluationDecisions.id],
+  }),
+  foreignKey({
+    columns: [table.merchantId, table.redemptionId],
+    foreignColumns: [redemptions.merchantId, redemptions.id],
+  }),
+  check(
+    'redemption_operations_state_valid',
+    sql`${table.state} IN ('pending', 'committed', 'rejected')`,
+  ),
+  check(
+    'redemption_operations_idempotency_key_nonempty',
+    sql`length(${table.idempotencyKey}) > 0`,
+  ),
+  check(
+    'redemption_operations_external_order_ref_nonempty',
+    sql`length(${table.externalOrderRef}) > 0`,
+  ),
+  check(
+    'redemption_operations_request_digest_nonempty',
+    sql`length(${table.requestDigest}) > 0`,
+  ),
+  check(
+    'redemption_operations_terminal_state_valid',
+    sql`(
+      ${table.state} = 'pending'
+      AND ${table.terminalErrorCode} IS NULL
+      AND ${table.retryable} IS NULL
+      AND ${table.redemptionId} IS NULL
+    ) OR (
+      ${table.state} = 'committed'
+      AND ${table.terminalErrorCode} IS NULL
+      AND ${table.retryable} IS NULL
+      AND ${table.redemptionId} IS NOT NULL
+    ) OR (
+      ${table.state} = 'rejected'
+      AND ${table.terminalErrorCode} IS NOT NULL
+      AND ${table.retryable} = 0
+      AND ${table.redemptionId} IS NULL
+    )`,
+  ),
+  uniqueIndex('redemption_operations_merchant_external_order_unique').on(
+    table.merchantId,
+    table.externalOrderRef,
+  ),
+  index('redemption_operations_merchant_evaluation_index').on(
+    table.merchantId,
+    table.evaluationId,
+    table.state,
+  ),
+]);
+
+export const redemptionEntries = sqliteTable('redemption_entries', {
+  merchantId: text('merchant_id').notNull(),
+  redemptionId: text('redemption_id').notNull(),
+  position: integer('position').notNull(),
+  programRef: text('program_ref').notNull(),
+  programRevision: integer('program_revision').notNull(),
+  rewardRuleRef: text('reward_rule_ref'),
+  effectsJson: text('effects_json').notNull(),
+  discountMinorUnits: integer('discount_minor_units').notNull(),
+  currency: text('currency').notNull(),
+}, table => [
+  primaryKey({ columns: [table.redemptionId, table.position] }),
+  foreignKey({
+    columns: [table.merchantId, table.redemptionId],
+    foreignColumns: [redemptions.merchantId, redemptions.id],
+  }).onDelete('cascade'),
+  check('redemption_entries_position_nonnegative', sql`${table.position} >= 0`),
+  check('redemption_entries_revision_positive', sql`${table.programRevision} > 0`),
+  check(
+    'redemption_entries_program_ref_nonempty',
+    sql`length(${table.programRef}) > 0`,
+  ),
+  check(
+    'redemption_entries_effects_json_valid',
+    sql`json_valid(${table.effectsJson}) AND json_type(${table.effectsJson}) = 'array'`,
+  ),
+  check(
+    'redemption_entries_discount_nonnegative',
+    sql`${table.discountMinorUnits} >= 0`,
+  ),
+  check(
+    'redemption_entries_currency_valid',
+    sql`${table.currency} GLOB '[A-Z][A-Z][A-Z]' AND length(${table.currency}) = 3`,
+  ),
+  index('redemption_entries_merchant_redemption_order_index').on(
+    table.merchantId,
+    table.redemptionId,
+    table.position,
+  ),
+  index('redemption_entries_merchant_program_counts_index').on(
+    table.merchantId,
+    table.programRef,
+    table.redemptionId,
+    table.position,
+  ),
+]);
+
+export const redemptionCommitGuards = sqliteTable('redemption_commit_guards', {
+  redemptionId: text('redemption_id').notNull(),
+  position: integer('position').notNull(),
+  changedRows: integer('changed_rows').notNull(),
+}, table => [
+  primaryKey({ columns: [table.redemptionId, table.position] }),
+  check('redemption_commit_guards_changed_once', sql`${table.changedRows} = 1`),
 ]);
 
 export type MerchantRow = typeof merchants.$inferSelect;
@@ -327,3 +530,6 @@ export type CredentialRateLimitWindowRow = typeof credentialRateLimitWindows.$in
 export type ProductAuditRow = typeof productAudit.$inferSelect;
 export type EvaluationDecisionRow = typeof evaluationDecisions.$inferSelect;
 export type RedemptionRow = typeof redemptions.$inferSelect;
+export type PromoCodeClaimRow = typeof promoCodeClaims.$inferSelect;
+export type RedemptionOperationRow = typeof redemptionOperations.$inferSelect;
+export type RedemptionEntryRow = typeof redemptionEntries.$inferSelect;

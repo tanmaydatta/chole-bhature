@@ -3,8 +3,10 @@ import type {
   ApiCredentialScope,
   ApiCredentialView,
   AuditEntry,
+  CodeEvaluationResult,
   CustomerSnapshot,
   DeploymentEnvironment,
+  Effect,
   EvaluationRequest,
   IncentiveDecision,
   MerchantActivationRequest,
@@ -267,6 +269,11 @@ export interface ProgramRepository {
 export interface EvaluationDecisionRecord {
   evaluationId: string;
   merchantId: string;
+  mode: EvaluationMode;
+  submittedCodes: string[];
+  codeResults: CodeEvaluationResult[];
+  requestDigest: string;
+  correlationId: string;
   customerRef?: string;
   customerVersion?: number;
   schemaVersion: number;
@@ -277,6 +284,8 @@ export interface EvaluationDecisionRecord {
   expiresAt: string;
   createdAt: string;
 }
+
+export type EvaluationMode = 'automatic' | 'coded';
 
 export interface EvaluationFactsSnapshot {
   scalar: Record<string, unknown>;
@@ -293,20 +302,32 @@ export interface DecisionRepository {
   get(merchantId: string, evaluationId: string): Promise<EvaluationDecisionRecord | null>;
 }
 
-export interface RedemptionCreate {
-  redemptionId: string;
-  merchantId: string;
-  externalOrderRef?: string;
-  idempotencyKey?: string;
-  evaluationId: string;
-  result: RedemptionResponse;
+export interface RedemptionEntryRecord {
+  position: number;
+  programRef: string;
+  programRevision: number;
+  rewardRuleRef?: string;
+  effects: Effect[];
   discountMinorUnits: number;
   currency: string;
+}
+
+export interface RedemptionBundleCreate {
+  redemptionId: string;
+  merchantId: string;
+  evaluationId: string;
+  externalOrderRef: string;
+  idempotencyKey: string;
+  requestDigest: string;
+  result: RedemptionResponse;
+  entries: RedemptionEntryRecord[];
   createdAt: string;
   receiptIntegrityHash: string;
 }
 
-export interface AtomicRedemptionCommit extends RedemptionCreate {
+export type RedemptionCreate = RedemptionBundleCreate;
+
+export interface AtomicRedemptionCommit extends RedemptionBundleCreate {
   programId: string;
   programRef: string;
   expectedActiveRevision: number;
@@ -329,18 +350,18 @@ export interface RedemptionIntegrityVerifiers {
 }
 
 export interface RedemptionRepository {
-  create(input: RedemptionCreate): Promise<void>;
+  create(input: RedemptionBundleCreate): Promise<void>;
   commitAtomically(input: AtomicRedemptionCommit): Promise<boolean>;
   getByExternalOrderRef(
     merchantId: string,
     externalOrderRef: string,
     verifyIntegrity: RedemptionReceiptIntegrityVerifier,
-  ): Promise<RedemptionCreate | null>;
+  ): Promise<RedemptionBundleCreate | null>;
   getByIdempotencyKey(
     merchantId: string,
     idempotencyKey: string,
     verifyIntegrity: RedemptionReceiptIntegrityVerifier,
-  ): Promise<RedemptionCreate | null>;
+  ): Promise<RedemptionBundleCreate | null>;
   countCommittedForCustomerProgram(
     merchantId: string,
     customerRef: string,

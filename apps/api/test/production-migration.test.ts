@@ -54,6 +54,10 @@ async function resetToMigrationOne(): Promise<D1Migration> {
   ).toBeDefined();
 
   const applicationTables = [
+    'redemption_commit_guards',
+    'redemption_entries',
+    'redemption_operations',
+    'promo_code_claims',
     'product_audit',
     'credential_rate_limit_windows',
     'api_credentials',
@@ -73,6 +77,24 @@ async function resetToMigrationOne(): Promise<D1Migration> {
   await testEnv.DB.prepare('DELETE FROM d1_migrations').run();
   await applyD1Migrations(testEnv.DB, [migrationOne!]);
   return productionMigration!;
+}
+
+function requiredMigration(name: string): D1Migration {
+  const migration = testEnv.TEST_MIGRATIONS.find(candidate => candidate.name === name);
+  expect(migration, `${name} must remain available`).toBeDefined();
+  return migration!;
+}
+
+async function resetToMigrationFive(): Promise<D1Migration> {
+  const productionMigration = await resetToMigrationOne();
+  await seedRepresentativePlanTwoData();
+  await applyD1Migrations(testEnv.DB, [
+    productionMigration,
+    requiredMigration('0003_credential_origins.sql'),
+    requiredMigration('0004_program_committed_spend.sql'),
+    requiredMigration('0005_publishable_rate_limits.sql'),
+  ]);
+  return requiredMigration('0006_promo_selection_redemption_bundles.sql');
 }
 
 async function seedRepresentativePlanTwoData(): Promise<void> {
@@ -107,6 +129,7 @@ async function seedRepresentativePlanTwoData(): Promise<void> {
       redemptionId: 'legacy-redemption',
       evaluationId: 'legacy-evaluation',
       externalOrderRef: 'legacy-order',
+      idempotencyKey: 'legacy-key',
       programRef: 'legacy-welcome',
       rewardRuleRef: 'welcome-reward',
       status: 'committed',
@@ -172,10 +195,10 @@ async function seedRepresentativePlanTwoData(): Promise<void> {
     ),
     testEnv.DB.prepare(`
       INSERT INTO redemptions (
-        id, merchant_id, external_order_ref, evaluation_id, result_json,
+        id, merchant_id, external_order_ref, idempotency_key, evaluation_id, result_json,
         discount_minor_units, currency, created_at
       ) VALUES (
-        'legacy-redemption', 'phase-0-merchant', 'legacy-order',
+        'legacy-redemption', 'phase-0-merchant', 'legacy-order', 'legacy-key',
         'legacy-evaluation', ?1, 500, 'GBP', ?2
       )
     `).bind(JSON.stringify(redemptionResult), createdAt),
@@ -437,4 +460,204 @@ test('recovers spend from a rolled-back counter-first Worker update sequence', a
     budgetRemaining: 4_250,
     committedSpend: 750,
   });
+});
+
+test('adds promo claims, evaluation identity, idempotency operations, and bundle storage', async () => {
+  const migration = await resetToMigrationFive();
+  await applyD1Migrations(testEnv.DB, [migration]);
+
+  const tableNames = (await testEnv.DB.prepare(`
+    SELECT name FROM sqlite_master WHERE type = 'table'
+  `).all<{ name: string }>()).results.map(table => table.name);
+  const columns = async (table: string) => (
+    await testEnv.DB.prepare(`SELECT name FROM pragma_table_info('${table}')`)
+      .all<{ name: string }>()
+  ).results.map(column => column.name);
+
+  expect(tableNames).toEqual(expect.arrayContaining([
+    'promo_code_claims',
+    'redemption_operations',
+    'redemptions',
+    'redemption_entries',
+    'redemption_commit_guards',
+  ]));
+  expect(await columns('evaluation_decisions')).toEqual(expect.arrayContaining([
+    'mode',
+    'submitted_codes_json',
+    'code_results_json',
+    'request_digest',
+    'correlation_id',
+  ]));
+  expect(await columns('redemption_operations')).toEqual(expect.arrayContaining([
+    'idempotency_key',
+    'state',
+    'terminal_error_code',
+    'request_digest',
+  ]));
+  expect(await columns('redemptions')).toEqual(expect.arrayContaining([
+    'request_digest',
+    'result_json',
+  ]));
+  const indexes = (await testEnv.DB.prepare(`
+    SELECT name FROM sqlite_master WHERE type = 'index'
+  `).all<{ name: string }>()).results.map(index => index.name);
+  expect(indexes).toEqual(expect.arrayContaining([
+    'promo_code_claims_lookup',
+    'redemption_operations_merchant_external_order_unique',
+    'redemption_operations_merchant_evaluation_index',
+    'redemptions_merchant_external_order_ref_unique',
+    'redemptions_merchant_idempotency_key_unique',
+    'redemptions_merchant_evaluation_index',
+    'redemption_entries_merchant_program_counts_index',
+  ]));
+});
+
+test('normalizes valid legacy triggers and backfills singular redemption history', async () => {
+  const migration = await resetToMigrationFive();
+  const legacyAutomatic = {
+    ...programConfiguration,
+    code: '  OLD-AUTO  ',
+    stackable: true,
+    stackingGroup: 'legacy-auto',
+  };
+  const legacyCoded = {
+    ...programConfiguration,
+    id: 'legacy-coded',
+    name: 'Legacy coded',
+    autoApply: false,
+    code: '  vip20  ',
+    stackable: true,
+    stackingGroup: 'legacy-coded',
+  };
+  await testEnv.DB.batch([
+    testEnv.DB.prepare(`
+      UPDATE programs SET config_json = ?1
+      WHERE merchant_id = 'phase-0-merchant' AND id = 'legacy-program-row'
+    `).bind(JSON.stringify(legacyAutomatic)),
+    testEnv.DB.prepare(`
+      UPDATE program_revisions SET config_json = ?1
+      WHERE merchant_id = 'phase-0-merchant' AND program_id = 'legacy-program-row'
+    `).bind(JSON.stringify(legacyAutomatic)),
+    testEnv.DB.prepare(`
+      INSERT INTO programs (
+        id, merchant_id, external_ref, type, name, status, config_json, priority,
+        max_uses, usage_count, budget_remaining, active_revision, draft_revision,
+        created_at, updated_at
+      ) VALUES (
+        'legacy-coded-row', 'phase-0-merchant', 'legacy-coded', 'promo',
+        'Legacy coded', 'active', ?1, 10, 10, 0, 5000, 1, NULL, ?2, ?2
+      )
+    `).bind(JSON.stringify(legacyCoded), createdAt),
+    testEnv.DB.prepare(`
+      INSERT INTO program_revisions (
+        program_id, merchant_id, revision, config_json, created_at, created_by,
+        published_at, published_by
+      ) VALUES (
+        'legacy-coded-row', 'phase-0-merchant', 1, ?1, ?2, 'migration-test',
+        ?2, 'migration-test'
+      )
+    `).bind(JSON.stringify(legacyCoded), createdAt),
+    testEnv.DB.prepare(`
+      INSERT INTO program_counters (
+        program_id, merchant_id, max_uses, usage_count, budget_remaining,
+        committed_spend
+      ) VALUES ('legacy-coded-row', 'phase-0-merchant', 10, 0, 5000, 0)
+    `),
+  ]);
+
+  await applyD1Migrations(testEnv.DB, [migration]);
+
+  const automatic = JSON.parse((await testEnv.DB.prepare(`
+    SELECT config_json AS configJson FROM program_revisions
+    WHERE merchant_id = 'phase-0-merchant' AND program_id = 'legacy-program-row'
+  `).first<{ configJson: string }>())!.configJson) as Record<string, unknown>;
+  expect(automatic).toMatchObject({ autoApply: true, stackable: false });
+  expect(automatic).not.toHaveProperty('code');
+  expect(automatic).not.toHaveProperty('stackingGroup');
+
+  const coded = JSON.parse((await testEnv.DB.prepare(`
+    SELECT config_json AS configJson FROM program_revisions
+    WHERE merchant_id = 'phase-0-merchant' AND program_id = 'legacy-coded-row'
+  `).first<{ configJson: string }>())!.configJson) as Record<string, unknown>;
+  expect(coded).toMatchObject({ autoApply: false, code: 'vip20', stackable: true });
+  expect(coded).not.toHaveProperty('stackingGroup');
+  expect(await testEnv.DB.prepare(`
+    SELECT display_code AS displayCode, normalized_code AS normalizedCode
+    FROM promo_code_claims
+    WHERE merchant_id = 'phase-0-merchant' AND program_id = 'legacy-coded-row'
+  `).first()).toEqual({ displayCode: 'vip20', normalizedCode: 'VIP20' });
+
+  expect(await testEnv.DB.prepare(`
+    SELECT position, program_ref AS programRef, program_revision AS programRevision,
+      reward_rule_ref AS rewardRuleRef, effects_json AS effectsJson,
+      discount_minor_units AS discountMinorUnits, currency
+    FROM redemption_entries WHERE redemption_id = 'legacy-redemption'
+  `).first()).toEqual({
+    position: 0,
+    programRef: 'legacy-welcome',
+    programRevision: 1,
+    rewardRuleRef: 'welcome-reward',
+    effectsJson: JSON.stringify([{
+      type: 'order_discount',
+      calculation: 'fixed',
+      amount: { currency: 'GBP', minorUnits: 500 },
+    }]),
+    discountMinorUnits: 500,
+    currency: 'GBP',
+  });
+  expect(await testEnv.DB.prepare(`
+    SELECT mode, submitted_codes_json AS submittedCodesJson,
+      code_results_json AS codeResultsJson, request_digest AS requestDigest,
+      correlation_id AS correlationId
+    FROM evaluation_decisions WHERE id = 'legacy-evaluation'
+  `).first()).toEqual({
+    mode: 'automatic',
+    submittedCodesJson: '[]',
+    codeResultsJson: '[]',
+    requestDigest: 'legacy:legacy-evaluation',
+    correlationId: 'migration:legacy-evaluation',
+  });
+  expect(await testEnv.DB.prepare(`
+    SELECT merchant_id AS merchantId, idempotency_key AS idempotencyKey,
+      external_order_ref AS externalOrderRef, request_digest AS requestDigest,
+      state, terminal_error_code AS terminalErrorCode, retryable,
+      redemption_id AS redemptionId
+    FROM redemption_operations
+    WHERE merchant_id = 'phase-0-merchant' AND idempotency_key = 'legacy-key'
+  `).first()).toEqual({
+    merchantId: 'phase-0-merchant',
+    idempotencyKey: 'legacy-key',
+    externalOrderRef: 'legacy-order',
+    requestDigest: 'legacy:legacy-redemption',
+    state: 'committed',
+    terminalErrorCode: null,
+    retryable: null,
+    redemptionId: 'legacy-redemption',
+  });
+});
+
+test('aborts ambiguous legacy trigger configurations instead of guessing intent', async () => {
+  const migration = await resetToMigrationFive();
+  const ambiguous = {
+    ...programConfiguration,
+    id: 'ambiguous-coded',
+    name: 'Ambiguous coded',
+    autoApply: undefined,
+    code: 'MAYBE-A-CODE',
+  };
+  await testEnv.DB.prepare(`
+    UPDATE programs SET config_json = ?1
+    WHERE merchant_id = 'phase-0-merchant' AND id = 'legacy-program-row'
+  `).bind(JSON.stringify(ambiguous)).run();
+  await testEnv.DB.prepare(`
+    UPDATE program_revisions SET config_json = ?1
+    WHERE merchant_id = 'phase-0-merchant' AND program_id = 'legacy-program-row'
+  `).bind(JSON.stringify(ambiguous)).run();
+
+  await expect(applyD1Migrations(testEnv.DB, [migration]))
+    .rejects.toThrow(/legacy promo trigger/i);
+  expect(await testEnv.DB.prepare(`
+    SELECT COUNT(*) AS count FROM sqlite_master
+    WHERE type = 'table' AND name = 'promo_code_claims'
+  `).first()).toEqual({ count: 0 });
 });

@@ -2,7 +2,9 @@ import {
   ApiCredentialScopeSchema,
   ApiCredentialViewSchema,
   AuditEntrySchema,
+  CodeEvaluationResultSchema,
   CustomerSnapshotSchema,
+  EffectSchema,
   EvaluationRequestSchema,
   IncentiveDecisionSchema,
   MerchantActivationRequestSchema,
@@ -15,6 +17,7 @@ import {
   ProgramStatusSchema,
   RedemptionResponseSchema,
   VariableDefinitionSchema,
+  normalizeDistinctPromoCodes,
   type VariableDefinition,
 } from '@incentives/contracts';
 import { and, asc, desc, eq } from 'drizzle-orm';
@@ -30,6 +33,7 @@ import {
   programCounters,
   programRevisions,
   programs,
+  redemptionEntries,
   redemptions,
   schemaVersions,
   variableDefinitions,
@@ -52,6 +56,7 @@ import {
   type ProgramRecord,
   type ProgramRevisionRecord,
   type RedemptionCreate,
+  type RedemptionEntryRecord,
   type RedemptionReceiptIntegrityVerifier,
   type Repositories,
   type SchemaVersionRecord,
@@ -62,6 +67,7 @@ import {
 const AttributesSchema = z.record(z.string(), z.unknown());
 const DefinitionsSchema = z.array(VariableDefinitionSchema);
 const DecisionsSchema = z.array(IncentiveDecisionSchema);
+const CodeResultsSchema = z.array(CodeEvaluationResultSchema);
 const FactsSchema = z.object({
   scalar: AttributesSchema,
   lineItems: z.array(AttributesSchema),
@@ -87,9 +93,26 @@ const AllowedOriginsSchema = z.array(ExactOriginSchema).max(100).refine(
   'Origins must be unique',
 );
 const ReceiptIntegrityHashSchema = z.string().regex(/^[0-9a-f]{64}$/u);
+const RequestDigestSchema = z.string().regex(/^[0-9a-f]{64}$/u);
+const EvaluationModeSchema = z.enum(['automatic', 'coded']);
 const StoredRedemptionEnvelopeSchema = z.object({
-  version: z.literal(1),
+  version: z.literal(2),
   result: RedemptionResponseSchema,
+  receiptIntegrityHash: ReceiptIntegrityHashSchema,
+}).strict();
+const LegacyRedemptionResultSchema = z.object({
+  redemptionId: z.string().min(1),
+  evaluationId: z.string().min(1),
+  externalOrderRef: z.string().min(1).optional(),
+  idempotencyKey: z.string().min(1).optional(),
+  programRef: z.string().min(1),
+  rewardRuleRef: z.string().min(1).optional(),
+  status: z.literal('committed'),
+  effects: z.array(EffectSchema),
+}).strict();
+const LegacyRedemptionEnvelopeSchema = z.object({
+  version: z.literal(1),
+  result: LegacyRedemptionResultSchema,
   receiptIntegrityHash: ReceiptIntegrityHashSchema,
 }).strict();
 
@@ -141,6 +164,15 @@ function now(): string {
 
 function parseJson<T>(value: string, schema: z.ZodType<T>): T {
   return schema.parse(JSON.parse(value) as unknown);
+}
+
+function parseCanonicalJson<T>(value: string, schema: z.ZodType<T>): T {
+  const stored = JSON.parse(value) as unknown;
+  const parsed = schema.parse(stored);
+  if (canonicalJson(stored) !== canonicalJson(parsed)) {
+    throw new Error('Stored JSON requires canonicalization');
+  }
+  return parsed;
 }
 
 function persistedRecord<T>(kind: string, deserialize: () => T): T {
@@ -621,10 +653,15 @@ function conditionalAuditInsertStatement(
   );
 }
 
-function parseDecision(input: EvaluationDecisionRecord): EvaluationDecisionRecord {
+function parseDecision(
+  input: EvaluationDecisionRecord,
+  options: { legacy?: boolean } = {},
+): EvaluationDecisionRecord {
   canonicalJson(input.request);
   canonicalJson(input.facts);
   canonicalJson(input.decisions);
+  canonicalJson(input.submittedCodes);
+  canonicalJson(input.codeResults);
 
   const customerRef = input.customerRef === undefined
     ? undefined
@@ -643,13 +680,42 @@ function parseDecision(input: EvaluationDecisionRecord): EvaluationDecisionRecor
   }
   const facts = FactsSchema.parse(input.facts);
   const decisions = DecisionsSchema.parse(input.decisions);
+  const mode = EvaluationModeSchema.parse(input.mode);
+  const submittedCodes = z.array(z.string().min(1)).max(10).parse(input.submittedCodes);
+  const codeResults = CodeResultsSchema.parse(input.codeResults);
+  const normalizedRequestCodes = normalizeDistinctPromoCodes(request.codes ?? []);
+  if (
+    canonicalJson(submittedCodes)
+      !== canonicalJson(normalizedRequestCodes.map(code => code.display))
+  ) {
+    throw new Error('Submitted codes must match the normalized evaluation request order');
+  }
+  if (
+    mode !== (submittedCodes.length === 0 ? 'automatic' : 'coded')
+    || (mode === 'automatic' && codeResults.length !== 0)
+    || (mode === 'coded' && codeResults.length !== submittedCodes.length)
+    || codeResults.some((result, index) => (
+      result.code !== submittedCodes[index]
+      || result.normalizedCode !== normalizedRequestCodes[index]?.normalized
+    ))
+  ) {
+    throw new Error('Evaluation mode and code diagnostics are inconsistent');
+  }
   canonicalJson(request);
   canonicalJson(facts);
   canonicalJson(decisions);
+  canonicalJson(codeResults);
 
   return {
     evaluationId: z.string().min(1).parse(input.evaluationId),
     merchantId: z.string().min(1).parse(input.merchantId),
+    mode,
+    submittedCodes,
+    codeResults,
+    requestDigest: options.legacy === true
+      ? z.string().regex(/^legacy:[^:]+$/u).parse(input.requestDigest)
+      : RequestDigestSchema.parse(input.requestDigest),
+    correlationId: z.string().min(1).max(200).parse(input.correlationId),
     ...optional('customerRef', customerRef),
     ...optional('customerVersion', customerVersion),
     schemaVersion: PositiveIntegerSchema.parse(input.schemaVersion),
@@ -663,94 +729,251 @@ function parseDecision(input: EvaluationDecisionRecord): EvaluationDecisionRecor
 }
 
 function parseDecisionRow(row: typeof evaluationDecisions.$inferSelect): EvaluationDecisionRecord {
-  return parseDecision({
+  const request = parseCanonicalJson(row.requestJson, EvaluationRequestSchema);
+  const facts = parseCanonicalJson(row.factsJson, FactsSchema);
+  const decisions = parseCanonicalJson(row.decisionsJson, DecisionsSchema);
+  const submittedCodes = parseCanonicalJson(
+    row.submittedCodesJson,
+    z.array(z.string().min(1)).max(10),
+  );
+  const codeResults = parseCanonicalJson(row.codeResultsJson, CodeResultsSchema);
+  const record = {
     evaluationId: row.id,
     merchantId: row.merchantId,
+    mode: EvaluationModeSchema.parse(row.mode),
+    submittedCodes,
+    codeResults,
+    requestDigest: row.requestDigest,
+    correlationId: row.correlationId,
     ...optional('customerRef', row.customerRef),
     ...optional('customerVersion', row.customerVersion),
     schemaVersion: row.schemaVersion,
-    request: parseJson(row.requestJson, EvaluationRequestSchema),
-    facts: parseJson(row.factsJson, FactsSchema),
-    decisions: parseJson(row.decisionsJson, DecisionsSchema),
+    request,
+    facts,
+    decisions,
     integrityHash: row.integrityHash,
     expiresAt: row.expiresAt,
     createdAt: row.createdAt,
-  });
+  };
+  if (row.requestDigest.startsWith('legacy:')) {
+    if (
+      row.requestDigest !== `legacy:${row.id}`
+      || row.correlationId !== `migration:${row.id}`
+    ) {
+      throw new Error('Legacy evaluation migration markers are invalid');
+    }
+    return parseDecision(record, { legacy: true });
+  }
+  return parseDecision(record);
 }
 
 function decisionFromRow(row: typeof evaluationDecisions.$inferSelect): EvaluationDecisionRecord {
   return persistedRecord('evaluation decision', () => parseDecisionRow(row));
 }
 
+function parseRedemptionEntry(input: RedemptionEntryRecord): RedemptionEntryRecord {
+  const rewardRuleRef = input.rewardRuleRef === undefined
+    ? undefined
+    : z.string().min(1).parse(input.rewardRuleRef);
+  const effects = z.array(EffectSchema).parse(input.effects);
+  canonicalJson(effects);
+  return {
+    position: z.number().int().nonnegative().parse(input.position),
+    programRef: z.string().min(1).parse(input.programRef),
+    programRevision: PositiveIntegerSchema.parse(input.programRevision),
+    ...optional('rewardRuleRef', rewardRuleRef),
+    effects,
+    discountMinorUnits: NonnegativeIntegerSchema.parse(input.discountMinorUnits),
+    currency: CurrencySchema.parse(input.currency),
+  };
+}
+
 function parseRedemption(input: RedemptionCreate): RedemptionCreate {
-  const externalOrderRef = input.externalOrderRef === undefined
-    ? undefined
-    : z.string().min(1).parse(input.externalOrderRef);
-  const idempotencyKey = input.idempotencyKey === undefined
-    ? undefined
-    : z.string().min(1).parse(input.idempotencyKey);
-
-  if (externalOrderRef === undefined && idempotencyKey === undefined) {
-    throw new Error('At least one redemption identifier is required');
-  }
-
+  const redemptionId = z.string().min(1).parse(input.redemptionId);
+  const evaluationId = z.string().min(1).parse(input.evaluationId);
+  const externalOrderRef = z.string().min(1).parse(input.externalOrderRef);
+  const idempotencyKey = z.string().min(1).parse(input.idempotencyKey);
   const result = RedemptionResponseSchema.parse(input.result);
+  const entries = z.array(z.unknown()).min(1).parse(input.entries)
+    .map(entry => parseRedemptionEntry(entry as RedemptionEntryRecord));
+  if (entries.some((entry, position) => entry.position !== position)) {
+    throw new Error('Redemption entry positions must be contiguous and ordered');
+  }
+  const publicEntries = entries.map((entry) => ({
+    programRef: entry.programRef,
+    programRevision: entry.programRevision,
+    ...optional('rewardRuleRef', entry.rewardRuleRef),
+    effects: entry.effects,
+  }));
   if (
-    result.redemptionId !== input.redemptionId
-    || result.evaluationId !== input.evaluationId
+    result.redemptionId !== redemptionId
+    || result.evaluationId !== evaluationId
     || result.externalOrderRef !== externalOrderRef
     || result.idempotencyKey !== idempotencyKey
+    || canonicalJson(result.entries) !== canonicalJson(publicEntries)
   ) {
-    throw new Error('Redemption result does not match its relational identifiers');
+    throw new Error('Redemption result does not match its relational bundle');
   }
 
   return {
-    redemptionId: z.string().min(1).parse(input.redemptionId),
+    redemptionId,
     merchantId: z.string().min(1).parse(input.merchantId),
-    ...optional('externalOrderRef', externalOrderRef),
-    ...optional('idempotencyKey', idempotencyKey),
-    evaluationId: z.string().min(1).parse(input.evaluationId),
+    externalOrderRef,
+    idempotencyKey,
+    evaluationId,
+    requestDigest: RequestDigestSchema.parse(input.requestDigest),
     result,
-    discountMinorUnits: z.number().int().nonnegative().parse(input.discountMinorUnits),
-    currency: CurrencySchema.parse(input.currency),
+    entries,
     createdAt: DateTimeSchema.parse(input.createdAt),
     receiptIntegrityHash: ReceiptIntegrityHashSchema.parse(input.receiptIntegrityHash),
   };
 }
 
-function parseRedemptionRow(row: typeof redemptions.$inferSelect): RedemptionCreate {
+function redemptionTotals(redemption: RedemptionCreate): {
+  discountMinorUnits: number;
+  currency: string;
+} {
+  const currencies = new Set(redemption.entries.map(entry => entry.currency));
+  if (currencies.size !== 1) throw new Error('Redemption entries must use one currency');
+  const total = redemption.entries.reduce(
+    (sum, entry) => sum + BigInt(entry.discountMinorUnits),
+    0n,
+  );
+  if (total > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw new Error('Redemption discount exceeds the supported range');
+  }
+  return {
+    discountMinorUnits: Number(total),
+    currency: redemption.entries[0]!.currency,
+  };
+}
+
+function parseRedemptionRow(
+  row: typeof redemptions.$inferSelect,
+  entryRows: Array<typeof redemptionEntries.$inferSelect>,
+): RedemptionCreate {
+  if (row.externalOrderRef === null || row.idempotencyKey === null) {
+    throw new Error('Current redemption bundles require both identifiers');
+  }
   const envelope = parseJson(row.resultJson, StoredRedemptionEnvelopeSchema);
-  return parseRedemption({
+  const redemption = parseRedemption({
     redemptionId: row.id,
     merchantId: row.merchantId,
-    ...optional('externalOrderRef', row.externalOrderRef),
-    ...optional('idempotencyKey', row.idempotencyKey),
+    externalOrderRef: row.externalOrderRef,
+    idempotencyKey: row.idempotencyKey,
     evaluationId: row.evaluationId,
+    requestDigest: row.requestDigest,
     result: envelope.result,
-    discountMinorUnits: row.discountMinorUnits,
-    currency: row.currency,
+    entries: entryRows.map(entry => ({
+      position: entry.position,
+      programRef: entry.programRef,
+      programRevision: entry.programRevision,
+      ...optional('rewardRuleRef', entry.rewardRuleRef),
+      effects: parseJson(entry.effectsJson, z.array(EffectSchema)),
+      discountMinorUnits: entry.discountMinorUnits,
+      currency: entry.currency,
+    })),
     createdAt: row.createdAt,
     receiptIntegrityHash: envelope.receiptIntegrityHash,
   });
+  const totals = redemptionTotals(redemption);
+  if (
+    row.discountMinorUnits !== totals.discountMinorUnits
+    || row.currency !== totals.currency
+  ) {
+    throw new Error('Redemption header totals do not match its entries');
+  }
+  return redemption;
 }
 
-function redemptionFromRow(row: typeof redemptions.$inferSelect): RedemptionCreate {
-  return persistedRecord('redemption', () => parseRedemptionRow(row));
+function readLegacyRedemptionRow(
+  row: typeof redemptions.$inferSelect,
+  entryRows: Array<typeof redemptionEntries.$inferSelect>,
+) {
+  const envelope = parseJson(row.resultJson, LegacyRedemptionEnvelopeSchema);
+  const [entry] = entryRows;
+  if (entry === undefined) {
+    throw new Error('Legacy redemption has no migrated entry');
+  }
+  if (
+    row.requestDigest !== `legacy:${row.id}`
+    || entryRows.length !== 1
+    || entry.position !== 0
+    || envelope.result.redemptionId !== row.id
+    || envelope.result.evaluationId !== row.evaluationId
+    || envelope.result.externalOrderRef !== (row.externalOrderRef ?? undefined)
+    || envelope.result.idempotencyKey !== (row.idempotencyKey ?? undefined)
+    || envelope.result.programRef !== entry.programRef
+    || envelope.result.rewardRuleRef !== (entry.rewardRuleRef ?? undefined)
+    || canonicalJson(envelope.result.effects)
+      !== canonicalJson(parseJson(entry.effectsJson, z.array(EffectSchema)))
+    || row.discountMinorUnits !== entry.discountMinorUnits
+    || row.currency !== entry.currency
+  ) {
+    throw new Error('Legacy redemption row does not match its migrated entry');
+  }
+  return { row, entry, envelope };
+}
+
+function historicalRedemptionFromRows(
+  row: typeof redemptions.$inferSelect,
+  entryRows: Array<typeof redemptionEntries.$inferSelect>,
+): RedemptionCreate {
+  return persistedRecord('redemption', () => {
+    const raw = JSON.parse(row.resultJson) as { version?: unknown };
+    if (raw.version !== 1) return parseRedemptionRow(row, entryRows);
+    const legacy = readLegacyRedemptionRow(row, entryRows);
+    return {
+      redemptionId: row.id,
+      merchantId: row.merchantId,
+      ...optional('externalOrderRef', row.externalOrderRef ?? undefined),
+      ...optional('idempotencyKey', row.idempotencyKey ?? undefined),
+      evaluationId: row.evaluationId,
+      requestDigest: row.requestDigest,
+      result: legacy.envelope.result,
+      entries: [{
+        position: legacy.entry.position,
+        programRef: legacy.entry.programRef,
+        programRevision: legacy.entry.programRevision,
+        ...optional('rewardRuleRef', legacy.entry.rewardRuleRef),
+        effects: parseJson(legacy.entry.effectsJson, z.array(EffectSchema)),
+        discountMinorUnits: legacy.entry.discountMinorUnits,
+        currency: legacy.entry.currency,
+      }],
+      createdAt: row.createdAt,
+      receiptIntegrityHash: legacy.envelope.receiptIntegrityHash,
+    } as unknown as RedemptionCreate;
+  });
+}
+
+function redemptionFromRows(
+  row: typeof redemptions.$inferSelect,
+  entryRows: Array<typeof redemptionEntries.$inferSelect>,
+): RedemptionCreate {
+  return persistedRecord('redemption', () => {
+    const raw = JSON.parse(row.resultJson) as { version?: unknown };
+    if (raw.version === 1) {
+      readLegacyRedemptionRow(row, entryRows);
+      throw new Error('Legacy redemption is available only to the private audit reader');
+    }
+    return parseRedemptionRow(row, entryRows);
+  });
 }
 
 function redemptionEnvelope(redemption: RedemptionCreate): string {
   return JSON.stringify(StoredRedemptionEnvelopeSchema.parse({
-    version: 1,
+    version: 2,
     result: redemption.result,
     receiptIntegrityHash: redemption.receiptIntegrityHash,
   }));
 }
 
-async function verifiedRedemptionFromRow(
+async function verifiedRedemptionFromRows(
   row: typeof redemptions.$inferSelect,
+  entryRows: Array<typeof redemptionEntries.$inferSelect>,
   verifyIntegrity: RedemptionReceiptIntegrityVerifier,
 ): Promise<RedemptionCreate> {
-  const redemption = redemptionFromRow(row);
+  const redemption = redemptionFromRows(row, entryRows);
   if (!(await verifyIntegrity(redemption))) {
     throw new Error('Redemption receipt integrity verification failed');
   }
@@ -761,7 +984,11 @@ function parseAtomicRedemption(input: AtomicRedemptionCommit): AtomicRedemptionC
   const parsed = parseRedemption(input);
   const programRef = z.string().min(1).parse(input.programRef);
   const expectedProgram = PromoProgramSchema.parse(input.expectedProgram);
-  if (expectedProgram.id !== programRef || parsed.result.programRef !== programRef) {
+  if (
+    expectedProgram.id !== programRef
+    || parsed.entries.length !== 1
+    || parsed.entries[0]?.programRef !== programRef
+  ) {
     throw new Error('Atomic redemption program identity does not match');
   }
   const customerRef = input.customerRef === undefined
@@ -2573,6 +2800,11 @@ export function createRepositories(env: Env): Repositories {
           requestJson: canonicalJson(parsed.request),
           factsJson: canonicalJson(parsed.facts),
           decisionsJson: canonicalJson(parsed.decisions),
+          mode: parsed.mode,
+          submittedCodesJson: canonicalJson(parsed.submittedCodes),
+          codeResultsJson: canonicalJson(parsed.codeResults),
+          requestDigest: parsed.requestDigest,
+          correlationId: parsed.correlationId,
           integrityHash: parsed.integrityHash,
           expiresAt: parsed.expiresAt,
           createdAt: parsed.createdAt,
@@ -2591,23 +2823,66 @@ export function createRepositories(env: Env): Repositories {
     redemptions: {
       async create(input) {
         const parsed = parseRedemption(input);
-        await db.insert(redemptions).values({
-          id: parsed.redemptionId,
-          merchantId: parsed.merchantId,
-          externalOrderRef: parsed.externalOrderRef ?? null,
-          idempotencyKey: parsed.idempotencyKey ?? null,
-          evaluationId: parsed.evaluationId,
-          resultJson: redemptionEnvelope(parsed),
-          discountMinorUnits: parsed.discountMinorUnits,
-          currency: parsed.currency,
-          createdAt: parsed.createdAt,
-        }).run();
+        const totals = redemptionTotals(parsed);
+        await env.DB.batch([
+          env.DB.prepare(`
+            INSERT INTO redemptions (
+              id, merchant_id, external_order_ref, idempotency_key, evaluation_id,
+              result_json, discount_minor_units, currency, created_at, request_digest
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+          `).bind(
+            parsed.redemptionId,
+            parsed.merchantId,
+            parsed.externalOrderRef,
+            parsed.idempotencyKey,
+            parsed.evaluationId,
+            redemptionEnvelope(parsed),
+            totals.discountMinorUnits,
+            totals.currency,
+            parsed.createdAt,
+            parsed.requestDigest,
+          ),
+          ...parsed.entries.map(entry => env.DB.prepare(`
+            INSERT INTO redemption_entries (
+              merchant_id, redemption_id, position, program_ref, program_revision,
+              reward_rule_ref, effects_json, discount_minor_units, currency
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+          `).bind(
+            parsed.merchantId,
+            parsed.redemptionId,
+            entry.position,
+            entry.programRef,
+            entry.programRevision,
+            entry.rewardRuleRef ?? null,
+            canonicalJson(entry.effects),
+            entry.discountMinorUnits,
+            entry.currency,
+          )),
+          env.DB.prepare(`
+            INSERT INTO redemption_operations (
+              merchant_id, idempotency_key, external_order_ref, evaluation_id,
+              request_digest, state, terminal_error_code, retryable, redemption_id,
+              created_at, updated_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5, 'committed', NULL, NULL, ?6, ?7, ?7)
+          `).bind(
+            parsed.merchantId,
+            parsed.idempotencyKey,
+            parsed.externalOrderRef,
+            parsed.evaluationId,
+            parsed.requestDigest,
+            parsed.redemptionId,
+            parsed.createdAt,
+          ),
+        ]);
       },
 
       async commitAtomically(input) {
         const parsed = parseAtomicRedemption(input);
-        const [counter, legacyCounter, ledger] = await env.DB.batch([
-          env.DB.prepare(`
+        const totals = redemptionTotals(parsed);
+        let results;
+        try {
+          results = await env.DB.batch([
+            env.DB.prepare(`
             UPDATE program_counters
             SET usage_count = usage_count + 1,
                 committed_spend = committed_spend + ?1,
@@ -2675,7 +2950,7 @@ export function createRepositories(env: Env): Repositories {
                 )
               )
           `).bind(
-            parsed.discountMinorUnits,
+            totals.discountMinorUnits,
             parsed.programId,
             parsed.merchantId,
             parsed.programRef,
@@ -2688,7 +2963,7 @@ export function createRepositories(env: Env): Repositories {
             parsed.expectedActiveRevision,
             parsed.createdAt,
           ),
-          env.DB.prepare(`
+            env.DB.prepare(`
             UPDATE programs
             SET usage_count = (
                   SELECT usage_count FROM program_counters
@@ -2701,12 +2976,12 @@ export function createRepositories(env: Env): Repositories {
             WHERE merchant_id = ?1 AND id = ?2 AND external_ref = ?3
               AND changes() = 1
           `).bind(parsed.merchantId, parsed.programId, parsed.programRef),
-          env.DB.prepare(`
+            env.DB.prepare(`
             INSERT INTO redemptions (
               id, merchant_id, external_order_ref, idempotency_key, evaluation_id,
-              result_json, discount_minor_units, currency, created_at
+              result_json, discount_minor_units, currency, created_at, request_digest
             )
-            SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9
+            SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10
             WHERE changes() = 1
           `).bind(
             parsed.redemptionId,
@@ -2715,11 +2990,62 @@ export function createRepositories(env: Env): Repositories {
             parsed.idempotencyKey ?? null,
             parsed.evaluationId,
             redemptionEnvelope(parsed),
-            parsed.discountMinorUnits,
-            parsed.currency,
+            totals.discountMinorUnits,
+            totals.currency,
             parsed.createdAt,
+            parsed.requestDigest,
           ),
-        ]);
+            ...parsed.entries.map(entry => env.DB.prepare(`
+              INSERT INTO redemption_entries (
+                merchant_id, redemption_id, position, program_ref, program_revision,
+                reward_rule_ref, effects_json, discount_minor_units, currency
+              )
+              SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9
+              WHERE changes() = 1
+            `).bind(
+              parsed.merchantId,
+              parsed.redemptionId,
+              entry.position,
+              entry.programRef,
+              entry.programRevision,
+              entry.rewardRuleRef ?? null,
+              canonicalJson(entry.effects),
+              entry.discountMinorUnits,
+              entry.currency,
+            )),
+            env.DB.prepare(`
+              INSERT INTO redemption_operations (
+                merchant_id, idempotency_key, external_order_ref, evaluation_id,
+                request_digest, state, terminal_error_code, retryable, redemption_id,
+                created_at, updated_at
+              )
+              SELECT ?1, ?2, ?3, ?4, ?5, 'committed', NULL, NULL, ?6, ?7, ?7
+              WHERE changes() = 1
+            `).bind(
+              parsed.merchantId,
+              parsed.idempotencyKey,
+              parsed.externalOrderRef,
+              parsed.evaluationId,
+              parsed.requestDigest,
+              parsed.redemptionId,
+              parsed.createdAt,
+            ),
+            env.DB.prepare(`
+              INSERT INTO redemption_commit_guards (
+                redemption_id, position, changed_rows
+              ) VALUES (?1, 0, changes())
+            `).bind(parsed.redemptionId),
+            env.DB.prepare(`
+              DELETE FROM redemption_commit_guards
+              WHERE redemption_id = ?1 AND position = 0 AND changes() = 1
+            `).bind(parsed.redemptionId),
+          ]);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          if (/redemption_commit_guards|changed_rows = 1/u.test(message)) return false;
+          throw error;
+        }
+        const [counter, legacyCounter, ledger] = results;
         if (
           counter?.meta.changes === 0
           && legacyCounter?.meta.changes === 0
@@ -2740,7 +3066,12 @@ export function createRepositories(env: Env): Repositories {
           eq(redemptions.merchantId, merchantId),
           eq(redemptions.externalOrderRef, externalOrderRef),
         )).get();
-        return row === undefined ? null : verifiedRedemptionFromRow(row, verifyIntegrity);
+        if (row === undefined) return null;
+        const entries = await db.select().from(redemptionEntries).where(and(
+          eq(redemptionEntries.merchantId, row.merchantId),
+          eq(redemptionEntries.redemptionId, row.id),
+        )).orderBy(asc(redemptionEntries.position)).all();
+        return verifiedRedemptionFromRows(row, entries, verifyIntegrity);
       },
 
       async getByIdempotencyKey(merchantId, idempotencyKey, verifyIntegrity) {
@@ -2748,7 +3079,12 @@ export function createRepositories(env: Env): Repositories {
           eq(redemptions.merchantId, merchantId),
           eq(redemptions.idempotencyKey, idempotencyKey),
         )).get();
-        return row === undefined ? null : verifiedRedemptionFromRow(row, verifyIntegrity);
+        if (row === undefined) return null;
+        const entries = await db.select().from(redemptionEntries).where(and(
+          eq(redemptionEntries.merchantId, row.merchantId),
+          eq(redemptionEntries.redemptionId, row.id),
+        )).orderBy(asc(redemptionEntries.position)).all();
+        return verifiedRedemptionFromRows(row, entries, verifyIntegrity);
       },
 
       async countCommittedForCustomerProgram(
@@ -2770,6 +3106,7 @@ export function createRepositories(env: Env): Repositories {
           discountMinorUnits: redemptions.discountMinorUnits,
           currency: redemptions.currency,
           redemptionCreatedAt: redemptions.createdAt,
+          redemptionRequestDigest: redemptions.requestDigest,
           decisionId: evaluationDecisions.id,
           decisionMerchantId: evaluationDecisions.merchantId,
           decisionCustomerRef: evaluationDecisions.customerRef,
@@ -2778,6 +3115,11 @@ export function createRepositories(env: Env): Repositories {
           requestJson: evaluationDecisions.requestJson,
           factsJson: evaluationDecisions.factsJson,
           decisionsJson: evaluationDecisions.decisionsJson,
+          mode: evaluationDecisions.mode,
+          submittedCodesJson: evaluationDecisions.submittedCodesJson,
+          codeResultsJson: evaluationDecisions.codeResultsJson,
+          requestDigest: evaluationDecisions.requestDigest,
+          correlationId: evaluationDecisions.correlationId,
           integrityHash: evaluationDecisions.integrityHash,
           expiresAt: evaluationDecisions.expiresAt,
           decisionCreatedAt: evaluationDecisions.createdAt,
@@ -2794,7 +3136,7 @@ export function createRepositories(env: Env): Repositories {
 
         let count = 0;
         for (const candidate of candidates) {
-          const redemption = redemptionFromRow({
+          const redemptionRow = {
             id: candidate.redemptionId,
             merchantId: candidate.redemptionMerchantId,
             externalOrderRef: candidate.externalOrderRef,
@@ -2804,7 +3146,13 @@ export function createRepositories(env: Env): Repositories {
             discountMinorUnits: candidate.discountMinorUnits,
             currency: candidate.currency,
             createdAt: candidate.redemptionCreatedAt,
-          });
+            requestDigest: candidate.redemptionRequestDigest,
+          };
+          const entryRows = await db.select().from(redemptionEntries).where(and(
+            eq(redemptionEntries.merchantId, candidate.redemptionMerchantId),
+            eq(redemptionEntries.redemptionId, candidate.redemptionId),
+          )).orderBy(asc(redemptionEntries.position)).all();
+          const redemption = historicalRedemptionFromRows(redemptionRow, entryRows);
           const snapshot = decisionFromRow({
             id: candidate.decisionId,
             merchantId: candidate.decisionMerchantId,
@@ -2814,6 +3162,11 @@ export function createRepositories(env: Env): Repositories {
             requestJson: candidate.requestJson,
             factsJson: candidate.factsJson,
             decisionsJson: candidate.decisionsJson,
+            mode: candidate.mode,
+            submittedCodesJson: candidate.submittedCodesJson,
+            codeResultsJson: candidate.codeResultsJson,
+            requestDigest: candidate.requestDigest,
+            correlationId: candidate.correlationId,
             integrityHash: candidate.integrityHash,
             expiresAt: candidate.expiresAt,
             createdAt: candidate.decisionCreatedAt,
@@ -2824,20 +3177,20 @@ export function createRepositories(env: Env): Repositories {
           if (!(await verifyIntegrity.verifyDecision(snapshot))) {
             throw new Error('Decision snapshot integrity verification failed');
           }
-          const matchingDecision = snapshot.decisions.find(decision => (
-            decision.outcome === 'qualified'
-            && decision.commitRequired
-            && decision.programRef === redemption.result.programRef
-            && decision.rewardRuleRef === redemption.result.rewardRuleRef
-            && canonicalJson(decision.effects) === canonicalJson(redemption.result.effects)
+          const everyEntryMatches = redemption.entries.every(entry => (
+            snapshot.decisions.some(decision => (
+              decision.outcome === 'qualified'
+              && decision.commitRequired
+              && decision.programRef === entry.programRef
+              && decision.programRevision === entry.programRevision
+              && decision.rewardRuleRef === entry.rewardRuleRef
+              && canonicalJson(decision.effects) === canonicalJson(entry.effects)
+            ))
           ));
-          if (
-            redemption.evaluationId !== snapshot.evaluationId
-            || matchingDecision === undefined
-          ) {
+          if (redemption.evaluationId !== snapshot.evaluationId || !everyEntryMatches) {
             throw new Error('Redemption does not match a qualified decision snapshot');
           }
-          if (redemption.result.programRef === parsedProgramRef) count += 1;
+          count += redemption.entries.filter(entry => entry.programRef === parsedProgramRef).length;
         }
         return count;
       },
