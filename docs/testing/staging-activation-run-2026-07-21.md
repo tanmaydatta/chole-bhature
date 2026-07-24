@@ -195,6 +195,468 @@ deferrals are in the linked Product follow-up register.
   event-triggered incentives remain planned, not implemented.
 - Future event definitions/mappings and event-triggered Loyalty, Referral, and Affiliate behavior are preserved in that design but do not block Gate C.
 
+## Task 10 local automated evidence
+
+This evidence is local only. It was established from clean processes at source
+commit `0f49908` and does not claim that migration `0006`, either Worker
+deployment, or the fresh manual staging run has happened.
+
+| Gate | Result at `0f49908` |
+| --- | --- |
+| Six focused package suites (`contracts`, `engine`, `module-kit`, `promo`, `api`, `dashboard`) | Pass: 904/904 tests |
+| `pnpm test` | Pass: 1,261/1,261 workspace tests |
+| `pnpm build` | Pass; the existing dashboard main-chunk warning above 500 kB remains |
+| `pnpm lint` | Pass; only the two existing dashboard Fast Refresh warnings remain (`ThemeProvider.tsx:9:14` and `Toast.tsx:15:17`) |
+| `pnpm verify:clean-tests` | Pass |
+| `apps/api/test/production-migration.test.ts` | Pass: 20/20 tests, including the production baseline, fail-loud legacy guards, and readable legacy redemption backfill |
+| Task 10 review | No Critical or Important findings |
+
+## Owner-controlled Task 10 staging rollout — prepared, not executed
+
+**Status:** Not run. No Cloudflare query, export, migration, deployment,
+secret operation, or manual staging case below was executed by the
+implementation agent. The Cloudflare account owner runs one command at a time,
+checks the stated output, records only safe evidence, and stops on any
+deviation before continuing.
+
+All commands start at the repository root. The rollout source must contain
+`0f49908`, have no uncommitted tracked changes, and use the existing ignored
+mode-`0600` `.env.staging`. Load that file without printing it, then run the
+sanitized preflight:
+
+```sh
+git merge-base --is-ancestor 0f49908 HEAD
+```
+
+Expected: exit `0`.
+
+```sh
+git diff --quiet
+```
+
+Expected: exit `0`.
+
+```sh
+git diff --cached --quiet
+```
+
+Expected: exit `0`.
+
+```sh
+set -a
+. ./.env.staging
+set +a
+```
+
+Expected: no values are printed.
+
+```sh
+pnpm staging:preflight
+```
+
+Expected: exit `0`; sanitized JSON names the three staging Workers and two
+databases, shows the approved origins and recipient count, and says
+`"cloudflareWrites": false`. It must not print a D1 UUID, address, or secret.
+The owner must also have authenticated Wrangler access and schedule the export
+for a window in which its documented temporary D1 query unavailability is
+acceptable.
+
+### 1. Back up and query current Product staging data
+
+Create a private directory outside the repository:
+
+```sh
+export TASK10_BACKUP_DIR="$(mktemp -d /tmp/incentives-task10-XXXXXX)"
+```
+
+Expected: the variable names a new mode-`0700` directory and nothing sensitive
+is printed.
+
+Run the account-owner-controlled remote export:
+
+```sh
+pnpm --filter @incentives/api exec wrangler d1 export incentives-staging \
+  --remote \
+  --output "$TASK10_BACKUP_DIR/incentives-staging-before-0006.sql"
+```
+
+Expected: exit `0` after the owner confirms the export; the SQL file is
+non-empty inside the private directory. Do not open, paste, commit, or copy the
+export into this record.
+
+Query counts only:
+
+```sh
+pnpm --filter @incentives/api exec wrangler d1 execute incentives-staging \
+  --remote \
+  --json \
+  --command "
+SELECT
+  (SELECT COUNT(*) FROM programs WHERE type = 'promo') AS promo_rows,
+  (
+    SELECT COUNT(*)
+    FROM program_revisions AS revision
+    INNER JOIN programs AS logical
+      ON logical.merchant_id = revision.merchant_id
+      AND logical.id = revision.program_id
+    WHERE logical.type = 'promo'
+  ) AS promo_revision_rows,
+  (SELECT COUNT(*) FROM redemptions) AS redemption_rows,
+  (
+    SELECT COUNT(*)
+    FROM d1_migrations
+    WHERE name = '0006_promo_selection_redemption_bundles.sql'
+  ) AS migration_0006_rows;
+"
+```
+
+Expected before a first rollout: safe integer counts and
+`migration_0006_rows = 0`. If that count is already `1`, stop and reconcile the
+earlier migration/deployment evidence instead of treating this as a new run.
+
+### 2. Validate legacy Promo rows
+
+This query mirrors migration `0006`'s fail-loud trigger, normalization, and
+overlap guards, but returns counts only. It does not reveal codes, customer
+data, or recipient data.
+
+```sh
+pnpm --filter @incentives/api exec wrangler d1 execute incentives-staging \
+  --remote \
+  --json \
+  --command "
+WITH promo_configs AS (
+  SELECT config_json
+  FROM programs
+  WHERE type = 'promo'
+  UNION ALL
+  SELECT revision.config_json
+  FROM program_revisions AS revision
+  INNER JOIN programs AS logical
+    ON logical.merchant_id = revision.merchant_id
+    AND logical.id = revision.program_id
+  WHERE logical.type = 'promo'
+),
+invalid_triggers AS (
+  SELECT 1
+  FROM promo_configs
+  WHERE CASE
+    WHEN json_valid(config_json) = 0 THEN 1
+    WHEN json_type(config_json, '\$') <> 'object' THEN 1
+    WHEN COALESCE(json_extract(config_json, '\$.type'), '') <> 'promo' THEN 1
+    WHEN COALESCE(json_type(config_json, '\$.autoApply'), 'missing')
+      NOT IN ('true', 'false') THEN 1
+    WHEN COALESCE(json_type(config_json, '\$.stackable'), 'missing')
+      NOT IN ('true', 'false') THEN 1
+    WHEN json_type(config_json, '\$.code') = 'text'
+      AND instr(CAST(json_extract(config_json, '\$.code') AS BLOB), X'00') > 0
+      THEN 1
+    WHEN json_type(config_json, '\$.autoApply') = 'true'
+      AND COALESCE(json_type(config_json, '\$.code'), 'text')
+        NOT IN ('null', 'text') THEN 1
+    WHEN json_type(config_json, '\$.autoApply') = 'false'
+      AND (
+        COALESCE(json_type(config_json, '\$.code'), 'missing') <> 'text'
+        OR COALESCE(length(trim(json_extract(config_json, '\$.code'))), 0) = 0
+        OR length(trim(json_extract(config_json, '\$.code'))) > 128
+      ) THEN 1
+    ELSE 0
+  END = 1
+),
+unsafe_normalization AS (
+  SELECT 1
+  FROM promo_configs
+  WHERE json_type(config_json, '\$.autoApply') = 'false'
+    AND json_extract(config_json, '\$.code') GLOB '*[^ -~]*'
+),
+overlapping_claims AS (
+  SELECT 1
+  FROM programs AS left_program
+  INNER JOIN program_revisions AS left_revision
+    ON left_revision.merchant_id = left_program.merchant_id
+    AND left_revision.program_id = left_program.id
+    AND left_revision.revision = left_program.active_revision
+  INNER JOIN programs AS right_program
+    ON right_program.merchant_id = left_program.merchant_id
+    AND right_program.id > left_program.id
+  INNER JOIN program_revisions AS right_revision
+    ON right_revision.merchant_id = right_program.merchant_id
+    AND right_revision.program_id = right_program.id
+    AND right_revision.revision = right_program.active_revision
+  WHERE left_program.type = 'promo'
+    AND right_program.type = 'promo'
+    AND left_program.status IN ('active', 'scheduled', 'paused')
+    AND right_program.status IN ('active', 'scheduled', 'paused')
+    AND json_type(left_revision.config_json, '\$.autoApply') = 'false'
+    AND json_type(right_revision.config_json, '\$.autoApply') = 'false'
+    AND (
+      json_extract(left_revision.config_json, '\$.endDate') IS NULL
+      OR json_extract(left_revision.config_json, '\$.endDate') >= date('now')
+    )
+    AND (
+      json_extract(right_revision.config_json, '\$.endDate') IS NULL
+      OR json_extract(right_revision.config_json, '\$.endDate') >= date('now')
+    )
+    AND upper(trim(json_extract(left_revision.config_json, '\$.code')))
+      = upper(trim(json_extract(right_revision.config_json, '\$.code')))
+    AND COALESCE(
+      json_extract(left_revision.config_json, '\$.endDate'),
+      '9999-12-31'
+    ) >= COALESCE(
+      json_extract(right_revision.config_json, '\$.startDate'),
+      '0001-01-01'
+    )
+    AND COALESCE(
+      json_extract(right_revision.config_json, '\$.endDate'),
+      '9999-12-31'
+    ) >= COALESCE(
+      json_extract(left_revision.config_json, '\$.startDate'),
+      '0001-01-01'
+    )
+)
+SELECT
+  (SELECT COUNT(*) FROM invalid_triggers) AS invalid_trigger_rows,
+  (SELECT COUNT(*) FROM unsafe_normalization) AS unsafe_normalization_rows,
+  (SELECT COUNT(*) FROM overlapping_claims) AS overlapping_claim_pairs;
+"
+```
+
+Expected: all three counts are `0`. Any non-zero count stops the rollout. Do
+not query or record the affected code or configuration; reconcile it through a
+separately reviewed, application-assisted process.
+
+### 3. Apply and verify Product migration `0006`
+
+Run the repository script, which resolves the API package's installed Wrangler
+entrypoint and generates the protected staging config:
+
+```sh
+pnpm --filter @incentives/api db:migrate:staging
+```
+
+Expected: exit `0`; Wrangler reports
+`0006_promo_selection_redemption_bundles.sql` applied to remote
+`incentives-staging`. A failure stops the rollout; never attempt a destructive
+D1 downgrade.
+
+Verify only the applied migration name and target table count:
+
+```sh
+pnpm --filter @incentives/api exec wrangler d1 execute incentives-staging \
+  --remote \
+  --json \
+  --command "
+SELECT COUNT(*) AS migration_0006_rows
+FROM d1_migrations
+WHERE name = '0006_promo_selection_redemption_bundles.sql';
+SELECT COUNT(*) AS migration_0006_target_tables
+FROM sqlite_master
+WHERE type = 'table'
+  AND name IN (
+    'promo_code_claims',
+    'redemption_operations',
+    'redemption_entries',
+    'redemption_commit_guards'
+  );
+"
+```
+
+Expected: `migration_0006_rows = 1` and
+`migration_0006_target_tables = 4`.
+
+### 4. Deploy the API Worker
+
+```sh
+pnpm --filter @incentives/api deploy:staging
+```
+
+Expected: exit `0`; `incentives-api-staging` deploys to the configured API
+custom domain and Wrangler prints the new version ID. Record the version ID,
+not account identity or other deployment metadata.
+
+### 5. Verify health and the clean-break OpenAPI
+
+```sh
+curl --silent --show-error --fail-with-body "$STAGING_API_ORIGIN/v1/health"
+```
+
+Expected: HTTP `200` and `{ "status": "ok" }`.
+
+Fetch the generated document into the private rollout directory:
+
+```sh
+curl --silent --show-error --fail-with-body \
+  --output "$TASK10_BACKUP_DIR/openapi.json" \
+  "$STAGING_API_ORIGIN/v1/openapi.json"
+```
+
+Expected: HTTP `200` and a non-empty JSON file.
+
+Validate the deployed request schemas without printing the document:
+
+```sh
+node -e '
+const { readFileSync } = require("node:fs");
+const document = JSON.parse(readFileSync(process.argv[1], "utf8"));
+const evaluation = document.components?.schemas?.EvaluationRequest;
+const redemption = document.components?.schemas?.RedemptionRequest;
+if (
+  document.paths?.["/v1/evaluate"]?.post === undefined
+  || document.paths?.["/v1/redemptions"]?.post === undefined
+  || evaluation?.properties?.codes === undefined
+  || Object.hasOwn(evaluation?.properties ?? {}, "code")
+  || evaluation?.additionalProperties !== false
+  || redemption?.properties?.evaluationId === undefined
+  || Object.hasOwn(redemption?.properties ?? {}, "programRef")
+  || redemption?.additionalProperties !== false
+) {
+  throw new Error("Deployed OpenAPI does not match the Task 10 clean-break contract");
+}
+console.log(JSON.stringify({
+  evaluateCodes: true,
+  singularCode: false,
+  redemptionEvaluationId: true,
+  redemptionProgramRef: false
+}));
+' "$TASK10_BACKUP_DIR/openapi.json"
+```
+
+Expected:
+`{"evaluateCodes":true,"singularCode":false,"redemptionEvaluationId":true,"redemptionProgramRef":false}`.
+
+### 6. Identity deployment decision
+
+**Current decision: skip Identity.** At source `0f49908`, no Identity Worker
+implementation, Identity RPC request/response schema, or staging binding
+configuration changed. The Operator and Core changes therefore do not require
+an `incentives-identity-staging` deployment.
+
+Only if a later reviewed rollout revision changes that binding contract may
+the account owner run:
+
+```sh
+pnpm --filter @incentives/identity deploy:staging
+```
+
+Expected if and only if that condition is met: exit `0`;
+`incentives-identity-staging` remains private with no route or `workers.dev`
+hostname, its Core service binding resolves, and Wrangler prints a new version
+ID. Do not run this command for the currently prepared source.
+
+### 7. Deploy the Operator Worker
+
+```sh
+pnpm --filter @incentives/operator-web deploy:staging
+```
+
+Expected: exit `0`; `incentives-operator-web-staging` deploys to the configured
+Operator custom domain, both private service bindings resolve, and Wrangler
+prints the new version ID.
+
+### 8. Run the exact fresh Gate C manual
+
+Handoff to the canonical
+[Gate C manual end-to-end test](gate-c-manual-test.md), beginning at
+**Per-run test data**. Generate its `GATE_C_RUN_SUFFIX` exactly once, execute
+the complete derived-value export block, and use that one set for the entire
+staging run. Do not reuse the 2026-07-21 values, regenerate only part of the
+set, or substitute example values.
+
+Every client identity, client name, customer reference, credential label,
+program reference, Promo code, external order reference, and idempotency key
+must carry that suffix. Copy only evaluation and redemption IDs returned by
+this run. Complete the guide's full case sequence and final verdict; the
+correction-specific cases `SELECT-AUTO-01` through `SELECT-AUTO-03`,
+`SELECT-CODE-01` through `SELECT-CODE-04`, `REDEEM-BUNDLE-01` through
+`REDEEM-BUNDLE-03`, `TENANT-API-01`, and `OBS-API-01` are mandatory.
+
+### 9. Record deployed versions and safe evidence
+
+Read back only the API deployment time, traffic percentage, and version ID:
+
+```sh
+pnpm --filter @incentives/api exec wrangler deployments status \
+  --name incentives-api-staging \
+  --json \
+| node -e '
+let raw = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", chunk => { raw += chunk; });
+process.stdin.on("end", () => {
+  const deployment = JSON.parse(raw);
+  console.log(JSON.stringify({
+    worker: "incentives-api-staging",
+    createdOn: deployment.created_on,
+    versions: deployment.versions.map(({ version_id, percentage }) => ({
+      versionId: version_id,
+      percentage,
+    })),
+  }, null, 2));
+});
+'
+```
+
+Expected: the just-deployed API version carries 100% traffic. Do not record
+the unfiltered Wrangler JSON because it contains account metadata.
+
+Read back the same safe fields for Operator Web:
+
+```sh
+pnpm --filter @incentives/operator-web exec wrangler deployments status \
+  --name incentives-operator-web-staging \
+  --json \
+| node -e '
+let raw = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", chunk => { raw += chunk; });
+process.stdin.on("end", () => {
+  const deployment = JSON.parse(raw);
+  console.log(JSON.stringify({
+    worker: "incentives-operator-web-staging",
+    createdOn: deployment.created_on,
+    versions: deployment.versions.map(({ version_id, percentage }) => ({
+      versionId: version_id,
+      percentage,
+    })),
+  }, null, 2));
+});
+'
+```
+
+Expected: the just-deployed Operator Web version carries 100% traffic.
+
+Run the equivalent Identity readback only if Step 6's binding-change condition
+was met and Identity was actually deployed:
+
+```sh
+pnpm --filter @incentives/identity exec wrangler deployments status \
+  --name incentives-identity-staging \
+  --json \
+| node -e '
+let raw = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", chunk => { raw += chunk; });
+process.stdin.on("end", () => {
+  const deployment = JSON.parse(raw);
+  console.log(JSON.stringify({
+    worker: "incentives-identity-staging",
+    createdOn: deployment.created_on,
+    versions: deployment.versions.map(({ version_id, percentage }) => ({
+      versionId: version_id,
+      percentage,
+    })),
+  }, null, 2));
+});
+'
+```
+
+For every manual case, record expected versus actual result, HTTP status,
+evaluation/redemption ID where applicable, correlation ID, the deployed Worker
+version IDs, and any new gap with severity and follow-up owner. Do not record
+the backup contents, recipient addresses, credentials, raw submitted codes,
+customer attributes, request bodies, cookies, invitation/magic-link URLs,
+activation grants, or recovery-code text.
+
 ## Remaining manual continuation
 
 1. Finish Task 10 verification and review for the locally implemented
