@@ -188,8 +188,9 @@ new D1 coordinator. Repository round-trip and migrated-legacy coverage remains.
 ## Commit
 
 - Subject: `feat(api): commit selected promos as atomic bundles`
-- Identity: this report is included in that implementation commit; its immutable SHA is recorded
-  in the parent handoff because a commit cannot contain its own final SHA.
+- Implementation commit: `775085c34b0a2bd0902a832c2f946e03d339f4f5`
+- The report-only follow-up records the implementation commit's immutable SHA because a commit
+  cannot contain its own final SHA.
 
 ## Caveats
 
