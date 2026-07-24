@@ -152,8 +152,10 @@ the temporary files on success or failure. Its child environment is a fail-close
 required platform/temp/locale values and Cloudflare API token/account values only. It does not
 forward `NODE_OPTIONS`, `NODE_PATH`, endpoint or `WRANGLER_*` controls, proxy/output controls,
 unrelated cloud/service credentials, application secrets, or `STAGING_*` inputs. OAuth login still
-works through the allowed home/config paths. Staging `dev` commands may create a temporary
-`.dev.vars`; migrate and deploy commands never put application secrets in the generated TOML.
+works through the allowed home/config paths. Remote staging `dev` is intentionally unsupported:
+an interactive, indefinite Wrangler session cannot be buffered without either leaking remote
+metadata or hiding useful development output. Use the local three-Worker stack for development.
+Migrate and deploy commands never put application secrets in the generated TOML.
 
 Before every remote runner action, authenticated Wrangler resolves Product D1
 through a separate generated API config pinned to `STAGING_PRODUCT_D1_ID`. The
@@ -161,6 +163,12 @@ runner compares that resolved UUID without printing either value and stops
 before the requested action on any authentication, parsing, or identity
 failure. The requested command then runs with `shell: false`, the reviewed
 Worker/database name, and an exact argument allowlist.
+
+All supported non-interactive remote actions capture Wrangler stdout/stderr.
+Migration and deployment success is rebuilt as a fixed structural summary;
+failure returns only a generic message while retaining Wrangler's non-zero
+exit status. Raw account, author, database, resource, and deployment metadata
+is never forwarded.
 
 Task 10 adds protected owner-run actions for count-only inventory, legacy Promo
 and redemption prechecks, post-migration verification, cutover write markers,
@@ -185,14 +193,16 @@ historical and must not be executed.
 
 - A failed migration stops activation. Never attempt a destructive D1 downgrade.
 - A failed Worker deployment leaves its previous deployed version active.
-- Product migrations are forward-only. After migration, normal recovery is a
-  quiet-window containment plus a reviewed forward fix.
+- Product D1 migrations are forward-only. After migration, leave the migrated
+  schema in place and use quiet-window containment plus a reviewed forward
+  migration/fix. Never restore the pre-migration export over staging.
 - Protected Task 10 Worker rollback is deliberately disabled. The runner
   rejects rollback before spawning Wrangler. Do not bypass it with direct
   Wrangler rollback commands: interactive confirmation, version-to-source
   mapping, bindings, and secret compatibility are not safely preflighted.
-- Until reviewed fail-closed preflight or API tooling exists, Task 10 recovery
-  is containment plus a reviewed forward deployment. This applies to API,
-  Operator Web, Identity, Product D1, and the static demo.
+- API and Operator Web recovery is containment plus a reviewed forward
+  deployment.
+- Identity and the static demo are unchanged by Task 10. Do not deploy, roll
+  back, or otherwise modify either one as part of Task 10 recovery.
 - Identity must remain private. Stop if Cloudflare shows a public Identity route or hostname.
 - The static demo is never an operator-platform rollback target and remains unchanged.

@@ -23,8 +23,10 @@ The protected runner:
   proxy/output controls, unrelated cloud credentials, application secrets, and
   `STAGING_*` values;
 - fails closed on malformed Wrangler JSON; and
-- prints only approved count, timestamp, deployment-version, or completion
-  summaries. In particular, it never prints D1 export signed URLs.
+- captures every supported non-interactive remote action and prints only
+  approved count, timestamp, deployment-version, or fixed structural
+  completion summaries. In particular, it never prints remote migration or
+  deployment logs, account metadata, or D1 export signed URLs.
 
 ## 1. Approve the source and open a quiet window
 
@@ -168,9 +170,18 @@ pnpm --filter @incentives/api db:migrate:staging
 ```
 
 Expected: authenticated Product D1 confirmation followed by a successful
-application of `0006_promo_selection_redemption_bundles.sql`. Stop on any
-failure. Product D1 migrations are forward-only; never attempt a schema
-downgrade or import the pre-migration export over the migrated database.
+application of `0006_promo_selection_redemption_bundles.sql`. The protected
+runner's complete output is exactly:
+
+```text
+Authenticated staging Product D1 target confirmed.
+{"application":"api","action":"migrate","status":"completed"}
+```
+
+Stop on any failure. Product D1 migrations are forward-only; never attempt a
+schema downgrade or import the pre-migration export over the migrated
+database. The structural success line confirms Wrangler exited successfully;
+the next protected query is the authoritative schema-state verification.
 
 Verify only the migration and target-table counts:
 
@@ -203,7 +214,17 @@ pnpm --filter @incentives/api deploy:staging
 ```
 
 Expected: authenticated Product D1 confirmation and a successful deployment
-of `incentives-api-staging` only.
+of `incentives-api-staging` only. The package's local dependency-build output
+may appear first. The protected runner's final output is exactly:
+
+```text
+Authenticated staging Product D1 target confirmed.
+{"application":"api","action":"deploy","status":"completed"}
+```
+
+This summary does not expose a deployment version. The health, OpenAPI, and
+protected deployment-status checks below verify the deployed behavior and
+version.
 
 Verify health:
 
@@ -271,8 +292,16 @@ pnpm --filter @incentives/operator-web deploy:staging
 node scripts/staging-wrangler-runner.mjs operator-web task10-status
 ```
 
-Expected: `incentives-operator-web-staging` deploys successfully and the new
-Operator Web version receives `100` percent traffic.
+Expected: the package's local contracts/dashboard build output may appear
+first. The protected deploy runner ends with exactly:
+
+```text
+Authenticated staging Product D1 target confirmed.
+{"application":"operator-web","action":"deploy","status":"completed"}
+```
+
+The following protected status command must show the new Operator Web version
+receiving `100` percent traffic.
 
 ## 7. Run the fresh manual Gate C cases
 
@@ -331,6 +360,10 @@ exact version-to-source mapping, binding/secret compatibility, target account,
 and confirmation semantics, all Task 10 recovery is containment plus a
 reviewed forward fix. Preserve the before/after write markers and sanitized
 deployment-version summaries as incident evidence only.
+
+Task 10 does not change Identity or the static demo. They remain untouched
+during cutover and recovery; neither is a Task 10 forward-deployment or
+rollback target.
 
 ## 9. Export retention and explicit disposition
 

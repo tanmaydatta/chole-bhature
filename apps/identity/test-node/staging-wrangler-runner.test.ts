@@ -43,6 +43,8 @@ async function testHarness() {
   const testRepositoryRoot = path.join(directory, 'repository');
   const capture = path.join(testRepositoryRoot, 'capture.json');
   const exitStatus = path.join(testRepositoryRoot, 'fake-exit-status.txt');
+  const fakeStdout = path.join(testRepositoryRoot, 'fake-stdout.txt');
+  const fakeStderr = path.join(testRepositoryRoot, 'fake-stderr.txt');
   for (const app of ['api', 'identity', 'operator-web']) {
     const wranglerPackage = path.join(
       testRepositoryRoot, 'apps', app, 'node_modules', 'wrangler',
@@ -61,6 +63,8 @@ const isProductConfirmation = args[0] === 'd1' && args[1] === 'info';
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../../..');
 const capturePath = path.join(repositoryRoot, 'capture.json');
 const exitStatusPath = path.join(repositoryRoot, 'fake-exit-status.txt');
+const stdoutPath = path.join(repositoryRoot, 'fake-stdout.txt');
+const stderrPath = path.join(repositoryRoot, 'fake-stderr.txt');
 const devVarsPath = path.join(path.dirname(configPath), '.dev.vars');
 const hasDevVars = existsSync(devVarsPath);
 const devVars = hasDevVars ? readFileSync(devVarsPath, 'utf8') : '';
@@ -87,6 +91,8 @@ if (isProductConfirmation) {
   const productId = config.match(/database_id = "([^"]+)"/)?.[1];
   process.stdout.write(JSON.stringify({ uuid: productId }));
 } else {
+  if (existsSync(stdoutPath)) process.stdout.write(readFileSync(stdoutPath, 'utf8'));
+  if (existsSync(stderrPath)) process.stderr.write(readFileSync(stderrPath, 'utf8'));
   process.exit(Number(existsSync(exitStatusPath) ? readFileSync(exitStatusPath, 'utf8') : '0'));
 }
 `);
@@ -94,6 +100,8 @@ if (isProductConfirmation) {
   return {
     capture,
     exitStatus,
+    fakeStdout,
+    fakeStderr,
     repositoryRoot: testRepositoryRoot,
     environment: validEnvironment(),
   };
@@ -126,19 +134,25 @@ afterEach(async () => {
 
 describe('staging Wrangler runner', () => {
   test.each([
-    ['api', 'dev', ['dev', '--remote']],
     ['api', 'migrate', ['d1', 'migrations', 'apply', 'incentives-staging', '--remote']],
     ['api', 'deploy', ['deploy']],
-    ['identity', 'dev', ['dev', '--remote']],
     [
       'identity', 'migrate',
       ['d1', 'migrations', 'apply', 'incentives-auth-staging', '--remote'],
     ],
     ['identity', 'deploy', ['deploy']],
-    ['operator-web', 'dev', ['dev', '--remote']],
     ['operator-web', 'deploy', ['deploy']],
   ] as const)('renders and cleans a protected %s %s config', async (app, action, prefix) => {
     const harness = await testHarness();
+    const hostileWranglerOutput = [
+      'account=hostile-account@example.com',
+      'author=hostile-author@example.com',
+      'database=d918b5cc-7ce4-4bf6-a33e-90c8335f2ef1',
+      'version=815a3695-b864-49c3-9cfc-8d1d6d025129',
+      'resource=incentives-sensitive-resource',
+    ].join(' ');
+    await writeFile(harness.fakeStdout, hostileWranglerOutput);
+    await writeFile(harness.fakeStderr, hostileWranglerOutput);
 
     const result = await executeRunner(harness, app, action);
     const capture = JSON.parse(await readFile(harness.capture, 'utf8')) as {
@@ -159,8 +173,13 @@ describe('staging Wrangler runner', () => {
       hasDevOperatorSelectionSecret: boolean;
     };
 
-    expect(result.stdout).toBe('Authenticated staging Product D1 target confirmed.\n');
+    expect(result.stdout).toBe(
+      `Authenticated staging Product D1 target confirmed.
+${JSON.stringify({ application: app, action, status: 'completed' })}
+`,
+    );
     expect(result.stderr).toBe('');
+    expect(`${result.stdout}${result.stderr}`).not.toContain(hostileWranglerOutput);
     expect(capture.args.slice(0, prefix.length)).toEqual(prefix);
     expect(capture.args.slice(-2)).toEqual(['--config', capture.configPath]);
     expect(capture.config).toContain(`[observability]
@@ -174,14 +193,11 @@ head_sampling_rate = 1`);
     expect(capture.hasStagingInputs).toBe(false);
     await expect(stat(capture.configPath)).rejects.toMatchObject({ code: 'ENOENT' });
     await expect(stat(capture.devVarsPath)).rejects.toMatchObject({ code: 'ENOENT' });
-    const expectsIdentityDevVars = app === 'identity' && action === 'dev';
-    const expectsOperatorDevVars = app === 'operator-web' && action === 'dev';
-    const expectsDevVars = expectsIdentityDevVars || expectsOperatorDevVars;
-    expect(capture.devVarsMode).toBe(expectsDevVars ? 0o600 : null);
-    expect(capture.hasDevAuthSecret).toBe(expectsIdentityDevVars);
-    expect(capture.hasDevResendApiKey).toBe(expectsIdentityDevVars);
-    expect(capture.hasDevResendFrom).toBe(expectsIdentityDevVars);
-    expect(capture.hasDevOperatorSelectionSecret).toBe(expectsOperatorDevVars);
+    expect(capture.devVarsMode).toBe(null);
+    expect(capture.hasDevAuthSecret).toBe(false);
+    expect(capture.hasDevResendApiKey).toBe(false);
+    expect(capture.hasDevResendFrom).toBe(false);
+    expect(capture.hasDevOperatorSelectionSecret).toBe(false);
     if (app !== 'operator-web') {
       expect(capture.config).toContain(
         app === 'api' ? `database_id = "${productId}"` : `database_id = "${authId}"`,
@@ -244,41 +260,19 @@ head_sampling_rate = 1`);
     await expect(readFile(harness.capture, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
-  test.each([
-    ['AUTH_SECRET', undefined],
-    ['AUTH_SECRET', 'short'],
-    ['RESEND_API_KEY', undefined],
-    ['RESEND_FROM', undefined],
-  ])('fails Identity staging dev when %s is unsafe', async (key, value) => {
+  test.each(['api', 'identity', 'operator-web'])(
+    'rejects interactive remote %s dev before invoking Wrangler',
+    async app => {
     const harness = await testHarness();
-    const environment = validEnvironment({ ...harness.environment, [key]: value });
-    if (value === undefined) delete environment[key];
 
-    await expect(executeRunner(harness, 'identity', 'dev', environment)).rejects.toMatchObject({
+    await expect(executeRunner(harness, app, 'dev')).rejects.toMatchObject({
       code: 1,
-      stderr: expect.stringMatching(/^Staging configuration invalid: /),
+      stdout: '',
+      stderr: 'Unsupported staging Wrangler command.\n',
     });
     await expect(readFile(harness.capture, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
-  });
-
-  test.each([
-    undefined,
-    'short',
-  ])('fails Operator Web staging dev when its selection secret is %s', async value => {
-    const harness = await testHarness();
-    const environment = validEnvironment({
-      ...harness.environment,
-      OPERATOR_SELECTION_SECRET: value,
-    });
-    if (value === undefined) delete environment.OPERATOR_SELECTION_SECRET;
-
-    await expect(executeRunner(harness, 'operator-web', 'dev', environment))
-      .rejects.toMatchObject({
-        code: 1,
-        stderr: expect.stringMatching(/^Staging configuration invalid: /),
-      });
-    await expect(readFile(harness.capture, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
-  });
+    },
+  );
 
   test.each(['migrate', 'deploy']) (
     'does not require local Identity secrets for %s',
@@ -308,28 +302,48 @@ head_sampling_rate = 1`);
     await expect(readFile(harness.capture, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
-  test('preserves Wrangler failure status, cleans config, and redacts all inputs', async () => {
-    const harness = await testHarness();
-    await writeFile(harness.exitStatus, '17');
-    const environment = validEnvironment({ ...harness.environment });
+  test.each([
+    ['api', 'migrate'],
+    ['identity', 'deploy'],
+  ])(
+    'preserves failed %s %s status while suppressing raw Wrangler output',
+    async (app, action) => {
+      const harness = await testHarness();
+      await writeFile(harness.exitStatus, '17');
+      await writeFile(
+        harness.fakeStdout,
+        'stdout account=hostile-account author=hostile-author '
+          + 'uuid=815a3695-b864-49c3-9cfc-8d1d6d025129 resource=hostile-resource',
+      );
+      await writeFile(
+        harness.fakeStderr,
+        'stderr account=hostile-account author=hostile-author '
+          + 'uuid=815a3695-b864-49c3-9cfc-8d1d6d025129 resource=hostile-resource',
+      );
+      const environment = validEnvironment({ ...harness.environment });
 
-    let failure: unknown;
-    try {
-      await executeRunner(harness, 'identity', 'deploy', environment);
-    } catch (error) {
-      failure = error;
-    }
-    const processFailure = failure as { code: number; stdout: string; stderr: string };
-    const capture = JSON.parse(await readFile(harness.capture, 'utf8')) as {
-      configPath: string;
-    };
+      let failure: unknown;
+      try {
+        await executeRunner(harness, app, action, environment);
+      } catch (error) {
+        failure = error;
+      }
+      const processFailure = failure as { code: number; stdout: string; stderr: string };
+      const capture = JSON.parse(await readFile(harness.capture, 'utf8')) as {
+        configPath: string;
+      };
 
-    expect(processFailure.code).toBe(17);
-    expect(`${processFailure.stdout}${processFailure.stderr}`).not.toMatch(
-      /must-not-reach|d918b5cc|6a65017f|operator\.staging/,
-    );
-    await expect(stat(capture.configPath)).rejects.toMatchObject({ code: 'ENOENT' });
-  });
+      expect(processFailure.code).toBe(17);
+      expect(processFailure.stdout).toBe(
+        'Authenticated staging Product D1 target confirmed.\n',
+      );
+      expect(processFailure.stderr).toBe('Unable to execute Wrangler.\n');
+      expect(`${processFailure.stdout}${processFailure.stderr}`).not.toMatch(
+        /hostile|must-not-reach|d918b5cc|6a65017f|operator\.staging|815a3695/,
+      );
+      await expect(stat(capture.configPath)).rejects.toMatchObject({ code: 'ENOENT' });
+    },
+  );
 });
 
 describe('local three-Worker topology runner', () => {

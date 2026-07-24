@@ -117,40 +117,6 @@ export function loadStagingConfiguration(environment) {
   });
 }
 
-export function loadIdentityStagingDevelopmentSecrets(environment) {
-  const authSecret = required(environment, 'AUTH_SECRET');
-  if (authSecret.length < 32) {
-    throw new Error('AUTH_SECRET must contain at least 32 characters for staging development.');
-  }
-  return Object.freeze({
-    authSecret,
-    resendApiKey: required(environment, 'RESEND_API_KEY'),
-    resendFrom: required(environment, 'RESEND_FROM'),
-  });
-}
-
-export function loadOperatorWebStagingDevelopmentSecrets(environment) {
-  const operatorSelectionSecret = required(environment, 'OPERATOR_SELECTION_SECRET');
-  if (operatorSelectionSecret.length < 32) {
-    throw new Error(
-      'OPERATOR_SELECTION_SECRET must contain at least 32 characters for staging development.',
-    );
-  }
-  return Object.freeze({ operatorSelectionSecret });
-}
-
-export function renderIdentityStagingDevelopmentVars(secrets) {
-  return `AUTH_SECRET=${JSON.stringify(secrets.authSecret)}
-RESEND_API_KEY=${JSON.stringify(secrets.resendApiKey)}
-RESEND_FROM=${JSON.stringify(secrets.resendFrom)}
-`;
-}
-
-export function renderOperatorWebStagingDevelopmentVars(secrets) {
-  return `OPERATOR_SELECTION_SECRET=${JSON.stringify(secrets.operatorSelectionSecret)}
-`;
-}
-
 function tomlString(value) {
   return `"${value.replaceAll('\\', '\\\\').replaceAll('"', '\\"')}"`;
 }
@@ -283,9 +249,6 @@ function isExactTaskTenExportPath(value) {
 export function stagingWranglerArguments(app, action, configPath, actionArgument) {
   if (!['api', 'identity', 'operator-web'].includes(app)) {
     throw new Error('Unsupported staging Wrangler command.');
-  }
-  if (action === 'dev' && actionArgument === undefined) {
-    return ['dev', '--remote', '--config', configPath];
   }
   if (action === 'deploy' && actionArgument === undefined) {
     return ['deploy', '--config', configPath];

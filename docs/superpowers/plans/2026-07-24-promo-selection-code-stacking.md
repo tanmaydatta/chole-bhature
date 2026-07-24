@@ -1651,9 +1651,9 @@ account owner one at a time in this order:
 
 1. open a continuous quiet window;
 2. authenticate and confirm Product D1 through generated configuration;
-3. capture protected API/Operator status and Product write markers;
-4. export Product D1 to an owner-only directory;
-5. run count-only legacy Promo and redemption prechecks;
+3. run count-only inventory plus legacy Promo and redemption prechecks;
+4. capture protected API/Operator status and Product write markers;
+5. export Product D1 to an owner-only directory;
 6. apply D1 migration and verify the migration/table counts;
 7. verify API health before deployment while the previous Worker is live;
 8. deploy and verify the API Worker and clean-break OpenAPI;

@@ -12,11 +12,7 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import {
-  loadIdentityStagingDevelopmentSecrets,
-  loadOperatorWebStagingDevelopmentSecrets,
   loadStagingConfiguration,
-  renderIdentityStagingDevelopmentVars,
-  renderOperatorWebStagingDevelopmentVars,
   renderStagingWranglerConfig,
   stagingProductConfirmationArguments,
   stagingWranglerArguments,
@@ -70,7 +66,9 @@ const TASK10_QUERY_FIELDS = Object.freeze({
     latest_redemption_created_at: 'timestamp',
   }),
 });
-const CAPTURED_TASK10_ACTIONS = new Set([
+const CAPTURED_REMOTE_ACTIONS = new Set([
+  'migrate',
+  'deploy',
   ...Object.keys(TASK10_QUERY_FIELDS),
   'task10-status',
   'task10-export',
@@ -304,29 +302,11 @@ export async function runStagingWrangler({
     const exportDestination = action === 'task10-export'
       ? privateExportDestination(actionArgument)
       : null;
-    const developmentSecrets = action !== 'dev'
-      ? null
-      : app === 'identity'
-        ? { kind: 'identity', value: loadIdentityStagingDevelopmentSecrets(environment) }
-        : app === 'operator-web'
-          ? { kind: 'operator-web', value: loadOperatorWebStagingDevelopmentSecrets(environment) }
-          : null;
     const rendered = renderStagingWranglerConfig(app, configuration, repositoryRoot);
     temporaryDirectory = await mkdtemp(path.join(tmpdir(), 'incentives-staging-wrangler-'));
     const configPath = path.join(temporaryDirectory, `${app}.wrangler.toml`);
     await writeFile(configPath, rendered, { encoding: 'utf8', flag: 'wx', mode: 0o600 });
     await chmod(configPath, 0o600);
-    if (developmentSecrets) {
-      const devVarsPath = path.join(temporaryDirectory, '.dev.vars');
-      await writeFile(
-        devVarsPath,
-        developmentSecrets.kind === 'identity'
-          ? renderIdentityStagingDevelopmentVars(developmentSecrets.value)
-          : renderOperatorWebStagingDevelopmentVars(developmentSecrets.value),
-        { encoding: 'utf8', flag: 'wx', mode: 0o600 },
-      );
-      await chmod(devVarsPath, 0o600);
-    }
     const apiConfigPath = app === 'api'
       ? configPath
       : path.join(temporaryDirectory, 'api-target.wrangler.toml');
@@ -370,7 +350,7 @@ export async function runStagingWrangler({
     reportOutput('Authenticated staging Product D1 target confirmed.');
 
     const invocation = resolver(repositoryRoot, app);
-    const captureOutput = CAPTURED_TASK10_ACTIONS.has(action);
+    const captureOutput = CAPTURED_REMOTE_ACTIONS.has(action);
     const result = spawn(
       invocation.command,
       [
@@ -387,7 +367,9 @@ export async function runStagingWrangler({
     );
     if (result.error || result.status !== 0) {
       reportError('Unable to execute Wrangler.');
-      return captureOutput ? 1 : (result.status ?? 1);
+      return action === 'migrate' || action === 'deploy'
+        ? (result.status ?? 1)
+        : 1;
     }
     if (TASK10_QUERY_FIELDS[action]) {
       reportOutput(safeD1QueryOutput(action, result.stdout));
@@ -396,6 +378,12 @@ export async function runStagingWrangler({
     } else if (action === 'task10-export') {
       verifyPrivateExport(exportDestination);
       reportOutput('Product D1 export completed.');
+    } else if (action === 'migrate' || action === 'deploy') {
+      reportOutput(JSON.stringify({
+        application: app,
+        action,
+        status: 'completed',
+      }));
     }
     return 0;
   } catch (error) {

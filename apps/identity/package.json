@@ -10,8 +10,6 @@
     "bootstrap:root": "node src/cli/bootstrap-root-runner.mjs",
     "predev:local": "pnpm --filter @incentives/contracts build",
     "dev:local": "wrangler dev --config wrangler.toml",
-    "predev:staging": "pnpm --filter @incentives/contracts build",
-    "dev:staging": "node ../../scripts/staging-wrangler-runner.mjs identity dev",
     "predeploy:staging": "pnpm --filter @incentives/contracts build",
     "deploy:staging": "node ../../scripts/staging-wrangler-runner.mjs identity deploy",
     "db:migrate:local": "wrangler d1 migrations apply incentives-auth-local --local --config wrangler.toml",
