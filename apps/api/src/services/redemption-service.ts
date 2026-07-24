@@ -15,7 +15,10 @@ import {
 } from '../errors.js';
 import { canonicalJson } from '../json.js';
 import type { AtomicRedemptionCoordinator } from '../redemption/atomic-redemption-coordinator.js';
-import type { Repositories } from '../repositories/types.js';
+import {
+  RepositoryDependencyError,
+  type Repositories,
+} from '../repositories/types.js';
 
 const SigningSecretSchema = z.string().min(16).max(4_096);
 const encoder = new TextEncoder();
@@ -48,12 +51,18 @@ export function createRedemptionService(
         throw new RedemptionUnavailableError('decision_integrity');
       }
       try {
-        const evaluation = await repositories.decisions.get(
-          merchantId,
-          request.evaluationId,
-        ).catch(() => {
-          throw new RedemptionUnavailableError('d1');
-        });
+        let evaluation;
+        try {
+          evaluation = await repositories.decisions.get(
+            merchantId,
+            request.evaluationId,
+          );
+        } catch (error) {
+          if (error instanceof RepositoryDependencyError) {
+            throw new RedemptionUnavailableError(error.dependency);
+          }
+          throw new RedemptionUnavailableError();
+        }
         if (evaluation === null) throw new NotFoundError('Evaluation decision not found');
 
         const requestDigest = await sha256(canonicalJson({

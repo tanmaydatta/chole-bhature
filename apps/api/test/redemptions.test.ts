@@ -27,6 +27,7 @@ import type {
   RedemptionBundleCreate,
 } from '../src/repositories/types.js';
 import { signDecisionSnapshot } from '../src/services/evaluation-service.js';
+import { createRedemptionService } from '../src/services/redemption-service.js';
 
 const createdAt = '2026-07-24T12:00:00.000Z';
 const signingSecret = 'decision-signing-test-secret';
@@ -657,6 +658,89 @@ describe('D1 coordinator reconciliation', () => {
 
 describe('POST /v1/redemptions', () => {
   beforeEach(resetData);
+
+  test('omits dependency attribution for an injected provider-neutral decision read failure', async () => {
+    const readFailure = new Error('provider-neutral decision read failure');
+    const repositories = createRepositories({ DB: env.DB });
+    const coordinator: AtomicRedemptionCoordinator = {
+      commitBundle: vi.fn(),
+      getBundle: vi.fn(),
+    };
+    const service = createRedemptionService({
+      ...repositories,
+      decisions: {
+        ...repositories.decisions,
+        get: async () => {
+          throw readFailure;
+        },
+      },
+    }, coordinator, {
+      DB: env.DB,
+      DECISION_SIGNING_SECRET: signingSecret,
+    });
+
+    await expect(service.redeem(SEEDED_MERCHANT_ID, {
+      evaluationId: 'provider-neutral-read-failure',
+      externalOrderRef: 'provider-neutral-order',
+      idempotencyKey: 'provider-neutral-key',
+    }, 'provider-neutral-correlation')).rejects.toMatchObject({
+      code: 'REDEMPTION_UNAVAILABLE',
+      status: 503,
+      retryable: true,
+      dependency: undefined,
+    });
+    expect(coordinator.commitBundle).not.toHaveBeenCalled();
+  });
+
+  test('omits dependency attribution when a persisted decision cannot be decoded', async () => {
+    await seedProgram(automaticPromo('corrupt-decision-read'));
+    const evaluation = await evaluate();
+    await env.DB.prepare(`
+      UPDATE evaluation_decisions
+      SET request_json = '{'
+      WHERE merchant_id = ?1 AND id = ?2
+    `).bind(SEEDED_MERCHANT_ID, evaluation.evaluationId).run();
+
+    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      const response = await redeemRaw({
+        evaluationId: evaluation.evaluationId,
+        externalOrderRef: 'corrupt-decision-order',
+        idempotencyKey: 'corrupt-decision-key',
+      }, 'corrupt-decision-correlation');
+      await expectError(response, 503, 'REDEMPTION_UNAVAILABLE');
+      expect(errorLog).toHaveBeenCalledTimes(1);
+
+      const serialized = String(errorLog.mock.calls[0]?.[0]);
+      const logged = JSON.parse(serialized) as Record<string, unknown>;
+      expect(Object.keys(logged).sort()).toEqual([
+        'code',
+        'correlationId',
+        'credentialId',
+        'event',
+        'merchantId',
+        'method',
+        'retryable',
+        'route',
+        'status',
+      ]);
+      expect(logged).toMatchObject({
+        event: 'api_request_failed',
+        correlationId: 'corrupt-decision-correlation',
+        route: '/v1/redemptions',
+        method: 'POST',
+        code: 'REDEMPTION_UNAVAILABLE',
+        status: 503,
+        retryable: true,
+        merchantId: SEEDED_MERCHANT_ID,
+        credentialId: expect.any(String),
+      });
+      expect(serialized).not.toContain('corrupt-decision-order');
+      expect(serialized).not.toContain('corrupt-decision-key');
+    } finally {
+      errorLog.mockRestore();
+    }
+  });
 
   test('maps invalid signing configuration to a retryable coordinator failure', async () => {
     const errorLog = vi.spyOn(console, 'error').mockImplementation(() => undefined);

@@ -3047,10 +3047,12 @@ export function createRepositories(env: Env): Repositories {
       },
 
       async get(merchantId, evaluationId) {
-        const row = await db.select().from(evaluationDecisions).where(and(
-          eq(evaluationDecisions.merchantId, merchantId),
-          eq(evaluationDecisions.id, evaluationId),
-        )).get();
+        const row = await d1DependencyOperation(() => (
+          db.select().from(evaluationDecisions).where(and(
+            eq(evaluationDecisions.merchantId, merchantId),
+            eq(evaluationDecisions.id, evaluationId),
+          )).get()
+        ));
         return row === undefined ? null : decisionFromRow(row);
       },
     },

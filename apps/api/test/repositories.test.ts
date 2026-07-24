@@ -599,6 +599,55 @@ describe('D1 repositories', () => {
     }
   });
 
+  test('decision reads type actual D1 driver failures before stored-row decoding', async () => {
+    const driverFailure = new Error('forced repository D1 read failure');
+    const failingDb = new Proxy(env.DB, {
+      get(target, property) {
+        if (property === 'prepare') {
+          return (query: string) => {
+            function wrap(statement: D1PreparedStatement): D1PreparedStatement {
+              return new Proxy(statement, {
+                get(statementTarget, statementProperty) {
+                  if (
+                    statementProperty === 'raw'
+                    && query.includes('evaluation_decisions')
+                  ) {
+                    return async () => {
+                      throw driverFailure;
+                    };
+                  }
+                  if (statementProperty === 'bind') {
+                    return (...values: unknown[]) => wrap(
+                      statementTarget.bind(...values),
+                    );
+                  }
+                  const value = Reflect.get(statementTarget, statementProperty) as unknown;
+                  return typeof value === 'function'
+                    ? value.bind(statementTarget)
+                    : value;
+                },
+              });
+            }
+            return wrap(target.prepare(query));
+          };
+        }
+        const value = Reflect.get(target, property) as unknown;
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    }) as D1Database;
+    const repositories = createRepositories({ DB: failingDb });
+
+    const failure = await repositories.decisions.get(
+      'merchant-a',
+      'forced-d1-read-failure',
+    ).catch(error => error);
+    expect(failure).toBeInstanceOf(RepositoryDependencyError);
+    expect((failure as RepositoryDependencyError).dependency).toBe('d1');
+    expect((failure as RepositoryDependencyError).cause).toMatchObject({
+      cause: driverFailure,
+    });
+  });
+
   test('decision reads reject stored code diagnostics that require canonicalization', async () => {
     await seedMerchant('merchant-a');
     await seedPublishedSchema('merchant-a');

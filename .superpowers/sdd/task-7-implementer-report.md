@@ -200,3 +200,66 @@ Additional review-follow-up files:
 - `apps/api/src/repositories/types.ts`
 - `apps/api/src/repositories/d1-repositories.ts`
 - `apps/api/test/repositories.test.ts`
+
+## Review follow-up: redemption decision reads
+
+A second review found that redemption translated every decision-repository read
+failure into a hard-coded `d1` failure. Because `decisions.get` previously
+combined the Drizzle read with persisted-row decoding, corrupt data and
+provider-neutral injected failures were incorrectly attributed to D1.
+
+The follow-up narrows the dependency boundary:
+
+- the D1 adapter wraps only the awaited Drizzle decision query in
+  `d1DependencyOperation`;
+- persisted decision decoding remains outside the D1 wrapper;
+- redemption translates `RepositoryDependencyError.dependency` into the public
+  retryable error; and
+- unknown decision-read failures keep the existing public status and code but
+  omit dependency attribution.
+
+Strict RED evidence:
+
+```text
+pnpm --filter @incentives/api exec vitest run test/app.test.ts test/redemptions.test.ts test/repositories.test.ts
+3 test files; 132 tests; 129 passed, 3 failed
+```
+
+The three failures proved the missing boundaries: an actual D1 decision query
+failure was untyped, an injected provider-neutral read failure was falsely
+attributed to D1, and corrupt persisted decision data was logged with a false
+D1 dependency.
+
+Fresh GREEN verification:
+
+```text
+pnpm --filter @incentives/api exec vitest run test/app.test.ts test/redemptions.test.ts test/repositories.test.ts
+3 test files passed; 132 tests passed
+```
+
+```text
+pnpm --filter @incentives/api exec vitest run
+14 test files passed; 445 tests passed
+```
+
+```text
+pnpm --filter @incentives/api build
+PASS
+```
+
+```text
+pnpm --filter @incentives/api lint
+PASS
+```
+
+```text
+git diff --check
+PASS
+```
+
+Additional second-review files:
+
+- `apps/api/src/services/redemption-service.ts`
+- `apps/api/src/repositories/d1-repositories.ts`
+- `apps/api/test/redemptions.test.ts`
+- `apps/api/test/repositories.test.ts`
