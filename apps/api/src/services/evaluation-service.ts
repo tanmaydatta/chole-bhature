@@ -548,6 +548,11 @@ interface EvaluationServiceOptions {
   reservations?: EvaluationReservationHooks;
 }
 
+interface PreparedReservation {
+  handle: unknown;
+  programRef: string;
+}
+
 const defaultReservationHooks: EvaluationReservationHooks = {
   async prepare() {
     return undefined;
@@ -568,11 +573,11 @@ interface SingleProgramEvaluationContext {
   facts: EvaluationFactsSnapshot;
   verifyHistoricalIntegrity: RedemptionIntegrityVerifiers;
   reservations: EvaluationReservationHooks;
+  preparedReservations: PreparedReservation[];
 }
 
 interface EvaluatedProgram {
   decision: PromoDecision;
-  reservation?: unknown;
 }
 
 async function evaluateSingleProgram(
@@ -592,6 +597,7 @@ async function evaluateSingleProgram(
     facts,
     verifyHistoricalIntegrity,
     reservations,
+    preparedReservations,
   } = context;
   const runtimeProgram = effectiveProgram(record.program, now);
   const customerUsesCount = customer === null
@@ -681,10 +687,13 @@ async function evaluateSingleProgram(
     correlationId,
     decision: stableDecision(decision),
   });
-  return {
-    decision,
-    ...(reservation === undefined ? {} : { reservation }),
-  };
+  if (reservation !== undefined) {
+    preparedReservations.push({
+      handle: reservation,
+      programRef: decision.programRef,
+    });
+  }
+  return { decision };
 }
 
 function codeResult(
@@ -714,28 +723,31 @@ function codeResult(
   };
 }
 
-async function cleanupRejectedReservations(
-  evaluations: ReadonlyArray<{
-    decision?: PromoDecision;
-    reservation?: unknown;
-  }>,
+function boundedCleanupValue(value: string): string {
+  return value.slice(0, 200);
+}
+
+async function cleanupPreparedReservations(
+  preparedReservations: PreparedReservation[],
   hooks: EvaluationReservationHooks,
   context: Omit<ReservationCleanupContext, 'programRef'>,
 ): Promise<void> {
-  for (const evaluation of evaluations) {
-    if (evaluation.reservation === undefined || evaluation.decision === undefined) continue;
+  const reservations = preparedReservations.splice(0);
+  for (const reservation of reservations) {
     try {
-      await hooks.cancel(evaluation.reservation);
+      await hooks.cancel(reservation.handle);
     } catch (error) {
       const failureContext = {
-        ...context,
-        programRef: evaluation.decision.programRef,
+        merchantId: boundedCleanupValue(context.merchantId),
+        evaluationId: boundedCleanupValue(context.evaluationId),
+        correlationId: boundedCleanupValue(context.correlationId),
+        programRef: boundedCleanupValue(reservation.programRef),
       };
       try {
         if (hooks.onCleanupFailure === undefined) {
           console.error('Evaluation reservation cleanup failed', {
             ...failureContext,
-            error: error instanceof Error ? error.message : 'Unknown cancellation failure',
+            failure: 'reservation_cancellation_failed',
           });
         } else {
           hooks.onCleanupFailure(failureContext, error);
@@ -768,6 +780,8 @@ export function createEvaluationService(
         throw new NotFoundError('No schema has been published', 'SCHEMA_NOT_PUBLISHED');
       }
       const request = validatePublishedRequest(fixedRequest, published.definitions);
+      const preparedReservations: PreparedReservation[] = [];
+      let cleanupContext: Omit<ReservationCleanupContext, 'programRef'> | undefined;
 
       try {
         const customer = request.customerRef === undefined
@@ -791,6 +805,7 @@ export function createEvaluationService(
 
         const now = new Date();
         const evaluationId = crypto.randomUUID();
+        cleanupContext = { merchantId, evaluationId, correlationId };
         const normalizedCodes = normalizeDistinctPromoCodes(request.codes ?? []);
         const mode = modeForCodes(normalizedCodes);
         const submittedCodes = normalizedCodes.map(code => code.display);
@@ -822,6 +837,7 @@ export function createEvaluationService(
           facts,
           verifyHistoricalIntegrity,
           reservations,
+          preparedReservations,
         };
         let decisions: IncentiveDecision[];
         let codeResults: CodeEvaluationResult[];
@@ -838,7 +854,6 @@ export function createEvaluationService(
           const codedEvaluations: Array<{
             code: ReturnType<typeof normalizeDistinctPromoCodes>[number];
             decision?: PromoDecision;
-            reservation?: unknown;
           }> = [];
           for (const code of normalizedCodes) {
             const record = await repositories.programs.getPublishedByNormalizedCode(
@@ -861,11 +876,11 @@ export function createEvaluationService(
           const selected = selectCodedDecisionCombination(resolvedDecisions);
           const rejectedProgramRefs = new Set(selected.rejectedProgramRefs);
           if (rejectedProgramRefs.size !== 0) {
-            await cleanupRejectedReservations(codedEvaluations, reservations, {
-              merchantId,
-              evaluationId,
-              correlationId,
-            });
+            await cleanupPreparedReservations(
+              preparedReservations,
+              reservations,
+              cleanupContext,
+            );
           }
           decisions = selected.decisions.map(stableDecision);
           codeResults = codedEvaluations.map(entry => (
@@ -905,9 +920,7 @@ export function createEvaluationService(
           ),
           createdAt,
         };
-        await repositories.decisions.create(record);
-
-        return EvaluationResponseSchema.parse({
+        const response = EvaluationResponseSchema.parse({
           evaluationId,
           ...(record.customerRef === undefined ? {} : { customerRef: record.customerRef }),
           ...(record.customerVersion === undefined
@@ -918,7 +931,18 @@ export function createEvaluationService(
           decisions,
           ...(mode === 'coded' ? { codeResults } : {}),
         });
+        await repositories.decisions.create(record);
+        preparedReservations.length = 0;
+
+        return response;
       } catch (error) {
+        if (cleanupContext !== undefined) {
+          await cleanupPreparedReservations(
+            preparedReservations,
+            reservations,
+            cleanupContext,
+          );
+        }
         if (error instanceof NotFoundError) throw error;
         throw new Error('Evaluation pipeline failed', { cause: error });
       }

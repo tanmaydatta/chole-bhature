@@ -1084,6 +1084,213 @@ describe('POST /v1/evaluate', () => {
     );
   });
 
+  test('cancels an earlier prepared reservation when a later preparation fails', async () => {
+    await seedCustomer();
+    await seedProgram(codedPromo('prepare-first', 'PREPARE-FIRST', {
+      priority: 20,
+      stackable: true,
+    }));
+    await seedProgram(codedPromo('prepare-fails', 'PREPARE-FAILS', {
+      priority: 10,
+      stackable: true,
+    }));
+    const prepareFailure = new Error('simulated later preparation failure');
+    const cancel = vi.fn(async () => {});
+    const service = createEvaluationService(
+      createRepositories({ DB: env.DB }),
+      env,
+      {
+        reservations: {
+          prepare: async ({ decision }) => {
+            if (decision.programRef === 'prepare-fails') throw prepareFailure;
+            return { programRef: decision.programRef };
+          },
+          cancel,
+        },
+      },
+    );
+
+    await expect(service.evaluate(
+      SEEDED_MERCHANT_ID,
+      {
+        ...baseRequest,
+        codes: ['prepare-first', 'prepare-fails'],
+      },
+      'later-prepare-failure',
+    )).rejects.toMatchObject({
+      message: 'Evaluation pipeline failed',
+      cause: prepareFailure,
+    });
+    expect(cancel).toHaveBeenCalledExactlyOnceWith({ programRef: 'prepare-first' });
+  });
+
+  test('cancels an automatic winner when signed snapshot persistence fails', async () => {
+    await seedCustomer();
+    await seedProgram(promo('automatic-persistence-failure'));
+    const persistenceFailure = new Error('simulated decision snapshot failure');
+    const repositories = createRepositories({ DB: env.DB });
+    const cancel = vi.fn(async () => {});
+    const service = createEvaluationService({
+      ...repositories,
+      decisions: {
+        ...repositories.decisions,
+        create: async () => {
+          throw persistenceFailure;
+        },
+      },
+    }, env, {
+      reservations: {
+        prepare: async ({ decision }) => ({ programRef: decision.programRef }),
+        cancel,
+      },
+    });
+
+    await expect(service.evaluate(
+      SEEDED_MERCHANT_ID,
+      baseRequest,
+      'automatic-persistence-failure',
+    )).rejects.toMatchObject({
+      message: 'Evaluation pipeline failed',
+      cause: persistenceFailure,
+    });
+    expect(cancel).toHaveBeenCalledExactlyOnceWith({
+      programRef: 'automatic-persistence-failure',
+    });
+  });
+
+  test('keeps the original persistence failure and attempts later cleanup after cancellation fails', async () => {
+    await seedCustomer();
+    await seedProgram(codedPromo('cancel-first', 'CANCEL-FIRST', {
+      priority: 20,
+      stackable: true,
+    }));
+    await seedProgram(codedPromo('cancel-later', 'CANCEL-LATER', {
+      priority: 10,
+      stackable: true,
+    }));
+    const persistenceFailure = new Error('authoritative persistence failure');
+    const cancellationFailure = new Error('simulated cancellation uncertainty');
+    const repositories = createRepositories({ DB: env.DB });
+    const cleanupAttempts: unknown[] = [];
+    const cleanupFailure = vi.fn();
+    const service = createEvaluationService({
+      ...repositories,
+      decisions: {
+        ...repositories.decisions,
+        create: async () => {
+          throw persistenceFailure;
+        },
+      },
+    }, env, {
+      reservations: {
+        prepare: async ({ decision }) => ({ programRef: decision.programRef }),
+        cancel: async (handle) => {
+          cleanupAttempts.push(handle);
+          if ((handle as { programRef: string }).programRef === 'cancel-first') {
+            throw cancellationFailure;
+          }
+        },
+        onCleanupFailure: cleanupFailure,
+      },
+    });
+
+    await expect(service.evaluate(
+      SEEDED_MERCHANT_ID,
+      {
+        ...baseRequest,
+        codes: ['cancel-first', 'cancel-later'],
+      },
+      'cleanup-continuation',
+    )).rejects.toMatchObject({
+      message: 'Evaluation pipeline failed',
+      cause: persistenceFailure,
+    });
+    expect(cleanupAttempts).toEqual([
+      { programRef: 'cancel-first' },
+      { programRef: 'cancel-later' },
+    ]);
+    expect(cleanupFailure).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        correlationId: 'cleanup-continuation',
+        programRef: 'cancel-first',
+      }),
+      cancellationFailure,
+    );
+  });
+
+  test('does not cancel rejected-combination reservations twice when persistence later fails', async () => {
+    await seedCustomer();
+    await seedProgram(codedPromo('reject-once-stackable', 'REJECT-ONCE-STACK', {
+      priority: 20,
+      stackable: true,
+    }));
+    await seedProgram(codedPromo('reject-once-exclusive', 'REJECT-ONCE-EXCLUSIVE', {
+      priority: 10,
+      stackable: false,
+    }));
+    const persistenceFailure = new Error('post-rejection persistence failure');
+    const repositories = createRepositories({ DB: env.DB });
+    const cancel = vi.fn(async () => {});
+    const service = createEvaluationService({
+      ...repositories,
+      decisions: {
+        ...repositories.decisions,
+        create: async () => {
+          throw persistenceFailure;
+        },
+      },
+    }, env, {
+      reservations: {
+        prepare: async ({ decision }) => ({ programRef: decision.programRef }),
+        cancel,
+      },
+    });
+
+    await expect(service.evaluate(
+      SEEDED_MERCHANT_ID,
+      {
+        ...baseRequest,
+        codes: ['reject-once-stack', 'reject-once-exclusive'],
+      },
+      'reject-once-correlation',
+    )).rejects.toMatchObject({
+      message: 'Evaluation pipeline failed',
+      cause: persistenceFailure,
+    });
+    expect(cancel.mock.calls.map(([handle]) => handle)).toEqual([
+      { programRef: 'reject-once-stackable' },
+      { programRef: 'reject-once-exclusive' },
+    ]);
+  });
+
+  test('retains a prepared automatic winner after successful snapshot persistence', async () => {
+    await seedCustomer();
+    await seedProgram(promo('automatic-persistence-success'));
+    const cancel = vi.fn(async () => {});
+    const service = createEvaluationService(
+      createRepositories({ DB: env.DB }),
+      env,
+      {
+        reservations: {
+          prepare: async ({ decision }) => ({ programRef: decision.programRef }),
+          cancel,
+        },
+      },
+    );
+
+    await expect(service.evaluate(
+      SEEDED_MERCHANT_ID,
+      baseRequest,
+      'automatic-persistence-success',
+    )).resolves.toMatchObject({
+      decisions: [{
+        programRef: 'automatic-persistence-success',
+        outcome: 'qualified',
+      }],
+    });
+    expect(cancel).not.toHaveBeenCalled();
+  });
+
   test.each([
     ['total usage', { usageCap: 2 }, 'USAGE_CAP_EXHAUSTED'],
     ['budget', { budget: { currency: 'GBP', minorUnits: 999 } }, 'BUDGET_EXHAUSTED'],

@@ -112,6 +112,67 @@ Task 3 already supplied the required repository record fields, D1 columns, parse
 - Reviewer independently confirmed 127/127 focused tests, green lint, clean diff check, and that
   the remaining full-flow/build failures are confined to Task 6.
 
+## Reservation cleanup closure
+
+An independent follow-up review found an Important cleanup gap: prepared reservation handles were
+cancelled for a rejected coded combination, but not for later lookup, evaluation, preparation,
+response validation, signing, or snapshot persistence failures.
+
+The service now keeps one evaluation-scoped registry of prepared handles. Every unsuccessful exit
+consumes and cancels the registry exactly once, cancellation attempts continue after individual
+failures, and bounded cleanup context is reported without replacing the authoritative evaluation
+failure. Handles are retained only after the response validates and the signed snapshot is
+persisted successfully. The same lifecycle applies to automatic and coded evaluations.
+
+Regression RED:
+
+```text
+pnpm --filter @incentives/api exec vitest run test/evaluate.test.ts \
+  -t "earlier prepared reservation|snapshot persistence|later cleanup|retains a prepared automatic"
+3 failed, 1 passed, 65 skipped
+```
+
+The failures showed zero cancellation attempts after a later preparation failure, an automatic
+snapshot persistence failure, and a persistence failure with cancellation uncertainty.
+
+Closure GREEN:
+
+```text
+pnpm --filter @incentives/api exec vitest run test/evaluate.test.ts \
+  -t "earlier prepared reservation|snapshot persistence|later cleanup|retains a prepared automatic"
+4 passed, 65 skipped
+```
+
+```text
+pnpm --filter @incentives/api exec vitest run test/evaluate.test.ts
+1 file passed; 70 tests passed
+```
+
+```text
+pnpm --filter @incentives/api exec vitest run \
+  test/evaluate.test.ts \
+  test/evaluation-integrity.test.ts \
+  test/repositories.test.ts
+3 files passed; 132 tests passed
+```
+
+```text
+pnpm --filter @incentives/api lint
+PASS
+
+git diff --check
+PASS
+```
+
+The API build still fails only in the pending Task 6
+`apps/api/src/services/redemption-service.ts` singular redemption implementation. The closure is
+committed separately as `fix(api): clean up prepared evaluation reservations`.
+
+The independent closure review returned **READY / Approved**, with no Critical, Important, or
+Minor findings. The reviewer independently confirmed 132/132 focused tests, green lint, a clean
+scoped diff check, exactly-once registry consumption, authoritative failure preservation, bounded
+default diagnostics, and successful reservation retention.
+
 ## Concerns
 
 - Task 6 must replace the stale singular redemption service before API build and full-flow can be
