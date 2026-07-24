@@ -829,6 +829,8 @@ describe('live session and tenant boundary', () => {
     };
     const view = {
       configuration,
+      activeConfiguration: { ...configuration, status: 'active' },
+      draftConfiguration: configuration,
       lifecycle: {
         programRef: 'promo-a', status: 'active', activeRevision: 1,
         draftRevision: 2, updatedAt: authenticatedAt,
