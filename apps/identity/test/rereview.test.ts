@@ -11,6 +11,7 @@ import {
   authenticationResponse,
   createTestCredential,
   registrationResponse,
+  toDerSignature,
   type TestCredential,
 } from './webauthn-fixture.js';
 
@@ -830,6 +831,17 @@ describe('magic-link state and Identity error boundary', () => {
 });
 
 describe('minor boundary hardening', () => {
+  test('DER-encodes a raw P-256 signature whose first byte is the DER sequence marker', () => {
+    const rawSignature = new Uint8Array(64).fill(1);
+    rawSignature[0] = 0x30;
+
+    const encoded = toDerSignature(rawSignature);
+
+    expect(encoded).toHaveLength(70);
+    expect(Array.from(encoded.slice(0, 4))).toEqual([0x30, 68, 0x02, 32]);
+    expect(encoded).not.toEqual(rawSignature);
+  });
+
   test('deletes outstanding magic links case-insensitively', async () => {
     await seedUser({ id: 'employee-1', email: 'known@example.test' });
     await testEnv.AUTH_DB.prepare(`

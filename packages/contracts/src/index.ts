@@ -13,6 +13,7 @@ export * from './openapi.js';
 export * from './operator.js';
 export * from './operator-bff.js';
 export * from './paths.js';
+export * from './promo-codes.js';
 export * from './programs.js';
 export { ReferralProgramSchema } from './referral-program.js';
 export type { ReferralProgram } from './referral-program.js';

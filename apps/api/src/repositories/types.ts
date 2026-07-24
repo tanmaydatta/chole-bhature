@@ -3,8 +3,10 @@ import type {
   ApiCredentialScope,
   ApiCredentialView,
   AuditEntry,
+  CodeEvaluationResult,
   CustomerSnapshot,
   DeploymentEnvironment,
+  Effect,
   EvaluationRequest,
   IncentiveDecision,
   MerchantActivationRequest,
@@ -21,6 +23,18 @@ import type {
 
 export type SchemaState = 'draft' | 'published';
 export type DefinitionState = SchemaState | 'deprecated';
+export type RepositoryDependency = 'd1';
+
+export class RepositoryDependencyError extends Error {
+  override readonly name = 'RepositoryDependencyError';
+
+  constructor(
+    readonly dependency: RepositoryDependency,
+    cause: unknown,
+  ) {
+    super('Repository dependency failed', { cause });
+  }
+}
 
 export interface VariableDefinitionCreate {
   id: string;
@@ -233,21 +247,39 @@ export interface ProgramCounterRecord {
   committedSpend: number;
 }
 
+export interface PromoCodeClaimInput {
+  merchantId: string;
+  programId: string;
+  programRef: string;
+  activeRevision: number;
+  displayCode: string;
+  normalizedCode: string;
+  startsAt?: string;
+  endsAt?: string;
+  claimedAt: string;
+}
+
+export interface PublishProgramInput {
+  merchantId: string;
+  externalRef: string;
+  expectedDraftRevision: number;
+  publishedAt: string;
+  publishedBy: string;
+  codeClaim?: PromoCodeClaimInput;
+}
+
 export interface ProgramRepository {
   create(input: ProgramCreate): Promise<ProgramRecord>;
   get(merchantId: string, externalRef: string): Promise<ProgramRecord | null>;
   getActive(merchantId: string, externalRef: string): Promise<ProgramRecord | null>;
+  getPublishedByNormalizedCode(
+    merchantId: string,
+    normalizedCode: string,
+  ): Promise<ProgramRecord | null>;
   list(merchantId: string): Promise<ProgramRecord[]>;
   listActive(merchantId: string): Promise<ProgramRecord[]>;
   updateDraft(input: ProgramUpdate): Promise<ProgramRecord>;
-  publishDraft(input: {
-    merchantId: string;
-    externalRef: string;
-    expectedDraftRevision: number;
-    status: Exclude<ProgramStatus, 'draft'>;
-    publishedAt: string;
-    publishedBy: string;
-  }): Promise<ProgramRecord>;
+  publishDraftWithCodeClaim(input: PublishProgramInput): Promise<ProgramRecord>;
   updateLifecycle(input: {
     merchantId: string;
     externalRef: string;
@@ -267,6 +299,11 @@ export interface ProgramRepository {
 export interface EvaluationDecisionRecord {
   evaluationId: string;
   merchantId: string;
+  mode: EvaluationMode;
+  submittedCodes: string[];
+  codeResults: CodeEvaluationResult[];
+  requestDigest: string;
+  correlationId: string;
   customerRef?: string;
   customerVersion?: number;
   schemaVersion: number;
@@ -277,6 +314,8 @@ export interface EvaluationDecisionRecord {
   expiresAt: string;
   createdAt: string;
 }
+
+export type EvaluationMode = 'automatic' | 'coded';
 
 export interface EvaluationFactsSnapshot {
   scalar: Record<string, unknown>;
@@ -293,27 +332,30 @@ export interface DecisionRepository {
   get(merchantId: string, evaluationId: string): Promise<EvaluationDecisionRecord | null>;
 }
 
-export interface RedemptionCreate {
-  redemptionId: string;
-  merchantId: string;
-  externalOrderRef?: string;
-  idempotencyKey?: string;
-  evaluationId: string;
-  result: RedemptionResponse;
+export interface RedemptionEntryRecord {
+  position: number;
+  programRef: string;
+  programRevision: number;
+  rewardRuleRef?: string;
+  effects: Effect[];
   discountMinorUnits: number;
   currency: string;
+}
+
+export interface RedemptionBundleCreate {
+  redemptionId: string;
+  merchantId: string;
+  evaluationId: string;
+  externalOrderRef: string;
+  idempotencyKey: string;
+  requestDigest: string;
+  result: RedemptionResponse;
+  entries: RedemptionEntryRecord[];
   createdAt: string;
   receiptIntegrityHash: string;
 }
 
-export interface AtomicRedemptionCommit extends RedemptionCreate {
-  programId: string;
-  programRef: string;
-  expectedActiveRevision: number;
-  expectedProgram: PromoProgram;
-  customerRef?: string;
-  perCustomerCap?: number;
-}
+export type RedemptionCreate = RedemptionBundleCreate;
 
 export type DecisionIntegrityVerifier = (
   record: EvaluationDecisionRecord,
@@ -329,18 +371,17 @@ export interface RedemptionIntegrityVerifiers {
 }
 
 export interface RedemptionRepository {
-  create(input: RedemptionCreate): Promise<void>;
-  commitAtomically(input: AtomicRedemptionCommit): Promise<boolean>;
+  create(input: RedemptionBundleCreate): Promise<void>;
   getByExternalOrderRef(
     merchantId: string,
     externalOrderRef: string,
     verifyIntegrity: RedemptionReceiptIntegrityVerifier,
-  ): Promise<RedemptionCreate | null>;
+  ): Promise<RedemptionBundleCreate | null>;
   getByIdempotencyKey(
     merchantId: string,
     idempotencyKey: string,
     verifyIntegrity: RedemptionReceiptIntegrityVerifier,
-  ): Promise<RedemptionCreate | null>;
+  ): Promise<RedemptionBundleCreate | null>;
   countCommittedForCustomerProgram(
     merchantId: string,
     customerRef: string,
@@ -386,5 +427,13 @@ export class ProgramConflictError extends Error {
 
   constructor(message: string) {
     super(message);
+  }
+}
+
+export class PromoCodeConflictError extends Error {
+  override readonly name = 'PromoCodeConflictError';
+
+  constructor(readonly conflictingProgramRef: string) {
+    super('This code overlaps another published Promo');
   }
 }

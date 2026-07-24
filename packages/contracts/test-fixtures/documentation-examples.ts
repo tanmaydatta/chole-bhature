@@ -92,19 +92,12 @@ export const canonicalCustomer = {
 } as const satisfies CustomerSnapshot;
 
 export const canonicalEvaluationRequest = {
-  customerRef: 'customer-123',
-  code: 'WELCOME10',
+  codes: ['GATEC15', 'VIP20'],
+  customerRef: 'customer-1',
   cart: {
     currency: 'GBP',
-    subtotal: 6_500,
-    items: [{
-      productRef: 'product-456',
-      variantRef: 'variant-789',
-      quantity: 1,
-      unitPrice: 6_500,
-      attributes: { category: 'shoes' },
-    }],
-    attributes: { delivery_country: 'GB' },
+    subtotal: 12_500,
+    items: [],
   },
   context: { channel: 'web' },
 } as const satisfies EvaluationRequest;
@@ -303,39 +296,91 @@ export const canonicalFallbackResponse = {
 
 export const canonicalNoMatchResponse = {
   ...canonicalEvaluationResponseBase,
-  decisions: [{
-    programRef: 'gold-web-rewards-no-fallback',
-    programRevision: 1,
-    programType: 'promo',
-    outcome: 'not_qualified',
-    effects: [],
-    reasonCodes: ['NO_REWARD_RULE_MATCHED'],
-    message: 'No reward rule matched.',
-    commitRequired: false,
-    eligible: false,
-  }],
+  decisions: [],
+} as const satisfies EvaluationResponse;
+
+export const canonicalCodedEvaluationResponse = {
+  evaluationId: 'evaluation-123',
+  customerRef: 'customer-1',
+  customerVersion: 1,
+  schemaVersion: 1,
+  expiresAt: '2026-07-24T15:05:00.000Z',
+  decisions: [
+    {
+      programRef: 'vip-shipping',
+      programRevision: 1,
+      programType: 'promo',
+      outcome: 'qualified',
+      rewardRuleRef: 'free-shipping',
+      effects: [{ type: 'free_shipping' }],
+      reasonCodes: [],
+      commitRequired: true,
+      eligible: true,
+    },
+    {
+      programRef: 'gate-c-15',
+      programRevision: 1,
+      programType: 'promo',
+      outcome: 'qualified',
+      rewardRuleRef: 'fifteen-percent',
+      effects: [{
+        type: 'order_discount',
+        calculation: 'percent',
+        basisPoints: 1_500,
+      }],
+      reasonCodes: [],
+      commitRequired: true,
+      eligible: true,
+    },
+  ],
+  codeResults: [
+    {
+      code: 'GATEC15',
+      normalizedCode: 'GATEC15',
+      outcome: 'selected',
+      programRef: 'gate-c-15',
+      reasonCodes: [],
+    },
+    {
+      code: 'VIP20',
+      normalizedCode: 'VIP20',
+      outcome: 'selected',
+      programRef: 'vip-shipping',
+      reasonCodes: [],
+    },
+  ],
 } as const satisfies EvaluationResponse;
 
 export const canonicalRedemptionRequest = {
-  evaluationId: 'evaluation-789',
-  programRef: 'gold-web-rewards',
+  evaluationId: 'evaluation-123',
   externalOrderRef: 'order-456',
-  idempotencyKey: 'checkout-attempt-abc',
+  idempotencyKey: 'checkout-789',
 } as const satisfies RedemptionRequest;
 
 export const canonicalCommittedRedemption = {
   redemptionId: 'redemption-123',
-  evaluationId: 'evaluation-789',
-  programRef: 'gold-web-rewards',
-  rewardRuleRef: 'large-cart-20-percent',
+  evaluationId: 'evaluation-123',
   externalOrderRef: 'order-456',
-  idempotencyKey: 'checkout-attempt-abc',
   status: 'committed',
-  effects: [{
-    type: 'order_discount',
-    calculation: 'percent',
-    basisPoints: 2_000,
-  }],
+  entries: [
+    {
+      programRef: 'vip-shipping',
+      programRevision: 1,
+      rewardRuleRef: 'free-shipping',
+      effects: [{ type: 'free_shipping' }],
+    },
+    {
+      programRef: 'gate-c-15',
+      programRevision: 1,
+      rewardRuleRef: 'fifteen-percent',
+      effects: [{
+        type: 'order_discount',
+        calculation: 'percent',
+        basisPoints: 1_500,
+      }],
+    },
+  ],
+  idempotencyKey: 'checkout-789',
 } as const satisfies RedemptionResponse;
 
 export const canonicalApiError = {

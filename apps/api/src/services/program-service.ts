@@ -1,5 +1,6 @@
 import {
   PromoProgramSchema,
+  normalizePromoCode,
   type ApiFieldError,
   type CommerceReward,
   type OperatorProgramView,
@@ -173,14 +174,48 @@ export function createProgramService(repositories: Repositories) {
     merchantId: string,
     record: Awaited<ReturnType<typeof find>>,
   ): Promise<OperatorProgramView> {
-    const activeRecord = record.activeRevision === undefined
-      ? null
-      : await repositories.programs.getActive(merchantId, record.externalRef);
+    const [activeRecord, activeRevisionRecord, draftRevisionRecord] = await Promise.all([
+      record.activeRevision === undefined
+        ? Promise.resolve(null)
+        : repositories.programs.getActive(merchantId, record.externalRef),
+      record.activeRevision === undefined
+        ? Promise.resolve(null)
+        : repositories.programs.getRevision(
+          merchantId,
+          record.externalRef,
+          record.activeRevision,
+        ),
+      record.draftRevision === undefined
+        ? Promise.resolve(null)
+        : repositories.programs.getRevision(
+          merchantId,
+          record.externalRef,
+          record.draftRevision,
+        ),
+    ]);
+    if (
+      (record.activeRevision !== undefined && activeRevisionRecord === null)
+      || (record.draftRevision !== undefined && draftRevisionRecord === null)
+    ) {
+      throw new ProgramConflictError('A referenced program revision is missing');
+    }
+    const status = activeRecord?.program.status ?? record.program.status;
+    const activeConfiguration = activeRevisionRecord === null
+      ? undefined
+      : activeRevisionRecord.configuration;
+    const draftConfiguration = draftRevisionRecord === null
+      ? undefined
+      : draftRevisionRecord.configuration;
+    if (draftConfiguration === undefined && activeConfiguration === undefined) {
+      throw new ProgramConflictError('The program has no addressable revision');
+    }
     return {
       configuration: record.program,
+      ...(activeConfiguration === undefined ? {} : { activeConfiguration }),
+      ...(draftConfiguration === undefined ? {} : { draftConfiguration }),
       lifecycle: {
         programRef: record.externalRef,
-        status: activeRecord?.program.status ?? record.program.status,
+        status,
         ...(record.activeRevision === undefined
           ? {}
           : { activeRevision: record.activeRevision }),
@@ -317,25 +352,36 @@ export function createProgramService(repositories: Repositories) {
         throw new ProgramConflictError('There is no draft revision to publish');
       }
       await validateForPublishedSchema(merchantId, draft.program);
-      const previous = await repositories.programs.getActive(merchantId, externalRef);
       const now = new Date();
-      const priorStatus = previous === null
+      const publishedAt = now.toISOString();
+      const code = draft.program.autoApply
         ? undefined
-        : effectiveProgramStatus(previous.program, now);
-      const priorNaturallyEnded = previous?.program.endDate !== undefined
-        && previous.program.endDate < now.toISOString().slice(0, 10);
-      const status = priorNaturallyEnded || priorStatus === 'ended'
-        ? 'ended'
-        : priorStatus === 'paused'
-        ? priorStatus
-        : effectiveStatus(draft.program);
-      const published = await repositories.programs.publishDraft({
+        : normalizePromoCode(draft.program.code);
+      const published = await repositories.programs.publishDraftWithCodeClaim({
         merchantId,
         externalRef,
         expectedDraftRevision: draft.draftRevision,
-        status,
-        publishedAt: now.toISOString(),
+        publishedAt,
         publishedBy: actorUserId,
+        ...(code === undefined
+          ? {}
+          : {
+              codeClaim: {
+                merchantId,
+                programId: draft.id,
+                programRef: externalRef,
+                activeRevision: draft.draftRevision,
+                displayCode: code.display,
+                normalizedCode: code.normalized,
+                ...(draft.program.startDate === undefined
+                  ? {}
+                  : { startsAt: draft.program.startDate }),
+                ...(draft.program.endDate === undefined
+                  ? {}
+                  : { endsAt: draft.program.endDate }),
+                claimedAt: publishedAt,
+              },
+            }),
       });
       return {
         ...lifecycle(published),

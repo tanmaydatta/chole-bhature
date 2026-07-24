@@ -6,6 +6,7 @@ import {
   CORRELATION_ID_HEADER,
   NotFoundError,
 } from './errors.js';
+import { createD1AtomicRedemptionCoordinator } from './redemption/d1-atomic-redemption-coordinator.js';
 import { createRepositories } from './repositories/d1-repositories.js';
 import { createCustomerRoutes } from './routes/customers.js';
 import { createEvaluationRoutes } from './routes/evaluate.js';
@@ -13,11 +14,13 @@ import { createOpenApiRoutes } from './routes/openapi.js';
 import { createRedemptionRoutes } from './routes/redemptions.js';
 import { createSchemaRoutes } from './routes/schemas.js';
 
+const SAFE_CORRELATION_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/u;
+
 const correlationId: MiddlewareHandler<AppEnvironment> = async (context, next) => {
   const supplied = context.req.header(CORRELATION_ID_HEADER)?.trim();
-  const id = supplied === undefined || supplied.length === 0
-    ? crypto.randomUUID()
-    : supplied;
+  const id = supplied !== undefined && SAFE_CORRELATION_ID.test(supplied)
+    ? supplied
+    : crypto.randomUUID();
 
   context.set('correlationId', id);
   try {
@@ -29,6 +32,7 @@ const correlationId: MiddlewareHandler<AppEnvironment> = async (context, next) =
 
 const requestScope: MiddlewareHandler<AppEnvironment> = async (context, next) => {
   context.set('repositories', createRepositories(context.env));
+  context.set('atomicRedemptions', createD1AtomicRedemptionCoordinator(context.env));
   await next();
 };
 

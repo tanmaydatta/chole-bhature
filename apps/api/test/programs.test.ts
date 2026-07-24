@@ -1,14 +1,20 @@
 import {
   ApiErrorSchema,
+  type OperatorCallContext,
   type PromoProgram,
   type VariableDefinition,
 } from '@incentives/contracts';
 import { SELF } from 'cloudflare:test';
 import { env } from 'cloudflare:workers';
+import { Hono } from 'hono';
 import { beforeEach, describe, expect, test } from 'vitest';
 
 import { SEEDED_MERCHANT_ID } from './test-credentials.js';
+import type { AppEnvironment } from '../src/env.js';
+import { apiErrorResponse } from '../src/errors.js';
 import { createRepositories } from '../src/repositories/d1-repositories.js';
+import { PromoCodeConflictError } from '../src/repositories/types.js';
+import { publishProgram } from '../src/routes/programs.js';
 import { createProgramService } from '../src/services/program-service.js';
 import { operatorAuthoringRequest } from './operator-authoring-app.js';
 
@@ -213,11 +219,89 @@ describe('Promo program API', () => {
     expect(JSON.parse(stored?.config_json as string)).toEqual(updated);
   });
 
+  test.each([
+    ['a Unicode control character', 'GATE\u0000C15'],
+    ['more than 128 normalized code points', 'ß'.repeat(65)],
+  ])('rejects a coded Promo containing %s before persistence', async (_case, code) => {
+    await expectError(
+      await programRequest(
+        'POST',
+        '',
+        'sk_test_secret_credential_material_000000000001',
+        promo('invalid-code', { code }),
+      ),
+      400,
+      'CONTEXT_VALIDATION_FAILED',
+    );
+    expect(await createRepositories({ DB: env.DB }).programs.get(
+      SEEDED_MERCHANT_ID,
+      'invalid-code',
+    )).toBeNull();
+  });
+
+  test('maps an authorized operator publication conflict to a non-retryable 409', async () => {
+    const service = createProgramService(createRepositories({ DB: env.DB }));
+    const owner = promo('operator-code-owner', { code: 'operator-only' });
+    const conflict = promo('operator-code-conflict', { code: ' OPERATOR-ONLY ' });
+    await service.createDraft(SEEDED_MERCHANT_ID, owner);
+    await service.createDraft(SEEDED_MERCHANT_ID, conflict);
+    await service.publish(SEEDED_MERCHANT_ID, owner.id, 'program-operator');
+
+    const operator: OperatorCallContext = {
+      correlationId: 'operator-code-conflict',
+      actorUserId: 'program-operator',
+      actorKind: 'member',
+      merchantId: SEEDED_MERCHANT_ID,
+      permission: 'programs:publish',
+    };
+    const app = new Hono<AppEnvironment>();
+    app.onError((error, context) => apiErrorResponse(context, error));
+    app.post('/publish', async context => context.json(
+      await publishProgram(context.env, operator, conflict.id),
+    ));
+
+    const response = await app.request(
+      new Request('https://operator.test/publish', { method: 'POST' }),
+      undefined,
+      env,
+    );
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({
+      error: {
+        code: 'PROMO_CODE_CONFLICT',
+        message: expect.stringContaining(owner.id),
+        retryable: false,
+      },
+    });
+  });
+
+  test('does not disclose a raw publication conflict through a public runtime error', async () => {
+    const app = new Hono<AppEnvironment>();
+    app.onError((error, context) => apiErrorResponse(context, error));
+    app.get('/runtime', () => {
+      throw new PromoCodeConflictError('private-conflicting-promo');
+    });
+
+    const response = await app.request(
+      new Request('https://runtime.test/runtime'),
+      undefined,
+      env,
+    );
+    expect(response.status).toBe(503);
+    const body = await response.json();
+    expect(body).toMatchObject({
+      error: {
+        code: 'EVALUATION_UNAVAILABLE',
+        retryable: true,
+      },
+    });
+    expect(JSON.stringify(body)).not.toContain('private-conflicting-promo');
+  });
+
   test('PATCH is a full canonical replacement that removes omitted optional fields', async () => {
     const created = await createProgram(promo('replace-all', {
       startDate: '2026-08-01',
       endDate: '2026-08-31',
-      stackingGroup: 'welcome',
     }));
     const replacement: PromoProgram = {
       id: created.id,

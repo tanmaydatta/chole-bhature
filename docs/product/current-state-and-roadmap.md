@@ -1,8 +1,9 @@
 # Product Current State and Roadmap
 
-**Updated:** 2026-07-23
+**Updated:** 2026-07-24
 
-**Status:** Active — Gate C staging verification in progress
+**Status:** Active — clean-break correction and Task 10 review remediation
+verified locally; reviewed merge and owner-run staging evidence pending
 
 **Notion mirror:** https://app.notion.com/p/Product-Current-State-and-Roadmap-3a6e5c7c2b8e81f6b412c45a2bc7b344
 
@@ -23,12 +24,13 @@ deferred issue remains in the
 | Question | Current answer |
 |---|---|
 | Overall phase | Production Operator Platform, Delivery Gate C |
-| Current activity | Finish manual staging verification of the live Operator platform |
+| Current activity | Merge the protected rollout commit through a reviewed PR, then have the owner run the cutover from merged `dev` and manually verify the clean-break Promo selection and atomic bundle correction |
 | Current product-code baseline | PR #8 merge commit `e15cbba` on `dev` |
-| Current deployment gap | PR #8 is merged, but Operator Web must be redeployed before the free-shipping regression can be retested |
-| Current blocker | No product-code blocker is known; staging verification is waiting for the user-run Operator Web deployment and manual continuation |
-| Gate C finish line | Free-shipping create/publish/reload, tenant isolation, evaluation, redemption, idempotent retry, and exhaustion all pass |
-| Next plan work | Close Gate C evidence, write the approved financial-authority implementation plan, then continue the Production Operator Platform plan from Task 10 |
+| Local feature state | Promo-selection plan Tasks 1–9 and Task 10 review remediation are implemented and verified locally; protected rollout tooling, migration prechecks, compatibility proof, and recovery guidance are prepared; merge and staging evidence remain open |
+| Current deployment gap | The new migration/API/operator build is not deployed; staging still runs the historical singular selection/redemption contract |
+| Current blocker | Owner-controlled staging deployment and the 12 documented selection/bundle/tenant/log cases have not run |
+| Gate C finish line | Merge by reviewed PR, execute the protected owner-run cutover one command at a time from the exact merged `dev` commit, pass all manual cases, and close remaining tenant/security evidence |
+| Next plan work | Close Gate C, then write the approved free-shipping financial-authority implementation plan |
 
 ## Source-of-truth map
 
@@ -39,8 +41,11 @@ Use this page for current sequencing and status. Follow its links for detail:
 | Current state and next work | This page |
 | Every known gap, resolved incident, and deferred capability | [Repository](./follow-up-register.md) · [Notion](https://app.notion.com/p/Product-Follow-up-Register-3a6e5c7c2b8e81cebe96de50b64f3bbd) |
 | Current staging evidence | [Repository](../testing/staging-activation-run-2026-07-21.md) · [Notion](https://app.notion.com/p/3a5e5c7c2b8e81739dfed75f998e6489) |
+| Protected Task 10 cutover and recovery | [Repository](../testing/task10-staging-cutover.md) · [Notion](https://app.notion.com/p/Task-10-protected-staging-cutover-and-recovery-3a7e5c7c2b8e817f9c0cf0acab3e8c2e) |
 | Repeatable manual procedure | [Repository](../testing/gate-c-manual-test.md) · [Notion](https://app.notion.com/p/3a3e5c7c2b8e8155aa10c869b97b7e5a) |
 | Active delivery plan | [Repository](../superpowers/plans/2026-07-19-production-operator-platform.md) · [Notion](https://app.notion.com/p/Production-Operator-Platform-and-Integration-Harness-Implementation-Plan-3a2e5c7c2b8e8191ba1ff65dd30752b3) |
+| Approved Promo selection and atomic-redemption design | [Repository](../superpowers/specs/2026-07-23-promo-selection-code-stacking-design.md) · [Notion](https://app.notion.com/p/Promo-Selection-Code-Stacking-and-Atomic-Redemption-Design-Spec-3a6e5c7c2b8e81549b6adc7f3d096455) |
+| Next implementation plan | [Repository](../superpowers/plans/2026-07-24-promo-selection-code-stacking.md) · [Notion](https://app.notion.com/p/Promo-Selection-Code-Stacking-and-Atomic-Redemption-Implementation-Plan-3a7e5c7c2b8e811791dee0d21803c8e2) |
 | Approved free-shipping financial design | [Repository](../superpowers/specs/2026-07-23-free-shipping-budget-authority-design.md) · [Notion](https://app.notion.com/p/Free-Shipping-Budget-Authority-Reservations-and-Reversals-Design-Spec-3a6e5c7c2b8e81f49c6ecbf878d7d48c) |
 | All implementation plans and their statuses | [Notion Plans index](https://app.notion.com/p/Plans-390e5c7c2b8e8165b7f7d77392eab088) |
 
@@ -58,8 +63,10 @@ test observations to make the current state look cleaner.
   pure evaluation engine, module extension point, and connector conformance
   boundary.
 - The persistent Core runtime is complete: D1-backed schema publication,
-  stored customer attributes, evaluation decision snapshots, and atomic
-  idempotent Promo redemption.
+  stored customer attributes, private automatic/coded evaluation snapshots, and
+  provider-neutral atomic/idempotent Promo bundle redemption. D1 is the initial
+  atomic coordinator adapter because all current counters and ledger state live
+  in one database.
 - Ordered conditional reward rules are complete for Promo. Reusable
   configuration contracts exist for Affiliate, Referral, and Loyalty, but
   their production runtimes are deliberately deferred.
@@ -78,6 +85,15 @@ test observations to make the current state look cleaner.
 - Staging uses `api.staging.wastd.dev` and
   `operator.staging.wastd.dev`; Identity remains private.
 - API, Identity, and Operator Web persist staging logs at 100% sampling.
+- Task 10 staging operations now have a protected runner boundary for
+  Product-D1 identity confirmation, count-only migration/precheck queries, a
+  read-only Time Travel bookmark, API/Operator deployment status, and cutover
+  write markers. The child environment is fail-closed and deployment status
+  accepts only canonical, unique Cloudflare version UUIDs. The runner exposes
+  neither D1 restore nor Worker rollback. Normal recovery is containment plus
+  a forward fix; the canonical guide also records the tightly controlled
+  exceptional Time Travel restore sequence. These operations are prepared,
+  not executed.
 
 ## What is verified in staging
 
@@ -95,30 +111,66 @@ manually:
   optimistic concurrency conflicts, and recovery;
 - Promo revision 1 and revision 2 authoring/publication, ordered reward
   persistence, hard-refresh durability, pause, resume, and irreversible end.
+- no-budget free-shipping Promo creation, publication, and hard-refresh
+  durability;
+- staging credential creation and authenticated schema reads;
+- automatic evaluation, redemption, exact idempotent retry, changed-retry
+  conflict, second redemption, and per-customer exhaustion; and
+- manual-code draft persistence plus missing, incorrect, and correct code
+  evaluation behavior.
 
 ## Current work
 
-PR #8 fixed the no-budget free-shipping editor path and is merged into `dev`.
-It added:
+Staging proved the existing credential, schema, customer, Promo lifecycle,
+redemption-idempotency, and cap behavior. It also exposed a deeper product
+contract problem in the deployed build: unrelated Promo outcomes, ambiguous
+automatic stacking, and singular child selection at redemption. This work is
+the next clean-break runtime correction before any client commerce integration
+is allowed to depend on that old boundary.
 
-- explicit **Add budget** and **Remove budget** controls;
-- field-specific budget validation;
-- explicit free-shipping/monetary-budget conflict guidance; and
-- regression coverage proving a no-budget free-shipping request omits
-  `budget`.
+The approved behavior is recorded in the
+[Promo Selection, Code Stacking, and Atomic Redemption design](../superpowers/specs/2026-07-23-promo-selection-code-stacking-design.md).
+Its
+[plan](../superpowers/plans/2026-07-24-promo-selection-code-stacking.md)
+is `In progress`: Tasks 1–9 and Task 10 review remediation are implemented and
+verified locally. The public request uses `codes[]`; automatic evaluation returns zero
+or one private winner; coded evaluation returns submitted-code diagnostics;
+compatible coded Promos can combine; the signed ordered set commits through a
+provider-neutral atomic coordinator; D1 is its initial adapter; and sanitized
+failure logs carry the client-visible correlation ID.
+
+Task 10 review remediation has added a migration-equivalent count-only legacy
+redemption guard, a proof that pre-`0006` column-list inserts remain accepted
+but bypass the new ledgers, and the
+[protected staging cutover/recovery guide](../testing/task10-staging-cutover.md).
+Every protected remote action uses generated mode-`0600` configuration,
+authenticates and confirms Product D1 without printing IDs, and emits only
+allowlisted summaries. The design is not marked implemented because the
+reviewed merge, owner-controlled staging cutover, and manual evidence remain
+incomplete.
 
 The immediate sequence is:
 
-1. The user deploys Operator Web from current `dev`.
-2. Repeat the no-budget free-shipping create, publish, and hard-refresh case.
-3. Complete the remaining tenant-isolation checks.
-4. Complete evaluation, redemption, idempotent-retry, and exhaustion checks.
-5. Update the staging report, follow-up register, active plans, this page, and
-   their Notion mirrors with the final Gate C result.
+1. Commit and approve the locally verified Task 10 rollout candidate; never
+   push directly to `dev`.
+2. Merge the candidate into `dev` through a reviewed PR.
+3. Confirm the exact merged `dev` commit and protected-runner revision before
+   staging.
+4. The account owner follows the protected cutover guide one command at a
+   time: continuous quiet window, Product-D1 confirmation/prechecks, exact
+   pre-migration Time Travel bookmark, migration, pre-deployment health, API
+   deployment, and Operator deployment. Identity is not part of this cutover.
+5. Repeat the documented automatic, coded, stacking, bundle-idempotency, and
+   concurrency cases with fresh references.
+6. Record the staging evidence and complete the remaining tenant-isolation and
+   security closeout checks.
+7. Reconcile the staging report, follow-up register, active plans, this page,
+   and their Notion mirrors with the final Gate C result.
 
 No assistant-run Cloudflare mutation is permitted. The assistant supplies one
-command at a time; the user runs every deployment, migration, secret, domain,
-or other Cloudflare write.
+command at a time; the account owner runs every deployment, migration, secret,
+domain, or other Cloudflare write. External deployment scope is local/staging
+only until separately approved; no production rollout is implied.
 
 ## What happens after Gate C
 
@@ -147,6 +199,14 @@ free-shipping financial authority. The implementation must preserve:
 - provider-neutral ports so Cloudflare Durable Objects/SQLite can be replaced
   without changing domain callsites.
 
+The future distributed free-shipping authority implements the same
+`AtomicRedemptionCoordinator` port and stable failure semantics as the current
+D1 adapter. Budget and per-order cap stay optional; the client supplies actual
+shipping cost; the decision is a full waiver or none; reservation TTL is
+configurable with a 15-minute default; expiry and recovery are treated as money;
+and currency must match exactly with no conversion. Event-driven reversals and
+future event-triggered incentives remain planned work.
+
 This plan is created after Gate C so the current verification result remains
 clear. Its execution does not silently expand Gate C.
 
@@ -166,9 +226,10 @@ existing plan, continue in this order:
 
 Only after the shared platform reaches its acceptance gate—or a real client
 creates a justified earlier constraint—choose Shopify or a manual/custom
-connector. The canonical contracts, connector conformance boundary, typed
-customer/context schema, conditional rewards, and provider-neutral financial
-authority are designed to remain common across those integrations.
+connector. That choice remains uncommitted. The canonical contracts, connector
+conformance boundary, typed customer/context schema, conditional rewards, and
+provider-neutral financial authority are designed to remain common across
+those integrations.
 
 ## Known gaps and deferred work
 
@@ -179,15 +240,20 @@ must be updated whenever a finding changes state. It currently preserves:
   Overview, and live-page styling;
 - member passkeys/MFA and safer invitation account handoff;
 - schema deprecation, stale impact state, and lifecycle presentation;
-- Promo active-vs-draft comparison, revision history, deliberate single-draft
-  semantics, silent sample seeding, and catalog mapping for `productRef`;
+- Promo active-vs-draft full comparison, revision history/rollback, deliberate
+  single-draft semantics, and catalog mapping for `productRef`;
+- client-facing percentage entry instead of exposing internal basis points;
 - the complete approved free-shipping financial-authority design;
 - future event ingestion/mapping and event-triggered Loyalty, Referral, and
   Affiliate behavior;
-- Loyalty wallet terminology and asset-catalog work;
+- Loyalty wallet terminology, asset-catalog work, and the ability for an
+  eligible conditional Promo to grant a configured wallet asset once the
+  production accrual ledger and fulfilment port exist;
 - Affiliate/Referral production runtimes;
-- custom role composition; and
-- integration-specific incurred-cost mapping.
+- custom role composition;
+- integration-specific incurred-cost mapping; and
+- staging verification that the now-implemented sanitized structured public-API
+  error event is locatable by the correlation ID returned to a client.
 
 Nothing in those categories should be considered forgotten merely because it
 does not block the current Gate C test.

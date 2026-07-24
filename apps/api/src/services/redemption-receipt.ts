@@ -35,24 +35,56 @@ async function signingKey(secret: string): Promise<CryptoKey> {
 
 function receiptPayload(receipt: UnsignedRedemptionReceipt | RedemptionCreate) {
   return {
+    kind: 'redemption_bundle_v2',
+    merchantId: receipt.merchantId,
+    redemptionId: receipt.redemptionId,
+    evaluationId: receipt.evaluationId,
+    externalOrderRef: receipt.externalOrderRef,
+    idempotencyKey: receipt.idempotencyKey,
+    requestDigest: receipt.requestDigest,
+    status: receipt.result.status,
+    entries: receipt.entries.map(entry => ({
+      position: entry.position,
+      programRef: entry.programRef,
+      programRevision: entry.programRevision,
+      ...(entry.rewardRuleRef === undefined
+        ? {}
+        : { rewardRuleRef: entry.rewardRuleRef }),
+      effects: entry.effects,
+      discountMinorUnits: entry.discountMinorUnits,
+      currency: entry.currency,
+    })),
+    createdAt: receipt.createdAt,
+  };
+}
+
+function legacyReceiptPayload(receipt: RedemptionCreate) {
+  const [entry] = receipt.entries;
+  if (
+    !receipt.requestDigest.startsWith('legacy:')
+    || entry === undefined
+    || receipt.entries.length !== 1
+    || entry.position !== 0
+  ) return null;
+  return {
     kind: 'redemption_receipt_v1',
     merchantId: receipt.merchantId,
     redemptionId: receipt.redemptionId,
     evaluationId: receipt.evaluationId,
-    programRef: receipt.result.programRef,
-    ...(receipt.result.rewardRuleRef === undefined
+    programRef: entry.programRef,
+    ...(entry.rewardRuleRef === undefined
       ? {}
-      : { rewardRuleRef: receipt.result.rewardRuleRef }),
-    effects: receipt.result.effects,
+      : { rewardRuleRef: entry.rewardRuleRef }),
+    effects: entry.effects,
     ...(receipt.externalOrderRef === undefined
       ? {}
       : { externalOrderRef: receipt.externalOrderRef }),
     ...(receipt.idempotencyKey === undefined
       ? {}
       : { idempotencyKey: receipt.idempotencyKey }),
-    discountMinorUnits: receipt.discountMinorUnits,
-    currency: receipt.currency,
-    status: receipt.result.status,
+    discountMinorUnits: entry.discountMinorUnits,
+    currency: entry.currency,
+    status: 'committed',
     createdAt: receipt.createdAt,
   };
 }
@@ -75,10 +107,14 @@ export async function verifyRedemptionReceipt(
 ): Promise<boolean> {
   const signature = hexToBytes(receipt.receiptIntegrityHash);
   if (signature === null) return false;
+  const payload = receipt.requestDigest.startsWith('legacy:')
+    ? legacyReceiptPayload(receipt)
+    : receiptPayload(receipt);
+  if (payload === null) return false;
   return crypto.subtle.verify(
     'HMAC',
     await signingKey(secret),
     signature,
-    encoder.encode(canonicalJson(receiptPayload(receipt))),
+    encoder.encode(canonicalJson(payload)),
   );
 }

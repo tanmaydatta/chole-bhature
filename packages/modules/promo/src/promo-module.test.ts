@@ -39,7 +39,7 @@ const context: ModuleEvaluationContext = {
   evaluationId: 'eval-1',
   now: new Date('2026-07-18T12:00:00Z'),
   request: {
-    code: 'WELCOME10',
+    codes: ['WELCOME10'],
     cart: { currency: 'GBP', subtotal: 6_500, items: [] },
   },
   facts,
@@ -116,20 +116,20 @@ describe('PromoModule', () => {
     });
   });
 
-  test('returns invalid_code without an effect for a mismatched code', async () => {
+  test('evaluates a coded configuration once the orchestrator has selected it', async () => {
     const [decision] = await PromoModule.evaluate({
       ...context,
-      request: { ...context.request, code: 'WRONG' },
+      request: { ...context.request, codes: ['A-DIFFERENT-CODE'] },
     }, welcome10);
 
     expect(decision).toMatchObject({
-      outcome: 'invalid_code',
-      effects: [],
-      reasonCodes: ['INVALID_PROMO_CODE'],
-      commitRequired: false,
-      eligible: false,
+      programRef: 'welcome-10',
+      outcome: 'qualified',
+      rewardRuleRef: 'default-reward',
+      reasonCodes: [],
+      commitRequired: true,
+      eligible: true,
     });
-    expect(decision).not.toHaveProperty('rewardRuleRef');
   });
 
   test.each(['draft', 'scheduled', 'paused', 'ended'] as const)(
@@ -146,43 +146,6 @@ describe('PromoModule', () => {
       expect(decision).not.toHaveProperty('rewardRuleRef');
     },
   );
-
-  test.each(['draft', 'scheduled', 'paused', 'ended'] as const)(
-    'keeps a %s program unavailable even when the request code is wrong',
-    async (status) => {
-      const [decision] = await PromoModule.evaluate({
-        ...context,
-        request: { ...context.request, code: 'WRONG' },
-      }, { ...welcome10, status });
-
-      expect(decision).toMatchObject({
-        outcome: 'unavailable',
-        reasonCodes: ['PROGRAM_UNAVAILABLE'],
-      });
-    },
-  );
-
-  test('does not qualify a non-auto-apply program with no configured code', async () => {
-    const { code: _code, ...withoutCode } = welcome10;
-    const [decision] = await PromoModule.evaluate(
-      {
-        ...context,
-        request: {
-          cart: context.request.cart,
-        },
-      },
-      withoutCode as PromoProgram,
-    );
-
-    expect(decision).toMatchObject({
-      outcome: 'invalid_code',
-      effects: [],
-      reasonCodes: ['INVALID_PROMO_CODE'],
-      commitRequired: false,
-      eligible: false,
-    });
-    expect(decision).not.toHaveProperty('rewardRuleRef');
-  });
 
   test.each([
     ['before its start date', new Date('2026-06-30T23:59:59Z')],

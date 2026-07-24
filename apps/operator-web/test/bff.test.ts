@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 
 import { ROLE_PERMISSIONS } from '../../identity/src/authorization/registry.js';
 import {
+  AuthorizedPromoCodeConflictError,
   ContextValidationError,
   ForbiddenError,
   NotFoundError,
@@ -828,6 +829,8 @@ describe('live session and tenant boundary', () => {
     };
     const view = {
       configuration,
+      activeConfiguration: { ...configuration, status: 'active' },
+      draftConfiguration: configuration,
       lifecycle: {
         programRef: 'promo-a', status: 'active', activeRevision: 1,
         draftRevision: 2, updatedAt: authenticatedAt,
@@ -854,6 +857,38 @@ describe('live session and tenant boundary', () => {
 });
 
 describe('correlation and safe downstream failures', () => {
+  test('maps a serialized Core RPC publish conflict to a non-retryable 409', async () => {
+    const handler = await worker();
+    const env = createEnv(admin);
+    const localConflict = new AuthorizedPromoCodeConflictError('existing-promo');
+    const remoteConflict = structuredClone(localConflict);
+    expect(remoteConflict).toMatchObject({
+      name: 'Error',
+      message: 'PROMO_CODE_CONFLICT:{"conflictingProgramRef":"existing-promo"}',
+    });
+    expect(remoteConflict).not.toHaveProperty('conflictingProgramRef');
+    env.CORE.publishProgram.mockRejectedValue(remoteConflict);
+
+    const response = await handler?.fetch(request(
+      '/operator/v1/programs/conflicting-promo/publish',
+      { method: 'POST', body: '{}' },
+    ), env);
+
+    expect(response?.status).toBe(409);
+    expect(await json(response)).toEqual(apiError(
+      'PROMO_CODE_CONFLICT',
+      'This code overlaps published Promo "existing-promo"',
+      false,
+    ));
+    expect(env.CORE.publishProgram).toHaveBeenCalledWith(
+      expect.objectContaining({
+        merchantId: 'merchant-a',
+        permission: 'programs:publish',
+      }),
+      'conflicting-promo',
+    );
+  });
+
   test('marks authenticated and show-once credential responses as non-cacheable', async () => {
     const handler = await worker();
     const env = createEnv(admin);

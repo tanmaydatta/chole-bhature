@@ -131,6 +131,8 @@ describe('same-origin BFF client', () => {
     } as const;
     const view = {
       configuration,
+      activeConfiguration: { ...configuration, status: 'active' as const },
+      draftConfiguration: configuration,
       lifecycle: {
         programRef: 'promo/a', status: 'active', activeRevision: 1, draftRevision: 2,
         updatedAt: '2026-07-20T10:00:00.000Z',

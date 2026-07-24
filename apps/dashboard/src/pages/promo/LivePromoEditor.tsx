@@ -45,6 +45,14 @@ function nextId(prefix: string): string {
     : `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
+function minimal(id: string, name: string): PromoProgram {
+  return {
+    id, type: 'promo', name, status: 'draft', autoApply: true,
+    eligibility: { match: 'ALL', conditions: [] },
+    rewardRules: [], stackable: false, priority: 10,
+  };
+}
+
 function example(id: string, name: string): PromoProgram {
   return {
     id, type: 'promo', name, status: 'draft', autoApply: true,
@@ -148,7 +156,7 @@ export default function LivePromoEditor() {
   const auth = useAuth();
   const navigate = useNavigate();
   const { id } = useParams<{ id: string }>();
-  const [program, setProgram] = useState<PromoProgram>(() => example('', ''));
+  const [program, setProgram] = useState<PromoProgram>(() => minimal('', ''));
   const [variables, setVariables] = useState<ConditionBuilderVariable[]>([]);
   const [loading, setLoading] = useState(Boolean(id));
   const [loadError, setLoadError] = useState<BffClientError | null>(null);
@@ -178,7 +186,10 @@ export default function LivePromoEditor() {
       if (current) setVariables(result.definitions.map(view => view.definition).filter(definition => definition.source !== 'event').map(localVariable));
     }).catch(cause => { if (current) setLoadError(auth.handleError(cause)); });
     if (id) void programApi.get(id).then(view => {
-      if (current) setProgram({ ...view.configuration, status: 'draft' });
+      if (current) setProgram({
+        ...(view.draftConfiguration ?? view.configuration),
+        status: 'draft',
+      });
     }).catch(cause => { if (current) setLoadError(auth.handleError(cause)); }).finally(() => {
       if (current) setLoading(false);
     });
@@ -219,6 +230,30 @@ export default function LivePromoEditor() {
     }
   }
 
+  function selectAutomaticTrigger() {
+    if (program.autoApply) return;
+    if (
+      (program.code.length > 0 || program.stackable)
+      && !window.confirm('Switching to Automatic will clear the code and stacking choice. Continue?')
+    ) return;
+    const { code: _code, ...withoutCode } = program;
+    setProgram({
+      ...withoutCode,
+      autoApply: true,
+      stackable: false,
+    });
+  }
+
+  function selectCodedTrigger() {
+    if (!program.autoApply) return;
+    setProgram({
+      ...program,
+      autoApply: false,
+      code: '',
+      stackable: false,
+    });
+  }
+
   if (loading) return <p>Loading Promo draft…</p>;
   if (loadError) return <ErrorState error={loadError} retry={() => window.location.reload()} forceRetry />;
 
@@ -226,8 +261,12 @@ export default function LivePromoEditor() {
     <h1>{id ? 'Edit Promo draft' : 'Create Promo'}</h1>
     <label>External reference<input aria-label="External reference" disabled={Boolean(id)} value={program.id} onChange={event => setProgram({ ...program, id: event.target.value })}/></label>
     <label>Promo name<input aria-label="Promo name" value={program.name} onChange={event => setProgram({ ...program, name: event.target.value })}/></label>
-    <label><input type="checkbox" checked={program.autoApply} onChange={event => setProgram(event.target.checked ? { ...program, autoApply: true } : { ...program, autoApply: false, code: program.code ?? '' })}/>Auto apply</label>
-    {!program.autoApply && <label>Code<input value={program.code} onChange={event => setProgram({ ...program, code: event.target.value })}/></label>}
+    <fieldset>
+      <legend>Trigger</legend>
+      <label><input type="radio" name="promo-trigger" checked={program.autoApply} onChange={selectAutomaticTrigger}/>Automatic</label>
+      <label><input type="radio" name="promo-trigger" checked={!program.autoApply} onChange={selectCodedTrigger}/>Code-triggered</label>
+      {!program.autoApply && <label>Code<input value={program.code} onChange={event => setProgram({ ...program, code: event.target.value })}/></label>}
+    </fieldset>
     {!id && <button type="button" onClick={() => setProgram(example(program.id, program.name))}>Use complete authoring example</button>}
     <section><h2>Eligibility</h2><ConditionBuilder value={program.eligibility} variables={variables} onChange={eligibility => setProgram({ ...program, eligibility })}/></section>
     <RewardRules program={program} variables={variables} change={setProgram}/>
@@ -248,8 +287,7 @@ export default function LivePromoEditor() {
       <label>Start date<input type="date" value={program.startDate ?? ''} onChange={event => setProgram({ ...program, startDate: event.target.value || undefined })}/></label>
       <label>End date<input type="date" value={program.endDate ?? ''} onChange={event => setProgram({ ...program, endDate: event.target.value || undefined })}/></label>
       <label>Priority<input type="number" value={program.priority} onChange={event => setProgram({ ...program, priority: Number(event.target.value) })}/></label>
-      <label>Stacking group<input value={program.stackingGroup ?? ''} onChange={event => setProgram({ ...program, stackingGroup: event.target.value || undefined })}/></label>
-      <label><input type="checkbox" checked={program.stackable} onChange={event => setProgram({ ...program, stackable: event.target.checked })}/>Stackable</label>
+      {!program.autoApply && <label><input type="checkbox" checked={program.stackable} onChange={event => setProgram({ ...program, stackable: event.target.checked })}/>Stackable</label>}
     </section>
     {freeShippingBudgetConflict && <p role="alert">Remove the monetary budget before saving a free-shipping reward.</p>}
     {!validation.success && <p role="alert">Complete every required field and ensure each conditional rule has a condition.</p>}

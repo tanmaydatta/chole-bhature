@@ -367,7 +367,17 @@ describe('production operator contracts', () => {
     }).success).toBe(false);
 
     const operatorProgram = {
-      configuration: { ...canonicalProgramRevision.configuration, status: 'draft' as const },
+      configuration: {
+        ...canonicalProgramRevision.configuration,
+        status: 'draft' as const,
+        name: 'Gold web rewards draft',
+      },
+      activeConfiguration: canonicalProgramRevision.configuration,
+      draftConfiguration: {
+        ...canonicalProgramRevision.configuration,
+        status: 'draft' as const,
+        name: 'Gold web rewards draft',
+      },
       lifecycle: {
         ...canonicalProgramLifecycle,
         draftRevision: 2,
@@ -377,12 +387,59 @@ describe('production operator contracts', () => {
     expect(OperatorProgramListResponseSchema.parse({ programs: [operatorProgram] }))
       .toEqual({ programs: [operatorProgram] });
     expect(OperatorProgramViewSchema.safeParse({
+      configuration: operatorProgram.draftConfiguration,
+      draftConfiguration: operatorProgram.draftConfiguration,
+      lifecycle: {
+        programRef: operatorProgram.lifecycle.programRef,
+        status: 'draft',
+        draftRevision: 1,
+        updatedAt: operatorProgram.lifecycle.updatedAt,
+      },
+    }).success).toBe(true);
+    expect(OperatorProgramViewSchema.safeParse({
+      configuration: operatorProgram.activeConfiguration,
+      activeConfiguration: operatorProgram.activeConfiguration,
+      lifecycle: canonicalProgramLifecycle,
+    }).success).toBe(true);
+    for (const status of ['paused', 'ended'] as const) {
+      expect(OperatorProgramViewSchema.safeParse({
+        configuration: {
+          ...operatorProgram.activeConfiguration,
+          status,
+        },
+        activeConfiguration: operatorProgram.activeConfiguration,
+        lifecycle: {
+          ...canonicalProgramLifecycle,
+          status,
+        },
+      }).success).toBe(true);
+    }
+    expect(OperatorProgramViewSchema.safeParse({
       ...operatorProgram,
       usageCount: 10,
     }).success).toBe(false);
     expect(OperatorProgramViewSchema.safeParse({
       ...operatorProgram,
       lifecycle: { ...operatorProgram.lifecycle, programRef: 'another-program' },
+    }).success).toBe(false);
+    expect(OperatorProgramViewSchema.safeParse({
+      ...operatorProgram,
+      activeConfiguration: undefined,
+    }).success).toBe(false);
+    expect(OperatorProgramViewSchema.safeParse({
+      ...operatorProgram,
+      draftConfiguration: undefined,
+    }).success).toBe(false);
+    expect(OperatorProgramViewSchema.safeParse({
+      ...operatorProgram,
+      configuration: operatorProgram.activeConfiguration,
+    }).success).toBe(false);
+    expect(OperatorProgramViewSchema.safeParse({
+      ...operatorProgram,
+      draftConfiguration: {
+        ...operatorProgram.draftConfiguration,
+        id: 'another-program',
+      },
     }).success).toBe(false);
     for (const lifecycle of [
       { ...operatorProgram.lifecycle, activeRevision: 2, draftRevision: 2 },

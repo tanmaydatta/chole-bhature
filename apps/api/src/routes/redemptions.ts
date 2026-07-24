@@ -1,6 +1,5 @@
 import { Hono } from 'hono';
 import type { Context } from 'hono';
-import { RedemptionRequestSchema } from '@incentives/contracts';
 
 import { requireSecretScope } from '../auth/api-credentials.js';
 import type { AppEnvironment } from '../env.js';
@@ -18,10 +17,15 @@ async function requestJson(context: Context<AppEnvironment>): Promise<unknown> {
 export function createRedemptionRoutes(): Hono<AppEnvironment> {
   const routes = new Hono<AppEnvironment>();
   routes.post('/', requireSecretScope('redemptions:write'), async (context) => {
-    const service = createRedemptionService(context.get('repositories'), context.env);
+    const service = createRedemptionService(
+      context.get('repositories'),
+      context.get('atomicRedemptions'),
+      context.env,
+    );
     return context.json(await service.redeem(
       context.get('merchantId'),
-      RedemptionRequestSchema.parse(await requestJson(context)),
+      await requestJson(context),
+      context.get('correlationId'),
     ));
   });
   return routes;

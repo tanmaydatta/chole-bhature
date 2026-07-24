@@ -28,8 +28,10 @@ export default function LivePromoList() {
   return <div className="flex flex-col gap-4">
     <div className="flex justify-between"><h1>Promo Codes</h1>{canManage && <Link to="/promo/new">New promo</Link>}</div>
     <label>Status<select value={status} onChange={event => setStatus(event.target.value as ProgramStatus | 'all')}><option value="all">All</option>{['draft','scheduled','active','paused','ended'].map(value => <option key={value}>{value}</option>)}</select></label>
-    {visible.length === 0 ? <p>No Promos match this filter.</p> : <table><thead><tr><th>Name</th><th>Status</th><th>Revision</th><th>Schedule</th></tr></thead><tbody>{visible.map(view => <tr key={view.configuration.id} tabIndex={0} onClick={() => navigate(`/promo/${encodeURIComponent(view.configuration.id)}`)} onKeyDown={event => { if (event.key === 'Enter') navigate(`/promo/${encodeURIComponent(view.configuration.id)}`); }}>
-      <td>{view.configuration.name}</td><td>{view.lifecycle.status}</td><td>
+    {visible.length === 0 ? <p>No Promos match this filter.</p> : <table><thead><tr><th>Name</th><th>Trigger</th><th>Status</th><th>Revision</th><th>Schedule</th></tr></thead><tbody>{visible.map(view => <tr key={view.configuration.id} tabIndex={0} onClick={() => navigate(`/promo/${encodeURIComponent(view.configuration.id)}`)} onKeyDown={event => { if (event.key === 'Enter') navigate(`/promo/${encodeURIComponent(view.configuration.id)}`); }}>
+      <td>{view.configuration.name}</td>
+      <td><span>{view.configuration.autoApply ? 'Automatic' : 'Code-triggered'}</span></td>
+      <td>{view.lifecycle.status}</td><td>
         {view.lifecycle.activeRevision !== undefined && <span>Active revision {view.lifecycle.activeRevision}</span>}
         {view.lifecycle.activeRevision !== undefined && view.lifecycle.draftRevision !== undefined && ' · '}
         {view.lifecycle.draftRevision !== undefined && <span>Draft revision {view.lifecycle.draftRevision}</span>}

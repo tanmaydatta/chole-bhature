@@ -11,8 +11,6 @@
     "lint": "oxlint src test",
     "predev:local": "pnpm --filter @incentives/contracts build && pnpm --filter @incentives/dashboard build",
     "dev:local": "wrangler dev --config wrangler.toml",
-    "predev:staging": "pnpm --filter @incentives/contracts build && pnpm --filter @incentives/dashboard build",
-    "dev:staging": "node ../../scripts/staging-wrangler-runner.mjs operator-web dev",
     "predeploy:staging": "pnpm --filter @incentives/contracts build && pnpm --filter @incentives/dashboard build",
     "deploy:staging": "node ../../scripts/staging-wrangler-runner.mjs operator-web deploy"
   },

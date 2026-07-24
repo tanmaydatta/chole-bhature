@@ -9,15 +9,30 @@ import {
 } from '@incentives/contracts';
 import { SELF } from 'cloudflare:test';
 import { env } from 'cloudflare:workers';
-import { beforeEach, describe, expect, test } from 'vitest';
+import { beforeEach, describe, expect, test, vi } from 'vitest';
 
 import { SEEDED_MERCHANT_ID } from './test-credentials.js';
 import { createApp } from '../src/app.js';
+import type {
+  AtomicRedemptionCoordinator,
+  CommitRedemptionBundleInput,
+  CommitRedemptionBundleResult,
+  ExhaustionReasonCode,
+  TerminalRedemptionErrorCode,
+} from '../src/redemption/atomic-redemption-coordinator.js';
+import { createD1AtomicRedemptionCoordinator } from '../src/redemption/d1-atomic-redemption-coordinator.js';
 import { createRepositories } from '../src/repositories/d1-repositories.js';
+import type {
+  EvaluationDecisionRecord,
+  RedemptionBundleCreate,
+} from '../src/repositories/types.js';
 import { signDecisionSnapshot } from '../src/services/evaluation-service.js';
+import { createRedemptionService } from '../src/services/redemption-service.js';
 
-const createdAt = '2026-07-18T12:00:00.000Z';
+const createdAt = '2026-07-24T12:00:00.000Z';
 const signingSecret = 'decision-signing-test-secret';
+const secretToken = 'sk_test_secret_credential_material_000000000001';
+const publishableToken = 'pk_test_publishable_credential_material_00000001';
 const baseRequest = {
   customerRef: 'customer-1',
   cart: { currency: 'GBP', subtotal: 6_500, items: [] },
@@ -42,7 +57,7 @@ function conditionalRule(reward: CommerceReward, id = 'default-reward') {
   };
 }
 
-function promo(id: string, overrides: PromoOverrides = {}): PromoProgram {
+function automaticPromo(id: string, overrides: PromoOverrides = {}): PromoProgram {
   const { reward, ...canonicalOverrides } = overrides;
   return {
     id,
@@ -64,10 +79,41 @@ function promo(id: string, overrides: PromoOverrides = {}): PromoProgram {
   } as PromoProgram;
 }
 
+function codedPromo(
+  id: string,
+  code: string,
+  overrides: PromoOverrides = {},
+): PromoProgram {
+  const { reward, ...canonicalOverrides } = overrides;
+  return {
+    id,
+    type: 'promo',
+    name: `Promo ${id}`,
+    status: 'active',
+    eligibility: { match: 'ALL', conditions: [] },
+    rewardRules: [conditionalRule(reward ?? {
+      type: 'order_discount',
+      calculation: 'fixed',
+      amount: { currency: 'GBP', minorUnits: 500 },
+    })],
+    budget: { currency: 'GBP', minorUnits: 10_000 },
+    usageCap: 10,
+    stackable: true,
+    priority: 10,
+    autoApply: false,
+    code,
+    ...canonicalOverrides,
+  } as PromoProgram;
+}
+
 async function resetData(): Promise<void> {
   await env.DB.batch([
+    env.DB.prepare('DELETE FROM redemption_commit_guards'),
+    env.DB.prepare('DELETE FROM redemption_entries'),
+    env.DB.prepare('DELETE FROM redemption_operations'),
     env.DB.prepare('DELETE FROM redemptions'),
     env.DB.prepare('DELETE FROM evaluation_decisions'),
+    env.DB.prepare('DELETE FROM promo_code_claims'),
     env.DB.prepare('DELETE FROM programs'),
     env.DB.prepare('DELETE FROM customers'),
     env.DB.prepare('DELETE FROM variable_definitions'),
@@ -87,11 +133,43 @@ async function resetData(): Promise<void> {
 
 async function seedProgram(program: PromoProgram): Promise<void> {
   const repositories = createRepositories({ DB: env.DB });
-  await repositories.programs.create({
+  const stored = await repositories.programs.create({
     merchantId: SEEDED_MERCHANT_ID,
     program,
     schema: await repositories.schemas.getLatestVersion(SEEDED_MERCHANT_ID, 'published'),
     createdAt,
+  });
+  if (!program.autoApply) {
+    await env.DB.prepare(`
+      INSERT INTO promo_code_claims (
+        id, merchant_id, program_id, program_ref, active_revision,
+        display_code, normalized_code, starts_at, ends_at, released_at, created_at
+      ) VALUES (?1, ?2, ?3, ?4, 1, ?5, ?6, NULL, NULL, NULL, ?7)
+    `).bind(
+      `claim-${program.id}`,
+      SEEDED_MERCHANT_ID,
+      stored.id,
+      program.id,
+      program.code,
+      program.code.trim().toUpperCase(),
+      createdAt,
+    ).run();
+  }
+}
+
+function evaluateRaw(
+  request: EvaluationRequest = baseRequest,
+  correlationId?: string,
+): Promise<Response> {
+  const headers = new Headers({
+    authorization: `Bearer ${publishableToken}`,
+    'content-type': 'application/json',
+  });
+  if (correlationId !== undefined) headers.set('x-correlation-id', correlationId);
+  return SELF.fetch('https://example.test/v1/evaluate', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(request),
   });
 }
 
@@ -103,23 +181,16 @@ async function evaluate(
   return EvaluationResponseSchema.parse(await response.json());
 }
 
-function evaluateRaw(request: EvaluationRequest = baseRequest): Promise<Response> {
-  return SELF.fetch('https://example.test/v1/evaluate', {
-    method: 'POST',
-    headers: {
-      authorization: 'Bearer pk_test_publishable_credential_material_00000001',
-      'content-type': 'application/json',
-    },
-    body: JSON.stringify(request),
-  });
-}
-
-function redeemRaw(body: unknown, token = 'sk_test_secret_credential_material_000000000001'): Promise<Response> {
+function redeemRaw(
+  body: unknown,
+  correlationId = 'redemption-test-correlation',
+): Promise<Response> {
   return SELF.fetch('https://example.test/v1/redemptions', {
     method: 'POST',
     headers: {
-      authorization: `Bearer ${token}`,
+      authorization: `Bearer ${secretToken}`,
       'content-type': 'application/json',
+      'x-correlation-id': correlationId,
     },
     body: JSON.stringify(body),
   });
@@ -131,7 +202,11 @@ async function redeem(body: RedemptionRequest) {
   return RedemptionResponseSchema.parse(await response.json());
 }
 
-async function expectError(response: Response, status: number, code: string) {
+async function expectError(
+  response: Response,
+  status: number,
+  code: string,
+) {
   expect(response.status).toBe(status);
   const body = ApiErrorSchema.parse(await response.json());
   expect(body.error).toMatchObject({
@@ -141,843 +216,1083 @@ async function expectError(response: Response, status: number, code: string) {
   return body;
 }
 
-async function resign(evaluationId: string, mutate: (record: Awaited<ReturnType<
-  ReturnType<typeof createRepositories>['decisions']['get']
->>) => void): Promise<void> {
-  const repositories = createRepositories({ DB: env.DB });
-  const record = await repositories.decisions.get(SEEDED_MERCHANT_ID, evaluationId);
-  expect(record).not.toBeNull();
+async function storedDecision(
+  evaluationId: string,
+): Promise<EvaluationDecisionRecord> {
+  const decision = await createRepositories({ DB: env.DB }).decisions.get(
+    SEEDED_MERCHANT_ID,
+    evaluationId,
+  );
+  expect(decision).not.toBeNull();
+  return decision!;
+}
+
+async function resign(
+  evaluationId: string,
+  mutate: (record: EvaluationDecisionRecord) => void,
+): Promise<void> {
+  const record = await storedDecision(evaluationId);
   mutate(record);
-  record!.integrityHash = await signDecisionSnapshot(record!, signingSecret);
+  record.integrityHash = await signDecisionSnapshot(record, signingSecret);
   await env.DB.prepare(`
     UPDATE evaluation_decisions
     SET request_json = ?1, facts_json = ?2, decisions_json = ?3,
       integrity_hash = ?4, expires_at = ?5
     WHERE merchant_id = ?6 AND id = ?7
   `).bind(
-    JSON.stringify(record!.request),
-    JSON.stringify(record!.facts),
-    JSON.stringify(record!.decisions),
-    record!.integrityHash,
-    record!.expiresAt,
+    JSON.stringify(record.request),
+    JSON.stringify(record.facts),
+    JSON.stringify(record.decisions),
+    record.integrityHash,
+    record.expiresAt,
     SEEDED_MERCHANT_ID,
     evaluationId,
   ).run();
 }
 
+function commitInput(
+  evaluation: EvaluationDecisionRecord,
+  suffix = 'contract',
+): CommitRedemptionBundleInput {
+  return {
+    merchantId: evaluation.merchantId,
+    evaluation,
+    externalOrderRef: `${suffix}-order`,
+    idempotencyKey: `${suffix}-key`,
+    requestDigest: 'a'.repeat(64),
+    correlationId: `${suffix}-correlation`,
+    committedAt: createdAt,
+  };
+}
+
+async function seedLegacyRedemption(input: {
+  redemptionId: string;
+  evaluation: EvaluationDecisionRecord;
+  externalOrderRef?: string;
+  idempotencyKey?: string;
+}): Promise<void> {
+  const decision = input.evaluation.decisions[0];
+  if (decision === undefined) throw new Error('Legacy redemption requires one decision');
+  await env.DB.batch([
+    env.DB.prepare(`
+      INSERT INTO redemptions (
+        id, merchant_id, external_order_ref, idempotency_key, evaluation_id,
+        result_json, discount_minor_units, currency, created_at, request_digest
+      ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0, ?7, ?8, ?9)
+    `).bind(
+      input.redemptionId,
+      input.evaluation.merchantId,
+      input.externalOrderRef ?? null,
+      input.idempotencyKey ?? null,
+      input.evaluation.evaluationId,
+      JSON.stringify({
+        version: 1,
+        result: {
+          redemptionId: input.redemptionId,
+          evaluationId: input.evaluation.evaluationId,
+          ...(input.externalOrderRef === undefined
+            ? {}
+            : { externalOrderRef: input.externalOrderRef }),
+          ...(input.idempotencyKey === undefined
+            ? {}
+            : { idempotencyKey: input.idempotencyKey }),
+          programRef: decision.programRef,
+          ...(decision.rewardRuleRef === undefined
+            ? {}
+            : { rewardRuleRef: decision.rewardRuleRef }),
+          status: 'committed',
+          effects: decision.effects,
+        },
+        receiptIntegrityHash: '0'.repeat(64),
+      }),
+      input.evaluation.request.cart.currency,
+      createdAt,
+      `legacy:${input.redemptionId}`,
+    ),
+    env.DB.prepare(`
+      INSERT INTO redemption_entries (
+        merchant_id, redemption_id, position, program_ref, program_revision,
+        reward_rule_ref, effects_json, discount_minor_units, currency
+      ) VALUES (?1, ?2, 0, ?3, ?4, ?5, ?6, 0, ?7)
+    `).bind(
+      input.evaluation.merchantId,
+      input.redemptionId,
+      decision.programRef,
+      decision.programRevision,
+      decision.rewardRuleRef ?? null,
+      JSON.stringify(decision.effects),
+      input.evaluation.request.cart.currency,
+    ),
+  ]);
+}
+
+class InMemoryAtomicRedemptionCoordinator implements AtomicRedemptionCoordinator {
+  readonly #operations = new Map<string, {
+    digest: string;
+    externalOrderRef: string;
+    result: CommitRedemptionBundleResult;
+  }>();
+  readonly #orders = new Map<string, string>();
+  readonly #forcedExhaustion = new Map<string, ExhaustionReasonCode>();
+
+  forceExhaustion(
+    input: CommitRedemptionBundleInput,
+    reasonCode: ExhaustionReasonCode,
+  ): void {
+    this.#forcedExhaustion.set(
+      `${input.merchantId}:${input.idempotencyKey}`,
+      reasonCode,
+    );
+  }
+
+  async commitBundle(
+    input: CommitRedemptionBundleInput,
+  ): Promise<CommitRedemptionBundleResult> {
+    const operationKey = `${input.merchantId}:${input.idempotencyKey}`;
+    const orderKey = `${input.merchantId}:${input.externalOrderRef}`;
+    const orderOwner = this.#orders.get(orderKey);
+    if (orderOwner !== undefined && orderOwner !== input.idempotencyKey) {
+      return { kind: 'conflict' };
+    }
+    const existing = this.#operations.get(operationKey);
+    if (existing !== undefined) {
+      if (
+        existing.digest !== input.requestDigest
+        || existing.externalOrderRef !== input.externalOrderRef
+      ) return { kind: 'conflict' };
+      if (existing.result.kind === 'committed') {
+        return { kind: 'exact_retry', bundle: existing.result.bundle };
+      }
+      if (existing.result.kind === 'terminal_retry') return existing.result;
+      return existing.result;
+    }
+    this.#orders.set(orderKey, input.idempotencyKey);
+    const exhaustion = this.#forcedExhaustion.get(operationKey);
+    if (exhaustion !== undefined) {
+      this.#operations.set(operationKey, {
+        digest: input.requestDigest,
+        externalOrderRef: input.externalOrderRef,
+        result: {
+          kind: 'terminal_retry',
+          code: exhaustion,
+          retryable: false,
+        },
+      });
+      return { kind: 'exhausted', reasonCode: exhaustion };
+    }
+    const selected = input.evaluation.decisions.filter(
+      decision => decision.outcome === 'qualified' && decision.commitRequired,
+    );
+    if (selected.length === 0) {
+      const result = {
+        kind: 'terminal_retry',
+        code: 'NOTHING_TO_COMMIT',
+        retryable: false,
+      } as const;
+      this.#operations.set(operationKey, {
+        digest: input.requestDigest,
+        externalOrderRef: input.externalOrderRef,
+        result,
+      });
+      return result;
+    }
+    const result = {
+      redemptionId: `memory-${input.idempotencyKey}`,
+      evaluationId: input.evaluation.evaluationId,
+      externalOrderRef: input.externalOrderRef,
+      idempotencyKey: input.idempotencyKey,
+      status: 'committed',
+      entries: selected.map(decision => ({
+        programRef: decision.programRef,
+        programRevision: decision.programRevision,
+        ...(decision.rewardRuleRef === undefined
+          ? {}
+          : { rewardRuleRef: decision.rewardRuleRef }),
+        effects: decision.effects,
+      })),
+    } as const;
+    const bundle: RedemptionBundleCreate = {
+      redemptionId: result.redemptionId,
+      merchantId: input.merchantId,
+      evaluationId: input.evaluation.evaluationId,
+      externalOrderRef: input.externalOrderRef,
+      idempotencyKey: input.idempotencyKey,
+      requestDigest: input.requestDigest,
+      result,
+      entries: result.entries.map((entry, position) => ({
+        position,
+        ...entry,
+        discountMinorUnits: 0,
+        currency: input.evaluation.request.cart.currency,
+      })),
+      createdAt: input.committedAt,
+      receiptIntegrityHash: '0'.repeat(64),
+    };
+    const committed = { kind: 'committed', bundle } as const;
+    this.#operations.set(operationKey, {
+      digest: input.requestDigest,
+      externalOrderRef: input.externalOrderRef,
+      result: committed,
+    });
+    return committed;
+  }
+
+  async getBundle(input: {
+    merchantId: string;
+    idempotencyKey: string;
+  }): Promise<RedemptionBundleCreate | null> {
+    const operation = this.#operations.get(
+      `${input.merchantId}:${input.idempotencyKey}`,
+    );
+    if (operation?.result.kind === 'committed') return operation.result.bundle;
+    return null;
+  }
+}
+
+interface CoordinatorFixture {
+  coordinator: AtomicRedemptionCoordinator;
+  input: CommitRedemptionBundleInput;
+  terminalInput: CommitRedemptionBundleInput;
+  prepareExhaustion(
+    reasonCode: ExhaustionReasonCode,
+  ): Promise<CommitRedemptionBundleInput>;
+}
+
+function atomicCoordinatorContract(
+  name: string,
+  fixture: () => Promise<CoordinatorFixture>,
+) {
+  describe(`${name} AtomicRedemptionCoordinator contract`, () => {
+    test('commits once, returns the exact bundle on retry, and supports lookup', async () => {
+      const { coordinator, input } = await fixture();
+      const committed = await coordinator.commitBundle(input);
+      expect(committed.kind).toBe('committed');
+      if (committed.kind !== 'committed') throw new Error('Expected a committed bundle');
+
+      await expect(coordinator.commitBundle(input)).resolves.toEqual({
+        kind: 'exact_retry',
+        bundle: committed.bundle,
+      });
+      await expect(coordinator.getBundle({
+        merchantId: input.merchantId,
+        idempotencyKey: input.idempotencyKey,
+      })).resolves.toEqual(committed.bundle);
+    });
+
+    test('conflicts when an idempotency key is reused with another digest', async () => {
+      const { coordinator, input } = await fixture();
+      await coordinator.commitBundle(input);
+      await expect(coordinator.commitBundle({
+        ...input,
+        requestDigest: 'b'.repeat(64),
+      })).resolves.toEqual({ kind: 'conflict' });
+    });
+
+    test('conflicts when an external order is reused by another key', async () => {
+      const { coordinator, input } = await fixture();
+      await coordinator.commitBundle(input);
+      await expect(coordinator.commitBundle({
+        ...input,
+        idempotencyKey: `${input.idempotencyKey}-other`,
+      })).resolves.toEqual({ kind: 'conflict' });
+    });
+
+    test('persists a stable terminal outcome for exact retries', async () => {
+      const { coordinator, terminalInput } = await fixture();
+      const terminal = {
+        kind: 'terminal_retry',
+        code: 'NOTHING_TO_COMMIT',
+        retryable: false,
+      } as const;
+      await expect(coordinator.commitBundle(terminalInput)).resolves.toEqual(terminal);
+      await expect(coordinator.commitBundle(terminalInput)).resolves.toEqual(terminal);
+    });
+
+    test.each([
+      'USAGE_CAP_EXHAUSTED',
+      'BUDGET_EXHAUSTED',
+      'PER_CUSTOMER_CAP_EXHAUSTED',
+    ] satisfies ExhaustionReasonCode[])(
+      'emits %s as first exhaustion and preserves it on exact retry',
+      async (reasonCode) => {
+        const fixtureValue = await fixture();
+        const exhaustionInput = await fixtureValue.prepareExhaustion(reasonCode);
+        await expect(
+          fixtureValue.coordinator.commitBundle(exhaustionInput),
+        ).resolves.toEqual({ kind: 'exhausted', reasonCode });
+        await expect(
+          fixtureValue.coordinator.commitBundle(exhaustionInput),
+        ).resolves.toEqual({
+          kind: 'terminal_retry',
+          code: reasonCode,
+          retryable: false,
+        });
+      },
+    );
+  });
+}
+
+atomicCoordinatorContract('in-memory', async () => {
+  await resetData();
+  const terminalEvaluation = await evaluate();
+  await seedProgram(automaticPromo('memory-contract'));
+  const [evaluation, exhaustionEvaluation] = await Promise.all([
+    evaluate(),
+    evaluate(),
+  ]);
+  const coordinator = new InMemoryAtomicRedemptionCoordinator();
+  const exhaustionInput = commitInput(
+    await storedDecision(exhaustionEvaluation.evaluationId),
+    'memory-exhaustion-contract',
+  );
+  return {
+    coordinator,
+    input: commitInput(await storedDecision(evaluation.evaluationId), 'memory-contract'),
+    terminalInput: commitInput(
+      await storedDecision(terminalEvaluation.evaluationId),
+      'memory-terminal-contract',
+    ),
+    async prepareExhaustion(reasonCode) {
+      coordinator.forceExhaustion(exhaustionInput, reasonCode);
+      return exhaustionInput;
+    },
+  };
+});
+
+atomicCoordinatorContract('D1', async () => {
+  await resetData();
+  const terminalEvaluation = await evaluate();
+  await seedProgram(automaticPromo('d1-contract', { perCustomerCap: 1 }));
+  const [evaluation, exhaustionEvaluation] = await Promise.all([
+    evaluate(),
+    evaluate(),
+  ]);
+  const coordinator = createD1AtomicRedemptionCoordinator({
+    DB: env.DB,
+    DECISION_SIGNING_SECRET: signingSecret,
+  });
+  const input = commitInput(await storedDecision(evaluation.evaluationId), 'd1-contract');
+  const exhaustionInput = commitInput(
+    await storedDecision(exhaustionEvaluation.evaluationId),
+    'd1-exhaustion-contract',
+  );
+  return {
+    coordinator,
+    input,
+    terminalInput: commitInput(
+      await storedDecision(terminalEvaluation.evaluationId),
+      'd1-terminal-contract',
+    ),
+    async prepareExhaustion(reasonCode) {
+      if (reasonCode === 'PER_CUSTOMER_CAP_EXHAUSTED') {
+        const committed = await coordinator.commitBundle(input);
+        expect(committed.kind).toBe('committed');
+        return exhaustionInput;
+      }
+      if (reasonCode === 'USAGE_CAP_EXHAUSTED') {
+        await env.DB.batch([
+          env.DB.prepare(`
+            UPDATE program_counters SET usage_count = max_uses
+            WHERE merchant_id = ?1
+          `).bind(SEEDED_MERCHANT_ID),
+          env.DB.prepare(`
+            UPDATE programs SET usage_count = 10
+            WHERE merchant_id = ?1
+          `).bind(SEEDED_MERCHANT_ID),
+        ]);
+        return exhaustionInput;
+      }
+      await env.DB.batch([
+        env.DB.prepare(`
+          UPDATE program_counters
+          SET budget_remaining = 0, committed_spend = 10000
+          WHERE merchant_id = ?1
+        `).bind(SEEDED_MERCHANT_ID),
+        env.DB.prepare(`
+          UPDATE programs SET budget_remaining = 0
+          WHERE merchant_id = ?1
+        `).bind(SEEDED_MERCHANT_ID),
+      ]);
+      return exhaustionInput;
+    },
+  };
+});
+
+describe('D1 coordinator reconciliation', () => {
+  beforeEach(resetData);
+
+  test('repairs a pending operation after its authoritative bundle committed', async () => {
+    await seedProgram(automaticPromo('pending-reconciliation'));
+    const evaluation = await evaluate();
+    const input = commitInput(
+      await storedDecision(evaluation.evaluationId),
+      'pending-reconciliation',
+    );
+    const coordinator = createD1AtomicRedemptionCoordinator({
+      DB: env.DB,
+      DECISION_SIGNING_SECRET: signingSecret,
+    });
+    const committed = await coordinator.commitBundle(input);
+    expect(committed.kind).toBe('committed');
+    if (committed.kind !== 'committed') throw new Error('Expected committed bundle');
+    await env.DB.prepare(`
+      UPDATE redemption_operations
+      SET state = 'pending', redemption_id = NULL
+      WHERE merchant_id = ?1 AND idempotency_key = ?2
+    `).bind(input.merchantId, input.idempotencyKey).run();
+
+    await expect(coordinator.commitBundle(input)).resolves.toEqual({
+      kind: 'exact_retry',
+      bundle: committed.bundle,
+    });
+    expect(await env.DB.prepare(`
+      SELECT state, redemption_id AS redemptionId
+      FROM redemption_operations
+      WHERE merchant_id = ?1 AND idempotency_key = ?2
+    `).bind(input.merchantId, input.idempotencyKey).first()).toEqual({
+      state: 'committed',
+      redemptionId: committed.bundle.redemptionId,
+    });
+  });
+});
+
 describe('POST /v1/redemptions', () => {
   beforeEach(resetData);
 
-  test('keeps request validation at 400 before entering the internal redemption boundary', async () => {
-    const response = await createApp().request('https://example.test/v1/redemptions', {
-      method: 'POST',
-      headers: {
-        authorization: 'Bearer sk_test_secret_credential_material_000000000001',
-        'content-type': 'application/json',
+  test('omits dependency attribution for an injected provider-neutral decision read failure', async () => {
+    const readFailure = new Error('provider-neutral decision read failure');
+    const repositories = createRepositories({ DB: env.DB });
+    const coordinator: AtomicRedemptionCoordinator = {
+      commitBundle: vi.fn(),
+      getBundle: vi.fn(),
+    };
+    const service = createRedemptionService({
+      ...repositories,
+      decisions: {
+        ...repositories.decisions,
+        get: async () => {
+          throw readFailure;
+        },
       },
-      body: JSON.stringify({ evaluationId: 'missing-program-and-identifier' }),
-    }, {
+    }, coordinator, {
       DB: env.DB,
-      DECISION_SIGNING_SECRET: 'weak',
+      DECISION_SIGNING_SECRET: signingSecret,
+    });
+
+    await expect(service.redeem(SEEDED_MERCHANT_ID, {
+      evaluationId: 'provider-neutral-read-failure',
+      externalOrderRef: 'provider-neutral-order',
+      idempotencyKey: 'provider-neutral-key',
+    }, 'provider-neutral-correlation')).rejects.toMatchObject({
+      code: 'REDEMPTION_UNAVAILABLE',
+      status: 503,
+      retryable: true,
+      dependency: undefined,
+    });
+    expect(coordinator.commitBundle).not.toHaveBeenCalled();
+  });
+
+  test('omits dependency attribution when a persisted decision cannot be decoded', async () => {
+    await seedProgram(automaticPromo('corrupt-decision-read'));
+    const evaluation = await evaluate();
+    await env.DB.prepare(`
+      UPDATE evaluation_decisions
+      SET request_json = '{'
+      WHERE merchant_id = ?1 AND id = ?2
+    `).bind(SEEDED_MERCHANT_ID, evaluation.evaluationId).run();
+
+    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      const response = await redeemRaw({
+        evaluationId: evaluation.evaluationId,
+        externalOrderRef: 'corrupt-decision-order',
+        idempotencyKey: 'corrupt-decision-key',
+      }, 'corrupt-decision-correlation');
+      await expectError(response, 503, 'REDEMPTION_UNAVAILABLE');
+      expect(errorLog).toHaveBeenCalledTimes(1);
+
+      const serialized = String(errorLog.mock.calls[0]?.[0]);
+      const logged = JSON.parse(serialized) as Record<string, unknown>;
+      expect(Object.keys(logged).sort()).toEqual([
+        'code',
+        'correlationId',
+        'credentialId',
+        'event',
+        'merchantId',
+        'method',
+        'retryable',
+        'route',
+        'status',
+      ]);
+      expect(logged).toMatchObject({
+        event: 'api_request_failed',
+        correlationId: 'corrupt-decision-correlation',
+        route: '/v1/redemptions',
+        method: 'POST',
+        code: 'REDEMPTION_UNAVAILABLE',
+        status: 503,
+        retryable: true,
+        merchantId: SEEDED_MERCHANT_ID,
+        credentialId: expect.any(String),
+      });
+      expect(serialized).not.toContain('corrupt-decision-order');
+      expect(serialized).not.toContain('corrupt-decision-key');
+    } finally {
+      errorLog.mockRestore();
+    }
+  });
+
+  test('maps invalid signing configuration to a retryable coordinator failure', async () => {
+    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      const response = await createApp().request('https://example.test/v1/redemptions', {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${secretToken}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          evaluationId: 'evaluation-1',
+          externalOrderRef: 'order-1',
+          idempotencyKey: 'key-1',
+        }),
+      }, {
+        DB: env.DB,
+        DECISION_SIGNING_SECRET: 'weak',
+      });
+      const error = await expectError(response, 503, 'REDEMPTION_UNAVAILABLE');
+      expect(error.error.retryable).toBe(true);
+      expect(JSON.stringify(error)).not.toContain('weak');
+      expect(errorLog).toHaveBeenCalledTimes(1);
+      expect(JSON.parse(String(errorLog.mock.calls[0]?.[0]))).toMatchObject({
+        dependency: 'decision_integrity',
+      });
+    } finally {
+      errorLog.mockRestore();
+    }
+  });
+
+  test('rejects the removed child program selector', async () => {
+    const response = await redeemRaw({
+      evaluationId: 'evaluation-1',
+      programRef: 'promo-a',
+      externalOrderRef: 'order-1',
+      idempotencyKey: 'key-1',
     });
     await expectError(response, 400, 'CONTEXT_VALIDATION_FAILED');
   });
 
-  test('maps weak signing configuration to a generic retryable 503', async () => {
-    const response = await createApp().request('https://example.test/v1/redemptions', {
-      method: 'POST',
-      headers: {
-        authorization: 'Bearer sk_test_secret_credential_material_000000000001',
-        'content-type': 'application/json',
+  test.each([
+    {
+      identifier: 'external order',
+      legacy: { externalOrderRef: 'legacy-external-order' },
+      request: {
+        externalOrderRef: 'legacy-external-order',
+        idempotencyKey: 'fresh-key-for-legacy-order',
       },
-      body: JSON.stringify({
-        evaluationId: 'evaluation-1',
-        programRef: 'welcome',
-        externalOrderRef: 'order-1',
-      }),
-    }, {
-      DB: env.DB,
-      DECISION_SIGNING_SECRET: 'weak',
-    });
-    const error = await expectError(response, 503, 'EVALUATION_UNAVAILABLE');
-    expect(error.error.retryable).toBe(true);
-    expect(JSON.stringify(error)).not.toContain('weak');
-  });
-
-  test.each([
-    ['stored decision', 'evaluation_decisions', "decisions_json = '[{\"programRef\":\"welcome\"}]'"],
-    ['stored redemption retry', 'redemptions', "result_json = '{\"programRef\":\"welcome\"}'"],
-    ['stored program', 'program_revisions', "config_json = '{\"id\":\"welcome\"}'"],
-  ])('maps a schema-invalid %s row to a generic retryable 503', async (
-    _name,
-    table,
-    mutation,
-  ) => {
-    await seedProgram(promo('welcome'));
-    const evaluation = await evaluate();
-    if (table === 'redemptions') {
-      await redeem({
-        evaluationId: evaluation.evaluationId,
-        programRef: 'welcome',
-        externalOrderRef: 'corrupt-retry',
+    },
+    {
+      identifier: 'idempotency key',
+      legacy: { idempotencyKey: 'legacy-idempotency-key' },
+      request: {
+        externalOrderRef: 'fresh-order-for-legacy-key',
+        idempotencyKey: 'legacy-idempotency-key',
+      },
+    },
+  ])(
+    'returns stable VERSION_CONFLICT when a one-sided legacy $identifier is reused',
+    async ({ identifier, legacy, request }) => {
+      await seedProgram(automaticPromo(`legacy-${identifier.replaceAll(' ', '-')}`));
+      const evaluation = await evaluate();
+      await seedLegacyRedemption({
+        redemptionId: `legacy-${identifier.replaceAll(' ', '-')}`,
+        evaluation: await storedDecision(evaluation.evaluationId),
+        ...legacy,
       });
-    }
-    await env.DB.prepare(`
-      UPDATE ${table} SET ${mutation} WHERE merchant_id = ?1
-        ${table === 'program_revisions' ? `AND revision = (
-          SELECT active_revision FROM programs
-          WHERE merchant_id = ?1 AND external_ref = 'welcome'
-        )` : ''}
-    `).bind(SEEDED_MERCHANT_ID).run();
+      const body = { evaluationId: evaluation.evaluationId, ...request };
 
-    const response = await redeemRaw({
+      const first = await expectError(
+        await redeemRaw(body, `legacy-${identifier}-correlation`),
+        409,
+        'VERSION_CONFLICT',
+      );
+      const retry = await expectError(
+        await redeemRaw(body, `legacy-${identifier}-correlation`),
+        409,
+        'VERSION_CONFLICT',
+      );
+      expect(retry.error).toMatchObject({
+        code: first.error.code,
+        message: first.error.message,
+        retryable: first.error.retryable,
+      });
+      expect(await env.DB.prepare(`
+        SELECT COUNT(*) AS count
+        FROM redemption_operations
+        WHERE merchant_id = ?1 AND idempotency_key = ?2
+      `).bind(SEEDED_MERCHANT_ID, request.idempotencyKey).first()).toEqual({
+        count: 0,
+      });
+    },
+  );
+
+  test('returns a stable NOTHING_TO_COMMIT terminal result', async () => {
+    const evaluation = await evaluate();
+    const request = {
       evaluationId: evaluation.evaluationId,
-      programRef: 'welcome',
-      externalOrderRef: table === 'redemptions' ? 'corrupt-retry' : `corrupt-${table}`,
+      externalOrderRef: 'empty-order',
+      idempotencyKey: 'empty-key',
+    };
+    const first = await expectError(
+      await redeemRaw(request, 'empty-correlation'),
+      409,
+      'NOTHING_TO_COMMIT',
+    );
+    const retry = await expectError(
+      await redeemRaw(request, 'empty-correlation'),
+      409,
+      'NOTHING_TO_COMMIT',
+    );
+    expect(retry).toEqual(first);
+    expect(await env.DB.prepare(`
+      SELECT state, terminal_error_code AS terminalErrorCode, retryable
+      FROM redemption_operations
+      WHERE merchant_id = ?1 AND idempotency_key = 'empty-key'
+    `).bind(SEEDED_MERCHANT_ID).first()).toEqual({
+      state: 'rejected',
+      terminalErrorCode: 'NOTHING_TO_COMMIT',
+      retryable: 0,
     });
-    const error = await expectError(response, 503, 'EVALUATION_UNAVAILABLE');
-    expect(error.error.retryable).toBe(true);
-    expect(JSON.stringify(error)).not.toMatch(/Zod|config_json|decisions_json|result_json/u);
   });
 
-  test.each([
-    ['external order only', { externalOrderRef: 'order-1' }],
-    ['idempotency key only', { idempotencyKey: 'key-1' }],
-    ['both identifiers', { externalOrderRef: 'order-1', idempotencyKey: 'key-1' }],
-  ])('commits a canonical redemption with %s', async (_name, identifiers) => {
-    await seedProgram(promo('welcome'));
+  test('commits one selected decision as one immutable child', async () => {
+    await seedProgram(automaticPromo('welcome'));
     const evaluation = await evaluate();
-
     const result = await redeem({
       evaluationId: evaluation.evaluationId,
-      programRef: 'welcome',
-      ...identifiers,
+      externalOrderRef: 'welcome-order',
+      idempotencyKey: 'welcome-key',
     });
 
     expect(result).toEqual({
       redemptionId: expect.any(String),
       evaluationId: evaluation.evaluationId,
-      programRef: 'welcome',
-      rewardRuleRef: 'default-reward',
-      ...identifiers,
+      externalOrderRef: 'welcome-order',
+      idempotencyKey: 'welcome-key',
       status: 'committed',
-      effects: [promo('welcome').rewardRules[0]!.reward],
-    });
-    const stored = await env.DB.prepare(`
-      SELECT result_json, discount_minor_units, currency FROM redemptions WHERE id = ?1
-    `).bind(result.redemptionId).first();
-    expect(stored).toEqual({
-      result_json: expect.any(String),
-      discount_minor_units: 1_000,
-      currency: 'GBP',
-    });
-    expect(JSON.parse(stored!.result_json as string)).toEqual({
-      version: 1,
-      result,
-      receiptIntegrityHash: expect.stringMatching(/^[0-9a-f]{64}$/u),
-    });
-  });
-
-  test('decrements budget by only the selected rule cost', async () => {
-    const expensive = {
-      ...conditionalRule({
-        type: 'order_discount',
-        calculation: 'fixed',
-        amount: { currency: 'GBP', minorUnits: 2_000 },
-      }, 'expensive'),
-      conditions: {
-        match: 'ALL' as const,
-        conditions: [{
-          id: 'expensive-cart',
-          variable: 'cart.subtotal',
-          operator: 'gte' as const,
-          value: 10_000,
-        }],
-      },
-    };
-    const selected = conditionalRule({
-      type: 'order_discount',
-      calculation: 'fixed',
-      amount: { currency: 'GBP', minorUnits: 500 },
-    }, 'selected-cheap');
-    await seedProgram(promo('selected-cost-commit', {
-      rewardRules: [expensive, selected],
-      budget: { currency: 'GBP', minorUnits: 1_000 },
-    }));
-    const evaluation = await evaluate();
-    expect(evaluation.decisions[0]).toMatchObject({
-      rewardRuleRef: 'selected-cheap',
-      effects: [selected.reward],
-    });
-
-    await redeem({
-      evaluationId: evaluation.evaluationId,
-      programRef: 'selected-cost-commit',
-      externalOrderRef: 'selected-cost-order',
+      entries: [{
+        programRef: 'welcome',
+        programRevision: 1,
+        rewardRuleRef: 'default-reward',
+        effects: automaticPromo('welcome').rewardRules[0]!.reward === undefined
+          ? []
+          : [automaticPromo('welcome').rewardRules[0]!.reward],
+      }],
     });
     expect(await env.DB.prepare(`
-      SELECT usage_count, budget_remaining FROM programs
-      WHERE merchant_id = ?1 AND external_ref = 'selected-cost-commit'
+      SELECT COUNT(*) AS count FROM redemption_entries WHERE redemption_id = ?1
+    `).bind(result.redemptionId).first()).toEqual({ count: 1 });
+    expect(await env.DB.prepare(`
+      SELECT usage_count AS usageCount, budget_remaining AS budgetRemaining
+      FROM program_counters
+      WHERE merchant_id = ?1
     `).bind(SEEDED_MERCHANT_ID).first()).toEqual({
-      usage_count: 1,
-      budget_remaining: 500,
+      usageCount: 1,
+      budgetRemaining: 9_000,
     });
   });
 
-  test('stable retries by either identifier return the original response without mutation', async () => {
-    await seedProgram(promo('welcome'));
-    const evaluation = await evaluate();
-    const original = await redeem({
-      evaluationId: evaluation.evaluationId,
-      programRef: 'welcome',
-      externalOrderRef: 'order-1',
-      idempotencyKey: 'key-1',
-    });
-
-    expect(await redeem({
-      evaluationId: evaluation.evaluationId,
-      programRef: 'welcome',
-      externalOrderRef: 'order-1',
-    })).toEqual(original);
-    expect(await redeem({
-      evaluationId: evaluation.evaluationId,
-      programRef: 'welcome',
-      idempotencyKey: 'key-1',
-    })).toEqual(original);
-    expect(await env.DB.prepare('SELECT usage_count, budget_remaining FROM programs')
-      .first()).toEqual({ usage_count: 1, budget_remaining: 9_000 });
-    expect(await env.DB.prepare('SELECT COUNT(*) AS count FROM redemptions')
-      .first()).toEqual({ count: 1 });
-  });
-
-  test('rejects cross-program receipt reassignment between identical qualified programs', async () => {
-    await seedProgram(promo('identical-a', { priority: 20, stackable: true }));
-    await seedProgram(promo('identical-b', { priority: 10, stackable: true }));
-    const evaluation = await evaluate();
-    await redeem({
-      evaluationId: evaluation.evaluationId,
-      programRef: 'identical-a',
-      externalOrderRef: 'reassigned-order',
-    });
-    await env.DB.prepare(`
-      UPDATE redemptions SET result_json = CASE
-        WHEN json_type(result_json, '$.result') = 'object'
-          THEN json_set(result_json, '$.result.programRef', 'identical-b')
-        ELSE json_set(result_json, '$.programRef', 'identical-b')
-      END
-      WHERE merchant_id = ?1 AND external_order_ref = 'reassigned-order'
-    `).bind(SEEDED_MERCHANT_ID).run();
-
-    await expectError(await redeemRaw({
-      evaluationId: evaluation.evaluationId,
-      programRef: 'identical-b',
-      externalOrderRef: 'reassigned-order',
-    }), 503, 'EVALUATION_UNAVAILABLE');
-  });
-
-  test.each([
-    ['stored currency', "currency = 'USD'"],
-    ['stored projected discount', 'discount_minor_units = 999'],
-  ])('historical counting rejects %s corruption', async (_name, mutation) => {
-    await seedProgram(promo('history-integrity', {
-      perCustomerCap: 3,
+  test('commits several coded decisions in authoritative selected order', async () => {
+    await seedProgram(codedPromo('promo-low', 'LOW', { priority: 10 }));
+    await seedProgram(codedPromo('promo-high', 'HIGH', {
+      priority: 30,
+      reward: { type: 'free_shipping' },
     }));
-    const evaluation = await evaluate();
-    await redeem({
-      evaluationId: evaluation.evaluationId,
-      programRef: 'history-integrity',
-      externalOrderRef: `history-${_name}`,
-    });
-    await env.DB.prepare(`
-      UPDATE redemptions SET ${mutation}
-      WHERE merchant_id = ?1 AND external_order_ref = ?2
-    `).bind(SEEDED_MERCHANT_ID, `history-${_name}`).run();
+    const evaluation = await evaluate({ ...baseRequest, codes: ['LOW', 'HIGH'] });
+    expect(evaluation.decisions.map(decision => decision.programRef)).toEqual([
+      'promo-high',
+      'promo-low',
+    ]);
 
-    const error = await expectError(
-      await evaluateRaw(),
-      503,
-      'EVALUATION_UNAVAILABLE',
-    );
-    expect(error.error.retryable).toBe(true);
+    const result = await redeem({
+      evaluationId: evaluation.evaluationId,
+      externalOrderRef: 'stack-order',
+      idempotencyKey: 'stack-key',
+    });
+    expect(result.entries.map(entry => entry.programRef)).toEqual([
+      'promo-high',
+      'promo-low',
+    ]);
+    expect((await env.DB.prepare(`
+      SELECT position, program_ref AS programRef
+      FROM redemption_entries WHERE redemption_id = ?1 ORDER BY position
+    `).bind(result.redemptionId).all()).results).toEqual([
+      { position: 0, programRef: 'promo-high' },
+      { position: 1, programRef: 'promo-low' },
+    ]);
   });
 
-  test('a corrupted persisted receipt signature fails closed on retry', async () => {
-    await seedProgram(promo('receipt-signature'));
-    const evaluation = await evaluate();
-    await redeem({
-      evaluationId: evaluation.evaluationId,
-      programRef: 'receipt-signature',
-      idempotencyKey: 'receipt-signature-key',
-    });
+  test('rolls back every child, header, entry, and counter when the final child fails', async () => {
+    await seedProgram(codedPromo('first-child', 'FIRST', { priority: 20 }));
+    await seedProgram(codedPromo('final-child', 'FINAL', {
+      priority: 10,
+      budget: { currency: 'GBP', minorUnits: 500 },
+    }));
+    const evaluation = await evaluate({ ...baseRequest, codes: ['FIRST', 'FINAL'] });
     await env.DB.prepare(`
-      UPDATE redemptions
-      SET result_json = json_set(
-        result_json,
-        '$.receiptIntegrityHash',
-        '0000000000000000000000000000000000000000000000000000000000000000'
+      UPDATE program_counters
+      SET budget_remaining = 0, committed_spend = 500
+      WHERE merchant_id = ?1 AND program_id = (
+        SELECT id FROM programs WHERE merchant_id = ?1 AND external_ref = 'final-child'
       )
-      WHERE merchant_id = ?1 AND idempotency_key = 'receipt-signature-key'
+    `).bind(SEEDED_MERCHANT_ID).run();
+    await env.DB.prepare(`
+      UPDATE programs SET budget_remaining = 0
+      WHERE merchant_id = ?1 AND external_ref = 'final-child'
     `).bind(SEEDED_MERCHANT_ID).run();
 
-    await expectError(await redeemRaw({
-      evaluationId: evaluation.evaluationId,
-      programRef: 'receipt-signature',
-      idempotencyKey: 'receipt-signature-key',
-    }), 503, 'EVALUATION_UNAVAILABLE');
-  });
-
-  test('concurrent identical requests converge on one stable idempotent response', async () => {
-    await seedProgram(promo('welcome'));
-    const evaluation = await evaluate();
     const request = {
       evaluationId: evaluation.evaluationId,
-      programRef: 'welcome',
-      externalOrderRef: 'same-order',
-      idempotencyKey: 'same-key',
-    } as const satisfies RedemptionRequest;
-    const responses = await Promise.all([redeemRaw(request), redeemRaw(request)]);
-    expect(responses.map(response => response.status)).toEqual([200, 200]);
-    const results = await Promise.all(responses.map(async response => (
-      RedemptionResponseSchema.parse(await response.json())
-    )));
-    expect(results[1]).toEqual(results[0]);
-    expect(await env.DB.prepare('SELECT usage_count, budget_remaining FROM programs')
-      .first()).toEqual({ usage_count: 1, budget_remaining: 9_000 });
-    expect(await env.DB.prepare('SELECT COUNT(*) AS count FROM redemptions')
-      .first()).toEqual({ count: 1 });
-  });
-
-  test('rejects a missing identifier and publishable credentials', async () => {
-    await expectError(await redeemRaw({ evaluationId: 'e', programRef: 'p' }), 400,
-      'CONTEXT_VALIDATION_FAILED');
-    await expectError(await redeemRaw({
-      evaluationId: 'e', programRef: 'p', externalOrderRef: 'o',
-    }, 'pk_test_publishable_credential_material_00000001'), 403, 'FORBIDDEN');
-  });
-
-  test('conflicting identifier reuse returns VERSION_CONFLICT', async () => {
-    await seedProgram(promo('welcome'));
-    const first = await evaluate();
-    const second = await evaluate();
-    await redeem({
-      evaluationId: first.evaluationId,
-      programRef: 'welcome',
-      externalOrderRef: 'order-1',
-      idempotencyKey: 'key-1',
-    });
-
-    await expectError(await redeemRaw({
-      evaluationId: second.evaluationId,
-      programRef: 'welcome',
-      externalOrderRef: 'order-1',
-    }), 409, 'VERSION_CONFLICT');
-    await expectError(await redeemRaw({
-      evaluationId: first.evaluationId,
-      programRef: 'welcome',
-      externalOrderRef: 'order-1',
-      idempotencyKey: 'different-key',
-    }), 409, 'VERSION_CONFLICT');
-  });
-
-  test('idempotency reuse with a different external order, evaluation, or program conflicts', async () => {
-    await seedProgram(promo('welcome'));
-    await seedProgram(promo('second-program', { priority: 9 }));
-    const first = await evaluate();
-    const second = await evaluate();
-    await redeem({
-      evaluationId: first.evaluationId,
-      programRef: 'welcome',
-      externalOrderRef: 'order-1',
-      idempotencyKey: 'shared-key',
-    });
-
-    for (const request of [
-      {
-        evaluationId: first.evaluationId, programRef: 'welcome',
-        externalOrderRef: 'different-order', idempotencyKey: 'shared-key',
-      },
-      {
-        evaluationId: second.evaluationId, programRef: 'welcome',
-        idempotencyKey: 'shared-key',
-      },
-      {
-        evaluationId: first.evaluationId, programRef: 'second-program',
-        idempotencyKey: 'shared-key',
-      },
-    ]) {
-      await expectError(await redeemRaw(request), 409, 'VERSION_CONFLICT');
-    }
-  });
-
-  test('supplying identifiers that resolve to different redemptions conflicts', async () => {
-    await seedProgram(promo('welcome'));
-    const [first, second] = await Promise.all([evaluate(), evaluate()]);
-    await redeem({
-      evaluationId: first.evaluationId,
-      programRef: 'welcome',
-      externalOrderRef: 'order-from-first',
-    });
-    await redeem({
-      evaluationId: second.evaluationId,
-      programRef: 'welcome',
-      idempotencyKey: 'key-from-second',
-    });
-
-    await expectError(await redeemRaw({
-      evaluationId: first.evaluationId,
-      programRef: 'welcome',
-      externalOrderRef: 'order-from-first',
-      idempotencyKey: 'key-from-second',
-    }), 409, 'VERSION_CONFLICT');
-  });
-
-  test.each([
-    ['usage cap changed to NULL', 'max_uses = NULL'],
-    ['usage cap changed to a different value', 'max_uses = 11'],
-    ['usage count becomes negative', 'usage_count = -1'],
-    ['usage count exceeds its configured cap', 'usage_count = 11'],
-    ['budget changed to NULL', 'budget_remaining = NULL'],
-    ['budget exceeds its configured bound', 'budget_remaining = 10001'],
-    ['budget becomes negative', 'budget_remaining = -1'],
-  ])('fails closed without mutation when program relational %s', async (_name, mutation) => {
-    await seedProgram(promo('relational-corruption'));
-    const evaluation = await evaluate();
-    await env.DB.exec('PRAGMA ignore_check_constraints = ON');
-    try {
-      await env.DB.prepare(`
-        UPDATE program_counters SET ${mutation}
-        WHERE merchant_id = ?1 AND program_id = (
-          SELECT id FROM programs WHERE merchant_id = ?1 AND external_ref = ?2
-        )
-      `).bind(SEEDED_MERCHANT_ID, 'relational-corruption').run();
-    } finally {
-      await env.DB.exec('PRAGMA ignore_check_constraints = OFF');
-    }
-    const counterBefore = await env.DB.prepare(`
-      SELECT usage_count, budget_remaining FROM program_counters
-    `).first();
-
-    await expectError(await redeemRaw({
-      evaluationId: evaluation.evaluationId,
-      programRef: 'relational-corruption',
-      externalOrderRef: `corrupt-${_name}`,
-    }), 503, 'EVALUATION_UNAVAILABLE');
+      externalOrderRef: 'rollback-order',
+      idempotencyKey: 'rollback-key',
+    };
+    const first = await expectError(
+      await redeemRaw(request, 'rollback-correlation'),
+      409,
+      'BUDGET_EXHAUSTED',
+    );
+    const retry = await expectError(
+      await redeemRaw(request, 'rollback-correlation'),
+      409,
+      'BUDGET_EXHAUSTED',
+    );
+    expect(retry).toEqual(first);
     expect(await env.DB.prepare(`
-      SELECT usage_count, budget_remaining FROM program_counters
-    `).first()).toEqual(counterBefore);
+      SELECT state, terminal_error_code AS terminalErrorCode
+      FROM redemption_operations
+      WHERE merchant_id = ?1 AND idempotency_key = 'rollback-key'
+    `).bind(SEEDED_MERCHANT_ID).first()).toEqual({
+      state: 'rejected',
+      terminalErrorCode: 'BUDGET_EXHAUSTED',
+    });
+    expect((await env.DB.prepare(`
+      SELECT external_ref AS programRef, usage_count AS usageCount
+      FROM programs WHERE merchant_id = ?1 ORDER BY external_ref
+    `).bind(SEEDED_MERCHANT_ID).all()).results).toEqual([
+      { programRef: 'final-child', usageCount: 0 },
+      { programRef: 'first-child', usageCount: 0 },
+    ]);
     expect(await env.DB.prepare('SELECT COUNT(*) AS count FROM redemptions').first())
+      .toEqual({ count: 0 });
+    expect(await env.DB.prepare('SELECT COUNT(*) AS count FROM redemption_entries').first())
       .toEqual({ count: 0 });
   });
 
-  test.each([
-    ['result program', "result_json = json_set(result_json, '$.result.programRef', 'other-program')"],
-    ['effects', `result_json = json_set(result_json,
-      '$.result.effects[0].amount.minorUnits', 500)`],
-    ['reward rule reference', "result_json = json_set(result_json, '$.result.rewardRuleRef', 'other-rule')"],
-    ['currency', "currency = 'USD'"],
-    ['discount amount', 'discount_minor_units = 999'],
-    ['decision HMAC', "integrity_hash = 'tampered'"],
-  ])('schema-valid committed retry corruption in %s fails closed', async (
-    _name,
-    mutation,
-  ) => {
-    await seedProgram(promo('retry-integrity'));
+  test('preserves USAGE_CAP_EXHAUSTED across the first failure and exact retry', async () => {
+    await seedProgram(automaticPromo('usage-exhaustion', { usageCap: 1 }));
     const evaluation = await evaluate();
-    await redeem({
+    await env.DB.batch([
+      env.DB.prepare(`
+        UPDATE program_counters SET usage_count = 1
+        WHERE merchant_id = ?1
+      `).bind(SEEDED_MERCHANT_ID),
+      env.DB.prepare(`
+        UPDATE programs SET usage_count = 1
+        WHERE merchant_id = ?1
+      `).bind(SEEDED_MERCHANT_ID),
+    ]);
+    const request = {
       evaluationId: evaluation.evaluationId,
-      programRef: 'retry-integrity',
-      externalOrderRef: 'retry-corruption',
+      externalOrderRef: 'usage-exhaustion-order',
+      idempotencyKey: 'usage-exhaustion-key',
+    };
+
+    const first = await expectError(
+      await redeemRaw(request, 'usage-exhaustion-correlation'),
+      409,
+      'USAGE_CAP_EXHAUSTED',
+    );
+    const retry = await expectError(
+      await redeemRaw(request, 'usage-exhaustion-correlation'),
+      409,
+      'USAGE_CAP_EXHAUSTED',
+    );
+    expect(retry).toEqual(first);
+  });
+
+  test('preserves PER_CUSTOMER_CAP_EXHAUSTED across first failure and exact retry', async () => {
+    await seedProgram(automaticPromo('customer-exhaustion', { perCustomerCap: 1 }));
+    const [firstEvaluation, exhaustedEvaluation] = await Promise.all([
+      evaluate(),
+      evaluate(),
+    ]);
+    await redeem({
+      evaluationId: firstEvaluation.evaluationId,
+      externalOrderRef: 'customer-cap-first-order',
+      idempotencyKey: 'customer-cap-first-key',
     });
-    const table = _name === 'decision HMAC' ? 'evaluation_decisions' : 'redemptions';
-    await env.DB.prepare(`UPDATE ${table} SET ${mutation} WHERE merchant_id = ?1`)
-      .bind(SEEDED_MERCHANT_ID).run();
+    const request = {
+      evaluationId: exhaustedEvaluation.evaluationId,
+      externalOrderRef: 'customer-cap-exhausted-order',
+      idempotencyKey: 'customer-cap-exhausted-key',
+    };
+
+    const first = await expectError(
+      await redeemRaw(request, 'customer-cap-exhausted-correlation'),
+      409,
+      'PER_CUSTOMER_CAP_EXHAUSTED',
+    );
+    const retry = await expectError(
+      await redeemRaw(request, 'customer-cap-exhausted-correlation'),
+      409,
+      'PER_CUSTOMER_CAP_EXHAUSTED',
+    );
+    expect(retry).toEqual(first);
+  });
+
+  test('revalidates every selected active revision and reward rule before committing', async () => {
+    await seedProgram(codedPromo('unchanged-child', 'UNCHANGED', { priority: 20 }));
+    await seedProgram(codedPromo('changed-child', 'CHANGED', { priority: 10 }));
+    const evaluation = await evaluate({ ...baseRequest, codes: ['UNCHANGED', 'CHANGED'] });
+    await env.DB.prepare(`
+      UPDATE program_revisions
+      SET config_json = json_set(config_json, '$.rewardRules[0].id', 'renamed-rule')
+      WHERE merchant_id = ?1 AND program_id = (
+        SELECT id FROM programs WHERE merchant_id = ?1 AND external_ref = 'changed-child'
+      ) AND revision = 1
+    `).bind(SEEDED_MERCHANT_ID).run();
 
     await expectError(await redeemRaw({
       evaluationId: evaluation.evaluationId,
-      programRef: 'retry-integrity',
-      externalOrderRef: 'retry-corruption',
-    }), 503, 'EVALUATION_UNAVAILABLE');
-    expect(await env.DB.prepare('SELECT usage_count, budget_remaining FROM programs').first())
-      .toEqual({ usage_count: 1, budget_remaining: 9_000 });
+      externalOrderRef: 'changed-rule-order',
+      idempotencyKey: 'changed-rule-key',
+    }), 409, 'VERSION_CONFLICT');
+    expect(await env.DB.prepare('SELECT COUNT(*) AS count FROM redemptions').first())
+      .toEqual({ count: 0 });
+    expect((await env.DB.prepare(`
+      SELECT usage_count AS usageCount FROM program_counters ORDER BY program_id
+    `).all()).results).toEqual([{ usageCount: 0 }, { usageCount: 0 }]);
+  });
+
+  test('returns the original bundle and ordered entries on an exact retry', async () => {
+    await seedProgram(automaticPromo('stable-retry'));
+    const evaluation = await evaluate();
+    const request = {
+      evaluationId: evaluation.evaluationId,
+      externalOrderRef: 'stable-order',
+      idempotencyKey: 'stable-key',
+    };
+    const original = await redeem(request);
+    await expect(redeem(request)).resolves.toEqual(original);
     expect(await env.DB.prepare('SELECT COUNT(*) AS count FROM redemptions').first())
       .toEqual({ count: 1 });
   });
 
-  test('a valid retry stays stable after expiry and mutable program exhaustion', async () => {
-    await seedProgram(promo('stable-old-commit'));
-    const evaluation = await evaluate();
-    const original = await redeem({
-      evaluationId: evaluation.evaluationId,
-      programRef: 'stable-old-commit',
-      idempotencyKey: 'stable-old-key',
+  test('conflicts when the same key is reused with a different bundle digest', async () => {
+    await seedProgram(automaticPromo('digest-conflict'));
+    const [first, second] = await Promise.all([evaluate(), evaluate()]);
+    await redeem({
+      evaluationId: first.evaluationId,
+      externalOrderRef: 'digest-order',
+      idempotencyKey: 'digest-key',
     });
-    await resign(evaluation.evaluationId, record => {
-      record!.expiresAt = '2020-01-01T00:00:00.000Z';
-    });
-    await env.DB.prepare(`
-      UPDATE programs SET status = 'paused',
-        config_json = json_set(config_json, '$.status', 'paused'),
-        usage_count = max_uses, budget_remaining = 0
-      WHERE merchant_id = ?1 AND external_ref = 'stable-old-commit'
-    `).bind(SEEDED_MERCHANT_ID).run();
-
-    expect(await redeem({
-      evaluationId: evaluation.evaluationId,
-      programRef: 'stable-old-commit',
-      idempotencyKey: 'stable-old-key',
-    })).toEqual(original);
+    await expectError(await redeemRaw({
+      evaluationId: second.evaluationId,
+      externalOrderRef: 'different-order',
+      idempotencyKey: 'digest-key',
+    }), 409, 'VERSION_CONFLICT');
   });
 
-  test('rejects expired, tampered, cross-merchant, and non-qualified decisions', async () => {
-    await seedProgram(promo('welcome'));
+  test('conflicts when the same external order is reused for another evaluation', async () => {
+    await seedProgram(automaticPromo('order-conflict'));
+    const [first, second] = await Promise.all([evaluate(), evaluate()]);
+    await redeem({
+      evaluationId: first.evaluationId,
+      externalOrderRef: 'shared-order',
+      idempotencyKey: 'first-key',
+    });
+    await expectError(await redeemRaw({
+      evaluationId: second.evaluationId,
+      externalOrderRef: 'shared-order',
+      idempotencyKey: 'second-key',
+    }), 409, 'VERSION_CONFLICT');
+  });
+
+  test('concurrent exact requests converge on one bundle', async () => {
+    await seedProgram(automaticPromo('convergent'));
+    const evaluation = await evaluate();
+    const request = {
+      evaluationId: evaluation.evaluationId,
+      externalOrderRef: 'convergent-order',
+      idempotencyKey: 'convergent-key',
+    };
+    const responses = await Promise.all([redeemRaw(request), redeemRaw(request)]);
+    expect(responses.map(response => response.status)).toEqual([200, 200]);
+    const results = await Promise.all(
+      responses.map(async response => RedemptionResponseSchema.parse(await response.json())),
+    );
+    expect(results[1]).toEqual(results[0]);
+    expect(await env.DB.prepare('SELECT COUNT(*) AS count FROM redemptions').first())
+      .toEqual({ count: 1 });
+  });
+
+  test('concurrent different requests cannot exceed a usage cap or budget', async () => {
+    await seedProgram(automaticPromo('last-use', {
+      usageCap: 1,
+      budget: { currency: 'GBP', minorUnits: 1_000 },
+    }));
+    const [first, second] = await Promise.all([evaluate(), evaluate()]);
+    const responses = await Promise.all([
+      redeemRaw({
+        evaluationId: first.evaluationId,
+        externalOrderRef: 'last-use-order-1',
+        idempotencyKey: 'last-use-key-1',
+      }),
+      redeemRaw({
+        evaluationId: second.evaluationId,
+        externalOrderRef: 'last-use-order-2',
+        idempotencyKey: 'last-use-key-2',
+      }),
+    ]);
+    expect(responses.map(response => response.status).sort()).toEqual([200, 409]);
+    expect(await env.DB.prepare(`
+      SELECT usage_count AS usageCount, budget_remaining AS budgetRemaining
+      FROM program_counters WHERE merchant_id = ?1
+    `).bind(SEEDED_MERCHANT_ID).first()).toEqual({
+      usageCount: 1,
+      budgetRemaining: 0,
+    });
+    expect(await env.DB.prepare('SELECT COUNT(*) AS count FROM redemptions').first())
+      .toEqual({ count: 1 });
+  });
+
+  test('concurrent different requests cannot exceed a per-customer cap', async () => {
+    await seedProgram(automaticPromo('customer-last-use', { perCustomerCap: 1 }));
+    const [first, second] = await Promise.all([evaluate(), evaluate()]);
+    const responses = await Promise.all([
+      redeemRaw({
+        evaluationId: first.evaluationId,
+        externalOrderRef: 'customer-order-1',
+        idempotencyKey: 'customer-key-1',
+      }),
+      redeemRaw({
+        evaluationId: second.evaluationId,
+        externalOrderRef: 'customer-order-2',
+        idempotencyKey: 'customer-key-2',
+      }),
+    ]);
+    expect(responses.map(response => response.status).sort()).toEqual([200, 409]);
+    expect(await env.DB.prepare(`
+      SELECT usage_count AS usageCount FROM program_counters WHERE merchant_id = ?1
+    `).bind(SEEDED_MERCHANT_ID).first()).toEqual({ usageCount: 1 });
+  });
+
+  test('expired and tampered evaluations cannot commit', async () => {
+    await seedProgram(automaticPromo('integrity'));
     const expired = await evaluate();
     await resign(expired.evaluationId, record => {
-      record!.expiresAt = '2020-01-01T00:00:00.000Z';
+      record.expiresAt = '2020-01-01T00:00:00.000Z';
     });
     await expectError(await redeemRaw({
       evaluationId: expired.evaluationId,
-      programRef: 'welcome',
-      externalOrderRef: 'expired',
+      externalOrderRef: 'expired-order',
+      idempotencyKey: 'expired-key',
     }), 410, 'DECISION_EXPIRED');
 
     const tampered = await evaluate();
     await env.DB.prepare(`
-      UPDATE evaluation_decisions SET decisions_json = '[]' WHERE id = ?1
-    `).bind(tampered.evaluationId).run();
+      UPDATE evaluation_decisions SET decisions_json = '[]'
+      WHERE merchant_id = ?1 AND id = ?2
+    `).bind(SEEDED_MERCHANT_ID, tampered.evaluationId).run();
     await expectError(await redeemRaw({
       evaluationId: tampered.evaluationId,
-      programRef: 'welcome',
-      externalOrderRef: 'tampered',
-    }), 503, 'EVALUATION_UNAVAILABLE');
-
-    await env.DB.prepare(`
-      INSERT INTO merchants (id, name, created_at) VALUES ('merchant-b', 'B', ?1)
-    `).bind(createdAt).run();
-    await env.DB.prepare(`
-      INSERT INTO schema_versions (
-        merchant_id, version, state, published_at, definitions_json
-      ) VALUES ('merchant-b', 1, 'published', ?1, '[]')
-    `).bind(createdAt).run();
-    const repositories = createRepositories({ DB: env.DB });
-    await repositories.customers.create('merchant-b', {
-      externalRef: 'customer-1', attributes: {},
-    });
-    const crossTenantSource = await evaluate();
-    const sourceRecord = await repositories.decisions.get(
-      SEEDED_MERCHANT_ID,
-      crossTenantSource.evaluationId,
-    );
-    expect(sourceRecord).not.toBeNull();
-    const crossTenantRecord = {
-      ...sourceRecord!,
-      evaluationId: 'merchant-b-decision',
-      merchantId: 'merchant-b',
-      integrityHash: '',
-    };
-    crossTenantRecord.integrityHash = await signDecisionSnapshot(crossTenantRecord, signingSecret);
-    await repositories.decisions.create(crossTenantRecord);
-    await expectError(await redeemRaw({
-      evaluationId: 'merchant-b-decision',
-      programRef: 'welcome',
-      externalOrderRef: 'cross-merchant',
-    }), 404, 'NOT_FOUND');
-
-    const nonQualified = await evaluate();
-    await resign(nonQualified.evaluationId, record => {
-      record!.decisions[0] = {
-        ...record!.decisions[0]!, outcome: 'not_qualified', effects: [], commitRequired: false,
-        eligible: false,
-      };
-    });
-    await expectError(await redeemRaw({
-      evaluationId: nonQualified.evaluationId,
-      programRef: 'welcome',
-      externalOrderRef: 'not-qualified',
+      externalOrderRef: 'tampered-order',
+      idempotencyKey: 'tampered-key',
     }), 409, 'VERSION_CONFLICT');
-  });
-
-  test('fails closed when decision effects no longer match the program reward', async () => {
-    await seedProgram(promo('welcome'));
-    const evaluation = await evaluate();
-    const changed = promo('welcome', {
-      reward: {
-        type: 'order_discount', calculation: 'fixed',
-        amount: { currency: 'GBP', minorUnits: 500 },
-      },
-    });
-    await env.DB.prepare(`
-      UPDATE program_revisions SET config_json = ?1
-      WHERE merchant_id = ?2 AND revision = (
-        SELECT active_revision FROM programs
-        WHERE merchant_id = ?2 AND external_ref = 'welcome'
-      ) AND program_id = (
-        SELECT id FROM programs WHERE merchant_id = ?2 AND external_ref = 'welcome'
-      )
-    `).bind(JSON.stringify(changed), SEEDED_MERCHANT_ID).run();
-
-    await expectError(await redeemRaw({
-      evaluationId: evaluation.evaluationId,
-      programRef: 'welcome',
-      externalOrderRef: 'mismatch',
-    }), 409, 'VERSION_CONFLICT');
-  });
-
-  test('fails closed when signed selected effects differ from signed snapshot config', async () => {
-    await seedProgram(promo('signed-effect-mismatch'));
-    const evaluation = await evaluate();
-    await resign(evaluation.evaluationId, record => {
-      record!.facts.programs[0]!.config.rewardRules[0]!.reward = {
-        type: 'order_discount',
-        calculation: 'fixed',
-        amount: { currency: 'GBP', minorUnits: 500 },
-      };
-    });
-
-    await expectError(await redeemRaw({
-      evaluationId: evaluation.evaluationId,
-      programRef: 'signed-effect-mismatch',
-      externalOrderRef: 'signed-effect-mismatch-order',
-    }), 409, 'VERSION_CONFLICT');
-  });
-
-  test('commits a selected fallback by stable rule reference', async () => {
-    await seedProgram(promo('fallback-offer', {
-      rewardRules: [{
-        ...conditionalRule({ type: 'free_shipping' }, 'never-matches'),
-        conditions: {
-          match: 'ALL',
-          conditions: [{
-            id: 'impossible-cart',
-            variable: 'cart.subtotal',
-            operator: 'gt',
-            value: 100_000,
-          }],
-        },
-      }],
-      fallbackReward: {
-        id: 'fallback',
-        name: 'Fallback',
-        reward: {
-          type: 'order_discount',
-          calculation: 'fixed',
-          amount: { currency: 'GBP', minorUnits: 500 },
-        },
-      },
-    }));
-    const evaluation = await evaluate();
-
-    expect(await redeem({
-      evaluationId: evaluation.evaluationId,
-      programRef: 'fallback-offer',
-      externalOrderRef: 'fallback-order',
-    })).toMatchObject({
-      rewardRuleRef: 'fallback',
-      effects: [{
-        type: 'order_discount',
-        calculation: 'fixed',
-        amount: { currency: 'GBP', minorUnits: 500 },
-      }],
-    });
-  });
-
-  test.each([
-    ['missing', undefined],
-    ['unknown', 'unknown-rule'],
-  ])('fails closed for a %s signed reward rule reference', async (_name, rewardRuleRef) => {
-    await seedProgram(promo('rule-reference'));
-    const evaluation = await evaluate();
-    await resign(evaluation.evaluationId, record => {
-      if (rewardRuleRef === undefined) {
-        delete record!.decisions[0]!.rewardRuleRef;
-      } else {
-        record!.decisions[0]!.rewardRuleRef = rewardRuleRef;
-      }
-    });
-
-    await expectError(await redeemRaw({
-      evaluationId: evaluation.evaluationId,
-      programRef: 'rule-reference',
-      externalOrderRef: `bad-rule-${_name}`,
-    }), 409, 'VERSION_CONFLICT');
-  });
-
-  test('fails closed for duplicate reward ids in the signed program snapshot', async () => {
-    await seedProgram(promo('duplicate-snapshot'));
-    const evaluation = await evaluate();
-    await resign(evaluation.evaluationId, record => {
-      record!.facts.programs[0]!.config.fallbackReward = {
-        id: 'default-reward',
-        name: 'Duplicate',
-        reward: { type: 'free_shipping' },
-      };
-    });
-
-    await expectError(await redeemRaw({
-      evaluationId: evaluation.evaluationId,
-      programRef: 'duplicate-snapshot',
-      externalOrderRef: 'duplicate-snapshot-order',
-    }), 503, 'EVALUATION_UNAVAILABLE');
-  });
-
-  test('fails closed when the selected rule id changes in the current program', async () => {
-    await seedProgram(promo('changed-rule-id'));
-    const evaluation = await evaluate();
-    await env.DB.prepare(`
-      UPDATE program_revisions
-      SET config_json = json_set(config_json, '$.rewardRules[0].id', 'renamed-rule')
-      WHERE merchant_id = ?1 AND revision = (
-        SELECT active_revision FROM programs
-        WHERE merchant_id = ?1 AND external_ref = 'changed-rule-id'
-      ) AND program_id = (
-        SELECT id FROM programs
-        WHERE merchant_id = ?1 AND external_ref = 'changed-rule-id'
-      )
-    `).bind(SEEDED_MERCHANT_ID).run();
-
-    await expectError(await redeemRaw({
-      evaluationId: evaluation.evaluationId,
-      programRef: 'changed-rule-id',
-      externalOrderRef: 'changed-rule-order',
-    }), 409, 'VERSION_CONFLICT');
-  });
-
-  test('does not re-evaluate rule conditions against changed current configuration', async () => {
-    await seedProgram(promo('no-reevaluation'));
-    const evaluation = await evaluate();
-    await env.DB.prepare(`
-      UPDATE program_revisions
-      SET config_json = json_set(
-        config_json,
-        '$.rewardRules[0].conditions.conditions[0].value',
-        100000
-      )
-      WHERE merchant_id = ?1 AND revision = (
-        SELECT active_revision FROM programs
-        WHERE merchant_id = ?1 AND external_ref = 'no-reevaluation'
-      ) AND program_id = (
-        SELECT id FROM programs
-        WHERE merchant_id = ?1 AND external_ref = 'no-reevaluation'
-      )
-    `).bind(SEEDED_MERCHANT_ID).run();
-
-    await expect(redeem({
-      evaluationId: evaluation.evaluationId,
-      programRef: 'no-reevaluation',
-      externalOrderRef: 'no-reevaluation-order',
-    })).resolves.toMatchObject({
-      rewardRuleRef: 'default-reward',
-      status: 'committed',
-    });
-  });
-
-  test('fails closed on corrupt committed history used for a per-customer cap', async () => {
-    await seedProgram(promo('customer-history', { perCustomerCap: 2 }));
-    const [first, second] = await Promise.all([evaluate(), evaluate()]);
-    await redeem({
-      evaluationId: first.evaluationId,
-      programRef: 'customer-history',
-      externalOrderRef: 'history-1',
-    });
-    await env.DB.prepare(`
-      UPDATE evaluation_decisions SET integrity_hash = 'tampered'
-      WHERE merchant_id = ?1 AND id = ?2
-    `).bind(SEEDED_MERCHANT_ID, first.evaluationId).run();
-
-    await expectError(await redeemRaw({
-      evaluationId: second.evaluationId,
-      programRef: 'customer-history',
-      externalOrderRef: 'history-2',
-    }), 503, 'EVALUATION_UNAVAILABLE');
-    expect(await env.DB.prepare('SELECT usage_count FROM programs').first())
-      .toEqual({ usage_count: 1 });
     expect(await env.DB.prepare('SELECT COUNT(*) AS count FROM redemptions').first())
-      .toEqual({ count: 1 });
+      .toEqual({ count: 0 });
   });
+
+  test('does not expose a committed response when the complete D1 batch fails', async () => {
+    await seedProgram(automaticPromo('batch-failure'));
+    const correlationId = 'bundle-redemption-correlation';
+    const evaluationResponse = await evaluateRaw(baseRequest, correlationId);
+    expect(evaluationResponse.status).toBe(200);
+    const evaluation = EvaluationResponseSchema.parse(await evaluationResponse.json());
+    expect(evaluationResponse.headers.get('x-correlation-id')).toBe(correlationId);
+    expect((await storedDecision(evaluation.evaluationId)).correlationId).toBe(correlationId);
+    await env.DB.prepare(`
+      CREATE TRIGGER force_redemption_entry_failure
+      BEFORE INSERT ON redemption_entries
+      BEGIN
+        SELECT RAISE(ABORT, 'forced redemption entry failure');
+      END
+    `).run();
+    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      const response = await redeemRaw({
+        evaluationId: evaluation.evaluationId,
+        externalOrderRef: 'batch-failure-order',
+        idempotencyKey: 'batch-failure-key',
+      }, correlationId);
+      const error = await expectError(response, 503, 'REDEMPTION_UNAVAILABLE');
+      expect(response.headers.get('x-correlation-id')).toBe(correlationId);
+      expect(error.error.correlationId).toBe(correlationId);
+      expect(errorLog).toHaveBeenCalledTimes(1);
+
+      const serialized = String(errorLog.mock.calls[0]?.[0]);
+      expect(JSON.parse(serialized)).toMatchObject({
+        event: 'api_request_failed',
+        correlationId,
+        route: '/v1/redemptions',
+        method: 'POST',
+        code: 'REDEMPTION_UNAVAILABLE',
+        status: 503,
+        retryable: true,
+        merchantId: SEEDED_MERCHANT_ID,
+        credentialId: expect.any(String),
+        dependency: 'atomic_redemption',
+      });
+      expect(serialized).not.toContain('Authorization');
+      expect(serialized).not.toContain('000000000001');
+      expect(serialized).not.toContain(evaluation.evaluationId);
+      expect(serialized).not.toContain('batch-failure-order');
+      expect(serialized).not.toContain('batch-failure-key');
+      expect(serialized).not.toContain('forced redemption entry failure');
+    } finally {
+      errorLog.mockRestore();
+      await env.DB.prepare('DROP TRIGGER force_redemption_entry_failure').run();
+    }
+    expect(await env.DB.prepare('SELECT COUNT(*) AS count FROM redemptions').first())
+      .toEqual({ count: 0 });
+    expect(await env.DB.prepare('SELECT COUNT(*) AS count FROM redemption_entries').first())
+      .toEqual({ count: 0 });
+    expect(await env.DB.prepare(`
+      SELECT usage_count AS usageCount FROM program_counters WHERE merchant_id = ?1
+    `).bind(SEEDED_MERCHANT_ID).first()).toEqual({ usageCount: 0 });
+  });
+});
+
+describe('terminal coordinator contract', () => {
+  beforeEach(resetData);
 
   test.each([
-    ['paused program', "status = 'paused', config_json = json_set(config_json, '$.status', 'paused')"],
-    ['usage cap', 'usage_count = max_uses'],
-    ['budget', 'budget_remaining = 999'],
-  ])('returns EXHAUSTED when mutable %s changes after evaluation', async (_name, mutation) => {
-    await seedProgram(promo('welcome'));
-    const evaluation = await evaluate();
-    await env.DB.prepare(`UPDATE programs SET ${mutation} WHERE external_ref = 'welcome'`).run();
-
-    await expectError(await redeemRaw({
-      evaluationId: evaluation.evaluationId,
-      programRef: 'welcome',
-      externalOrderRef: `exhausted-${_name}`,
-    }), 409, 'EXHAUSTED');
-    expect(await env.DB.prepare('SELECT COUNT(*) AS count FROM redemptions')
-      .first()).toEqual({ count: 0 });
-  });
-
-  test('concurrent final-cap commits allow exactly one redemption', async () => {
-    await seedProgram(promo('one-use', { usageCap: 1 }));
-    const [first, second] = await Promise.all([evaluate(), evaluate()]);
-    const responses = await Promise.all([
-      redeemRaw({
-        evaluationId: first.evaluationId,
-        programRef: 'one-use', externalOrderRef: 'o-1', idempotencyKey: 'k-1',
-      }),
-      redeemRaw({
-        evaluationId: second.evaluationId,
-        programRef: 'one-use', externalOrderRef: 'o-2', idempotencyKey: 'k-2',
-      }),
-    ]);
-    const results = await Promise.all(responses.map(async response => ({
-      status: response.status,
-      body: await response.json() as Record<string, unknown>,
-    })));
-
-    expect(results.filter(({ status, body }) =>
-      status === 200 && body.status === 'committed')).toHaveLength(1);
-    expect(results.filter(({ status, body }) =>
-      status === 409 && (body.error as { code?: string } | undefined)?.code === 'EXHAUSTED'))
-      .toHaveLength(1);
-    expect(await env.DB.prepare('SELECT usage_count, budget_remaining FROM programs')
-      .first()).toEqual({ usage_count: 1, budget_remaining: 9_000 });
-    expect(await env.DB.prepare('SELECT COUNT(*) AS count FROM redemptions')
-      .first()).toEqual({ count: 1 });
-  });
-
-  test('concurrent per-customer final-cap commits allow exactly one redemption', async () => {
-    await seedProgram(promo('customer-one', { perCustomerCap: 1 }));
-    const [first, second] = await Promise.all([evaluate(), evaluate()]);
-    const responses = await Promise.all([
-      redeemRaw({
-        evaluationId: first.evaluationId,
-        programRef: 'customer-one', externalOrderRef: 'customer-o-1',
-      }),
-      redeemRaw({
-        evaluationId: second.evaluationId,
-        programRef: 'customer-one', externalOrderRef: 'customer-o-2',
-      }),
-    ]);
-    expect(responses.map(response => response.status).sort()).toEqual([200, 409]);
-    expect(await env.DB.prepare('SELECT usage_count FROM programs').first())
-      .toEqual({ usage_count: 1 });
-  });
-
-  test('concurrent final-budget commits allow exactly one redemption', async () => {
-    await seedProgram(promo('last-budget', {
-      budget: { currency: 'GBP', minorUnits: 1_000 },
-    }));
-    const [first, second] = await Promise.all([evaluate(), evaluate()]);
-    const responses = await Promise.all([
-      redeemRaw({
-        evaluationId: first.evaluationId,
-        programRef: 'last-budget', idempotencyKey: 'budget-1',
-      }),
-      redeemRaw({
-        evaluationId: second.evaluationId,
-        programRef: 'last-budget', idempotencyKey: 'budget-2',
-      }),
-    ]);
-    expect(responses.map(response => response.status).sort()).toEqual([200, 409]);
-    expect(await env.DB.prepare('SELECT usage_count, budget_remaining FROM programs')
-      .first()).toEqual({ usage_count: 1, budget_remaining: 0 });
-    expect(await env.DB.prepare('SELECT COUNT(*) AS count FROM redemptions')
-      .first()).toEqual({ count: 1 });
-  });
+    'NOTHING_TO_COMMIT',
+    'DECISION_EXPIRED',
+    'INVALID_DECISION',
+    'PROGRAM_UNAVAILABLE',
+    'USAGE_CAP_EXHAUSTED',
+    'PER_CUSTOMER_CAP_EXHAUSTED',
+    'BUDGET_EXHAUSTED',
+  ] satisfies TerminalRedemptionErrorCode[])(
+    'keeps %s in the provider-neutral terminal result union',
+    (code) => {
+      const result: CommitRedemptionBundleResult = {
+        kind: 'terminal_retry',
+        code,
+        retryable: false,
+      };
+      expect(result).toEqual({ kind: 'terminal_retry', code, retryable: false });
+    },
+  );
 });

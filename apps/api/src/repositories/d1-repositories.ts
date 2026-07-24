@@ -2,7 +2,9 @@ import {
   ApiCredentialScopeSchema,
   ApiCredentialViewSchema,
   AuditEntrySchema,
+  CodeEvaluationResultSchema,
   CustomerSnapshotSchema,
+  EffectSchema,
   EvaluationRequestSchema,
   IncentiveDecisionSchema,
   MerchantActivationRequestSchema,
@@ -15,6 +17,8 @@ import {
   ProgramStatusSchema,
   RedemptionResponseSchema,
   VariableDefinitionSchema,
+  normalizeDistinctPromoCodes,
+  normalizePromoCode,
   type VariableDefinition,
 } from '@incentives/contracts';
 import { and, asc, desc, eq } from 'drizzle-orm';
@@ -30,6 +34,7 @@ import {
   programCounters,
   programRevisions,
   programs,
+  redemptionEntries,
   redemptions,
   schemaVersions,
   variableDefinitions,
@@ -39,11 +44,12 @@ import { MerchantIdentityConflictError } from '../errors/merchant-errors.js';
 import { canonicalJson } from '../json.js';
 import {
   OptimisticVersionConflictError,
+  PromoCodeConflictError,
   ProgramConflictError,
+  RepositoryDependencyError,
   SchemaRevisionConflictError,
   type CustomerRecord,
   type CustomerUpsert,
-  type AtomicRedemptionCommit,
   type CredentialCreate,
   type EvaluationDecisionRecord,
   type MerchantProvision,
@@ -52,6 +58,7 @@ import {
   type ProgramRecord,
   type ProgramRevisionRecord,
   type RedemptionCreate,
+  type RedemptionEntryRecord,
   type RedemptionReceiptIntegrityVerifier,
   type Repositories,
   type SchemaVersionRecord,
@@ -59,9 +66,20 @@ import {
   type VariableDefinitionRecord,
 } from './types.js';
 
+async function d1DependencyOperation<T>(
+  operation: () => Promise<T>,
+): Promise<T> {
+  try {
+    return await operation();
+  } catch (cause) {
+    throw new RepositoryDependencyError('d1', cause);
+  }
+}
+
 const AttributesSchema = z.record(z.string(), z.unknown());
 const DefinitionsSchema = z.array(VariableDefinitionSchema);
 const DecisionsSchema = z.array(IncentiveDecisionSchema);
+const CodeResultsSchema = z.array(CodeEvaluationResultSchema);
 const FactsSchema = z.object({
   scalar: AttributesSchema,
   lineItems: z.array(AttributesSchema),
@@ -72,6 +90,7 @@ const FactsSchema = z.object({
   }).strict()),
 }).strict();
 const DateTimeSchema = z.iso.datetime({ offset: true });
+const CalendarDateSchema = z.iso.date();
 const SchemaStateSchema = z.enum(['draft', 'published']);
 const DefinitionStateSchema = z.enum(['draft', 'published', 'deprecated']);
 const PositiveIntegerSchema = z.number().int().positive();
@@ -87,9 +106,26 @@ const AllowedOriginsSchema = z.array(ExactOriginSchema).max(100).refine(
   'Origins must be unique',
 );
 const ReceiptIntegrityHashSchema = z.string().regex(/^[0-9a-f]{64}$/u);
+const RequestDigestSchema = z.string().regex(/^[0-9a-f]{64}$/u);
+const EvaluationModeSchema = z.enum(['automatic', 'coded']);
 const StoredRedemptionEnvelopeSchema = z.object({
-  version: z.literal(1),
+  version: z.literal(2),
   result: RedemptionResponseSchema,
+  receiptIntegrityHash: ReceiptIntegrityHashSchema,
+}).strict();
+const LegacyRedemptionResultSchema = z.object({
+  redemptionId: z.string().min(1),
+  evaluationId: z.string().min(1),
+  externalOrderRef: z.string().min(1).optional(),
+  idempotencyKey: z.string().min(1).optional(),
+  programRef: z.string().min(1),
+  rewardRuleRef: z.string().min(1).optional(),
+  status: z.literal('committed'),
+  effects: z.array(EffectSchema),
+}).strict();
+const LegacyRedemptionEnvelopeSchema = z.object({
+  version: z.literal(1),
+  result: LegacyRedemptionResultSchema,
   receiptIntegrityHash: ReceiptIntegrityHashSchema,
 }).strict();
 
@@ -141,6 +177,15 @@ function now(): string {
 
 function parseJson<T>(value: string, schema: z.ZodType<T>): T {
   return schema.parse(JSON.parse(value) as unknown);
+}
+
+function parseCanonicalJson<T>(value: string, schema: z.ZodType<T>): T {
+  const stored = JSON.parse(value) as unknown;
+  const parsed = schema.parse(stored);
+  if (canonicalJson(stored) !== canonicalJson(parsed)) {
+    throw new Error('Stored JSON requires canonicalization');
+  }
+  return parsed;
 }
 
 function persistedRecord<T>(kind: string, deserialize: () => T): T {
@@ -621,10 +666,15 @@ function conditionalAuditInsertStatement(
   );
 }
 
-function parseDecision(input: EvaluationDecisionRecord): EvaluationDecisionRecord {
+function parseDecision(
+  input: EvaluationDecisionRecord,
+  options: { legacy?: boolean } = {},
+): EvaluationDecisionRecord {
   canonicalJson(input.request);
   canonicalJson(input.facts);
   canonicalJson(input.decisions);
+  canonicalJson(input.submittedCodes);
+  canonicalJson(input.codeResults);
 
   const customerRef = input.customerRef === undefined
     ? undefined
@@ -643,13 +693,42 @@ function parseDecision(input: EvaluationDecisionRecord): EvaluationDecisionRecor
   }
   const facts = FactsSchema.parse(input.facts);
   const decisions = DecisionsSchema.parse(input.decisions);
+  const mode = EvaluationModeSchema.parse(input.mode);
+  const submittedCodes = z.array(z.string().min(1)).max(10).parse(input.submittedCodes);
+  const codeResults = CodeResultsSchema.parse(input.codeResults);
+  const normalizedRequestCodes = normalizeDistinctPromoCodes(request.codes ?? []);
+  if (
+    canonicalJson(submittedCodes)
+      !== canonicalJson(normalizedRequestCodes.map(code => code.display))
+  ) {
+    throw new Error('Submitted codes must match the normalized evaluation request order');
+  }
+  if (
+    mode !== (submittedCodes.length === 0 ? 'automatic' : 'coded')
+    || (mode === 'automatic' && codeResults.length !== 0)
+    || (mode === 'coded' && codeResults.length !== submittedCodes.length)
+    || codeResults.some((result, index) => (
+      result.code !== submittedCodes[index]
+      || result.normalizedCode !== normalizedRequestCodes[index]?.normalized
+    ))
+  ) {
+    throw new Error('Evaluation mode and code diagnostics are inconsistent');
+  }
   canonicalJson(request);
   canonicalJson(facts);
   canonicalJson(decisions);
+  canonicalJson(codeResults);
 
   return {
     evaluationId: z.string().min(1).parse(input.evaluationId),
     merchantId: z.string().min(1).parse(input.merchantId),
+    mode,
+    submittedCodes,
+    codeResults,
+    requestDigest: options.legacy === true
+      ? z.string().regex(/^legacy:[^:]+$/u).parse(input.requestDigest)
+      : RequestDigestSchema.parse(input.requestDigest),
+    correlationId: z.string().min(1).max(200).parse(input.correlationId),
     ...optional('customerRef', customerRef),
     ...optional('customerVersion', customerVersion),
     schemaVersion: PositiveIntegerSchema.parse(input.schemaVersion),
@@ -663,125 +742,255 @@ function parseDecision(input: EvaluationDecisionRecord): EvaluationDecisionRecor
 }
 
 function parseDecisionRow(row: typeof evaluationDecisions.$inferSelect): EvaluationDecisionRecord {
-  return parseDecision({
+  const request = parseCanonicalJson(row.requestJson, EvaluationRequestSchema);
+  const facts = parseCanonicalJson(row.factsJson, FactsSchema);
+  const decisions = parseCanonicalJson(row.decisionsJson, DecisionsSchema);
+  const submittedCodes = parseCanonicalJson(
+    row.submittedCodesJson,
+    z.array(z.string().min(1)).max(10),
+  );
+  const codeResults = parseCanonicalJson(row.codeResultsJson, CodeResultsSchema);
+  const record = {
     evaluationId: row.id,
     merchantId: row.merchantId,
+    mode: EvaluationModeSchema.parse(row.mode),
+    submittedCodes,
+    codeResults,
+    requestDigest: row.requestDigest,
+    correlationId: row.correlationId,
     ...optional('customerRef', row.customerRef),
     ...optional('customerVersion', row.customerVersion),
     schemaVersion: row.schemaVersion,
-    request: parseJson(row.requestJson, EvaluationRequestSchema),
-    facts: parseJson(row.factsJson, FactsSchema),
-    decisions: parseJson(row.decisionsJson, DecisionsSchema),
+    request,
+    facts,
+    decisions,
     integrityHash: row.integrityHash,
     expiresAt: row.expiresAt,
     createdAt: row.createdAt,
-  });
+  };
+  if (row.requestDigest.startsWith('legacy:')) {
+    if (
+      row.requestDigest !== `legacy:${row.id}`
+      || row.correlationId !== `migration:${row.id}`
+    ) {
+      throw new Error('Legacy evaluation migration markers are invalid');
+    }
+    return parseDecision(record, { legacy: true });
+  }
+  return parseDecision(record);
 }
 
 function decisionFromRow(row: typeof evaluationDecisions.$inferSelect): EvaluationDecisionRecord {
   return persistedRecord('evaluation decision', () => parseDecisionRow(row));
 }
 
-function parseRedemption(input: RedemptionCreate): RedemptionCreate {
-  const externalOrderRef = input.externalOrderRef === undefined
+function parseRedemptionEntry(input: RedemptionEntryRecord): RedemptionEntryRecord {
+  const rewardRuleRef = input.rewardRuleRef === undefined
     ? undefined
-    : z.string().min(1).parse(input.externalOrderRef);
-  const idempotencyKey = input.idempotencyKey === undefined
-    ? undefined
-    : z.string().min(1).parse(input.idempotencyKey);
+    : z.string().min(1).parse(input.rewardRuleRef);
+  const effects = z.array(EffectSchema).parse(input.effects);
+  canonicalJson(effects);
+  return {
+    position: z.number().int().nonnegative().parse(input.position),
+    programRef: z.string().min(1).parse(input.programRef),
+    programRevision: PositiveIntegerSchema.parse(input.programRevision),
+    ...optional('rewardRuleRef', rewardRuleRef),
+    effects,
+    discountMinorUnits: NonnegativeIntegerSchema.parse(input.discountMinorUnits),
+    currency: CurrencySchema.parse(input.currency),
+  };
+}
 
-  if (externalOrderRef === undefined && idempotencyKey === undefined) {
-    throw new Error('At least one redemption identifier is required');
-  }
-
+export function parseRedemption(input: RedemptionCreate): RedemptionCreate {
+  const redemptionId = z.string().min(1).parse(input.redemptionId);
+  const evaluationId = z.string().min(1).parse(input.evaluationId);
+  const externalOrderRef = z.string().min(1).parse(input.externalOrderRef);
+  const idempotencyKey = z.string().min(1).parse(input.idempotencyKey);
   const result = RedemptionResponseSchema.parse(input.result);
+  const entries = z.array(z.unknown()).min(1).parse(input.entries)
+    .map(entry => parseRedemptionEntry(entry as RedemptionEntryRecord));
+  if (entries.some((entry, position) => entry.position !== position)) {
+    throw new Error('Redemption entry positions must be contiguous and ordered');
+  }
+  const publicEntries = entries.map((entry) => ({
+    programRef: entry.programRef,
+    programRevision: entry.programRevision,
+    ...optional('rewardRuleRef', entry.rewardRuleRef),
+    effects: entry.effects,
+  }));
   if (
-    result.redemptionId !== input.redemptionId
-    || result.evaluationId !== input.evaluationId
+    result.redemptionId !== redemptionId
+    || result.evaluationId !== evaluationId
     || result.externalOrderRef !== externalOrderRef
     || result.idempotencyKey !== idempotencyKey
+    || canonicalJson(result.entries) !== canonicalJson(publicEntries)
   ) {
-    throw new Error('Redemption result does not match its relational identifiers');
+    throw new Error('Redemption result does not match its relational bundle');
   }
 
   return {
-    redemptionId: z.string().min(1).parse(input.redemptionId),
+    redemptionId,
     merchantId: z.string().min(1).parse(input.merchantId),
-    ...optional('externalOrderRef', externalOrderRef),
-    ...optional('idempotencyKey', idempotencyKey),
-    evaluationId: z.string().min(1).parse(input.evaluationId),
+    externalOrderRef,
+    idempotencyKey,
+    evaluationId,
+    requestDigest: RequestDigestSchema.parse(input.requestDigest),
     result,
-    discountMinorUnits: z.number().int().nonnegative().parse(input.discountMinorUnits),
-    currency: CurrencySchema.parse(input.currency),
+    entries,
     createdAt: DateTimeSchema.parse(input.createdAt),
     receiptIntegrityHash: ReceiptIntegrityHashSchema.parse(input.receiptIntegrityHash),
   };
 }
 
-function parseRedemptionRow(row: typeof redemptions.$inferSelect): RedemptionCreate {
+export function redemptionTotals(redemption: RedemptionCreate): {
+  discountMinorUnits: number;
+  currency: string;
+} {
+  const currencies = new Set(redemption.entries.map(entry => entry.currency));
+  if (currencies.size !== 1) throw new Error('Redemption entries must use one currency');
+  const total = redemption.entries.reduce(
+    (sum, entry) => sum + BigInt(entry.discountMinorUnits),
+    0n,
+  );
+  if (total > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw new Error('Redemption discount exceeds the supported range');
+  }
+  return {
+    discountMinorUnits: Number(total),
+    currency: redemption.entries[0]!.currency,
+  };
+}
+
+function parseRedemptionRow(
+  row: typeof redemptions.$inferSelect,
+  entryRows: Array<typeof redemptionEntries.$inferSelect>,
+): RedemptionCreate {
+  if (row.externalOrderRef === null || row.idempotencyKey === null) {
+    throw new Error('Current redemption bundles require both identifiers');
+  }
   const envelope = parseJson(row.resultJson, StoredRedemptionEnvelopeSchema);
-  return parseRedemption({
+  const redemption = parseRedemption({
     redemptionId: row.id,
     merchantId: row.merchantId,
-    ...optional('externalOrderRef', row.externalOrderRef),
-    ...optional('idempotencyKey', row.idempotencyKey),
+    externalOrderRef: row.externalOrderRef,
+    idempotencyKey: row.idempotencyKey,
     evaluationId: row.evaluationId,
+    requestDigest: row.requestDigest,
     result: envelope.result,
-    discountMinorUnits: row.discountMinorUnits,
-    currency: row.currency,
+    entries: entryRows.map(entry => ({
+      position: entry.position,
+      programRef: entry.programRef,
+      programRevision: entry.programRevision,
+      ...optional('rewardRuleRef', entry.rewardRuleRef),
+      effects: parseJson(entry.effectsJson, z.array(EffectSchema)),
+      discountMinorUnits: entry.discountMinorUnits,
+      currency: entry.currency,
+    })),
     createdAt: row.createdAt,
     receiptIntegrityHash: envelope.receiptIntegrityHash,
   });
+  const totals = redemptionTotals(redemption);
+  if (
+    row.discountMinorUnits !== totals.discountMinorUnits
+    || row.currency !== totals.currency
+  ) {
+    throw new Error('Redemption header totals do not match its entries');
+  }
+  return redemption;
 }
 
-function redemptionFromRow(row: typeof redemptions.$inferSelect): RedemptionCreate {
-  return persistedRecord('redemption', () => parseRedemptionRow(row));
+function readLegacyRedemptionRow(
+  row: typeof redemptions.$inferSelect,
+  entryRows: Array<typeof redemptionEntries.$inferSelect>,
+) {
+  const envelope = parseJson(row.resultJson, LegacyRedemptionEnvelopeSchema);
+  const [entry] = entryRows;
+  if (entry === undefined) {
+    throw new Error('Legacy redemption has no migrated entry');
+  }
+  if (
+    row.requestDigest !== `legacy:${row.id}`
+    || entryRows.length !== 1
+    || entry.position !== 0
+    || envelope.result.redemptionId !== row.id
+    || envelope.result.evaluationId !== row.evaluationId
+    || envelope.result.externalOrderRef !== (row.externalOrderRef ?? undefined)
+    || envelope.result.idempotencyKey !== (row.idempotencyKey ?? undefined)
+    || envelope.result.programRef !== entry.programRef
+    || envelope.result.rewardRuleRef !== (entry.rewardRuleRef ?? undefined)
+    || canonicalJson(envelope.result.effects)
+      !== canonicalJson(parseJson(entry.effectsJson, z.array(EffectSchema)))
+    || row.discountMinorUnits !== entry.discountMinorUnits
+    || row.currency !== entry.currency
+  ) {
+    throw new Error('Legacy redemption row does not match its migrated entry');
+  }
+  return { row, entry, envelope };
 }
 
-function redemptionEnvelope(redemption: RedemptionCreate): string {
+function historicalRedemptionFromRows(
+  row: typeof redemptions.$inferSelect,
+  entryRows: Array<typeof redemptionEntries.$inferSelect>,
+): RedemptionCreate {
+  return persistedRecord('redemption', () => {
+    const raw = JSON.parse(row.resultJson) as { version?: unknown };
+    if (raw.version !== 1) return parseRedemptionRow(row, entryRows);
+    const legacy = readLegacyRedemptionRow(row, entryRows);
+    return {
+      redemptionId: row.id,
+      merchantId: row.merchantId,
+      ...optional('externalOrderRef', row.externalOrderRef ?? undefined),
+      ...optional('idempotencyKey', row.idempotencyKey ?? undefined),
+      evaluationId: row.evaluationId,
+      requestDigest: row.requestDigest,
+      result: legacy.envelope.result,
+      entries: [{
+        position: legacy.entry.position,
+        programRef: legacy.entry.programRef,
+        programRevision: legacy.entry.programRevision,
+        ...optional('rewardRuleRef', legacy.entry.rewardRuleRef),
+        effects: parseJson(legacy.entry.effectsJson, z.array(EffectSchema)),
+        discountMinorUnits: legacy.entry.discountMinorUnits,
+        currency: legacy.entry.currency,
+      }],
+      createdAt: row.createdAt,
+      receiptIntegrityHash: legacy.envelope.receiptIntegrityHash,
+    } as unknown as RedemptionCreate;
+  });
+}
+
+function redemptionFromRows(
+  row: typeof redemptions.$inferSelect,
+  entryRows: Array<typeof redemptionEntries.$inferSelect>,
+): RedemptionCreate {
+  return persistedRecord('redemption', () => {
+    const raw = JSON.parse(row.resultJson) as { version?: unknown };
+    if (raw.version === 1) {
+      readLegacyRedemptionRow(row, entryRows);
+      throw new Error('Legacy redemption is available only to the private audit reader');
+    }
+    return parseRedemptionRow(row, entryRows);
+  });
+}
+
+export function redemptionEnvelope(redemption: RedemptionCreate): string {
   return JSON.stringify(StoredRedemptionEnvelopeSchema.parse({
-    version: 1,
+    version: 2,
     result: redemption.result,
     receiptIntegrityHash: redemption.receiptIntegrityHash,
   }));
 }
 
-async function verifiedRedemptionFromRow(
+async function verifiedRedemptionFromRows(
   row: typeof redemptions.$inferSelect,
+  entryRows: Array<typeof redemptionEntries.$inferSelect>,
   verifyIntegrity: RedemptionReceiptIntegrityVerifier,
 ): Promise<RedemptionCreate> {
-  const redemption = redemptionFromRow(row);
+  const redemption = redemptionFromRows(row, entryRows);
   if (!(await verifyIntegrity(redemption))) {
     throw new Error('Redemption receipt integrity verification failed');
   }
   return redemption;
-}
-
-function parseAtomicRedemption(input: AtomicRedemptionCommit): AtomicRedemptionCommit {
-  const parsed = parseRedemption(input);
-  const programRef = z.string().min(1).parse(input.programRef);
-  const expectedProgram = PromoProgramSchema.parse(input.expectedProgram);
-  if (expectedProgram.id !== programRef || parsed.result.programRef !== programRef) {
-    throw new Error('Atomic redemption program identity does not match');
-  }
-  const customerRef = input.customerRef === undefined
-    ? undefined
-    : z.string().min(1).parse(input.customerRef);
-  const perCustomerCap = input.perCustomerCap === undefined
-    ? undefined
-    : PositiveIntegerSchema.parse(input.perCustomerCap);
-  if (perCustomerCap !== undefined && customerRef === undefined) {
-    throw new Error('A per-customer cap requires a customer reference');
-  }
-  return {
-    ...parsed,
-    programId: z.string().min(1).parse(input.programId),
-    programRef,
-    expectedActiveRevision: PositiveIntegerSchema.parse(input.expectedActiveRevision),
-    expectedProgram,
-    ...optional('customerRef', customerRef),
-    ...optional('perCustomerCap', perCustomerCap),
-  };
 }
 
 export function createRepositories(env: Env): Repositories {
@@ -845,10 +1054,12 @@ export function createRepositories(env: Env): Repositories {
     merchantId: string,
     externalRef: string,
   ): Promise<ProgramRecord | null> {
-    const row = await env.DB.prepare(`${programProjection('active')}
-      WHERE logical.merchant_id = ?1 AND logical.external_ref = ?2
-        AND logical.active_revision IS NOT NULL
-    `).bind(merchantId, externalRef).first<StoredProgramRow>();
+    const row = await d1DependencyOperation(() => (
+      env.DB.prepare(`${programProjection('active')}
+        WHERE logical.merchant_id = ?1 AND logical.external_ref = ?2
+          AND logical.active_revision IS NOT NULL
+      `).bind(merchantId, externalRef).first<StoredProgramRow>()
+    ));
     return row === null ? null : programFromRow(row);
   }
 
@@ -856,10 +1067,12 @@ export function createRepositories(env: Env): Repositories {
     merchantId: string,
     state: 'draft' | 'published',
   ): Promise<SchemaVersionRecord | null> {
-    const row = await db.select().from(schemaVersions).where(and(
-      eq(schemaVersions.merchantId, merchantId),
-      eq(schemaVersions.state, state),
-    )).orderBy(desc(schemaVersions.version)).get();
+    const row = await d1DependencyOperation(() => (
+      db.select().from(schemaVersions).where(and(
+        eq(schemaVersions.merchantId, merchantId),
+        eq(schemaVersions.state, state),
+      )).orderBy(desc(schemaVersions.version)).get()
+    ));
     return row === undefined ? null : schemaVersionFromRow(row);
   }
 
@@ -931,10 +1144,12 @@ export function createRepositories(env: Env): Repositories {
     merchantId: string,
     externalRef: string,
   ): Promise<CustomerRecord | null> {
-    const row = await db.select().from(customers).where(and(
-      eq(customers.merchantId, merchantId),
-      eq(customers.externalRef, externalRef),
-    )).get();
+    const row = await d1DependencyOperation(() => (
+      db.select().from(customers).where(and(
+        eq(customers.merchantId, merchantId),
+        eq(customers.externalRef, externalRef),
+      )).get()
+    ));
     return row === undefined ? null : customerFromRow(row);
   }
 
@@ -2038,6 +2253,42 @@ export function createRepositories(env: Env): Repositories {
         return getActiveProgramByExternalRef(merchantId, externalRef);
       },
 
+      async getPublishedByNormalizedCode(merchantId, normalizedCode) {
+        const parsedMerchantId = z.string().min(1).parse(merchantId);
+        const parsedNormalizedCode = z.string().min(1).parse(normalizedCode);
+        const claim = await d1DependencyOperation(() => (
+          env.DB.prepare(`
+            SELECT code_claim.program_ref AS programRef
+            FROM promo_code_claims AS code_claim
+            INNER JOIN programs AS logical
+              ON logical.merchant_id = code_claim.merchant_id
+              AND logical.id = code_claim.program_id
+              AND logical.active_revision = code_claim.active_revision
+            WHERE code_claim.merchant_id = ?1
+              AND code_claim.normalized_code = ?2
+              AND code_claim.released_at IS NULL
+              AND logical.status IN ('active', 'scheduled', 'paused')
+              AND COALESCE(code_claim.ends_at, '9999-12-31') >= date('now')
+            ORDER BY
+              CASE
+                WHEN COALESCE(code_claim.starts_at, '0001-01-01') <= date('now')
+                  THEN 0
+                ELSE 1
+              END,
+              COALESCE(code_claim.starts_at, '0001-01-01T00:00:00.000Z'),
+              code_claim.created_at,
+              code_claim.program_ref
+            LIMIT 1
+          `).bind(
+            parsedMerchantId,
+            parsedNormalizedCode,
+          ).first<{ programRef: string }>()
+        ));
+        return claim === null
+          ? null
+          : getActiveProgramByExternalRef(merchantId, claim.programRef);
+      },
+
       async list(merchantId) {
         const rows = await env.DB.prepare(`${programProjection()}
           WHERE logical.merchant_id = ?1
@@ -2047,10 +2298,12 @@ export function createRepositories(env: Env): Repositories {
       },
 
       async listActive(merchantId) {
-        const rows = await env.DB.prepare(`${programProjection('active')}
-          WHERE logical.merchant_id = ?1 AND logical.active_revision IS NOT NULL
-          ORDER BY logical.created_at, logical.external_ref
-        `).bind(merchantId).all<StoredProgramRow>();
+        const rows = await d1DependencyOperation(() => (
+          env.DB.prepare(`${programProjection('active')}
+            WHERE logical.merchant_id = ?1 AND logical.active_revision IS NOT NULL
+            ORDER BY logical.created_at, logical.external_ref
+          `).bind(merchantId).all<StoredProgramRow>()
+        ));
         return rows.results.map(programFromRow);
       },
 
@@ -2251,16 +2504,15 @@ export function createRepositories(env: Env): Repositories {
         return stored;
       },
 
-      async publishDraft(input) {
+      async publishDraftWithCodeClaim(input) {
         const merchantId = z.string().min(1).parse(input.merchantId);
         const externalRef = z.string().min(1).parse(input.externalRef);
         const expectedDraftRevision = PositiveIntegerSchema.parse(input.expectedDraftRevision);
-        const status = ProgramStatusSchema.parse(input.status);
-        if (status === 'draft') throw new ProgramConflictError('Draft is not a published status');
         const publishedAt = DateTimeSchema.parse(input.publishedAt);
         const publishedBy = z.string().min(1).parse(input.publishedBy);
         const current = await env.DB.prepare(`
           SELECT logical.id AS programId, logical.updated_at AS updatedAt,
+            logical.status AS lifecycleStatus,
             logical.active_revision AS activeRevision,
             draft.config_json AS draftConfigJson,
             active.config_json AS activeConfigJson,
@@ -2269,12 +2521,10 @@ export function createRepositories(env: Env): Repositories {
             counter.budget_remaining AS budgetRemaining,
             counter.committed_spend AS committedSpend,
             COALESCE((
-              SELECT SUM(redemption.discount_minor_units)
-              FROM redemptions AS redemption
-              WHERE redemption.merchant_id = logical.merchant_id
-                AND json_valid(redemption.result_json)
-                AND json_extract(redemption.result_json, '$.result.programRef')
-                  = logical.external_ref
+              SELECT SUM(entry.discount_minor_units)
+              FROM redemption_entries AS entry
+              WHERE entry.merchant_id = logical.merchant_id
+                AND entry.program_ref = logical.external_ref
             ), 0) AS ledgerCommittedSpend
           FROM programs AS logical
           INNER JOIN program_revisions AS draft
@@ -2293,6 +2543,7 @@ export function createRepositories(env: Env): Repositories {
         `).bind(merchantId, externalRef, expectedDraftRevision).first<{
           programId: string;
           updatedAt: string;
+          lifecycleStatus: string;
           activeRevision: number | null;
           draftConfigJson: string;
           activeConfigJson: string | null;
@@ -2307,6 +2558,50 @@ export function createRepositories(env: Env): Repositories {
         const active = current.activeConfigJson === null
           ? null
           : parseJson(current.activeConfigJson, PromoProgramSchema);
+        const lifecycleStatus = ProgramStatusSchema.parse(current.lifecycleStatus);
+        const publicationDate = publishedAt.slice(0, 10);
+        const status = lifecycleStatus === 'ended'
+          || (active?.endDate !== undefined && active.endDate < publicationDate)
+          ? 'ended'
+          : lifecycleStatus === 'paused'
+          ? 'paused'
+          : draft.endDate !== undefined && draft.endDate < publicationDate
+          ? 'ended'
+          : draft.startDate !== undefined && draft.startDate > publicationDate
+          ? 'scheduled'
+          : 'active';
+        const codeClaim = input.codeClaim;
+        if (draft.autoApply) {
+          if (codeClaim !== undefined) {
+            throw new ProgramConflictError('Automatic Promos cannot claim a code');
+          }
+        } else {
+          if (codeClaim === undefined) {
+            throw new ProgramConflictError('Coded Promos require a publication claim');
+          }
+          const normalized = normalizePromoCode(draft.code);
+          if (
+            z.string().min(1).parse(codeClaim.merchantId) !== merchantId
+            || z.string().min(1).parse(codeClaim.programId) !== current.programId
+            || z.string().min(1).parse(codeClaim.programRef) !== externalRef
+            || PositiveIntegerSchema.parse(codeClaim.activeRevision) !== expectedDraftRevision
+            || z.string().min(1).parse(codeClaim.displayCode) !== normalized.display
+            || z.string().min(1).parse(codeClaim.normalizedCode) !== normalized.normalized
+            || DateTimeSchema.parse(codeClaim.claimedAt) !== publishedAt
+            || (
+              codeClaim.startsAt === undefined
+                ? draft.startDate !== undefined
+                : CalendarDateSchema.parse(codeClaim.startsAt) !== draft.startDate
+            )
+            || (
+              codeClaim.endsAt === undefined
+                ? draft.endDate !== undefined
+                : CalendarDateSchema.parse(codeClaim.endsAt) !== draft.endDate
+            )
+          ) {
+            throw new ProgramConflictError('The Promo code claim does not match its draft');
+          }
+        }
         const nextMaxUses = draft.usageCap ?? null;
         if (nextMaxUses !== null && current.usageCount > nextMaxUses) {
           throw new ProgramConflictError('The replacement usage cap is below current usage');
@@ -2328,14 +2623,92 @@ export function createRepositories(env: Env): Repositories {
         }
         const updatedAt = nextProgramTimestamp(current.updatedAt, publishedAt);
         const legacyMirrorJson = storedProgramJson({ ...draft, status });
+        const requiresCodeClaim = codeClaim !== undefined && status !== 'ended';
+        const claimId = crypto.randomUUID();
         let results: D1Result[];
         try {
           results = await env.DB.batch([
+            env.DB.prepare(`
+              INSERT INTO promo_code_claims (
+                id, merchant_id, program_id, program_ref, active_revision,
+                display_code, normalized_code, starts_at, ends_at,
+                released_at, created_at
+              )
+              SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, NULL, ?10
+              WHERE ?11 = 1
+                AND NOT EXISTS (
+                  SELECT 1
+                  FROM promo_code_claims AS existing
+                  WHERE existing.released_at IS NULL
+                    AND existing.merchant_id = ?2
+                    AND existing.normalized_code = ?7
+                    AND existing.program_ref <> ?4
+                    AND COALESCE(
+                      existing.ends_at,
+                      '9999-12-31T23:59:59.999Z'
+                    ) >= COALESCE(?8, '0001-01-01T00:00:00.000Z')
+                    AND COALESCE(
+                      ?9,
+                      '9999-12-31T23:59:59.999Z'
+                    ) >= COALESCE(
+                      existing.starts_at,
+                      '0001-01-01T00:00:00.000Z'
+                    )
+                )
+            `).bind(
+              claimId,
+              merchantId,
+              current.programId,
+              externalRef,
+              expectedDraftRevision,
+              codeClaim?.displayCode ?? '',
+              codeClaim?.normalizedCode ?? '',
+              codeClaim?.startsAt ?? null,
+              codeClaim?.endsAt ?? null,
+              codeClaim?.claimedAt ?? publishedAt,
+              requiresCodeClaim ? 1 : 0,
+            ),
+            env.DB.prepare(`
+              SELECT existing.program_ref AS programRef
+              FROM promo_code_claims AS existing
+              WHERE ?1 = 1
+                AND NOT EXISTS (
+                  SELECT 1 FROM promo_code_claims AS inserted WHERE inserted.id = ?2
+                )
+                AND existing.released_at IS NULL
+                AND existing.merchant_id = ?3
+                AND existing.normalized_code = ?4
+                AND existing.program_ref <> ?5
+                AND COALESCE(
+                  existing.ends_at,
+                  '9999-12-31T23:59:59.999Z'
+                ) >= COALESCE(?6, '0001-01-01T00:00:00.000Z')
+                AND COALESCE(
+                  ?7,
+                  '9999-12-31T23:59:59.999Z'
+                ) >= COALESCE(
+                  existing.starts_at,
+                  '0001-01-01T00:00:00.000Z'
+                )
+              ORDER BY existing.created_at, existing.program_ref
+              LIMIT 1
+            `).bind(
+              requiresCodeClaim ? 1 : 0,
+              claimId,
+              merchantId,
+              codeClaim?.normalizedCode ?? '',
+              externalRef,
+              codeClaim?.startsAt ?? null,
+              codeClaim?.endsAt ?? null,
+            ),
             env.DB.prepare(`
               UPDATE program_revisions
               SET published_at = ?1, published_by = ?2
               WHERE merchant_id = ?3 AND revision = ?4
                 AND published_at IS NULL AND published_by IS NULL
+                AND (?11 = 0 OR EXISTS (
+                  SELECT 1 FROM promo_code_claims AS inserted WHERE inserted.id = ?12
+                ))
                 AND program_id = (
                   SELECT logical.id FROM programs AS logical
                   INNER JOIN program_counters AS counter
@@ -2361,6 +2734,8 @@ export function createRepositories(env: Env): Repositories {
               current.maxUses,
               current.budgetRemaining,
               current.committedSpend,
+              requiresCodeClaim ? 1 : 0,
+              claimId,
             ),
             env.DB.prepare(`
               UPDATE program_counters
@@ -2424,10 +2799,35 @@ export function createRepositories(env: Env): Repositories {
             ),
             env.DB.prepare(`
               SELECT json_extract(
-                CASE WHEN changes() = 1 THEN 'null' ELSE 'publication-cas-miss' END,
+                CASE
+                  WHEN changes() = 1 THEN 'null'
+                  WHEN ?1 = 1 AND NOT EXISTS (
+                    SELECT 1 FROM promo_code_claims AS inserted WHERE inserted.id = ?2
+                  ) THEN 'null'
+                  ELSE 'publication-cas-miss'
+                END,
                 '$'
               )
-            `),
+            `).bind(requiresCodeClaim ? 1 : 0, claimId),
+            env.DB.prepare(`
+              UPDATE promo_code_claims
+              SET released_at = ?1
+              WHERE merchant_id = ?2 AND program_id = ?3
+                AND active_revision <> ?4
+                AND released_at IS NULL
+                AND EXISTS (
+                  SELECT 1 FROM programs AS logical
+                  WHERE logical.merchant_id = ?2 AND logical.id = ?3
+                    AND logical.active_revision = ?4
+                    AND logical.draft_revision IS NULL
+                    AND logical.updated_at = ?1
+                )
+            `).bind(
+              updatedAt,
+              merchantId,
+              current.programId,
+              expectedDraftRevision,
+            ),
           ]);
         } catch (error) {
           if (error instanceof Error && /malformed JSON/u.test(error.message)) {
@@ -2435,7 +2835,22 @@ export function createRepositories(env: Env): Repositories {
           }
           throw error;
         }
-        const [revisionResult, counterResult, logicalResult] = results;
+        const [
+          claimResult,
+          conflictResult,
+          revisionResult,
+          counterResult,
+          logicalResult,
+        ] = results;
+        if (requiresCodeClaim && claimResult?.meta.changes !== 1) {
+          const conflict = z.object({ programRef: z.string().min(1) }).safeParse(
+            conflictResult?.results[0],
+          );
+          if (conflict.success) {
+            throw new PromoCodeConflictError(conflict.data.programRef);
+          }
+          throw new ProgramConflictError('The Promo code claim could not be acquired');
+        }
         if (
           revisionResult?.meta.changes !== 1
           || counterResult?.meta.changes !== 1
@@ -2467,23 +2882,67 @@ export function createRepositories(env: Env): Repositories {
         }>();
         if (current === null) throw new ProgramConflictError('The program lifecycle changed');
         const updatedAt = nextProgramTimestamp(current.updatedAt, candidateUpdatedAt);
-        const result = await env.DB.prepare(`
-          UPDATE programs
-          SET status = ?1,
-            config_json = json_set(config_json, '$.status', ?1),
-            updated_at = ?2
-          WHERE merchant_id = ?3 AND external_ref = ?4
-            AND status = ?5 AND active_revision = ?6 AND updated_at = ?7
-        `).bind(
-          status,
-          updatedAt,
-          merchantId,
-          externalRef,
-          expectedStatus,
-          current.activeRevision,
-          current.updatedAt,
-        ).run();
-        if (result.meta.changes !== 1) throw new ProgramConflictError('The program lifecycle changed');
+        let results: D1Result[];
+        try {
+          results = await env.DB.batch([
+            env.DB.prepare(`
+              UPDATE programs
+              SET status = ?1,
+                config_json = json_set(config_json, '$.status', ?1),
+                updated_at = ?2
+              WHERE merchant_id = ?3 AND external_ref = ?4
+                AND status = ?5 AND active_revision = ?6 AND updated_at = ?7
+            `).bind(
+              status,
+              updatedAt,
+              merchantId,
+              externalRef,
+              expectedStatus,
+              current.activeRevision,
+              current.updatedAt,
+            ),
+            env.DB.prepare(`
+              UPDATE promo_code_claims
+              SET released_at = ?1
+              WHERE ?2 = 'ended'
+                AND changes() = 1
+                AND merchant_id = ?3
+                AND program_ref = ?4
+                AND active_revision = ?5
+                AND released_at IS NULL
+            `).bind(
+              updatedAt,
+              status,
+              merchantId,
+              externalRef,
+              current.activeRevision,
+            ),
+            env.DB.prepare(`
+              SELECT json_extract(
+                CASE WHEN EXISTS (
+                  SELECT 1 FROM programs
+                  WHERE merchant_id = ?1 AND external_ref = ?2
+                    AND status = ?3 AND active_revision = ?4 AND updated_at = ?5
+                ) THEN 'null' ELSE 'lifecycle-cas-miss' END,
+                '$'
+              )
+            `).bind(
+              merchantId,
+              externalRef,
+              status,
+              current.activeRevision,
+              updatedAt,
+            ),
+          ]);
+        } catch (error) {
+          if (error instanceof Error && /malformed JSON/u.test(error.message)) {
+            throw new ProgramConflictError('The program lifecycle changed');
+          }
+          throw error;
+        }
+        if ((results[0]?.meta.changes ?? 0) < 1) {
+          throw new ProgramConflictError('The program lifecycle changed');
+        }
         return ProgramLifecycleSchema.parse({
           programRef: externalRef,
           status,
@@ -2564,7 +3023,7 @@ export function createRepositories(env: Env): Repositories {
     decisions: {
       async create(input) {
         const parsed = parseDecision(input);
-        await db.insert(evaluationDecisions).values({
+        const values = {
           id: parsed.evaluationId,
           merchantId: parsed.merchantId,
           customerRef: parsed.customerRef ?? null,
@@ -2573,17 +3032,27 @@ export function createRepositories(env: Env): Repositories {
           requestJson: canonicalJson(parsed.request),
           factsJson: canonicalJson(parsed.facts),
           decisionsJson: canonicalJson(parsed.decisions),
+          mode: parsed.mode,
+          submittedCodesJson: canonicalJson(parsed.submittedCodes),
+          codeResultsJson: canonicalJson(parsed.codeResults),
+          requestDigest: parsed.requestDigest,
+          correlationId: parsed.correlationId,
           integrityHash: parsed.integrityHash,
           expiresAt: parsed.expiresAt,
           createdAt: parsed.createdAt,
-        }).run();
+        };
+        await d1DependencyOperation(() => (
+          db.insert(evaluationDecisions).values(values).run()
+        ));
       },
 
       async get(merchantId, evaluationId) {
-        const row = await db.select().from(evaluationDecisions).where(and(
-          eq(evaluationDecisions.merchantId, merchantId),
-          eq(evaluationDecisions.id, evaluationId),
-        )).get();
+        const row = await d1DependencyOperation(() => (
+          db.select().from(evaluationDecisions).where(and(
+            eq(evaluationDecisions.merchantId, merchantId),
+            eq(evaluationDecisions.id, evaluationId),
+          )).get()
+        ));
         return row === undefined ? null : decisionFromRow(row);
       },
     },
@@ -2591,148 +3060,57 @@ export function createRepositories(env: Env): Repositories {
     redemptions: {
       async create(input) {
         const parsed = parseRedemption(input);
-        await db.insert(redemptions).values({
-          id: parsed.redemptionId,
-          merchantId: parsed.merchantId,
-          externalOrderRef: parsed.externalOrderRef ?? null,
-          idempotencyKey: parsed.idempotencyKey ?? null,
-          evaluationId: parsed.evaluationId,
-          resultJson: redemptionEnvelope(parsed),
-          discountMinorUnits: parsed.discountMinorUnits,
-          currency: parsed.currency,
-          createdAt: parsed.createdAt,
-        }).run();
-      },
-
-      async commitAtomically(input) {
-        const parsed = parseAtomicRedemption(input);
-        const [counter, legacyCounter, ledger] = await env.DB.batch([
-          env.DB.prepare(`
-            UPDATE program_counters
-            SET usage_count = usage_count + 1,
-                committed_spend = committed_spend + ?1,
-                budget_remaining = CASE
-                  WHEN budget_remaining IS NULL THEN NULL
-                  ELSE budget_remaining - ?1
-                END
-            WHERE program_id = ?2 AND merchant_id = ?3
-              AND EXISTS (
-                SELECT 1 FROM programs AS logical
-                INNER JOIN program_revisions AS active
-                  ON active.merchant_id = logical.merchant_id
-                  AND active.program_id = logical.id
-                  AND active.revision = logical.active_revision
-                WHERE logical.id = ?2 AND logical.merchant_id = ?3
-                  AND logical.external_ref = ?4
-                  AND logical.active_revision = ?11
-                  AND logical.status IN ('active', 'scheduled')
-                  AND (
-                    json_extract(active.config_json, '$.startDate') IS NULL
-                    OR json_extract(active.config_json, '$.startDate') <= substr(?12, 1, 10)
-                  )
-                  AND (
-                    json_extract(active.config_json, '$.endDate') IS NULL
-                    OR json_extract(active.config_json, '$.endDate') >= substr(?12, 1, 10)
-                  )
-              )
-              AND (
-                (?9 IS NULL AND max_uses IS NULL)
-                OR (?9 IS NOT NULL AND max_uses = ?9)
-              )
-              AND usage_count >= 0
-              AND (?9 IS NULL OR usage_count <= ?9)
-              AND (
-                (?10 IS NULL AND budget_remaining IS NULL)
-                OR (
-                  ?10 IS NOT NULL AND budget_remaining IS NOT NULL
-                  AND budget_remaining >= 0
-                  AND budget_remaining + committed_spend = ?10
-                )
-              )
-              AND committed_spend >= 0
-              AND (max_uses IS NULL OR usage_count < max_uses)
-              AND (budget_remaining IS NULL OR budget_remaining >= ?1)
-              AND (?5 IS NULL OR NOT EXISTS (
-                SELECT 1 FROM redemptions
-                WHERE merchant_id = ?3 AND external_order_ref = ?5
-              ))
-              AND (?6 IS NULL OR NOT EXISTS (
-                SELECT 1 FROM redemptions
-                WHERE merchant_id = ?3 AND idempotency_key = ?6
-              ))
-              AND (
-                ?7 IS NULL OR (
-                  ?8 IS NOT NULL AND (
-                    SELECT COUNT(*)
-                    FROM redemptions AS prior
-                    INNER JOIN evaluation_decisions AS prior_decision
-                      ON prior.merchant_id = prior_decision.merchant_id
-                      AND prior.evaluation_id = prior_decision.id
-                    WHERE prior.merchant_id = ?3
-                      AND prior_decision.customer_ref = ?8
-                      AND json_extract(prior.result_json, '$.result.programRef') = ?4
-                  ) < ?7
-                )
-              )
-          `).bind(
-            parsed.discountMinorUnits,
-            parsed.programId,
-            parsed.merchantId,
-            parsed.programRef,
-            parsed.externalOrderRef ?? null,
-            parsed.idempotencyKey ?? null,
-            parsed.perCustomerCap ?? null,
-            parsed.customerRef ?? null,
-            parsed.expectedProgram.usageCap ?? null,
-            parsed.expectedProgram.budget?.minorUnits ?? null,
-            parsed.expectedActiveRevision,
-            parsed.createdAt,
-          ),
-          env.DB.prepare(`
-            UPDATE programs
-            SET usage_count = (
-                  SELECT usage_count FROM program_counters
-                  WHERE merchant_id = ?1 AND program_id = ?2
-                ),
-                budget_remaining = (
-                  SELECT budget_remaining FROM program_counters
-                  WHERE merchant_id = ?1 AND program_id = ?2
-                )
-            WHERE merchant_id = ?1 AND id = ?2 AND external_ref = ?3
-              AND changes() = 1
-          `).bind(parsed.merchantId, parsed.programId, parsed.programRef),
+        const totals = redemptionTotals(parsed);
+        await env.DB.batch([
           env.DB.prepare(`
             INSERT INTO redemptions (
               id, merchant_id, external_order_ref, idempotency_key, evaluation_id,
-              result_json, discount_minor_units, currency, created_at
-            )
-            SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9
-            WHERE changes() = 1
+              result_json, discount_minor_units, currency, created_at, request_digest
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
           `).bind(
             parsed.redemptionId,
             parsed.merchantId,
-            parsed.externalOrderRef ?? null,
-            parsed.idempotencyKey ?? null,
+            parsed.externalOrderRef,
+            parsed.idempotencyKey,
             parsed.evaluationId,
             redemptionEnvelope(parsed),
-            parsed.discountMinorUnits,
-            parsed.currency,
+            totals.discountMinorUnits,
+            totals.currency,
+            parsed.createdAt,
+            parsed.requestDigest,
+          ),
+          ...parsed.entries.map(entry => env.DB.prepare(`
+            INSERT INTO redemption_entries (
+              merchant_id, redemption_id, position, program_ref, program_revision,
+              reward_rule_ref, effects_json, discount_minor_units, currency
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+          `).bind(
+            parsed.merchantId,
+            parsed.redemptionId,
+            entry.position,
+            entry.programRef,
+            entry.programRevision,
+            entry.rewardRuleRef ?? null,
+            canonicalJson(entry.effects),
+            entry.discountMinorUnits,
+            entry.currency,
+          )),
+          env.DB.prepare(`
+            INSERT INTO redemption_operations (
+              merchant_id, idempotency_key, external_order_ref, evaluation_id,
+              request_digest, state, terminal_error_code, retryable, redemption_id,
+              created_at, updated_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5, 'committed', NULL, NULL, ?6, ?7, ?7)
+          `).bind(
+            parsed.merchantId,
+            parsed.idempotencyKey,
+            parsed.externalOrderRef,
+            parsed.evaluationId,
+            parsed.requestDigest,
+            parsed.redemptionId,
             parsed.createdAt,
           ),
         ]);
-        if (
-          counter?.meta.changes === 0
-          && legacyCounter?.meta.changes === 0
-          && ledger?.meta.changes === 0
-        ) return false;
-        if (
-          counter?.meta.changes !== 1
-          || (legacyCounter?.meta.changes ?? 0) < 1
-          || ledger?.meta.changes !== 1
-        ) {
-          throw new Error('Atomic redemption counter and ledger diverged');
-        }
-        return true;
       },
 
       async getByExternalOrderRef(merchantId, externalOrderRef, verifyIntegrity) {
@@ -2740,7 +3118,12 @@ export function createRepositories(env: Env): Repositories {
           eq(redemptions.merchantId, merchantId),
           eq(redemptions.externalOrderRef, externalOrderRef),
         )).get();
-        return row === undefined ? null : verifiedRedemptionFromRow(row, verifyIntegrity);
+        if (row === undefined) return null;
+        const entries = await db.select().from(redemptionEntries).where(and(
+          eq(redemptionEntries.merchantId, row.merchantId),
+          eq(redemptionEntries.redemptionId, row.id),
+        )).orderBy(asc(redemptionEntries.position)).all();
+        return verifiedRedemptionFromRows(row, entries, verifyIntegrity);
       },
 
       async getByIdempotencyKey(merchantId, idempotencyKey, verifyIntegrity) {
@@ -2748,7 +3131,12 @@ export function createRepositories(env: Env): Repositories {
           eq(redemptions.merchantId, merchantId),
           eq(redemptions.idempotencyKey, idempotencyKey),
         )).get();
-        return row === undefined ? null : verifiedRedemptionFromRow(row, verifyIntegrity);
+        if (row === undefined) return null;
+        const entries = await db.select().from(redemptionEntries).where(and(
+          eq(redemptionEntries.merchantId, row.merchantId),
+          eq(redemptionEntries.redemptionId, row.id),
+        )).orderBy(asc(redemptionEntries.position)).all();
+        return verifiedRedemptionFromRows(row, entries, verifyIntegrity);
       },
 
       async countCommittedForCustomerProgram(
@@ -2770,6 +3158,7 @@ export function createRepositories(env: Env): Repositories {
           discountMinorUnits: redemptions.discountMinorUnits,
           currency: redemptions.currency,
           redemptionCreatedAt: redemptions.createdAt,
+          redemptionRequestDigest: redemptions.requestDigest,
           decisionId: evaluationDecisions.id,
           decisionMerchantId: evaluationDecisions.merchantId,
           decisionCustomerRef: evaluationDecisions.customerRef,
@@ -2778,6 +3167,11 @@ export function createRepositories(env: Env): Repositories {
           requestJson: evaluationDecisions.requestJson,
           factsJson: evaluationDecisions.factsJson,
           decisionsJson: evaluationDecisions.decisionsJson,
+          mode: evaluationDecisions.mode,
+          submittedCodesJson: evaluationDecisions.submittedCodesJson,
+          codeResultsJson: evaluationDecisions.codeResultsJson,
+          requestDigest: evaluationDecisions.requestDigest,
+          correlationId: evaluationDecisions.correlationId,
           integrityHash: evaluationDecisions.integrityHash,
           expiresAt: evaluationDecisions.expiresAt,
           decisionCreatedAt: evaluationDecisions.createdAt,
@@ -2794,7 +3188,7 @@ export function createRepositories(env: Env): Repositories {
 
         let count = 0;
         for (const candidate of candidates) {
-          const redemption = redemptionFromRow({
+          const redemptionRow = {
             id: candidate.redemptionId,
             merchantId: candidate.redemptionMerchantId,
             externalOrderRef: candidate.externalOrderRef,
@@ -2804,7 +3198,13 @@ export function createRepositories(env: Env): Repositories {
             discountMinorUnits: candidate.discountMinorUnits,
             currency: candidate.currency,
             createdAt: candidate.redemptionCreatedAt,
-          });
+            requestDigest: candidate.redemptionRequestDigest,
+          };
+          const entryRows = await db.select().from(redemptionEntries).where(and(
+            eq(redemptionEntries.merchantId, candidate.redemptionMerchantId),
+            eq(redemptionEntries.redemptionId, candidate.redemptionId),
+          )).orderBy(asc(redemptionEntries.position)).all();
+          const redemption = historicalRedemptionFromRows(redemptionRow, entryRows);
           const snapshot = decisionFromRow({
             id: candidate.decisionId,
             merchantId: candidate.decisionMerchantId,
@@ -2814,6 +3214,11 @@ export function createRepositories(env: Env): Repositories {
             requestJson: candidate.requestJson,
             factsJson: candidate.factsJson,
             decisionsJson: candidate.decisionsJson,
+            mode: candidate.mode,
+            submittedCodesJson: candidate.submittedCodesJson,
+            codeResultsJson: candidate.codeResultsJson,
+            requestDigest: candidate.requestDigest,
+            correlationId: candidate.correlationId,
             integrityHash: candidate.integrityHash,
             expiresAt: candidate.expiresAt,
             createdAt: candidate.decisionCreatedAt,
@@ -2824,20 +3229,20 @@ export function createRepositories(env: Env): Repositories {
           if (!(await verifyIntegrity.verifyDecision(snapshot))) {
             throw new Error('Decision snapshot integrity verification failed');
           }
-          const matchingDecision = snapshot.decisions.find(decision => (
-            decision.outcome === 'qualified'
-            && decision.commitRequired
-            && decision.programRef === redemption.result.programRef
-            && decision.rewardRuleRef === redemption.result.rewardRuleRef
-            && canonicalJson(decision.effects) === canonicalJson(redemption.result.effects)
+          const everyEntryMatches = redemption.entries.every(entry => (
+            snapshot.decisions.some(decision => (
+              decision.outcome === 'qualified'
+              && decision.commitRequired
+              && decision.programRef === entry.programRef
+              && decision.programRevision === entry.programRevision
+              && decision.rewardRuleRef === entry.rewardRuleRef
+              && canonicalJson(decision.effects) === canonicalJson(entry.effects)
+            ))
           ));
-          if (
-            redemption.evaluationId !== snapshot.evaluationId
-            || matchingDecision === undefined
-          ) {
+          if (redemption.evaluationId !== snapshot.evaluationId || !everyEntryMatches) {
             throw new Error('Redemption does not match a qualified decision snapshot');
           }
-          if (redemption.result.programRef === parsedProgramRef) count += 1;
+          if (redemption.entries.some(entry => entry.programRef === parsedProgramRef)) count += 1;
         }
         return count;
       },

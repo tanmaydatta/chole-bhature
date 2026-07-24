@@ -112,8 +112,10 @@ until the user separately approves automatic Cloudflare writes.
 - Identity deploys without a public route. A configuration that exposes it publicly is invalid.
 - Failed migrations stop deployment and are not rolled back destructively.
 - Failed Worker deployment leaves the last deployed Worker version active.
-- Worker code can be rolled back independently with Wrangler, while database migrations remain
-  forward-only.
+- Database migrations remain forward-only. The protected Task 10 path
+  deliberately disables Worker rollback until reviewed fail-closed
+  preflight/API tooling can prove version-to-source, target, binding/secret,
+  and confirmation safety; recovery is containment plus a forward fix.
 - The static demo is not a rollback target for the operator platform and is never modified by
   staging commands.
 

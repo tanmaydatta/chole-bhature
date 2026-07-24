@@ -5,7 +5,7 @@
   "scripts": {
     "build": "pnpm -r build",
     "test": "pnpm -r test",
-    "lint": "apps/identity/node_modules/.bin/oxlint scripts/local-workers-runner.mjs scripts/staging-preflight.mjs scripts/staging-wrangler-config.mjs scripts/staging-wrangler-runner.mjs && pnpm -r lint",
+    "lint": "apps/identity/node_modules/.bin/oxlint scripts/local-workers-runner.mjs scripts/staging-preflight.mjs scripts/staging-wrangler-config.mjs scripts/staging-wrangler-runner.mjs scripts/staging-wrangler-task10-queries.mjs && pnpm -r lint",
     "dev:local": "node scripts/local-workers-runner.mjs",
     "staging:preflight": "node scripts/staging-preflight.mjs",
     "verify:clean-tests": "bash scripts/verify-clean-test-gate.sh"

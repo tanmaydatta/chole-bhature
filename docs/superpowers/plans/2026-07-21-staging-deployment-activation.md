@@ -363,8 +363,10 @@ pnpm --filter @incentives/operator-web exec wrangler secret put OPERATOR_SELECTI
 
 The guide must explicitly say: `The assistant must not run these Cloudflare-changing commands.`
 It must also state that migration failure stops activation, database migrations are never rolled
-back destructively, Worker rollback is a separate user-run Wrangler mutation, Identity must remain
-private, and the static demo is never a rollback target.
+back destructively, and Identity must remain private. For the protected Task 10
+path, Worker rollback is deliberately disabled pending reviewed fail-closed
+preflight/API tooling; recovery is containment plus a forward fix. The static
+demo is never a recovery target.
 
 - [x] **Step 5: Run the policy test and verify GREEN**
 

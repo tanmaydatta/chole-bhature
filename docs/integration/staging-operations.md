@@ -147,16 +147,64 @@ pnpm --filter @incentives/operator-web exec wrangler secret put OPERATOR_SELECTI
 ```
 
 The staging runner generates a mode-`0600` temporary Wrangler config for the selected app, invokes
-that app's installed Wrangler entrypoint through the current absolute Node executable, removes the
-temporary files on success or failure, and strips application secrets and `STAGING_*` inputs from
-the Wrangler child environment. Staging `dev` commands may create a temporary `.dev.vars`; migrate
-and deploy commands never put application secrets in the generated TOML.
+that app's installed Wrangler entrypoint through the current absolute Node executable, and removes
+the temporary files on success or failure. Its child environment is a fail-closed allowlist:
+required platform/temp/locale values and Cloudflare API token/account values only. It does not
+forward `NODE_OPTIONS`, `NODE_PATH`, endpoint or `WRANGLER_*` controls, proxy/output controls,
+unrelated cloud/service credentials, application secrets, or `STAGING_*` inputs. OAuth login still
+works through the allowed home/config paths. Remote staging `dev` is intentionally unsupported:
+an interactive, indefinite Wrangler session cannot be buffered without either leaking remote
+metadata or hiding useful development output. Use the local three-Worker stack for development.
+Migrate and deploy commands never put application secrets in the generated TOML.
 
-### Failure and rollback rules
+Before every remote runner action, authenticated Wrangler resolves Product D1
+through a separate generated API config pinned to `STAGING_PRODUCT_D1_ID`. The
+runner compares that resolved UUID without printing either value and stops
+before the requested action on any authentication, parsing, or identity
+failure. The requested command then runs with `shell: false`, the reviewed
+Worker/database name, and an exact argument allowlist.
 
-- A failed migration stops activation. Never attempt a destructive D1 downgrade.
+All supported non-interactive remote actions capture Wrangler stdout/stderr.
+Migration and deployment success is rebuilt as a fixed structural summary;
+failure returns only a generic message while retaining Wrangler's non-zero
+exit status. Raw account, author, database, resource, and deployment metadata
+is never forwarded.
+
+Task 10 adds protected owner-run actions for count-only inventory, legacy Promo
+and redemption prechecks, post-migration verification, cutover write markers,
+a read-only Product D1 Time Travel bookmark, and API/Operator deployment
+status. Protected action output is parsed fail-closed and reduced to approved
+counts, timestamps, canonical Cloudflare version UUIDs, traffic percentages,
+the validated opaque bookmark, or a generic completion message. Empty,
+malformed, or case-insensitively duplicated version IDs fail closed.
+Wrangler stdout/stderr, D1 metadata, and account details are not forwarded.
+The runner deliberately exposes no Time Travel restore or Worker rollback
+action.
+
+The canonical ordered commands, expected safe outputs, quiet-window rules,
+pre-deployment health check, compatibility conditions, coordinated exceptional
+restore sequence, and evidence-retention rules are in the
+[Task 10 protected staging cutover and recovery guide](../testing/task10-staging-cutover.md).
+The dated activation record's older inline direct-Wrangler rollout draft is
+historical and must not be executed.
+
+### Failure and recovery rules
+
+- A failed migration stops activation. Do not automatically restore Product D1.
 - A failed Worker deployment leaves its previous deployed version active.
-- Worker rollback is a separate Cloudflare mutation and must be run by the user only after the
-  target Worker and version are confirmed with read-only commands.
+- Normal Product D1 recovery is quiet-window containment plus a reviewed
+  forward migration/fix. A Time Travel restore is exceptional and requires
+  continuous write isolation, an in-retention exact pre-migration bookmark,
+  known compatible previous Worker source, and explicit owner approval.
+- Protected Task 10 Worker rollback is deliberately disabled. The runner
+  rejects rollback before spawning Wrangler. Do not bypass it with direct
+  Wrangler rollback commands: interactive confirmation, version-to-source
+  mapping, bindings, and secret compatibility are not safely preflighted.
+- The runner also rejects D1 restore. Any approved exceptional restore must
+  follow the coordinated ordering in the canonical cutover guide.
+- API and Operator Web normal recovery is containment plus a reviewed forward
+  deployment.
+- Identity and the static demo are unchanged by Task 10. Do not deploy, roll
+  back, or otherwise modify either one as part of Task 10 recovery.
 - Identity must remain private. Stop if Cloudflare shows a public Identity route or hostname.
 - The static demo is never an operator-platform rollback target and remains unchanged.

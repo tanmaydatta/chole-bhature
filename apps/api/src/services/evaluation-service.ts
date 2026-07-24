@@ -1,7 +1,9 @@
 import {
   EvaluationRequestSchema,
   EvaluationResponseSchema,
+  normalizeDistinctPromoCodes,
   type Cart,
+  type CodeEvaluationResult,
   type Effect,
   type EvaluationRequest,
   type EvaluationResponse,
@@ -9,28 +11,67 @@ import {
   type PromoProgram,
   type VariableDefinition,
 } from '@incentives/contracts';
-import { assembleFacts, resolveDecisionConflicts } from '@incentives/engine';
+import {
+  assembleFacts,
+  compareProgramRank,
+  selectCodedDecisionCombination,
+} from '@incentives/engine';
 import { PromoModule } from '@incentives/promo';
 import { z } from 'zod';
 
 import type { Env } from '../env.js';
-import { NotFoundError } from '../errors.js';
+import {
+  EvaluationPipelineError,
+  NotFoundError,
+} from '../errors.js';
 import { canonicalJson } from '../json.js';
+import { RepositoryDependencyError } from '../repositories/types.js';
 import type {
   EvaluationDecisionRecord,
   EvaluationFactsSnapshot,
+  EvaluationMode,
+  ProgramRecord,
   RedemptionIntegrityVerifiers,
   Repositories,
 } from '../repositories/types.js';
 import { BUILTIN_VARIABLE_DEFINITIONS } from './schema-service.js';
 import { validateCustomerAttributes } from './customer-service.js';
-import { effectiveProgram } from './program-runtime.js';
+import { effectiveProgram, effectiveProgramStatus } from './program-runtime.js';
 import { verifyRedemptionReceipt } from './redemption-receipt.js';
 
 const DEFAULT_TTL_SECONDS = 300;
 const SigningSecretSchema = z.string().min(16).max(4_096);
 const TtlSchema = z.coerce.number().int().positive().max(86_400);
 const encoder = new TextEncoder();
+
+async function decisionIntegrityOperation<T>(
+  operation: () => Promise<T>,
+): Promise<T> {
+  try {
+    return await operation();
+  } catch (cause) {
+    throw new EvaluationPipelineError('decision_integrity', cause);
+  }
+}
+
+function throwEvaluationPipelineFailure(error: unknown): never {
+  if (
+    error instanceof EvaluationPipelineError
+    || error instanceof NotFoundError
+  ) throw error;
+  if (error instanceof RepositoryDependencyError) {
+    throw new EvaluationPipelineError(error.dependency, error);
+  }
+  throw new EvaluationPipelineError(undefined, error);
+}
+
+function decisionSigningSecret(env: Env): string {
+  try {
+    return SigningSecretSchema.parse(env.DECISION_SIGNING_SECRET);
+  } catch (cause) {
+    throw new EvaluationPipelineError('decision_integrity', cause);
+  }
+}
 
 function valueSchema(definition: VariableDefinition): z.ZodType {
   switch (definition.type) {
@@ -124,6 +165,35 @@ async function signingKey(secret: string): Promise<CryptoKey> {
 
 export function decisionSnapshot(record: Pick<
   EvaluationDecisionRecord,
+  | 'mode'
+  | 'submittedCodes'
+  | 'codeResults'
+  | 'requestDigest'
+  | 'correlationId'
+  | 'customerRef'
+  | 'customerVersion'
+  | 'schemaVersion'
+  | 'request'
+  | 'facts'
+  | 'decisions'
+>) {
+  return {
+    mode: record.mode,
+    submittedCodes: record.submittedCodes,
+    codeResults: record.codeResults,
+    requestDigest: record.requestDigest,
+    correlationId: record.correlationId,
+    ...(record.customerRef === undefined ? {} : { customerRef: record.customerRef }),
+    ...(record.customerVersion === undefined ? {} : { customerVersion: record.customerVersion }),
+    schemaVersion: record.schemaVersion,
+    request: record.request,
+    facts: record.facts,
+    decisions: record.decisions,
+  };
+}
+
+function legacyDecisionSnapshot(record: Pick<
+  EvaluationDecisionRecord,
   | 'customerRef'
   | 'customerVersion'
   | 'schemaVersion'
@@ -145,6 +215,11 @@ function integrityPayload(record: Pick<
   EvaluationDecisionRecord,
   | 'merchantId'
   | 'evaluationId'
+  | 'mode'
+  | 'submittedCodes'
+  | 'codeResults'
+  | 'requestDigest'
+  | 'correlationId'
   | 'customerRef'
   | 'customerVersion'
   | 'schemaVersion'
@@ -159,6 +234,25 @@ function integrityPayload(record: Pick<
     snapshot: decisionSnapshot(record),
     expiresAt: record.expiresAt,
   };
+}
+
+function legacyIntegrityPayload(record: EvaluationDecisionRecord) {
+  return {
+    merchantId: record.merchantId,
+    evaluationId: record.evaluationId,
+    snapshot: legacyDecisionSnapshot(record),
+    expiresAt: record.expiresAt,
+  };
+}
+
+function isMigratedLegacySnapshot(record: EvaluationDecisionRecord): boolean {
+  return (
+    record.requestDigest === `legacy:${record.evaluationId}`
+    && record.correlationId === `migration:${record.evaluationId}`
+    && record.mode === 'automatic'
+    && record.submittedCodes.length === 0
+    && record.codeResults.length === 0
+  );
 }
 
 export async function signDecisionSnapshot(
@@ -179,11 +273,14 @@ export async function verifyDecisionIntegrity(
 ): Promise<boolean> {
   const signature = hexToBytes(record.integrityHash);
   if (signature === null) return false;
+  const payload = isMigratedLegacySnapshot(record)
+    ? legacyIntegrityPayload(record)
+    : integrityPayload(record);
   return crypto.subtle.verify(
     'HMAC',
     await signingKey(secret),
     signature,
-    encoder.encode(canonicalJson(integrityPayload(record))),
+    encoder.encode(canonicalJson(payload)),
   );
 }
 
@@ -235,11 +332,10 @@ function qualifiedMessage(effects: readonly Effect[]): string {
   return 'This promotion was applied.';
 }
 
-function stableDecision(decision: ReturnType<typeof resolveDecisionConflicts>[number]): IncentiveDecision {
+function stableDecision(decision: PromoDecision): IncentiveDecision {
   const {
     priority: _priority,
     stackable: _stackable,
-    stackingGroup: _stackingGroup,
     ...canonical
   } = decision;
 
@@ -271,6 +367,7 @@ function stableDecision(decision: ReturnType<typeof resolveDecisionConflicts>[nu
     case 'exhausted':
       return { ...canonical, message: 'This promotion has been exhausted.' };
   }
+  throw new TypeError(`Unsupported decision outcome: ${String(canonical.outcome)}`);
 }
 
 function safeMinorUnits(value: bigint): number {
@@ -319,7 +416,9 @@ export function projectedDiscountMinorUnits(
   return safeMinorUnits(minimum(projected, subtotal));
 }
 
-type PromoDecision = Awaited<ReturnType<typeof PromoModule.evaluate>>[number];
+type PromoDecision = Awaited<ReturnType<typeof PromoModule.evaluate>>[number] & {
+  programType: 'promo';
+};
 
 function baseProgramDecision(program: PromoProgram, revision = 1): Pick<
   PromoDecision,
@@ -328,7 +427,6 @@ function baseProgramDecision(program: PromoProgram, revision = 1): Pick<
   | 'programType'
   | 'priority'
   | 'stackable'
-  | 'stackingGroup'
 > {
   return {
     programRef: program.id,
@@ -336,9 +434,6 @@ function baseProgramDecision(program: PromoProgram, revision = 1): Pick<
     programType: 'promo',
     priority: program.priority,
     stackable: program.stackable,
-    ...(program.stackingGroup === undefined
-      ? {}
-      : { stackingGroup: program.stackingGroup }),
   };
 }
 
@@ -419,30 +514,321 @@ function factInputs(request: EvaluationRequest) {
   };
 }
 
-export function createEvaluationService(repositories: Repositories, env: Env) {
+function modeForCodes(
+  codes: ReturnType<typeof normalizeDistinctPromoCodes>,
+): EvaluationMode {
+  return codes.length === 0 ? 'automatic' : 'coded';
+}
+
+async function evaluationRequestDigest(
+  request: EvaluationRequest,
+  mode: EvaluationMode,
+  codes: ReturnType<typeof normalizeDistinctPromoCodes>,
+): Promise<string> {
+  const { codes: _rawCodes, ...requestWithoutCodes } = request;
+  const normalizedRequest = mode === 'automatic'
+    ? requestWithoutCodes
+    : {
+      ...requestWithoutCodes,
+      codes: codes.map(code => code.normalized),
+    };
+  const digest = await crypto.subtle.digest(
+    'SHA-256',
+    encoder.encode(canonicalJson({ mode, request: normalizedRequest })),
+  );
+  return bytesToHex(digest);
+}
+
+async function automaticCandidates(
+  repositories: Repositories,
+  merchantId: string,
+  now: Date,
+): Promise<ProgramRecord[]> {
+  return (await repositories.programs.listActive(merchantId))
+    .filter(record => (
+      record.program.autoApply
+      && effectiveProgramStatus(record.program, now) === 'active'
+    ))
+    .sort((left, right) => compareProgramRank(
+      { priority: left.program.priority, programRef: left.externalRef },
+      { priority: right.program.priority, programRef: right.externalRef },
+    ));
+}
+
+type EvaluationCustomer = Awaited<ReturnType<Repositories['customers']['get']>>;
+
+interface ReservationPreparationInput {
+  merchantId: string;
+  evaluationId: string;
+  correlationId: string;
+  decision: IncentiveDecision;
+}
+
+interface ReservationCleanupContext {
+  merchantId: string;
+  evaluationId: string;
+  correlationId: string;
+  programRef: string;
+}
+
+interface EvaluationReservationHooks {
+  prepare(input: ReservationPreparationInput): Promise<unknown | undefined>;
+  cancel(handle: unknown): Promise<void>;
+  onCleanupFailure?(context: ReservationCleanupContext, error: unknown): void;
+}
+
+interface EvaluationServiceOptions {
+  reservations?: EvaluationReservationHooks;
+}
+
+interface PreparedReservation {
+  handle: unknown;
+  programRef: string;
+}
+
+const defaultReservationHooks: EvaluationReservationHooks = {
+  async prepare() {
+    return undefined;
+  },
+  async cancel() {},
+};
+
+interface SingleProgramEvaluationContext {
+  repositories: Repositories;
+  merchantId: string;
+  evaluationId: string;
+  correlationId: string;
+  now: Date;
+  request: EvaluationRequest;
+  customer: EvaluationCustomer;
+  liveFacts: ReturnType<typeof factInputs>;
+  definitions: VariableDefinition[];
+  facts: EvaluationFactsSnapshot;
+  verifyHistoricalIntegrity: RedemptionIntegrityVerifiers;
+  reservations: EvaluationReservationHooks;
+  preparedReservations: PreparedReservation[];
+}
+
+interface EvaluatedProgram {
+  decision: PromoDecision;
+}
+
+async function evaluateSingleProgram(
+  record: ProgramRecord,
+  context: SingleProgramEvaluationContext,
+): Promise<EvaluatedProgram> {
+  const {
+    repositories,
+    merchantId,
+    evaluationId,
+    correlationId,
+    now,
+    request,
+    customer,
+    liveFacts,
+    definitions,
+    facts,
+    verifyHistoricalIntegrity,
+    reservations,
+    preparedReservations,
+  } = context;
+  const runtimeProgram = effectiveProgram(record.program, now);
+  const customerUsesCount = customer === null
+    ? 0
+    : await repositories.redemptions.countCommittedForCustomerProgram(
+      merchantId,
+      customer.externalRef,
+      record.externalRef,
+      verifyHistoricalIntegrity,
+    );
+  const system = {
+    ...(record.budgetRemaining === undefined
+      ? {}
+      : { budget_remaining: record.budgetRemaining }),
+    redemptions_total: record.usageCount,
+    customer_uses_count: customerUsesCount,
+    today: now.toISOString().slice(0, 10),
+  };
+  facts.programs.push({
+    programRef: record.externalRef,
+    system,
+    config: runtimeProgram,
+  });
+  const programFacts = assembleFacts({
+    ...(customer === null ? {} : { customer: customer.attributes }),
+    ...(request.context === undefined ? {} : { context: request.context }),
+    ...liveFacts,
+    system,
+  });
+  const moduleDecisions = await PromoModule.evaluate({
+    merchantId,
+    evaluationId,
+    now,
+    request,
+    facts: programFacts,
+    definitions,
+  }, runtimeProgram);
+  if (moduleDecisions.length !== 1 || moduleDecisions[0] === undefined) {
+    throw new Error('Promo evaluation must return exactly one decision');
+  }
+  const [moduleDecision] = moduleDecisions;
+  if (moduleDecision.programType !== 'promo') {
+    throw new Error('Promo evaluation returned a non-Promo decision');
+  }
+
+  let decision: PromoDecision = {
+    ...moduleDecision,
+    programType: 'promo',
+    programRevision: record.revision,
+  };
+  if (
+    decision.outcome === 'qualified'
+    && selectedCurrencyMismatch(runtimeProgram, decision, request.cart.currency)
+  ) {
+    decision = currencyMismatchDecision(decision);
+  }
+  if (
+    decision.outcome === 'qualified'
+    && customer === null
+    && runtimeProgram.perCustomerCap !== undefined
+  ) {
+    decision = customerRequiredDecision(runtimeProgram, record.revision);
+  }
+  if (decision.outcome !== 'qualified') return { decision };
+
+  const projectedCost = projectedDiscountMinorUnits(decision.effects, request.cart);
+  const exhaustionReasons = [
+    ...(runtimeProgram.usageCap !== undefined
+      && record.usageCount >= runtimeProgram.usageCap
+      ? ['USAGE_CAP_EXHAUSTED']
+      : []),
+    ...(runtimeProgram.perCustomerCap !== undefined
+      && customerUsesCount >= runtimeProgram.perCustomerCap
+      ? ['PER_CUSTOMER_CAP_EXHAUSTED']
+      : []),
+    ...(record.budgetRemaining !== undefined
+      && record.budgetRemaining < projectedCost
+      ? ['BUDGET_EXHAUSTED']
+      : []),
+  ];
+  if (exhaustionReasons.length !== 0) {
+    return { decision: exhaustedDecision(decision, exhaustionReasons) };
+  }
+  const reservation = await reservations.prepare({
+    merchantId,
+    evaluationId,
+    correlationId,
+    decision: stableDecision(decision),
+  });
+  if (reservation !== undefined) {
+    preparedReservations.push({
+      handle: reservation,
+      programRef: decision.programRef,
+    });
+  }
+  return { decision };
+}
+
+function codeResult(
+  code: ReturnType<typeof normalizeDistinctPromoCodes>[number],
+  decision: PromoDecision,
+  rejectedProgramRefs: ReadonlySet<string>,
+): CodeEvaluationResult {
+  if (decision.outcome === 'qualified') {
+    const rejected = rejectedProgramRefs.has(decision.programRef);
+    return {
+      code: code.display,
+      normalizedCode: code.normalized,
+      outcome: rejected ? 'combination_rejected' : 'selected',
+      programRef: decision.programRef,
+      reasonCodes: rejected ? ['CODE_COMBINATION_NOT_ALLOWED'] : [],
+    };
+  }
+  if (decision.outcome === 'conflict') {
+    throw new Error('Resolved coded evaluations cannot produce conflict decisions');
+  }
   return {
-    async evaluate(merchantId: string, input: unknown): Promise<EvaluationResponse> {
+    code: code.display,
+    normalizedCode: code.normalized,
+    outcome: decision.outcome,
+    programRef: decision.programRef,
+    reasonCodes: decision.reasonCodes,
+  };
+}
+
+function boundedCleanupValue(value: string): string {
+  return value.slice(0, 200);
+}
+
+async function cleanupPreparedReservations(
+  preparedReservations: PreparedReservation[],
+  hooks: EvaluationReservationHooks,
+  context: Omit<ReservationCleanupContext, 'programRef'>,
+): Promise<void> {
+  const reservations = preparedReservations.splice(0);
+  for (const reservation of reservations) {
+    try {
+      await hooks.cancel(reservation.handle);
+    } catch (error) {
+      const failureContext = {
+        merchantId: boundedCleanupValue(context.merchantId),
+        evaluationId: boundedCleanupValue(context.evaluationId),
+        correlationId: boundedCleanupValue(context.correlationId),
+        programRef: boundedCleanupValue(reservation.programRef),
+      };
+      try {
+        if (hooks.onCleanupFailure === undefined) {
+          console.error('Evaluation reservation cleanup failed', {
+            ...failureContext,
+            failure: 'reservation_cancellation_failed',
+          });
+        } else {
+          hooks.onCleanupFailure(failureContext, error);
+        }
+      } catch {
+        console.error('Evaluation reservation cleanup failure could not be reported', failureContext);
+      }
+    }
+  }
+}
+
+export function createEvaluationService(
+  repositories: Repositories,
+  env: Env,
+  options: EvaluationServiceOptions = {},
+) {
+  const reservations = options.reservations ?? defaultReservationHooks;
+  return {
+    async evaluate(
+      merchantId: string,
+      input: unknown,
+      correlationId: string,
+    ): Promise<EvaluationResponse> {
       const fixedRequest = EvaluationRequestSchema.parse(input);
-      const published = await repositories.schemas.getLatestVersion(merchantId, 'published')
-        .catch((error: unknown) => {
-          throw new Error('Published schema lookup failed', { cause: error });
-        });
+      let published: Awaited<ReturnType<Repositories['schemas']['getLatestVersion']>>;
+      try {
+        published = await repositories.schemas.getLatestVersion(merchantId, 'published');
+      } catch (error) {
+        throwEvaluationPipelineFailure(error);
+      }
       if (published === null) {
         throw new NotFoundError('No schema has been published', 'SCHEMA_NOT_PUBLISHED');
       }
       const request = validatePublishedRequest(fixedRequest, published.definitions);
+      const preparedReservations: PreparedReservation[] = [];
+      let cleanupContext: Omit<ReservationCleanupContext, 'programRef'> | undefined;
 
       try {
         const customer = request.customerRef === undefined
           ? null
-          : await repositories.customers.get(merchantId, request.customerRef);
+          : await repositories.customers.get(merchantId, request.customerRef!);
         if (request.customerRef !== undefined && customer === null) {
           throw new NotFoundError('Customer not found', 'CUSTOMER_NOT_FOUND');
         }
         if (customer !== null) {
           validateCustomerAttributes(customer.attributes, published.definitions);
         }
-        const signingSecret = SigningSecretSchema.parse(env.DECISION_SIGNING_SECRET);
+        const signingSecret = decisionSigningSecret(env);
         const verifyHistoricalIntegrity: RedemptionIntegrityVerifiers = {
           verifyDecision: (snapshot: EvaluationDecisionRecord) => (
             verifyDecisionIntegrity(snapshot, signingSecret)
@@ -452,9 +838,12 @@ export function createEvaluationService(repositories: Repositories, env: Env) {
           ),
         };
 
-        const programs = await repositories.programs.listActive(merchantId);
         const now = new Date();
         const evaluationId = crypto.randomUUID();
+        cleanupContext = { merchantId, evaluationId, correlationId };
+        const normalizedCodes = normalizeDistinctPromoCodes(request.codes ?? []);
+        const mode = modeForCodes(normalizedCodes);
+        const submittedCodes = normalizedCodes.map(code => code.display);
         const liveFacts = factInputs(request);
         const commonFacts = assembleFacts({
           ...(customer === null ? {} : { customer: customer.attributes }),
@@ -470,91 +859,86 @@ export function createEvaluationService(repositories: Repositories, env: Env) {
           ...BUILTIN_VARIABLE_DEFINITIONS,
           ...published.definitions,
         ];
-        const moduleDecisions = [];
-
-        for (const record of programs) {
-          const runtimeProgram = effectiveProgram(record.program, now);
-          const customerUsesCount = customer === null
-            ? 0
-            : await repositories.redemptions.countCommittedForCustomerProgram(
-              merchantId,
-              customer.externalRef,
-              record.externalRef,
-              verifyHistoricalIntegrity,
-            );
-          const system = {
-            ...(record.budgetRemaining === undefined
-              ? {}
-              : { budget_remaining: record.budgetRemaining }),
-            redemptions_total: record.usageCount,
-            customer_uses_count: customerUsesCount,
-            today: now.toISOString().slice(0, 10),
-          };
-          facts.programs.push({
-            programRef: record.externalRef,
-            system,
-            config: runtimeProgram,
-          });
-          const programFacts = assembleFacts({
-            ...(customer === null ? {} : { customer: customer.attributes }),
-            ...(request.context === undefined ? {} : { context: request.context }),
-            ...liveFacts,
-            system,
-          });
-          const moduleEvaluated = (await PromoModule.evaluate({
-            merchantId,
-            evaluationId,
-            now,
-            request,
-            facts: programFacts,
-            definitions,
-          }, runtimeProgram)).map(decision => ({
-            ...decision,
-            programRevision: record.revision,
-          }));
-          const currencyChecked = moduleEvaluated.map(decision => (
-            decision.outcome === 'qualified'
-            && selectedCurrencyMismatch(runtimeProgram, decision, request.cart.currency)
-              ? currencyMismatchDecision(decision)
-              : decision
-          ));
-          const evaluated = customer === null && runtimeProgram.perCustomerCap !== undefined
-            ? currencyChecked.map(decision => decision.outcome === 'qualified'
-              ? customerRequiredDecision(runtimeProgram, record.revision)
-              : decision)
-            : currencyChecked;
-          for (const decision of evaluated) {
-            if (decision.outcome !== 'qualified') {
-              moduleDecisions.push(decision);
-              continue;
-            }
-            const projectedCost = projectedDiscountMinorUnits(decision.effects, request.cart);
-            const exhaustionReasons = [
-              ...(runtimeProgram.usageCap !== undefined
-                && record.usageCount >= runtimeProgram.usageCap
-                ? ['USAGE_CAP_EXHAUSTED']
-                : []),
-              ...(runtimeProgram.perCustomerCap !== undefined
-                && customerUsesCount >= runtimeProgram.perCustomerCap
-                ? ['PER_CUSTOMER_CAP_EXHAUSTED']
-                : []),
-              ...(record.budgetRemaining !== undefined
-                && record.budgetRemaining < projectedCost
-                ? ['BUDGET_EXHAUSTED']
-                : []),
-            ];
-            moduleDecisions.push(exhaustionReasons.length === 0
-              ? decision
-              : exhaustedDecision(decision, exhaustionReasons));
+        const singleProgramContext: SingleProgramEvaluationContext = {
+          repositories,
+          merchantId,
+          evaluationId,
+          correlationId,
+          now,
+          request,
+          customer,
+          liveFacts,
+          definitions,
+          facts,
+          verifyHistoricalIntegrity,
+          reservations,
+          preparedReservations,
+        };
+        let decisions: IncentiveDecision[];
+        let codeResults: CodeEvaluationResult[];
+        if (mode === 'automatic') {
+          decisions = [];
+          codeResults = [];
+          for (const candidate of await automaticCandidates(repositories, merchantId, now)) {
+            const evaluated = await evaluateSingleProgram(candidate, singleProgramContext);
+            if (evaluated.decision.outcome !== 'qualified') continue;
+            decisions = [stableDecision(evaluated.decision)];
+            break;
           }
+        } else {
+          const codedEvaluations: Array<{
+            code: ReturnType<typeof normalizeDistinctPromoCodes>[number];
+            decision?: PromoDecision;
+          }> = [];
+          for (const code of normalizedCodes) {
+            const record = await repositories.programs.getPublishedByNormalizedCode(
+              merchantId,
+              code.normalized,
+            );
+            const evaluated = record === null
+              ? undefined
+              : await evaluateSingleProgram(record, singleProgramContext);
+            codedEvaluations.push({
+              code,
+              ...(evaluated === undefined
+                ? {}
+                : evaluated),
+            });
+          }
+          const resolvedDecisions = codedEvaluations.flatMap(entry => (
+            entry.decision === undefined ? [] : [entry.decision]
+          ));
+          const selected = selectCodedDecisionCombination(resolvedDecisions);
+          const rejectedProgramRefs = new Set(selected.rejectedProgramRefs);
+          if (rejectedProgramRefs.size !== 0) {
+            await cleanupPreparedReservations(
+              preparedReservations,
+              reservations,
+              cleanupContext,
+            );
+          }
+          decisions = selected.decisions.map(stableDecision);
+          codeResults = codedEvaluations.map(entry => (
+            entry.decision === undefined
+              ? {
+                code: entry.code.display,
+                normalizedCode: entry.code.normalized,
+                outcome: 'invalid_code',
+                reasonCodes: ['INVALID_PROMO_CODE'],
+              }
+              : codeResult(entry.code, entry.decision, rejectedProgramRefs)
+          ));
         }
-
-        const decisions = resolveDecisionConflicts(moduleDecisions).map(stableDecision);
         const createdAt = now.toISOString();
         const expiresAt = new Date(now.getTime() + ttlSeconds(env) * 1_000).toISOString();
         const unsigned = {
           evaluationId,
           merchantId,
+          mode,
+          submittedCodes,
+          codeResults,
+          requestDigest: await evaluationRequestDigest(request, mode, normalizedCodes),
+          correlationId,
           ...(request.customerRef === undefined ? {} : { customerRef: request.customerRef }),
           ...(customer === null ? {} : { customerVersion: customer.version }),
           schemaVersion: published.version,
@@ -565,15 +949,12 @@ export function createEvaluationService(repositories: Repositories, env: Env) {
         };
         const record: EvaluationDecisionRecord = {
           ...unsigned,
-          integrityHash: await signDecisionSnapshot(
-            unsigned,
-            signingSecret,
-          ),
+          integrityHash: await decisionIntegrityOperation(() => (
+            signDecisionSnapshot(unsigned, signingSecret)
+          )),
           createdAt,
         };
-        await repositories.decisions.create(record);
-
-        return EvaluationResponseSchema.parse({
+        const response = EvaluationResponseSchema.parse({
           evaluationId,
           ...(record.customerRef === undefined ? {} : { customerRef: record.customerRef }),
           ...(record.customerVersion === undefined
@@ -582,10 +963,21 @@ export function createEvaluationService(repositories: Repositories, env: Env) {
           schemaVersion: record.schemaVersion,
           expiresAt,
           decisions,
+          ...(mode === 'coded' ? { codeResults } : {}),
         });
+        await repositories.decisions.create(record);
+        preparedReservations.length = 0;
+
+        return response;
       } catch (error) {
-        if (error instanceof NotFoundError) throw error;
-        throw new Error('Evaluation pipeline failed', { cause: error });
+        if (cleanupContext !== undefined) {
+          await cleanupPreparedReservations(
+            preparedReservations,
+            reservations,
+            cleanupContext,
+          );
+        }
+        throwEvaluationPipelineFailure(error);
       }
     },
   };

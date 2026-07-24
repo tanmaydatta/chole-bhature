@@ -1,4 +1,5 @@
 import type {
+  CodeEvaluationResult,
   CustomerSnapshot,
   EvaluationRequest,
   IncentiveDecision,
@@ -6,12 +7,16 @@ import type {
   RedemptionResponse,
   VariableDefinition,
 } from '@incentives/contracts';
+import { normalizePromoCode } from '@incentives/contracts';
 import { env } from 'cloudflare:workers';
 import { beforeEach, describe, expect, test } from 'vitest';
 
+import { canonicalJson } from '../src/json.js';
 import { createRepositories } from '../src/repositories/d1-repositories.js';
+import { RepositoryDependencyError } from '../src/repositories/types.js';
 import type {
   EvaluationDecisionRecord,
+  RedemptionBundleCreate,
   RedemptionCreate,
 } from '../src/repositories/types.js';
 import {
@@ -26,6 +31,22 @@ import {
 const createdAt = '2026-07-18T12:00:00.000Z';
 const expiresAt = '2026-07-18T12:05:00.000Z';
 const signingSecret = 'repository-history-signing-secret';
+const encoder = new TextEncoder();
+
+async function signLegacyReceipt(payload: unknown): Promise<string> {
+  const key = await crypto.subtle.importKey(
+    'raw',
+    encoder.encode(signingSecret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign'],
+  );
+  return [...new Uint8Array(await crypto.subtle.sign(
+    'HMAC',
+    key,
+    encoder.encode(canonicalJson(payload)),
+  ))].map(byte => byte.toString(16).padStart(2, '0')).join('');
+}
 
 const definition: VariableDefinition = {
   key: 'customer.tier',
@@ -124,6 +145,11 @@ function decision(
     customerVersion: 1,
     schemaVersion: 1,
     request,
+    mode: 'automatic',
+    submittedCodes: [],
+    codeResults: [],
+    requestDigest: 'a'.repeat(64),
+    correlationId: `${merchantId}-correlation`,
     facts: {
       scalar: { 'customer.tier': 'gold', 'cart.subtotal': 5_000 },
       lineItems: [],
@@ -139,17 +165,21 @@ function decision(
 function redemptionResult(
   redemptionId: string,
   evaluationId: string,
-  identifiers: { externalOrderRef?: string; idempotencyKey?: string },
+  identifiers: { externalOrderRef: string; idempotencyKey: string },
 ): RedemptionResponse {
   return {
     redemptionId,
     evaluationId,
-    programRef: 'welcome-10',
-    rewardRuleRef: 'default-reward',
+    externalOrderRef: identifiers.externalOrderRef,
+    idempotencyKey: identifiers.idempotencyKey,
     status: 'committed',
-    effects: incentiveDecision.effects,
-    ...identifiers,
-  } as RedemptionResponse;
+    entries: [{
+      programRef: 'welcome-10',
+      programRevision: 1,
+      rewardRuleRef: 'default-reward',
+      effects: incentiveDecision.effects,
+    }],
+  };
 }
 
 async function redemption(
@@ -157,15 +187,25 @@ async function redemption(
   evaluationId: string,
   identifiers: { externalOrderRef?: string; idempotencyKey?: string },
 ): Promise<RedemptionCreate> {
-  const redemptionId = `${evaluationId}-${identifiers.externalOrderRef ?? identifiers.idempotencyKey}`;
+  const resolvedIdentifiers = {
+    externalOrderRef: identifiers.externalOrderRef ?? `${evaluationId}-order`,
+    idempotencyKey: identifiers.idempotencyKey ?? `${evaluationId}-key`,
+  };
+  const redemptionId = `${evaluationId}-${resolvedIdentifiers.externalOrderRef}`;
+  const result = redemptionResult(redemptionId, evaluationId, resolvedIdentifiers);
   const unsigned = {
     redemptionId,
     merchantId,
     evaluationId,
-    ...identifiers,
-    result: redemptionResult(redemptionId, evaluationId, identifiers),
-    discountMinorUnits: 500,
-    currency: 'GBP',
+    ...resolvedIdentifiers,
+    requestDigest: 'd'.repeat(64),
+    result,
+    entries: [{
+      position: 0,
+      ...result.entries[0]!,
+      discountMinorUnits: 500,
+      currency: 'GBP',
+    }],
     createdAt,
   };
   return {
@@ -224,8 +264,12 @@ describe('D1 repositories', () => {
     await env.DB.batch([
       env.DB.prepare('DELETE FROM product_audit'),
       env.DB.prepare('DELETE FROM api_credentials'),
+      env.DB.prepare('DELETE FROM redemption_commit_guards'),
+      env.DB.prepare('DELETE FROM redemption_entries'),
+      env.DB.prepare('DELETE FROM redemption_operations'),
       env.DB.prepare('DELETE FROM redemptions'),
       env.DB.prepare('DELETE FROM evaluation_decisions'),
+      env.DB.prepare('DELETE FROM promo_code_claims'),
       env.DB.prepare('DELETE FROM program_counters'),
       env.DB.prepare('DELETE FROM program_revisions'),
       env.DB.prepare('DELETE FROM programs'),
@@ -485,7 +529,254 @@ describe('D1 repositories', () => {
       'integrity_hash',
       'expires_at',
       'created_at',
+      'mode',
+      'submitted_codes_json',
+      'code_results_json',
+      'request_digest',
+      'correlation_id',
     ]);
+  });
+
+  test('decision snapshots retain ordered submitted codes and code results', async () => {
+    await seedMerchant('merchant-a');
+    await seedPublishedSchema('merchant-a');
+    const repositories = createRepositories({ DB: env.DB });
+    await repositories.customers.create('merchant-a', customer('shared', { tier: 'gold' }));
+    const codeResults: CodeEvaluationResult[] = [{
+      code: 'vip20',
+      normalizedCode: 'VIP20',
+      outcome: 'selected',
+      programRef: 'welcome-10',
+      reasonCodes: [],
+    }, {
+      code: 'missing',
+      normalizedCode: 'MISSING',
+      outcome: 'invalid_code',
+      reasonCodes: ['INVALID_PROMO_CODE'],
+    }];
+    const snapshot: EvaluationDecisionRecord = {
+      ...decision('merchant-a', 'coded-snapshot'),
+      request: { ...request, codes: ['vip20', 'missing'] },
+      mode: 'coded',
+      submittedCodes: ['vip20', 'missing'],
+      codeResults,
+      requestDigest: 'b'.repeat(64),
+      correlationId: 'correlation-coded-evaluation',
+    };
+    snapshot.integrityHash = await signDecisionSnapshot(snapshot, signingSecret);
+
+    await repositories.decisions.create(snapshot);
+
+    await expect(repositories.decisions.get('merchant-a', 'coded-snapshot'))
+      .resolves.toEqual(snapshot);
+  });
+
+  test('decision writes type actual D1 driver failures at the repository boundary', async () => {
+    await seedMerchant('merchant-a');
+    await seedPublishedSchema('merchant-a');
+    const repositories = createRepositories({ DB: env.DB });
+    const snapshot = decision('merchant-a', 'forced-d1-driver-failure');
+    snapshot.integrityHash = await signDecisionSnapshot(snapshot, signingSecret);
+    await env.DB.prepare(`
+      CREATE TRIGGER force_repository_decision_insert_failure
+      BEFORE INSERT ON evaluation_decisions
+      BEGIN
+        SELECT RAISE(FAIL, 'forced repository D1 failure');
+      END
+    `).run();
+
+    try {
+      const failure = await repositories.decisions.create(snapshot).catch(error => error);
+      expect(failure).toBeInstanceOf(RepositoryDependencyError);
+      expect(failure).toMatchObject({
+        dependency: 'd1',
+        cause: expect.anything(),
+      });
+    } finally {
+      await env.DB.prepare(
+        'DROP TRIGGER IF EXISTS force_repository_decision_insert_failure',
+      ).run();
+    }
+  });
+
+  test('decision reads type actual D1 driver failures before stored-row decoding', async () => {
+    const driverFailure = new Error('forced repository D1 read failure');
+    const failingDb = new Proxy(env.DB, {
+      get(target, property) {
+        if (property === 'prepare') {
+          return (query: string) => {
+            function wrap(statement: D1PreparedStatement): D1PreparedStatement {
+              return new Proxy(statement, {
+                get(statementTarget, statementProperty) {
+                  if (
+                    statementProperty === 'raw'
+                    && query.includes('evaluation_decisions')
+                  ) {
+                    return async () => {
+                      throw driverFailure;
+                    };
+                  }
+                  if (statementProperty === 'bind') {
+                    return (...values: unknown[]) => wrap(
+                      statementTarget.bind(...values),
+                    );
+                  }
+                  const value = Reflect.get(statementTarget, statementProperty) as unknown;
+                  return typeof value === 'function'
+                    ? value.bind(statementTarget)
+                    : value;
+                },
+              });
+            }
+            return wrap(target.prepare(query));
+          };
+        }
+        const value = Reflect.get(target, property) as unknown;
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    }) as D1Database;
+    const repositories = createRepositories({ DB: failingDb });
+
+    const failure = await repositories.decisions.get(
+      'merchant-a',
+      'forced-d1-read-failure',
+    ).catch(error => error);
+    expect(failure).toBeInstanceOf(RepositoryDependencyError);
+    expect((failure as RepositoryDependencyError).dependency).toBe('d1');
+    expect((failure as RepositoryDependencyError).cause).toMatchObject({
+      cause: driverFailure,
+    });
+  });
+
+  test('decision reads reject stored code diagnostics that require canonicalization', async () => {
+    await seedMerchant('merchant-a');
+    await seedPublishedSchema('merchant-a');
+    const repositories = createRepositories({ DB: env.DB });
+    await repositories.customers.create('merchant-a', customer('shared', { tier: 'gold' }));
+    const snapshot: EvaluationDecisionRecord = {
+      ...decision('merchant-a', 'noncanonical-code-result'),
+      request: { ...request, codes: ['vip20'] },
+      mode: 'coded',
+      submittedCodes: ['vip20'],
+      codeResults: [{
+        code: 'vip20',
+        normalizedCode: 'VIP20',
+        outcome: 'selected',
+        programRef: 'welcome-10',
+        reasonCodes: [],
+      }],
+      requestDigest: 'e'.repeat(64),
+      correlationId: 'correlation-noncanonical-code-result',
+    };
+    snapshot.integrityHash = await signDecisionSnapshot(snapshot, signingSecret);
+    await repositories.decisions.create(snapshot);
+    await env.DB.prepare(`
+      UPDATE evaluation_decisions
+      SET code_results_json = json_set(code_results_json, '$[0].normalizedCode', 'vip20')
+      WHERE merchant_id = 'merchant-a' AND id = 'noncanonical-code-result'
+    `).run();
+
+    await expect(repositories.decisions.get('merchant-a', 'noncanonical-code-result'))
+      .rejects.toThrow('Stored evaluation decision is not canonical');
+  });
+
+  test('redemption bundles retain authoritative child order', async () => {
+    await seedMerchant('merchant-a');
+    const repositories = createRepositories({ DB: env.DB });
+    const evaluationId = await seedDecision('merchant-a', 'bundle-evaluation');
+    const redemptionId = 'bundle-redemption';
+    const result: RedemptionResponse = {
+      redemptionId,
+      evaluationId,
+      externalOrderRef: 'bundle-order',
+      idempotencyKey: 'bundle-key',
+      status: 'committed',
+      entries: [{
+        programRef: 'welcome-10',
+        programRevision: 1,
+        rewardRuleRef: 'default-reward',
+        effects: incentiveDecision.effects,
+      }, {
+        programRef: 'shipping',
+        programRevision: 7,
+        effects: [{ type: 'free_shipping' }],
+      }],
+    };
+    const unsigned: Omit<RedemptionBundleCreate, 'receiptIntegrityHash'> = {
+      redemptionId,
+      merchantId: 'merchant-a',
+      evaluationId,
+      externalOrderRef: 'bundle-order',
+      idempotencyKey: 'bundle-key',
+      requestDigest: 'c'.repeat(64),
+      result,
+      entries: [{
+        position: 0,
+        programRef: 'welcome-10',
+        programRevision: 1,
+        rewardRuleRef: 'default-reward',
+        effects: incentiveDecision.effects,
+        discountMinorUnits: 500,
+        currency: 'GBP',
+      }, {
+        position: 1,
+        programRef: 'shipping',
+        programRevision: 7,
+        effects: [{ type: 'free_shipping' }],
+        discountMinorUnits: 0,
+        currency: 'GBP',
+      }],
+      createdAt,
+    };
+    const input: RedemptionBundleCreate = {
+      ...unsigned,
+      receiptIntegrityHash: await signRedemptionReceipt(unsigned, signingSecret),
+    };
+
+    await expect(verifyRedemptionReceipt(input, signingSecret)).resolves.toBe(true);
+    for (const changedEntries of [
+      input.entries.slice(0, 1),
+      [...input.entries].reverse(),
+      input.entries.map((entry, index) => (
+        index === 1 ? { ...entry, programRef: 'mutated-shipping' } : entry
+      )),
+      [...input.entries, {
+        ...input.entries[1]!,
+        position: 2,
+        programRef: 'added-child',
+      }],
+    ]) {
+      await expect(verifyRedemptionReceipt({
+        ...input,
+        entries: changedEntries,
+      }, signingSecret)).resolves.toBe(false);
+    }
+
+    await repositories.redemptions.create(input);
+
+    await expect(repositories.redemptions.getByIdempotencyKey(
+      'merchant-a',
+      'bundle-key',
+      verifyHistoricalIntegrity.verifyReceipt,
+    )).resolves.toEqual(input);
+    expect((await env.DB.prepare(`
+      SELECT position, program_ref AS programRef
+      FROM redemption_entries
+      WHERE merchant_id = 'merchant-a' AND redemption_id = 'bundle-redemption'
+      ORDER BY position
+    `).all()).results).toEqual([
+      { position: 0, programRef: 'welcome-10' },
+      { position: 1, programRef: 'shipping' },
+    ]);
+    expect(await env.DB.prepare(`
+      SELECT state, request_digest AS requestDigest, redemption_id AS redemptionId
+      FROM redemption_operations
+      WHERE merchant_id = 'merchant-a' AND idempotency_key = 'bundle-key'
+    `).first()).toEqual({
+      state: 'committed',
+      requestDigest: 'c'.repeat(64),
+      redemptionId: 'bundle-redemption',
+    });
   });
 
   test('decision snapshots round-trip canonical program config and reject corrupt config', async () => {
@@ -614,9 +905,14 @@ describe('D1 repositories', () => {
       ...redemptionResult(
         `${evaluationId}-counted-order`,
         evaluationId,
-        { externalOrderRef: 'counted-order' },
+        { externalOrderRef: 'counted-order', idempotencyKey: `${evaluationId}-key` },
       ),
-      programRef: 'other-program',
+      entries: [{
+        programRef: 'other-program',
+        programRevision: 1,
+        rewardRuleRef: 'default-reward',
+        effects: incentiveDecision.effects,
+      }],
     };
     const otherProgramDecision = {
       ...incentiveDecision,
@@ -629,7 +925,11 @@ describe('D1 repositories', () => {
       decisions: [otherProgramDecision],
     };
     const integrityHash = await signDecisionSnapshot(otherProgramSnapshot, signingSecret);
-    const otherProgramReceipt = { ...countedReceipt, result: otherProgramResult };
+    const otherProgramReceipt = {
+      ...countedReceipt,
+      result: otherProgramResult,
+      entries: countedReceipt.entries.map(entry => ({ ...entry, programRef: 'other-program' })),
+    };
     const receiptIntegrityHash = await signRedemptionReceipt(
       otherProgramReceipt,
       signingSecret,
@@ -639,10 +939,14 @@ describe('D1 repositories', () => {
         UPDATE redemptions SET result_json = ?1
         WHERE merchant_id = 'merchant-a' AND evaluation_id = ?2
       `).bind(JSON.stringify({
-        version: 1,
+        version: 2,
         result: otherProgramResult,
         receiptIntegrityHash,
       }), evaluationId),
+      env.DB.prepare(`
+        UPDATE redemption_entries SET program_ref = 'other-program'
+        WHERE merchant_id = 'merchant-a' AND redemption_id = ?1
+      `).bind(countedReceipt.redemptionId),
       env.DB.prepare(`
         UPDATE evaluation_decisions SET decisions_json = ?1, integrity_hash = ?2
         WHERE merchant_id = 'merchant-a' AND id = ?3
@@ -660,6 +964,103 @@ describe('D1 repositories', () => {
       'other-program',
       verifyHistoricalIntegrity,
     )).resolves.toBe(1);
+  });
+
+  test('counts duplicate matching children once per committed redemption', async () => {
+    await seedMerchant('merchant-a');
+    const repositories = createRepositories({ DB: env.DB });
+    const evaluationId = await seedDecision('merchant-a', 'duplicate-entry-evaluation');
+    const base = await redemption('merchant-a', evaluationId, {
+      externalOrderRef: 'duplicate-entry-order',
+      idempotencyKey: 'duplicate-entry-key',
+    });
+    const duplicateBundle: RedemptionBundleCreate = {
+      ...base,
+      result: {
+        ...base.result,
+        entries: [base.result.entries[0]!, { ...base.result.entries[0]! }],
+      },
+      entries: [
+        base.entries[0]!,
+        { ...base.entries[0]!, position: 1 },
+      ],
+    };
+    duplicateBundle.receiptIntegrityHash = await signRedemptionReceipt(
+      duplicateBundle,
+      signingSecret,
+    );
+    await repositories.redemptions.create(duplicateBundle);
+
+    await expect(repositories.redemptions.countCommittedForCustomerProgram(
+      'merchant-a',
+      'shared',
+      'welcome-10',
+      verifyHistoricalIntegrity,
+    )).resolves.toBe(1);
+  });
+
+  test('counts strictly parsed migrated singular redemptions without exposing the old response', async () => {
+    await seedMerchant('merchant-a');
+    const repositories = createRepositories({ DB: env.DB });
+    const evaluationId = await seedDecision('merchant-a', 'legacy-evaluation');
+    const receiptIntegrityHash = await signLegacyReceipt({
+      kind: 'redemption_receipt_v1',
+      merchantId: 'merchant-a',
+      redemptionId: 'legacy-redemption',
+      evaluationId,
+      programRef: 'welcome-10',
+      rewardRuleRef: 'default-reward',
+      effects: incentiveDecision.effects,
+      idempotencyKey: 'legacy-key',
+      discountMinorUnits: 500,
+      currency: 'GBP',
+      status: 'committed',
+      createdAt,
+    });
+    await env.DB.batch([
+      env.DB.prepare(`
+        INSERT INTO redemptions (
+          id, merchant_id, external_order_ref, idempotency_key, evaluation_id,
+          result_json, discount_minor_units, currency, created_at, request_digest
+        ) VALUES (
+          'legacy-redemption', 'merchant-a', NULL, 'legacy-key', ?1,
+          ?2, 500, 'GBP', ?3, 'legacy:legacy-redemption'
+        )
+      `).bind(evaluationId, JSON.stringify({
+        version: 1,
+        result: {
+          redemptionId: 'legacy-redemption',
+          evaluationId,
+          idempotencyKey: 'legacy-key',
+          programRef: 'welcome-10',
+          rewardRuleRef: 'default-reward',
+          status: 'committed',
+          effects: incentiveDecision.effects,
+        },
+        receiptIntegrityHash,
+      }), createdAt),
+      env.DB.prepare(`
+        INSERT INTO redemption_entries (
+          merchant_id, redemption_id, position, program_ref, program_revision,
+          reward_rule_ref, effects_json, discount_minor_units, currency
+        ) VALUES (
+          'merchant-a', 'legacy-redemption', 0, 'welcome-10', 1,
+          'default-reward', ?1, 500, 'GBP'
+        )
+      `).bind(JSON.stringify(incentiveDecision.effects)),
+    ]);
+
+    await expect(repositories.redemptions.countCommittedForCustomerProgram(
+      'merchant-a',
+      'shared',
+      'welcome-10',
+      verifyHistoricalIntegrity,
+    )).resolves.toBe(1);
+    await expect(repositories.redemptions.getByIdempotencyKey(
+      'merchant-a',
+      'legacy-key',
+      verifyHistoricalIntegrity.verifyReceipt,
+    )).rejects.toThrow(/canonical|legacy.*private/i);
   });
 
   test('rejects a committed result whose canonical fields do not match its row', async () => {
@@ -695,15 +1096,22 @@ describe('D1 repositories', () => {
 
   test('rejects a committed result whose effects differ from its qualified decision', async () => {
     const { evaluationId, repositories } = await seedCommittedRedemption();
-    await env.DB.prepare(`
-      UPDATE redemptions
-      SET result_json = json_set(
-        result_json,
-        '$.result.effects[0].amount.minorUnits',
-        999
-      )
-      WHERE merchant_id = 'merchant-a' AND evaluation_id = ?1
-    `).bind(evaluationId).run();
+    await env.DB.batch([
+      env.DB.prepare(`
+        UPDATE redemptions
+        SET result_json = json_set(
+          result_json,
+          '$.result.entries[0].effects[0].amount.minorUnits',
+          999
+        )
+        WHERE merchant_id = 'merchant-a' AND evaluation_id = ?1
+      `).bind(evaluationId),
+      env.DB.prepare(`
+        UPDATE redemption_entries
+        SET effects_json = json_set(effects_json, '$[0].amount.minorUnits', 999)
+        WHERE merchant_id = 'merchant-a' AND redemption_id = ?1
+      `).bind(`${evaluationId}-counted-order`),
+    ]);
 
     await expect(repositories.redemptions.countCommittedForCustomerProgram(
       'merchant-a',
@@ -715,11 +1123,21 @@ describe('D1 repositories', () => {
 
   test('rejects a committed result whose reward rule reference differs from its decision', async () => {
     const { evaluationId, repositories } = await seedCommittedRedemption();
-    await env.DB.prepare(`
-      UPDATE redemptions
-      SET result_json = json_set(result_json, '$.result.rewardRuleRef', 'other-rule')
-      WHERE merchant_id = 'merchant-a' AND evaluation_id = ?1
-    `).bind(evaluationId).run();
+    await env.DB.batch([
+      env.DB.prepare(`
+        UPDATE redemptions
+        SET result_json = json_set(
+          result_json,
+          '$.result.entries[0].rewardRuleRef',
+          'other-rule'
+        )
+        WHERE merchant_id = 'merchant-a' AND evaluation_id = ?1
+      `).bind(evaluationId),
+      env.DB.prepare(`
+        UPDATE redemption_entries SET reward_rule_ref = 'other-rule'
+        WHERE merchant_id = 'merchant-a' AND redemption_id = ?1
+      `).bind(`${evaluationId}-counted-order`),
+    ]);
 
     await expect(repositories.redemptions.countCommittedForCustomerProgram(
       'merchant-a',
@@ -743,9 +1161,13 @@ describe('D1 repositories', () => {
     await env.DB.batch([
       env.DB.prepare(`
         UPDATE redemptions
-        SET result_json = json_set(result_json, '$.result.effects', json(?1))
+        SET result_json = json_set(result_json, '$.result.entries[0].effects', json(?1))
         WHERE merchant_id = 'merchant-a' AND evaluation_id = ?2
       `).bind(JSON.stringify(tamperedEffects), evaluationId),
+      env.DB.prepare(`
+        UPDATE redemption_entries SET effects_json = ?1
+        WHERE merchant_id = 'merchant-a' AND redemption_id = ?2
+      `).bind(JSON.stringify(tamperedEffects), `${evaluationId}-counted-order`),
       env.DB.prepare(`
         UPDATE evaluation_decisions SET decisions_json = ?1
         WHERE merchant_id = 'merchant-a' AND id = ?2
@@ -792,16 +1214,22 @@ describe('D1 repositories', () => {
 
   test('validates other-program candidates before excluding them from the requested count', async () => {
     const { evaluationId, repositories } = await seedCommittedRedemption();
-    await env.DB.prepare(`
-      UPDATE redemptions SET result_json = json_set(
-        result_json,
-        '$.result.programRef',
-        'different-program',
-        '$.result.effects',
-        json('[]')
-      )
-      WHERE merchant_id = 'merchant-a' AND evaluation_id = ?1
-    `).bind(evaluationId).run();
+    await env.DB.batch([
+      env.DB.prepare(`
+        UPDATE redemptions SET result_json = json_set(
+          result_json,
+          '$.result.entries[0].programRef',
+          'different-program',
+          '$.result.entries[0].effects',
+          json('[]')
+        )
+        WHERE merchant_id = 'merchant-a' AND evaluation_id = ?1
+      `).bind(evaluationId),
+      env.DB.prepare(`
+        UPDATE redemption_entries SET program_ref = 'different-program', effects_json = '[]'
+        WHERE merchant_id = 'merchant-a' AND redemption_id = ?1
+      `).bind(`${evaluationId}-counted-order`),
+    ]);
 
     await expect(repositories.redemptions.countCommittedForCustomerProgram(
       'merchant-a',
@@ -823,11 +1251,8 @@ describe('D1 repositories', () => {
     })).rejects.toThrow();
   });
 
-  test.each([
-    ['external order ref only', { externalOrderRef: 'order-1' }],
-    ['idempotency key only', { idempotencyKey: 'key-1' }],
-    ['both identifiers', { externalOrderRef: 'order-1', idempotencyKey: 'key-1' }],
-  ])('redemptions support %s', async (_name, identifiers) => {
+  test('redemptions require and support both bundle identifiers', async () => {
+    const identifiers = { externalOrderRef: 'order-1', idempotencyKey: 'key-1' };
     await seedMerchant('merchant-a');
     const repositories = createRepositories({ DB: env.DB });
     const evaluationId = await seedDecision('merchant-a');
@@ -835,20 +1260,16 @@ describe('D1 repositories', () => {
 
     await repositories.redemptions.create(input);
 
-    if (identifiers.externalOrderRef) {
-      expect(await repositories.redemptions.getByExternalOrderRef(
-        'merchant-a',
-        identifiers.externalOrderRef,
-        verifyHistoricalIntegrity.verifyReceipt,
-      )).toMatchObject(input);
-    }
-    if (identifiers.idempotencyKey) {
-      expect(await repositories.redemptions.getByIdempotencyKey(
-        'merchant-a',
-        identifiers.idempotencyKey,
-        verifyHistoricalIntegrity.verifyReceipt,
-      )).toMatchObject(input);
-    }
+    expect(await repositories.redemptions.getByExternalOrderRef(
+      'merchant-a',
+      identifiers.externalOrderRef,
+      verifyHistoricalIntegrity.verifyReceipt,
+    )).toMatchObject(input);
+    expect(await repositories.redemptions.getByIdempotencyKey(
+      'merchant-a',
+      identifiers.idempotencyKey,
+      verifyHistoricalIntegrity.verifyReceipt,
+    )).toMatchObject(input);
   });
 
   test('redemptions reject missing identifiers', async () => {
@@ -860,7 +1281,7 @@ describe('D1 repositories', () => {
       ...await redemption('merchant-a', evaluationId, { externalOrderRef: 'temporary' }),
       externalOrderRef: undefined,
       idempotencyKey: undefined,
-    } as unknown as RedemptionCreate)).rejects.toThrow(/identifier/i);
+    } as unknown as RedemptionCreate)).rejects.toThrow(/identifier|string/i);
   });
 
   test.each([
@@ -1093,6 +1514,178 @@ describe('D1 repositories', () => {
     });
     expect(await repositories.programs.getRevision('merchant-b', program.id, 1)).toBeNull();
     expect(await repositories.programs.getCounters('merchant-b', program.id)).toBeNull();
+  });
+
+  test('claims and resolves the same normalized code independently per merchant', async () => {
+    await seedMerchant('merchant-a');
+    await seedMerchant('merchant-b');
+    await seedPublishedSchema('merchant-a');
+    await seedPublishedSchema('merchant-b');
+    const repositories = createRepositories({ DB: env.DB });
+    const expectedCode = normalizePromoCode('  Straße  ');
+
+    for (const merchantId of ['merchant-a', 'merchant-b']) {
+      const draft = {
+        ...program,
+        id: `${merchantId}-coded`,
+        status: 'draft',
+        autoApply: false,
+        code: merchantId === 'merchant-a' ? '  Straße  ' : 'STRASSE',
+      } as PromoProgram;
+      const stored = await repositories.programs.create({
+        merchantId,
+        program: draft,
+        schema: await repositories.schemas.getLatestVersion(merchantId, 'published'),
+        createdAt,
+      });
+      if (draft.autoApply) throw new Error('Expected a coded repository fixture');
+      const code = normalizePromoCode(draft.code);
+      await repositories.programs.publishDraftWithCodeClaim({
+        merchantId,
+        externalRef: draft.id,
+        expectedDraftRevision: 1,
+        publishedAt: createdAt,
+        publishedBy: 'repository-test',
+        codeClaim: {
+          merchantId,
+          programId: stored.id,
+          programRef: draft.id,
+          activeRevision: 1,
+          displayCode: code.display,
+          normalizedCode: code.normalized,
+          claimedAt: createdAt,
+        },
+      });
+    }
+
+    await expect(repositories.programs.getPublishedByNormalizedCode(
+      'merchant-a',
+      expectedCode.normalized,
+    )).resolves.toMatchObject({
+      merchantId: 'merchant-a',
+      externalRef: 'merchant-a-coded',
+    });
+    await expect(repositories.programs.getPublishedByNormalizedCode(
+      'merchant-b',
+      expectedCode.normalized,
+    )).resolves.toMatchObject({
+      merchantId: 'merchant-b',
+      externalRef: 'merchant-b-coded',
+    });
+    await expect(repositories.programs.getPublishedByNormalizedCode(
+      'merchant-c',
+      expectedCode.normalized,
+    )).resolves.toBeNull();
+  });
+
+  test('resolves the current claim before elapsed reuse and the earliest future claim', async () => {
+    await seedMerchant('merchant-a');
+    await seedPublishedSchema('merchant-a');
+    const repositories = createRepositories({ DB: env.DB });
+    const dates = await env.DB.prepare(`
+      SELECT
+        date('now', '-10 days') AS expiredStart,
+        date('now', '-1 day') AS expiredEnd,
+        date('now') AS currentStart,
+        date('now', '+5 days') AS earlyFutureStart,
+        date('now', '+10 days') AS earlyFutureEnd,
+        date('now', '+20 days') AS lateFutureStart,
+        date('now', '+30 days') AS lateFutureEnd
+    `).first<{
+      expiredStart: string;
+      expiredEnd: string;
+      currentStart: string;
+      earlyFutureStart: string;
+      earlyFutureEnd: string;
+      lateFutureStart: string;
+      lateFutureEnd: string;
+    }>();
+    expect(dates).not.toBeNull();
+
+    async function publishCoded(
+      id: string,
+      codeValue: string,
+      startDate: string,
+      endDate: string,
+      status: 'active' | 'scheduled',
+    ) {
+      const draft = {
+        ...program,
+        id,
+        status: 'draft',
+        autoApply: false,
+        code: codeValue,
+        startDate,
+        endDate,
+      } as PromoProgram;
+      const stored = await repositories.programs.create({
+        merchantId: 'merchant-a',
+        program: draft,
+        schema: await repositories.schemas.getLatestVersion('merchant-a', 'published'),
+        createdAt,
+      });
+      if (draft.autoApply) throw new Error('Expected a coded repository fixture');
+      const code = normalizePromoCode(draft.code);
+      const publishedAt = status === 'active'
+        ? `${startDate}T12:00:00.000Z`
+        : createdAt;
+      return repositories.programs.publishDraftWithCodeClaim({
+        merchantId: 'merchant-a',
+        externalRef: draft.id,
+        expectedDraftRevision: 1,
+        publishedAt,
+        publishedBy: 'repository-test',
+        codeClaim: {
+          merchantId: 'merchant-a',
+          programId: stored.id,
+          programRef: draft.id,
+          activeRevision: 1,
+          displayCode: code.display,
+          normalizedCode: code.normalized,
+          startsAt: startDate,
+          endsAt: endDate,
+          claimedAt: publishedAt,
+        },
+      });
+    }
+
+    await publishCoded(
+      'elapsed-code-owner',
+      'reused',
+      dates!.expiredStart,
+      dates!.expiredEnd,
+      'active',
+    );
+    await publishCoded(
+      'current-code-owner',
+      'REUSED',
+      dates!.currentStart,
+      dates!.earlyFutureEnd,
+      'active',
+    );
+    await expect(repositories.programs.getPublishedByNormalizedCode(
+      'merchant-a',
+      'REUSED',
+    )).resolves.toMatchObject({ externalRef: 'current-code-owner' });
+
+    await publishCoded(
+      'late-future-code-owner',
+      'future',
+      dates!.lateFutureStart,
+      dates!.lateFutureEnd,
+      'scheduled',
+    );
+    await publishCoded(
+      'early-future-code-owner',
+      'FUTURE',
+      dates!.earlyFutureStart,
+      dates!.earlyFutureEnd,
+      'scheduled',
+    );
+    await expect(repositories.programs.getPublishedByNormalizedCode(
+      'merchant-a',
+      'FUTURE',
+    )).resolves.toMatchObject({ externalRef: 'early-future-code-owner' });
   });
 
   test('program reads prefer owned revision and counter rows over legacy shadows', async () => {

@@ -88,8 +88,8 @@ function derInteger(raw: Uint8Array): Uint8Array {
   return concat(Uint8Array.of(0x02, value.length), value);
 }
 
-function toDerSignature(signature: Uint8Array): Uint8Array {
-  if (signature[0] === 0x30) return signature;
+export function toDerSignature(signature: Uint8Array): Uint8Array {
+  // WebCrypto returns fixed-width P1363 r||s, even when its first byte happens to be 0x30.
   if (signature.length !== 64) throw new Error('Unexpected ECDSA signature shape');
   const r = derInteger(signature.slice(0, 32));
   const s = derInteger(signature.slice(32));
