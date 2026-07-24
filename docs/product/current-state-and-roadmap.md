@@ -1,8 +1,8 @@
 # Product Current State and Roadmap
 
-**Updated:** 2026-07-23
+**Updated:** 2026-07-24
 
-**Status:** Active — Gate C staging verification in progress
+**Status:** Active — Gate C exposed a product-contract correction; approved implementation plan ready
 
 **Notion mirror:** https://app.notion.com/p/Product-Current-State-and-Roadmap-3a6e5c7c2b8e81f6b412c45a2bc7b344
 
@@ -23,12 +23,12 @@ deferred issue remains in the
 | Question | Current answer |
 |---|---|
 | Overall phase | Production Operator Platform, Delivery Gate C |
-| Current activity | Finish manual staging verification of the live Operator platform |
+| Current activity | Implement the approved Promo selection, coded stacking, and atomic bundle-redemption correction discovered during staging |
 | Current product-code baseline | PR #8 merge commit `e15cbba` on `dev` |
-| Current deployment gap | PR #8 is merged, but Operator Web must be redeployed before the free-shipping regression can be retested |
-| Current blocker | No product-code blocker is known; staging verification is waiting for the user-run Operator Web deployment and manual continuation |
-| Gate C finish line | Free-shipping create/publish/reload, tenant isolation, evaluation, redemption, idempotent retry, and exhaustion all pass |
-| Next plan work | Close Gate C evidence, write the approved financial-authority implementation plan, then continue the Production Operator Platform plan from Task 10 |
+| Current deployment gap | None for PR #8; its free-shipping regression passed after deployment |
+| Current blocker | Evaluation exposes unrelated Promo decisions, automatic mode may select several programs, and the singular-program redemption contract cannot atomically commit a valid coded stack |
+| Gate C finish line | Land the approved correction, redeploy under user control, repeat automatic/coded selection and atomic bundle tests, and close the remaining tenant-isolation/security evidence |
+| Next plan work | Execute the Promo selection/code-stacking plan, close Gate C, then write the approved free-shipping financial-authority implementation plan |
 
 ## Source-of-truth map
 
@@ -41,6 +41,8 @@ Use this page for current sequencing and status. Follow its links for detail:
 | Current staging evidence | [Repository](../testing/staging-activation-run-2026-07-21.md) · [Notion](https://app.notion.com/p/3a5e5c7c2b8e81739dfed75f998e6489) |
 | Repeatable manual procedure | [Repository](../testing/gate-c-manual-test.md) · [Notion](https://app.notion.com/p/3a3e5c7c2b8e8155aa10c869b97b7e5a) |
 | Active delivery plan | [Repository](../superpowers/plans/2026-07-19-production-operator-platform.md) · [Notion](https://app.notion.com/p/Production-Operator-Platform-and-Integration-Harness-Implementation-Plan-3a2e5c7c2b8e8191ba1ff65dd30752b3) |
+| Approved Promo selection and atomic-redemption design | [Repository](../superpowers/specs/2026-07-23-promo-selection-code-stacking-design.md) · [Notion](https://app.notion.com/p/Promo-Selection-Code-Stacking-and-Atomic-Redemption-Design-Spec-3a6e5c7c2b8e81549b6adc7f3d096455) |
+| Next implementation plan | [Repository](../superpowers/plans/2026-07-24-promo-selection-code-stacking.md) · [Notion](https://app.notion.com/p/Promo-Selection-Code-Stacking-and-Atomic-Redemption-Implementation-Plan-3a7e5c7c2b8e811791dee0d21803c8e2) |
 | Approved free-shipping financial design | [Repository](../superpowers/specs/2026-07-23-free-shipping-budget-authority-design.md) · [Notion](https://app.notion.com/p/Free-Shipping-Budget-Authority-Reservations-and-Reversals-Design-Spec-3a6e5c7c2b8e81f49c6ecbf878d7d48c) |
 | All implementation plans and their statuses | [Notion Plans index](https://app.notion.com/p/Plans-390e5c7c2b8e8165b7f7d77392eab088) |
 
@@ -95,26 +97,46 @@ manually:
   optimistic concurrency conflicts, and recovery;
 - Promo revision 1 and revision 2 authoring/publication, ordered reward
   persistence, hard-refresh durability, pause, resume, and irreversible end.
+- no-budget free-shipping Promo creation, publication, and hard-refresh
+  durability;
+- staging credential creation and authenticated schema reads;
+- automatic evaluation, redemption, exact idempotent retry, changed-retry
+  conflict, second redemption, and per-customer exhaustion; and
+- manual-code draft persistence plus missing, incorrect, and correct code
+  evaluation behavior.
 
 ## Current work
 
-PR #8 fixed the no-budget free-shipping editor path and is merged into `dev`.
-It added:
+Staging proved the existing credential, schema, customer, Promo lifecycle,
+redemption-idempotency, and cap behavior. It also exposed a deeper product
+contract problem:
 
-- explicit **Add budget** and **Remove budget** controls;
-- field-specific budget validation;
-- explicit free-shipping/monetary-budget conflict guidance; and
-- regression coverage proving a no-budget free-shipping request omits
-  `budget`.
+- automatic evaluation returns unrelated Promo outcomes instead of privately
+  choosing at most one winner;
+- supplying one code still returns unrelated automatic and coded Promo
+  outcomes;
+- `stackable` does not define a safe way to select and commit a complete
+  multi-code result; and
+- the public redemption request still commits one caller-selected program
+  rather than the signed selected bundle.
+
+The product behavior is now approved in the
+[Promo Selection, Code Stacking, and Atomic Redemption design](../superpowers/specs/2026-07-23-promo-selection-code-stacking-design.md).
+Its implementation-ready
+[plan](../superpowers/plans/2026-07-24-promo-selection-code-stacking.md)
+is `Todo`.
 
 The immediate sequence is:
 
-1. The user deploys Operator Web from current `dev`.
-2. Repeat the no-budget free-shipping create, publish, and hard-refresh case.
-3. Complete the remaining tenant-isolation checks.
-4. Complete evaluation, redemption, idempotent-retry, and exhaustion checks.
-5. Update the staging report, follow-up register, active plans, this page, and
-   their Notion mirrors with the final Gate C result.
+1. Execute the Promo selection/code-stacking plan on a feature branch.
+2. Merge through a reviewed PR into `dev`; never push directly to `dev`.
+3. The user applies any staging migration and deployments one command at a
+   time.
+4. Repeat the documented automatic, coded, stacking, bundle-idempotency, and
+   concurrency cases with fresh references.
+5. Complete the remaining tenant-isolation and security closeout checks.
+6. Reconcile the staging report, follow-up register, active plans, this page,
+   and their Notion mirrors with the final Gate C result.
 
 No assistant-run Cloudflare mutation is permitted. The assistant supplies one
 command at a time; the user runs every deployment, migration, secret, domain,
@@ -180,14 +202,23 @@ must be updated whenever a finding changes state. It currently preserves:
 - member passkeys/MFA and safer invitation account handoff;
 - schema deprecation, stale impact state, and lifecycle presentation;
 - Promo active-vs-draft comparison, revision history, deliberate single-draft
-  semantics, silent sample seeding, and catalog mapping for `productRef`;
+  semantics, silent sample seeding, missing manual-code/application-mode
+  review, and catalog mapping for `productRef`;
+- the approved automatic/coded Promo selection boundary, deterministic
+  priority behavior, race-safe code ownership, compatible coded stacking, and
+  atomic bundle redemption;
+- client-facing percentage entry instead of exposing internal basis points;
 - the complete approved free-shipping financial-authority design;
 - future event ingestion/mapping and event-triggered Loyalty, Referral, and
   Affiliate behavior;
-- Loyalty wallet terminology and asset-catalog work;
+- Loyalty wallet terminology, asset-catalog work, and the ability for an
+  eligible conditional Promo to grant a configured wallet asset once the
+  production accrual ledger and fulfilment port exist;
 - Affiliate/Referral production runtimes;
-- custom role composition; and
-- integration-specific incurred-cost mapping.
+- custom role composition;
+- integration-specific incurred-cost mapping; and
+- sanitized structured public-API error logging so a correlation ID returned
+  to a client reliably identifies the corresponding failure record.
 
 Nothing in those categories should be considered forgotten merely because it
 does not block the current Gate C test.

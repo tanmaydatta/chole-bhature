@@ -1,8 +1,8 @@
 # Staging activation run — 2026-07-21
 
-**Status:** In progress — access roles, schema, customer, and Promo lifecycle
-verified; the free-shipping authoring fix is merged and awaits Operator Web
-redeployment/retest before the remaining incentive checks
+**Status:** In progress — planned Gate C flows are verified through manual-code
+evaluation, but staging exposed an approved Promo-selection and atomic
+bundle-redemption contract correction that must land before final closeout
 
 **Notion:** https://app.notion.com/p/3a5e5c7c2b8e81739dfed75f998e6489
 
@@ -49,7 +49,21 @@ redeployment/retest before the remaining incentive checks
 - Promo revision 2 authoring: Pass (the fixed logical reference produced draft revision 2 beside active revision 1; reward order changed and line-item fixed became line-item percent)
 - Promo revision 2 publication and reload: Pass (revision 2 became active and retained the changed name, order, effect, conditions, and fallback after hard refresh)
 - Promo lifecycle transitions: Pass (active revision 2 paused, resumed, and ended irreversibly; every state survived hard refresh and exposed only the valid next actions)
-- Free-shipping Promo authoring: Fail (the UI cannot remove the sample monetary budget, so an otherwise valid conditioned free-shipping draft cannot be saved)
+- Free-shipping Promo authoring retest: Pass (`gate-c-free-shipping-retest` saved without a monetary budget, published as active revision 1, and retained its conditioned `free_shipping` effect after hard refresh)
+- Staging API credential creation: Pass (a staging secret credential was created with schema-read, evaluation-write, and redemption-write scopes; plaintext was handled only in the tester shell)
+- Credential-authenticated published-schema read: Pass (published version 1 returned the expected required `customer.tier` and `context.channel` enum definitions)
+- Auto-apply evaluation: Pass (the active free-shipping Promo qualified without a request `code`; the ended Promo returned unavailable)
+- Redemption commit: Pass (the qualified free-shipping decision committed with a unique external-order reference and idempotency key)
+- Redemption idempotent retry: Pass (an identical retry returned the same committed redemption rather than creating another use)
+- Redemption idempotency conflict: Pass (reusing the same idempotency key with a different external-order reference returned HTTP 409 `VERSION_CONFLICT`, non-retryable)
+- Evaluation before second commit: Pass (with one committed use and a per-customer cap of 2, a later evaluation still qualified because evaluations do not consume the cap)
+- Second redemption commit: Pass (a new evaluation plus new external-order and idempotency identifiers committed the second use)
+- Per-customer exhaustion: Pass (the next evaluation returned `exhausted`, no effects, `eligible: false`, `commitRequired: false`, and `PER_CUSTOMER_CAP_EXHAUSTED`)
+- Manual-code draft persistence: Pass (`gate-c-manual-code` retained code-triggered mode and code `GATEC15` after a hard refresh and reopening the draft editor)
+- Manual-code evaluation without a code: Pass for the current contract (the manual Promo returned `invalid_code`)
+- Manual-code evaluation with an incorrect code: Pass for the current contract (the manual Promo remained `invalid_code`)
+- Manual-code evaluation with the correct code: Pass (the manual Promo qualified and returned the configured 20% order-discount effect)
+- Product-selection acceptance: Fail for the desired client contract (each response also exposed unrelated automatic/coded Promo outcomes, and the current redemption request commits one caller-selected program rather than a signed selected bundle)
 
 ## Schema deprecation discrepancy
 
@@ -69,8 +83,10 @@ redeployment/retest before the remaining incentive checks
 - Test result: Fail. The free-shipping create/publish/reload portion of `PROMO-02` is blocked through the client-facing UI.
 - Required fix: represent “no budget” explicitly in the editor, allow an existing/default budget to be removed atomically, show field-specific validation, and add a browser-level regression covering a no-budget free-shipping save.
 - Local resolution: implemented explicit **Add budget**/**Remove budget** actions, field-specific invalid-budget feedback, pre-submit free-shipping/budget conflict guidance, and a regression that verifies the saved request omits `budget`.
-- Retest status: PR #8 is merged into `dev`; Operator Web staging redeployment
-  and repetition of the manual create/publish/hard-refresh case remain pending.
+- Retest status: Pass after PR #8 was merged into `dev` and the API and
+  Operator Web staging Workers were redeployed. A fresh conditioned
+  free-shipping Promo saved with no budget, published as active revision 1,
+  and survived a hard refresh with the canonical effect intact.
 
 ## Invitation incident
 
@@ -82,6 +98,49 @@ redeployment/retest before the remaining incentive checks
 - Root cause: an extra top-level `correlationId` violated strict `IdentityCreateInvitationRequestSchema`; the valid correlation ID already belonged inside `input`
 - Code resolution: Merged in PR #7 and deployed to API, Identity, and Operator Web staging Workers
 - Retest result: Pass; the invitation was created, delivered, accepted, and used for a fresh client-admin sign-in
+
+## Evaluation observability incident
+
+- Affected flow: credential-authenticated `POST /v1/evaluate`.
+- Safe response: HTTP 503, `EVALUATION_UNAVAILABLE`, retryable, with the same
+  correlation ID in the response body and `x-correlation-id` header.
+- Confirmed runtime cause: `incentives-api-staging` had no
+  `DECISION_SIGNING_SECRET`; credential generation and schema reads do not
+  require that separate decision-integrity secret.
+- Observability finding: the public API error boundary converts handled
+  exceptions into safe canonical responses but does not explicitly emit a
+  sanitized structured error log. The returned correlation ID therefore does
+  not reliably locate the underlying exception in persisted Worker logs.
+- Required fix: implement `GAP-022` from the Product follow-up register,
+  preserving the correlation ID across the response and log while excluding
+  secrets and sensitive request data.
+- Runtime resolution: a fresh `DECISION_SIGNING_SECRET` was generated locally,
+  uploaded to the staging API Worker as a secret, and the same
+  credential-authenticated evaluation then succeeded.
+
+## Promo selection and atomic-redemption discrepancy
+
+- Affected flows: automatic evaluation, coded evaluation, compatible code
+  stacking, and redemption commit.
+- Observed automatic behavior: the response included decisions for every
+  active Promo, including unrelated unavailable/exhausted programs.
+- Observed coded behavior: missing and incorrect codes correctly produced
+  `invalid_code`, and the configured code correctly qualified, but all three
+  responses still included unrelated Promo decisions.
+- Commit mismatch: `POST /v1/redemptions` requires a caller-selected
+  `programRef`, so it cannot commit a complete signed stack as one operation.
+- Product decision: automatic evaluation privately considers only automatic
+  candidates and returns zero or one winner; coded evaluation suppresses
+  automatic candidates and resolves only submitted distinct normalized codes;
+  compatible coded Promos may stack; and redemption commits the complete signed
+  selected bundle atomically.
+- Status: `GAP-026` is approved with an implementation-ready
+  [design](../superpowers/specs/2026-07-23-promo-selection-code-stacking-design.md)
+  and [plan](../superpowers/plans/2026-07-24-promo-selection-code-stacking.md).
+- Retest requirement: after a reviewed merge and user-controlled staging
+  migration/deployment, repeat automatic zero-or-one selection, missing/wrong/
+  correct code isolation, mixed stackability, bundle idempotency, cap/budget
+  concurrency, and tenant-isolation cases with fresh identifiers.
 
 ## UX follow-ups
 
@@ -99,6 +158,9 @@ redeployment/retest before the remaining incentive checks
 - A brand-new Promo editor is already populated with the complete sample configuration before the user selects **Use complete authoring example**. Start new Promos with an intentional blank/minimal state, or explicitly identify and require selection of a template; never silently seed client drafts with sample rules, limits, or budget values.
 - The Promo budget controls cannot express the optional “no budget” state after a budget exists: clearing the inputs leaves an invalid object. Add an explicit budget enable/remove control and field-level errors; this currently blocks free-shipping authoring.
 - `productRef` is an opaque technical value with no catalog lookup or integration mapping help. Keep the canonical reference but add a connector-backed selector/validation when the first commerce integration is chosen.
+- Percentage reward fields expose internal basis points (`2000` for `20%`). Render a client-facing percentage control and perform the exact basis-point conversion at the boundary.
+- Promo detail omits both application mode and the configured manual code, so an operator cannot verify that a draft is code-triggered or review its code before publishing. Show both on detail and pre-publication comparison surfaces.
+- The live Promo selector cannot grant a Loyalty wallet asset. Future contracts can represent wallet accrual, but production publication must wait for a real ledger/fulfilment runtime; afterward, conditional Promos should be able to grant a merchant-configured Points/Credits/Miles/Stars/Cashback asset without coupling Promo to a specific Loyalty implementation.
 - Accepting an invitation in a browser with another active account consumes the invitation and redirects without explaining the accepted identity or account handoff. Require or guide an isolated handoff and show an explicit success state.
 
 The maintained identifiers, statuses, dispositions, and longer-term module
@@ -114,10 +176,15 @@ deferrals are in the linked Product follow-up register.
 
 ## Remaining manual continuation
 
-1. Fix and redeploy the no-budget free-shipping editor behavior.
-2. Repeat the free-shipping create, publish, and hard-refresh check.
-3. Complete remaining tenant-isolation checks.
-4. Continue evaluation, redemption, idempotent retry, and exhaustion checks.
+1. Implement and merge the approved `GAP-026` correction through a PR into
+   `dev`.
+2. Have the user apply the reviewed staging migration/deployments one command
+   at a time.
+3. Repeat the automatic, coded, stacking, atomic-bundle, idempotency, and
+   concurrency cases with fresh identifiers.
+4. Complete the remaining tenant-isolation and security closeout checks.
+5. Reconcile the canonical manual procedure, current-state roadmap, follow-up
+   register, active plans, and their Notion mirrors with the final result.
 
 ## Evidence policy
 
