@@ -1,8 +1,10 @@
 # Staging activation run — 2026-07-21
 
-**Status:** In progress — Tasks 1–9 of the Promo-selection correction are
-implemented and verified locally, but the owner-controlled staging
-migration/deployment and every new Task 10 manual case remain unrun
+**Status:** In progress — Tasks 1–9 of the Promo-selection correction and Task
+10 review remediation are implemented and verified locally; the protected
+cutover/recovery procedure is prepared, but reviewed merge, the
+owner-controlled staging migration/deployment, and every new manual case remain
+unrun
 
 **Notion:** https://app.notion.com/p/3a5e5c7c2b8e81739dfed75f998e6489
 
@@ -146,9 +148,13 @@ the account owner.
   compatible coded Promos may stack; and redemption commits the complete signed
   selected bundle atomically.
 - Local implementation status: Tasks 1–9 of `GAP-026` are implemented and
-  focused verification passes. The design remains **Approved; implementation
-  plan ready**, and the plan remains **In progress**, because owner-controlled
-  staging deployment and manual evidence do not yet exist. See the
+  focused verification passes. Task 10 review remediation adds protected
+  Product-D1 confirmation/queries/export/status, the migration-equivalent
+  legacy-redemption guard, the compatibility proof for old column-list
+  inserts, and a forward-only cutover/recovery procedure. The plan remains
+  **In progress** because final verification, reviewed merge,
+  owner-controlled staging deployment, and manual evidence do not yet exist.
+  See the
   [design](../superpowers/specs/2026-07-23-promo-selection-code-stacking-design.md)
   and [plan](../superpowers/plans/2026-07-24-promo-selection-code-stacking.md).
 - Retest requirement: after a reviewed merge and user-controlled staging
@@ -197,21 +203,32 @@ deferrals are in the linked Product follow-up register.
 
 ## Task 10 local automated evidence
 
-This evidence is local only. It was established from clean processes at source
-commit `0f49908` and does not claim that migration `0006`, either Worker
-deployment, or the fresh manual staging run has happened.
+This evidence is local only. It was freshly established from the current Task
+10 review-remediation candidate on 2026-07-24 and does not claim that migration
+`0006`, either Worker deployment, or the fresh manual staging run has happened.
 
-| Gate | Result at `0f49908` |
+| Gate | Current review-remediation result |
 | --- | --- |
-| Six focused package suites (`contracts`, `engine`, `module-kit`, `promo`, `api`, `dashboard`) | Pass: 904/904 tests |
-| `pnpm test` | Pass: 1,261/1,261 workspace tests |
+| Six focused package suites (`contracts`, `engine`, `module-kit`, `promo`, `api`, `dashboard`) | Pass: 905/905 tests |
+| Protected-runner suites (`staging-wrangler-resolution`, `staging-wrangler-runner`, `staging-wrangler-task10`) | Pass: 65/65 tests |
+| `pnpm test` | Pass: 1,285/1,285 workspace tests |
 | `pnpm build` | Pass; the existing dashboard main-chunk warning above 500 kB remains |
 | `pnpm lint` | Pass; only the two existing dashboard Fast Refresh warnings remain (`ThemeProvider.tsx:9:14` and `Toast.tsx:15:17`) |
-| `pnpm verify:clean-tests` | Pass |
-| `apps/api/test/production-migration.test.ts` | Pass: 20/20 tests, including the production baseline, fail-loud legacy guards, and readable legacy redemption backfill |
-| Task 10 review | No Critical or Important findings |
+| `pnpm verify:clean-tests` | Pass against the committed candidate, including the new protected-runner and migration-compatibility tests |
+| `apps/api/test/production-migration.test.ts` | Pass: 21/21 tests, including the production baseline, fail-loud legacy guards, readable legacy redemption backfill, and additive compatibility proof |
+| Task 10 review | Rollout-safety findings remediated; final parent review and merge remain pending |
 
 ## Owner-controlled Task 10 staging rollout — prepared, not executed
+
+> **Superseded rollout draft — do not execute the inline commands in this
+> section.** The reviewed procedure is the
+> [Task 10 protected staging cutover and recovery guide](./task10-staging-cutover.md).
+> It routes every D1 export/query, deployment-status read, and possible API
+> rollback through the generated mode-`0600` protected runner, adds the exact
+> legacy-redemption precheck, requires a continuous quiet window and
+> pre-deployment health check, and defines the forward-only recovery and
+> sensitive-export disposition rules. This historical draft remains only to
+> preserve the activation record.
 
 **Status:** Not run. No Cloudflare query, export, migration, deployment,
 secret operation, or manual staging case below was executed by the

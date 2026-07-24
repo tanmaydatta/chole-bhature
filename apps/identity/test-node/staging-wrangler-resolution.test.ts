@@ -48,7 +48,13 @@ describe('staging Wrangler executable resolution', () => {
     await writeFile(path.join(wranglerPackage, 'package.json'), '{"type":"module"}\n');
     await writeFile(
       path.join(wranglerBin, 'wrangler.js'),
-      `import { writeFileSync } from 'node:fs';\nwriteFileSync(process.env.LOCAL_CAPTURE, 'local');\n`,
+      `import { writeFileSync } from 'node:fs';
+const args = process.argv.slice(2);
+writeFileSync(process.env.LOCAL_CAPTURE, 'local');
+if (args[0] === 'd1' && args[1] === 'info') {
+  process.stdout.write(JSON.stringify({ uuid: process.env.FAKE_PRODUCT_D1_ID }));
+}
+`,
     );
     for (const executable of ['wrangler', 'node', 'sh', 'sed', 'dirname', 'uname']) {
       const hostileExecutable = path.join(hostileBin, executable);
@@ -72,6 +78,7 @@ describe('staging Wrangler executable resolution', () => {
     await execFileAsync(process.execPath, ['--input-type=module', '--eval', invocation], {
       env: validEnvironment({
         TEST_REPOSITORY_ROOT: repositoryRoot,
+        FAKE_PRODUCT_D1_ID: 'd918b5cc-7ce4-4bf6-a33e-90c8335f2ef1',
         LOCAL_CAPTURE: localCapture,
         HOSTILE_CAPTURE: hostileCapture,
         PATH: `${hostileBin}${path.delimiter}${process.env.PATH ?? ''}`,

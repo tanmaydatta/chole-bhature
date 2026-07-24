@@ -2,7 +2,8 @@
 
 **Updated:** 2026-07-24
 
-**Status:** Active — clean-break correction implemented locally through Task 9; Task 10 staging evidence pending
+**Status:** Active — clean-break correction and Task 10 review remediation
+verified locally; reviewed merge and owner-run staging evidence pending
 
 **Notion mirror:** https://app.notion.com/p/Product-Current-State-and-Roadmap-3a6e5c7c2b8e81f6b412c45a2bc7b344
 
@@ -23,12 +24,12 @@ deferred issue remains in the
 | Question | Current answer |
 |---|---|
 | Overall phase | Production Operator Platform, Delivery Gate C |
-| Current activity | Finish verification/review, then have the owner deploy and manually verify the clean-break Promo selection and atomic bundle correction |
+| Current activity | Complete reviewed integration, then have the owner run the protected cutover and manually verify the clean-break Promo selection and atomic bundle correction |
 | Current product-code baseline | PR #8 merge commit `e15cbba` on `dev` |
-| Local feature state | Promo-selection plan Tasks 1–9 implemented; Task 10/full review and staging evidence remain open |
+| Local feature state | Promo-selection plan Tasks 1–9 and Task 10 review remediation are implemented and verified locally; protected rollout tooling, migration prechecks, compatibility proof, and recovery guidance are prepared; merge and staging evidence remain open |
 | Current deployment gap | The new migration/API/operator build is not deployed; staging still runs the historical singular selection/redemption contract |
 | Current blocker | Owner-controlled staging deployment and the 12 documented selection/bundle/tenant/log cases have not run |
-| Gate C finish line | Complete Task 10, merge by reviewed PR, deploy one owner-run command at a time, pass all manual cases, and close remaining tenant/security evidence |
+| Gate C finish line | Merge by reviewed PR, execute the protected owner-run cutover one command at a time, pass all manual cases, and close remaining tenant/security evidence |
 | Next plan work | Close Gate C, then write the approved free-shipping financial-authority implementation plan |
 
 ## Source-of-truth map
@@ -40,6 +41,7 @@ Use this page for current sequencing and status. Follow its links for detail:
 | Current state and next work | This page |
 | Every known gap, resolved incident, and deferred capability | [Repository](./follow-up-register.md) · [Notion](https://app.notion.com/p/Product-Follow-up-Register-3a6e5c7c2b8e81cebe96de50b64f3bbd) |
 | Current staging evidence | [Repository](../testing/staging-activation-run-2026-07-21.md) · [Notion](https://app.notion.com/p/3a5e5c7c2b8e81739dfed75f998e6489) |
+| Protected Task 10 cutover and recovery | [Repository](../testing/task10-staging-cutover.md) |
 | Repeatable manual procedure | [Repository](../testing/gate-c-manual-test.md) · [Notion](https://app.notion.com/p/3a3e5c7c2b8e8155aa10c869b97b7e5a) |
 | Active delivery plan | [Repository](../superpowers/plans/2026-07-19-production-operator-platform.md) · [Notion](https://app.notion.com/p/Production-Operator-Platform-and-Integration-Harness-Implementation-Plan-3a2e5c7c2b8e8191ba1ff65dd30752b3) |
 | Approved Promo selection and atomic-redemption design | [Repository](../superpowers/specs/2026-07-23-promo-selection-code-stacking-design.md) · [Notion](https://app.notion.com/p/Promo-Selection-Code-Stacking-and-Atomic-Redemption-Design-Spec-3a6e5c7c2b8e81549b6adc7f3d096455) |
@@ -83,6 +85,11 @@ test observations to make the current state look cleaner.
 - Staging uses `api.staging.wastd.dev` and
   `operator.staging.wastd.dev`; Identity remains private.
 - API, Identity, and Operator Web persist staging logs at 100% sampling.
+- Task 10 staging operations now have a protected runner boundary for
+  Product-D1 identity confirmation, count-only migration/precheck queries,
+  private export, API/Operator deployment status, cutover write markers, and a
+  narrowly gated API-only emergency rollback. These operations are prepared,
+  not executed.
 
 ## What is verified in staging
 
@@ -121,22 +128,32 @@ The approved behavior is recorded in the
 [Promo Selection, Code Stacking, and Atomic Redemption design](../superpowers/specs/2026-07-23-promo-selection-code-stacking-design.md).
 Its
 [plan](../superpowers/plans/2026-07-24-promo-selection-code-stacking.md)
-is `In progress`: Tasks 1–9 are implemented and focused verification passes
-locally. The public request uses `codes[]`; automatic evaluation returns zero or
-one private winner; coded evaluation returns submitted-code diagnostics;
+is `In progress`: Tasks 1–9 and Task 10 review remediation are implemented and
+verified locally. The public request uses `codes[]`; automatic evaluation returns zero
+or one private winner; coded evaluation returns submitted-code diagnostics;
 compatible coded Promos can combine; the signed ordered set commits through a
 provider-neutral atomic coordinator; D1 is its initial adapter; and sanitized
-failure logs carry the client-visible correlation ID. The design is not marked
-implemented because Task 10, reviewed merge, owner-controlled staging
-deployment, and manual evidence remain incomplete.
+failure logs carry the client-visible correlation ID.
+
+Task 10 review remediation has added a migration-equivalent count-only legacy
+redemption guard, a proof that pre-`0006` column-list inserts remain accepted
+but bypass the new ledgers, and the
+[protected staging cutover/recovery guide](../testing/task10-staging-cutover.md).
+Every protected remote action uses generated mode-`0600` configuration,
+authenticates and confirms Product D1 without printing IDs, and emits only
+allowlisted summaries. The design is not marked implemented because the
+reviewed merge, owner-controlled staging cutover, and manual evidence remain
+incomplete.
 
 The immediate sequence is:
 
-1. Run Task 10 full verification, compatibility/security inspection, and code
-   review on the feature branch.
-2. Merge through a reviewed PR into `dev`; never push directly to `dev`.
-3. The account owner applies the staging migration and deployments one command at a
-   time.
+1. Merge the locally verified Task 10 review-remediation candidate through a
+   reviewed PR into `dev`; never push directly to `dev`.
+2. Confirm the merged source and protected-runner revision before staging.
+3. The account owner follows the protected cutover guide one command at a
+   time: continuous quiet window, Product-D1 confirmation/prechecks/export,
+   forward-only migration, pre-deployment health, API deployment, and Operator
+   deployment. Identity is not part of this cutover.
 4. Repeat the documented automatic, coded, stacking, bundle-idempotency, and
    concurrency cases with fresh references.
 5. Complete the remaining tenant-isolation and security closeout checks.

@@ -55,6 +55,7 @@ import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 const args = process.argv.slice(2);
 const configPath = args[args.indexOf('--config') + 1];
+const isProductConfirmation = args[0] === 'd1' && args[1] === 'info';
 const devVarsPath = path.join(path.dirname(configPath), '.dev.vars');
 const hasDevVars = existsSync(devVarsPath);
 const devVars = hasDevVars ? readFileSync(devVarsPath, 'utf8') : '';
@@ -76,7 +77,11 @@ writeFileSync(process.env.FAKE_WRANGLER_CAPTURE, JSON.stringify({
   hasDevOperatorSelectionSecret:
     devVars.includes('OPERATOR_SELECTION_SECRET=') && devVars.includes('must-not-reach'),
 }));
-process.exit(Number(process.env.FAKE_WRANGLER_EXIT ?? '0'));
+if (isProductConfirmation) {
+  process.stdout.write(JSON.stringify({ uuid: process.env.FAKE_PRODUCT_D1_ID }));
+} else {
+  process.exit(Number(process.env.FAKE_WRANGLER_EXIT ?? '0'));
+}
 `);
   }
   return {
@@ -84,6 +89,7 @@ process.exit(Number(process.env.FAKE_WRANGLER_EXIT ?? '0'));
     repositoryRoot: testRepositoryRoot,
     environment: validEnvironment({
       FAKE_WRANGLER_CAPTURE: capture,
+      FAKE_PRODUCT_D1_ID: productId,
     }),
   };
 }
@@ -148,7 +154,7 @@ describe('staging Wrangler runner', () => {
       hasDevOperatorSelectionSecret: boolean;
     };
 
-    expect(result.stdout).toBe('');
+    expect(result.stdout).toBe('Authenticated staging Product D1 target confirmed.\n');
     expect(result.stderr).toBe('');
     expect(capture.args.slice(0, prefix.length)).toEqual(prefix);
     expect(capture.args.slice(-2)).toEqual(['--config', capture.configPath]);

@@ -1,5 +1,13 @@
 import path from 'node:path';
 
+import {
+  LEGACY_PROMO_PRECHECK_SQL,
+  LEGACY_REDEMPTION_PRECHECK_SQL,
+  TASK10_COUNT_SQL,
+  TASK10_CUTOVER_WRITE_MARKER_SQL,
+  TASK10_POST_MIGRATION_SQL,
+} from './staging-wrangler-task10-queries.mjs';
+
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
 const RP_ID_PATTERN = /^(?=.{1,253}$)(?!-)(?:[a-z0-9-]{1,63}\.)+[a-z0-9-]{2,63}$/u;
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/u;
@@ -235,23 +243,129 @@ entrypoint = "CoreOperatorService"
 `;
 }
 
-export function stagingWranglerArguments(app, action, configPath) {
-  if (
-    !['api', 'identity', 'operator-web'].includes(app)
-    || !['dev', 'migrate', 'deploy'].includes(action)
-    || (app === 'operator-web' && action === 'migrate')
-  ) {
-    throw new Error('Unsupported staging Wrangler command.');
-  }
-  if (action === 'dev') return ['dev', '--remote', '--config', configPath];
-  if (action === 'deploy') return ['deploy', '--config', configPath];
+const STAGING_WORKER_NAMES = Object.freeze({
+  api: 'incentives-api-staging',
+  identity: 'incentives-identity-staging',
+  'operator-web': 'incentives-operator-web-staging',
+});
+
+export function stagingProductConfirmationArguments(configPath) {
   return [
     'd1',
-    'migrations',
-    'apply',
-    app === 'api' ? 'incentives-staging' : 'incentives-auth-staging',
-    '--remote',
+    'info',
+    'incentives-staging',
+    '--json',
     '--config',
     configPath,
   ];
+}
+
+function taskTenD1ExecuteArguments(sql, configPath) {
+  return [
+    'd1',
+    'execute',
+    'incentives-staging',
+    '--remote',
+    '--json',
+    '--command',
+    sql,
+    '--config',
+    configPath,
+  ];
+}
+
+function isExactTaskTenExportPath(value) {
+  return typeof value === 'string'
+    && path.isAbsolute(value)
+    && path.basename(value) === 'incentives-staging-before-0006.sql';
+}
+
+export function stagingWranglerArguments(app, action, configPath, actionArgument) {
+  if (!['api', 'identity', 'operator-web'].includes(app)) {
+    throw new Error('Unsupported staging Wrangler command.');
+  }
+  if (action === 'dev' && actionArgument === undefined) {
+    return ['dev', '--remote', '--config', configPath];
+  }
+  if (action === 'deploy' && actionArgument === undefined) {
+    return ['deploy', '--config', configPath];
+  }
+  if (
+    action === 'migrate'
+    && actionArgument === undefined
+    && app !== 'operator-web'
+  ) {
+    return [
+      'd1',
+      'migrations',
+      'apply',
+      app === 'api' ? 'incentives-staging' : 'incentives-auth-staging',
+      '--remote',
+      '--config',
+      configPath,
+    ];
+  }
+  if (
+    action === 'task10-status'
+    && actionArgument === undefined
+    && app !== 'identity'
+  ) {
+    return [
+      'deployments',
+      'status',
+      '--name',
+      STAGING_WORKER_NAMES[app],
+      '--json',
+      '--config',
+      configPath,
+    ];
+  }
+  if (app !== 'api') {
+    throw new Error('Unsupported staging Wrangler command.');
+  }
+  if (action === 'task10-counts' && actionArgument === undefined) {
+    return taskTenD1ExecuteArguments(TASK10_COUNT_SQL, configPath);
+  }
+  if (action === 'task10-precheck-promos' && actionArgument === undefined) {
+    return taskTenD1ExecuteArguments(LEGACY_PROMO_PRECHECK_SQL, configPath);
+  }
+  if (action === 'task10-precheck-redemptions' && actionArgument === undefined) {
+    return taskTenD1ExecuteArguments(LEGACY_REDEMPTION_PRECHECK_SQL, configPath);
+  }
+  if (action === 'task10-post-migration' && actionArgument === undefined) {
+    return taskTenD1ExecuteArguments(TASK10_POST_MIGRATION_SQL, configPath);
+  }
+  if (action === 'task10-write-marker' && actionArgument === undefined) {
+    return taskTenD1ExecuteArguments(TASK10_CUTOVER_WRITE_MARKER_SQL, configPath);
+  }
+  if (action === 'task10-export' && isExactTaskTenExportPath(actionArgument)) {
+    return [
+      'd1',
+      'export',
+      'incentives-staging',
+      '--remote',
+      '--output',
+      actionArgument,
+      '--config',
+      configPath,
+    ];
+  }
+  if (
+    action === 'task10-rollback'
+    && typeof actionArgument === 'string'
+    && UUID_PATTERN.test(actionArgument)
+  ) {
+    return [
+      'rollback',
+      actionArgument,
+      '--name',
+      STAGING_WORKER_NAMES.api,
+      '--message',
+      'Task 10 emergency rollback after a verified zero-write cutover',
+      '--yes',
+      '--config',
+      configPath,
+    ];
+  }
+  throw new Error('Unsupported staging Wrangler command.');
 }

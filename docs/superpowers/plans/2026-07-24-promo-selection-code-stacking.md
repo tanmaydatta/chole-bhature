@@ -8,7 +8,8 @@
 
 **Tech Stack:** TypeScript, Zod, Hono, Cloudflare Workers, D1/Drizzle, React, React Router, Vitest, Testing Library, pnpm.
 
-**Status:** In progress — Tasks 1–9 implemented locally; Task 10 and staging evidence pending
+**Status:** In progress — Tasks 1–9 and Task 10 review remediation implemented
+and verified locally; reviewed merge and owner-run staging evidence pending
 
 **Notion mirror:** https://app.notion.com/p/Promo-Selection-Code-Stacking-and-Atomic-Redemption-Implementation-Plan-3a7e5c7c2b8e811791dee0d21803c8e2
 
@@ -1582,7 +1583,7 @@ git commit -m "docs: document promo selection and atomic bundles"
 - Verify all files changed in Tasks 1–9
 - Update: `docs/testing/staging-activation-run-2026-07-21.md`
 
-- [ ] **Step 1: Run focused suites from a clean process**
+- [x] **Step 1: Run focused suites from a clean process**
 
 ```bash
 pnpm --filter @incentives/contracts test
@@ -1595,7 +1596,7 @@ pnpm --filter @incentives/dashboard test
 
 Expected: all pass with no watch processes left running.
 
-- [ ] **Step 2: Run repository-wide verification**
+- [x] **Step 2: Run repository-wide verification**
 
 ```bash
 pnpm build
@@ -1606,7 +1607,7 @@ pnpm verify:clean-tests
 
 Expected: every command exits 0.
 
-- [ ] **Step 3: Inspect migration and compatibility boundaries**
+- [x] **Step 3: Inspect migration and compatibility boundaries**
 
 Confirm:
 
@@ -1626,7 +1627,7 @@ rg -n "stackingGroup|request\\.code\\b|programRef.*RedemptionRequest" packages a
 
 Expected: provider-specific matches are confined to adapters/env wiring; legacy matches are migration/audit or explicit historical tests.
 
-- [ ] **Step 4: Perform a security/privacy review**
+- [x] **Step 4: Perform a security/privacy review**
 
 Search logs and response builders:
 
@@ -1642,19 +1643,25 @@ Verify:
 - coded responses echo only caller-submitted codes; and
 - authorized operator code visibility is permission-protected.
 
-- [ ] **Step 5: Prepare, but do not execute, staging commands**
+- [x] **Step 5: Prepare, but do not execute, staging commands**
 
-Write the exact migration/deploy commands in the activation record. Present them to the Cloudflare account owner one at a time in this order:
+Write the exact migration/deploy commands in the protected Task 10 cutover
+guide and link it from the activation record. Present them to the Cloudflare
+account owner one at a time in this order:
 
-1. back up/query current staging data;
-2. validate legacy Promo rows;
-3. apply D1 migration;
-4. deploy API Worker;
-5. verify health and OpenAPI;
-6. deploy identity Worker only if its binding contract changed;
-7. deploy operator Worker;
-8. run the manual staging guide; and
-9. record versions and evidence.
+1. open a continuous quiet window;
+2. authenticate and confirm Product D1 through generated configuration;
+3. capture protected API/Operator status and Product write markers;
+4. export Product D1 to an owner-only directory;
+5. run count-only legacy Promo and redemption prechecks;
+6. apply D1 migration and verify the migration/table counts;
+7. verify API health before deployment while the previous Worker is live;
+8. deploy and verify the API Worker and clean-break OpenAPI;
+9. deploy and verify Operator Web; Identity is not part of this rollout;
+10. run the manual staging guide with fresh references;
+11. record safe versions/evidence; and
+12. retain or explicitly delete the sensitive export only after evidence
+    acceptance.
 
 The implementation agent does not execute these external writes.
 
@@ -1674,7 +1681,7 @@ suffix or refresh only a subset of the references. Record:
 - deployed Worker version IDs; and
 - any new gap with severity and follow-up owner.
 
-- [ ] **Step 7: Request code review**
+- [x] **Step 7: Request code review**
 
 Use `superpowers:requesting-code-review`. Review specifically for:
 
@@ -1687,7 +1694,7 @@ Use `superpowers:requesting-code-review`. Review specifically for:
 - correlation propagation; and
 - accidental coupling to Cloudflare outside adapters.
 
-- [ ] **Step 8: Apply review feedback and rerun verification**
+- [x] **Step 8: Apply review feedback and rerun verification**
 
 Use `superpowers:receiving-code-review` for actionable feedback, then repeat Steps 1–4. Do not mark this plan done on the strength of an earlier run.
 

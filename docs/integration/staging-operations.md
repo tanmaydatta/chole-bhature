@@ -152,11 +152,43 @@ temporary files on success or failure, and strips application secrets and `STAGI
 the Wrangler child environment. Staging `dev` commands may create a temporary `.dev.vars`; migrate
 and deploy commands never put application secrets in the generated TOML.
 
+Before every remote runner action, authenticated Wrangler resolves Product D1
+through a separate generated API config pinned to `STAGING_PRODUCT_D1_ID`. The
+runner compares that resolved UUID without printing either value and stops
+before the requested action on any authentication, parsing, or identity
+failure. The requested command then runs with `shell: false`, the reviewed
+Worker/database name, and an exact argument allowlist.
+
+Task 10 adds protected owner-run actions for count-only inventory, legacy Promo
+and redemption prechecks, post-migration verification, cutover write markers,
+Product D1 export, API/Operator deployment status, and an emergency API-only
+rollback. Protected action output is parsed fail-closed and reduced to approved
+counts, timestamps, deployment versions, or a generic completion message.
+Wrangler stdout/stderr, D1 metadata, account details, and export signed URLs are
+not forwarded. Product export additionally requires a caller-supplied absolute
+path under an existing owner-controlled, non-symlink, mode-`0700` directory
+with the fixed basename `incentives-staging-before-0006.sql`.
+
+The canonical ordered commands, expected safe outputs, quiet-window rules,
+pre-deployment health check, compatibility conditions, and explicit
+export-retention/disposition steps are in the
+[Task 10 protected staging cutover and recovery guide](../testing/task10-staging-cutover.md).
+The dated activation record's older inline direct-Wrangler rollout draft is
+historical and must not be executed.
+
 ### Failure and rollback rules
 
 - A failed migration stops activation. Never attempt a destructive D1 downgrade.
 - A failed Worker deployment leaves its previous deployed version active.
-- Worker rollback is a separate Cloudflare mutation and must be run by the user only after the
-  target Worker and version are confirmed with read-only commands.
+- Product migrations are forward-only. After migration, normal recovery is a
+  quiet-window containment plus a reviewed forward fix.
+- An emergency API Worker rollback is a separate owner-only Cloudflare
+  mutation. It is permitted only when protected pre/post write markers prove
+  zero evaluation/redemption writes after migration, the exact prior API
+  version was captured, that version is mapped to reviewed local source, and
+  local tests prove that source remains compatible with the migrated schema.
+  Any write or uncertainty forbids rollback.
+- Task 10 does not roll back Operator Web, Identity, Product D1, or the static
+  demo.
 - Identity must remain private. Stop if Cloudflare shows a public Identity route or hostname.
 - The static demo is never an operator-platform rollback target and remains unchanged.

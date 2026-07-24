@@ -568,6 +568,110 @@ test('adds promo claims, evaluation identity, idempotency operations, and bundle
   ]));
 });
 
+test('keeps pre-0006 column-list inserts schema-compatible without populating new ledgers', async () => {
+  const migration = await resetToMigrationFive();
+  await applyD1Migrations(testEnv.DB, [migration]);
+
+  const before = await testEnv.DB.prepare(`
+    SELECT
+      (SELECT COUNT(*) FROM redemption_operations) AS operationCount,
+      (SELECT COUNT(*) FROM redemption_entries) AS entryCount
+  `).first<{ operationCount: number; entryCount: number }>();
+  const evaluationId = 'post-0006-old-worker-evaluation';
+  const redemptionId = 'post-0006-old-worker-redemption';
+  const idempotencyKey = 'post-0006-old-worker-key';
+  const externalOrderRef = 'post-0006-old-worker-order';
+  const request = {
+    customerRef: 'legacy-customer',
+    cart: { currency: 'GBP', subtotal: 5_000, items: [] },
+  };
+  const decisions = [{
+    programRef: 'legacy-welcome',
+    programRevision: 1,
+    programType: 'promo',
+    outcome: 'qualified',
+    rewardRuleRef: 'welcome-reward',
+    effects: [{
+      type: 'order_discount',
+      calculation: 'fixed',
+      amount: { currency: 'GBP', minorUnits: 500 },
+    }],
+    reasonCodes: ['QUALIFIED'],
+    commitRequired: true,
+  }];
+  const result = {
+    version: 1,
+    result: {
+      redemptionId,
+      evaluationId,
+      externalOrderRef,
+      idempotencyKey,
+      programRef: 'legacy-welcome',
+      rewardRuleRef: 'welcome-reward',
+      status: 'committed',
+      effects: decisions[0]!.effects,
+    },
+    receiptIntegrityHash: 'b'.repeat(64),
+  };
+
+  await testEnv.DB.batch([
+    testEnv.DB.prepare(`
+      INSERT INTO evaluation_decisions (
+        id, merchant_id, customer_ref, customer_version, schema_version,
+        request_json, facts_json, decisions_json, integrity_hash, expires_at, created_at
+      ) VALUES (
+        ?1, 'phase-0-merchant', 'legacy-customer', 2, 1,
+        ?2, ?3, ?4, 'old-worker-integrity',
+        '2026-07-18T12:10:00.000Z', '2026-07-18T12:06:00.000Z'
+      )
+    `).bind(
+      evaluationId,
+      JSON.stringify(request),
+      JSON.stringify({ scalar: { 'customer.tier': 'gold' }, lineItems: [], programs: [] }),
+      JSON.stringify(decisions),
+    ),
+    testEnv.DB.prepare(`
+      INSERT INTO redemptions (
+        id, merchant_id, external_order_ref, idempotency_key, evaluation_id,
+        result_json, discount_minor_units, currency, created_at
+      ) VALUES (
+        ?1, 'phase-0-merchant', ?2, ?3, ?4, ?5, 500, 'GBP',
+        '2026-07-18T12:07:00.000Z'
+      )
+    `).bind(
+      redemptionId,
+      externalOrderRef,
+      idempotencyKey,
+      evaluationId,
+      JSON.stringify(result),
+    ),
+  ]);
+
+  expect(await testEnv.DB.prepare(`
+    SELECT mode, submitted_codes_json AS submittedCodesJson,
+      code_results_json AS codeResultsJson, request_digest AS requestDigest,
+      correlation_id AS correlationId
+    FROM evaluation_decisions WHERE id = ?1
+  `).bind(evaluationId).first()).toEqual({
+    mode: 'automatic',
+    submittedCodesJson: '[]',
+    codeResultsJson: '[]',
+    requestDigest: 'legacy:unknown',
+    correlationId: 'migration:unknown',
+  });
+  expect(await testEnv.DB.prepare(`
+    SELECT request_digest AS requestDigest
+    FROM redemptions WHERE id = ?1
+  `).bind(redemptionId).first()).toEqual({
+    requestDigest: 'legacy:unknown',
+  });
+  expect(await testEnv.DB.prepare(`
+    SELECT
+      (SELECT COUNT(*) FROM redemption_operations) AS operationCount,
+      (SELECT COUNT(*) FROM redemption_entries) AS entryCount
+  `).first()).toEqual(before);
+});
+
 test('normalizes valid legacy triggers and backfills singular redemption history', async () => {
   const migration = await resetToMigrationFive();
   const legacyAutomatic = {
