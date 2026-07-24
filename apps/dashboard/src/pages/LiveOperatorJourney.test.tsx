@@ -1,4 +1,4 @@
-import { cleanup, render, screen, within } from '@testing-library/react';
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
@@ -397,7 +397,11 @@ describe('live operator authoring journey', () => {
     const server = installLiveBff();
     renderApp('/promo/new');
     expect(await screen.findByLabelText('External reference')).toBeInTheDocument();
-    expect(server.calls.some(call => call.path === '/operator/v1/schema/definitions' && call.method === 'GET')).toBe(true);
+    await waitFor(() => expect(
+      server.calls.some(call => (
+        call.path === '/operator/v1/schema/definitions' && call.method === 'GET'
+      )),
+    ).toBe(true));
     expect(server.calls.some(call => call.path === '/operator/v1/schema/published')).toBe(false);
     await userEvent.click(screen.getAllByText('＋ Add condition')[0]!);
     expect(screen.getByText('cart.subtotal')).toBeInTheDocument();
