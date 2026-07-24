@@ -85,12 +85,17 @@ export class DecisionExpiredError extends ApiFailure {
   }
 }
 
+export type ExhaustionErrorCode =
+  | 'EXHAUSTED'
+  | 'USAGE_CAP_EXHAUSTED'
+  | 'BUDGET_EXHAUSTED'
+  | 'PER_CUSTOMER_CAP_EXHAUSTED';
+
 export class ExhaustedError extends ApiFailure {
   override readonly name = 'ExhaustedError';
-  readonly code = 'EXHAUSTED';
   readonly status = 409;
 
-  constructor() {
+  constructor(readonly code: ExhaustionErrorCode = 'EXHAUSTED') {
     super('The incentive is no longer available');
   }
 }

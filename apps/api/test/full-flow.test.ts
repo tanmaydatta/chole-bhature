@@ -761,7 +761,7 @@ describe('integration-ready runtime', () => {
       idempotencyKey: 'ended-attempt',
     });
     expect(redemption.status).toBe(409);
-    expect(ApiErrorSchema.parse(await redemption.json()).error.code).toBe('EXHAUSTED');
+    expect(ApiErrorSchema.parse(await redemption.json()).error.code).toBe('VERSION_CONFLICT');
   });
 
   test('proves tiered rewards, selected-rule integrity, and program-wide exhaustion', async () => {

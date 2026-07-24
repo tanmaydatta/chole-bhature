@@ -1074,11 +1074,7 @@ describe('immutable Promo revisions and lifecycle', () => {
       operatorContext('programs:publish'),
       scheduled.id,
     )).resolves.toMatchObject({ status: 'scheduled', activeRevision: 1 });
-    await expect(evaluate(scheduled.id)).resolves.toMatchObject({
-      programRevision: 1,
-      outcome: 'unavailable',
-      reasonCodes: ['PROGRAM_UNAVAILABLE'],
-    });
+    await expect(evaluate(scheduled.id)).resolves.toBeUndefined();
 
     const paused = draftProgram('paused-scheduled-offer', {
       startDate: '2026-08-02',
@@ -1093,14 +1089,14 @@ describe('immutable Promo revisions and lifecycle', () => {
 
     vi.setSystemTime(new Date('2026-08-02T00:00:00.000Z'));
     await expect(evaluate(scheduled.id)).resolves.toMatchObject({ outcome: 'qualified' });
-    await expect(evaluate(paused.id)).resolves.toMatchObject({ outcome: 'unavailable' });
+    await expect(evaluate(paused.id)).resolves.toBeUndefined();
 
     vi.setSystemTime(new Date('2026-08-03T23:59:59.000Z'));
     await expect(evaluate(scheduled.id)).resolves.toMatchObject({ outcome: 'qualified' });
 
     vi.setSystemTime(new Date('2026-08-04T00:00:00.000Z'));
-    await expect(evaluate(scheduled.id)).resolves.toMatchObject({ outcome: 'unavailable' });
-    await expect(evaluate(paused.id)).resolves.toMatchObject({ outcome: 'unavailable' });
+    await expect(evaluate(scheduled.id)).resolves.toBeUndefined();
+    await expect(evaluate(paused.id)).resolves.toBeUndefined();
   });
 
   test('keeps natural end irreversible when a replacement revision is published later', async () => {
@@ -1124,7 +1120,7 @@ describe('immutable Promo revisions and lifecycle', () => {
       operatorContext('programs:publish'),
       ending.id,
     )).resolves.toMatchObject({ status: 'ended', activeRevision: 2 });
-    await expect(evaluate(ending.id)).resolves.toMatchObject({ outcome: 'unavailable' });
+    await expect(evaluate(ending.id)).resolves.toBeUndefined();
     await expect(service.resumeProgram(
       operatorContext('programs:manage'),
       ending.id,
@@ -1144,7 +1140,7 @@ describe('immutable Promo revisions and lifecycle', () => {
       operatorContext('programs:manage'),
       ending.id,
     )).rejects.toMatchObject({ name: 'ProgramConflictError' });
-    await expect(evaluate(ending.id)).resolves.toMatchObject({ outcome: 'unavailable' });
+    await expect(evaluate(ending.id)).resolves.toBeUndefined();
   });
 
   test('keeps prior natural end irreversible after pause and a longer replacement', async () => {
@@ -1173,7 +1169,7 @@ describe('immutable Promo revisions and lifecycle', () => {
       operatorContext('programs:manage'),
       ending.id,
     )).rejects.toMatchObject({ name: 'ProgramConflictError' });
-    await expect(evaluate(ending.id)).resolves.toMatchObject({ outcome: 'unavailable' });
+    await expect(evaluate(ending.id)).resolves.toBeUndefined();
   });
 
   test('pauses and resumes an active Promo, then makes end irreversible', async () => {
@@ -1186,7 +1182,7 @@ describe('immutable Promo revisions and lifecycle', () => {
       operatorContext('programs:manage'),
       active.id,
     )).resolves.toMatchObject({ status: 'paused', activeRevision: 1 });
-    await expect(evaluate(active.id)).resolves.toMatchObject({ outcome: 'unavailable' });
+    await expect(evaluate(active.id)).resolves.toBeUndefined();
     await expect(service.resumeProgram(
       operatorContext('programs:manage'),
       active.id,
@@ -1208,7 +1204,7 @@ describe('immutable Promo revisions and lifecycle', () => {
       operatorContext('programs:manage'),
       active.id,
     )).rejects.toMatchObject({ name: 'ProgramConflictError' });
-    await expect(evaluate(active.id)).resolves.toMatchObject({ outcome: 'unavailable' });
+    await expect(evaluate(active.id)).resolves.toBeUndefined();
   });
 
   test('does not let publishing a replacement silently resume a paused or ended Promo', async () => {
@@ -1236,10 +1232,7 @@ describe('immutable Promo revisions and lifecycle', () => {
         status: state,
         activeRevision: 2,
       });
-      await expect(evaluate(externalRef)).resolves.toMatchObject({
-        programRevision: 2,
-        outcome: 'unavailable',
-      });
+      await expect(evaluate(externalRef)).resolves.toBeUndefined();
     }
   });
 

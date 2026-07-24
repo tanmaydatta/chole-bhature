@@ -282,7 +282,6 @@ describe('Promo program API', () => {
     const created = await createProgram(promo('replace-all', {
       startDate: '2026-08-01',
       endDate: '2026-08-31',
-      stackingGroup: 'welcome',
     }));
     const replacement: PromoProgram = {
       id: created.id,

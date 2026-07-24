@@ -13,17 +13,17 @@ export interface CommitRedemptionBundleInput {
   committedAt: string;
 }
 
+export type ExhaustionReasonCode =
+  | 'USAGE_CAP_EXHAUSTED'
+  | 'PER_CUSTOMER_CAP_EXHAUSTED'
+  | 'BUDGET_EXHAUSTED';
+
 export type TerminalRedemptionErrorCode =
   | 'NOTHING_TO_COMMIT'
   | 'DECISION_EXPIRED'
   | 'INVALID_DECISION'
   | 'PROGRAM_UNAVAILABLE'
-  | 'PER_CUSTOMER_CAP_EXHAUSTED'
-  | 'BUDGET_EXHAUSTED';
-
-export type ExhaustionReasonCode =
-  | 'PER_CUSTOMER_CAP_EXHAUSTED'
-  | 'BUDGET_EXHAUSTED';
+  | ExhaustionReasonCode;
 
 export type CommitRedemptionBundleResult =
   | { kind: 'committed'; bundle: RedemptionBundleCreate }

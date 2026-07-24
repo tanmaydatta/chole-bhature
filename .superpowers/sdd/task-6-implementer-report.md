@@ -106,7 +106,7 @@ enforcement, expired and tampered decisions, every-child validation, forced fina
 entry-trigger batch abort, terminal result mapping, migrated entry accounting, and receipt HMAC
 failure after adding, removing, mutating, or reordering children.
 
-## Exact package command and known unrelated failures
+## Initial exact package command and stale failures
 
 ```text
 pnpm --filter @incentives/api test -- \
@@ -115,8 +115,8 @@ pnpm --filter @incentives/api test -- \
 ```
 
 The package script preserves the literal `--` and runs all API test files, so it also exercised
-stale Task 5 assertions outside Task 6. All three requested Task 6 files passed. The seven
-unchanged failures are:
+stale assertions and fixtures outside Task 6. All three requested Task 6 files passed. The seven
+failures at initial implementation handoff were:
 
 - `apps/api/test/programs.test.ts`
   - `PATCH is a full canonical replacement that removes omitted optional fields`
@@ -128,14 +128,67 @@ unchanged failures are:
   - `pauses and resumes an active Promo, then makes end irreversible`
   - `does not let publishing a replacement silently resume a paused or ended Promo`
 
-Those tests still expect unavailable automatic candidates in public evaluation output, which
-conflicts with Task 5's private-selection requirement. They were deliberately not changed in this
-Task 6 commit.
+The six revision-suite tests expected unavailable automatic candidates in public evaluation
+output, which conflicts with Task 5's private-selection requirement. The programs-suite failure
+was different: its input fixture still included removed `stackingGroup`, which correctly failed
+the strict trigger contract. Review follow-up repaired those six expectations and removed that one
+stale fixture field without changing production selection or validation behavior.
 
 A final attempt to rerun the three focused files after the isolated configuration fix was denied
 for elevated execution by policy; the sandbox retry again failed before Vitest with the same
 loopback/Wrangler `EPERM`. No bypass was attempted. The evidence therefore consists of the earlier
 91/91 focused run plus the final isolated 1/1 regression run.
+
+## Review-fix evidence
+
+Read-only review found two Important state-machine gaps:
+
+- one-sided legacy redemption identifiers were authoritative in `redemptions` but absent from the
+  migration's `redemption_operations` backfill, allowing acquisition to create a pending operation
+  before the bundle-header unique constraint failed; and
+- deterministic exhaustion was persisted, immediately reloaded as `terminal_retry`, and then
+  collapsed by the service to generic `EXHAUSTED`; usage capacity was additionally classified as
+  `PROGRAM_UNAVAILABLE`.
+
+Regression coverage was added before production changes. The parent ran the focused suite outside
+the restricted sandbox:
+
+```text
+pnpm --filter @incentives/api exec vitest run test/redemptions.test.ts
+41 tests: 8 failed, 33 passed
+```
+
+The eight intended failures were exactly:
+
+- three reusable coordinator-contract first-exhaustion kind/code failures;
+- two one-sided legacy external-order/idempotency collision responses returning `503` instead of
+  `VERSION_CONFLICT`; and
+- budget, usage, and per-customer public responses returning generic `EXHAUSTED` instead of their
+  stable codes.
+
+The correction checks authoritative one-sided legacy identifier claims before acquiring an
+operation, preserves current exact retry reconciliation, emits `exhausted` for the first
+deterministic capacity failure, persists the stable terminal code for exact retries, distinguishes
+usage capacity, and maps program/revision availability to `VERSION_CONFLICT`.
+
+The approved design's error model is authoritative over the older Task 6 brief union:
+`BUDGET_EXHAUSTED`, `USAGE_CAP_EXHAUSTED`, and `PER_CUSTOMER_CAP_EXHAUSTED` remain distinct
+non-retryable public codes.
+
+Focused GREEN:
+
+```text
+pnpm --filter @incentives/api exec vitest run test/redemptions.test.ts
+1 file passed; 41 tests passed
+```
+
+Full API GREEN after repairing the six privacy expectations and one strict-trigger fixture:
+
+```text
+pnpm --filter @incentives/api test
+dependency builds passed
+14 files passed; 435 tests passed
+```
 
 ## Build, lint, and static checks
 
@@ -176,6 +229,8 @@ no matches
 - `apps/api/src/routes/redemptions.ts`
 - `apps/api/src/services/redemption-service.ts`
 - `apps/api/test/full-flow.test.ts`
+- `apps/api/test/program-revisions.test.ts`
+- `apps/api/test/programs.test.ts`
 - `apps/api/test/redemptions.test.ts`
 - `apps/api/test/repositories.test.ts`
 - `.superpowers/sdd/task-6-implementer-report.md`

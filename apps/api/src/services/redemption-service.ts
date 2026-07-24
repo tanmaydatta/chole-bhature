@@ -80,7 +80,7 @@ export function createRedemptionService(
           case 'conflict':
             throw new VersionConflictError();
           case 'exhausted':
-            throw new ExhaustedError();
+            throw new ExhaustedError(result.reasonCode);
           case 'unavailable':
             throw new RedemptionUnavailableError();
           case 'terminal_retry':
@@ -92,9 +92,11 @@ export function createRedemptionService(
               case 'INVALID_DECISION':
                 throw new VersionConflictError('The evaluation decision is invalid');
               case 'PROGRAM_UNAVAILABLE':
+                throw new VersionConflictError('The selected program version is unavailable');
+              case 'USAGE_CAP_EXHAUSTED':
               case 'PER_CUSTOMER_CAP_EXHAUSTED':
               case 'BUDGET_EXHAUSTED':
-                throw new ExhaustedError();
+                throw new ExhaustedError(result.code);
             }
         }
       } catch (error) {

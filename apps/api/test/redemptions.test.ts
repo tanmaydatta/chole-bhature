@@ -17,6 +17,7 @@ import type {
   AtomicRedemptionCoordinator,
   CommitRedemptionBundleInput,
   CommitRedemptionBundleResult,
+  ExhaustionReasonCode,
   TerminalRedemptionErrorCode,
 } from '../src/redemption/atomic-redemption-coordinator.js';
 import { createD1AtomicRedemptionCoordinator } from '../src/redemption/d1-atomic-redemption-coordinator.js';
@@ -258,17 +259,95 @@ function commitInput(
   };
 }
 
+async function seedLegacyRedemption(input: {
+  redemptionId: string;
+  evaluation: EvaluationDecisionRecord;
+  externalOrderRef?: string;
+  idempotencyKey?: string;
+}): Promise<void> {
+  const decision = input.evaluation.decisions[0];
+  if (decision === undefined) throw new Error('Legacy redemption requires one decision');
+  await env.DB.batch([
+    env.DB.prepare(`
+      INSERT INTO redemptions (
+        id, merchant_id, external_order_ref, idempotency_key, evaluation_id,
+        result_json, discount_minor_units, currency, created_at, request_digest
+      ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0, ?7, ?8, ?9)
+    `).bind(
+      input.redemptionId,
+      input.evaluation.merchantId,
+      input.externalOrderRef ?? null,
+      input.idempotencyKey ?? null,
+      input.evaluation.evaluationId,
+      JSON.stringify({
+        version: 1,
+        result: {
+          redemptionId: input.redemptionId,
+          evaluationId: input.evaluation.evaluationId,
+          ...(input.externalOrderRef === undefined
+            ? {}
+            : { externalOrderRef: input.externalOrderRef }),
+          ...(input.idempotencyKey === undefined
+            ? {}
+            : { idempotencyKey: input.idempotencyKey }),
+          programRef: decision.programRef,
+          ...(decision.rewardRuleRef === undefined
+            ? {}
+            : { rewardRuleRef: decision.rewardRuleRef }),
+          status: 'committed',
+          effects: decision.effects,
+        },
+        receiptIntegrityHash: '0'.repeat(64),
+      }),
+      input.evaluation.request.cart.currency,
+      createdAt,
+      `legacy:${input.redemptionId}`,
+    ),
+    env.DB.prepare(`
+      INSERT INTO redemption_entries (
+        merchant_id, redemption_id, position, program_ref, program_revision,
+        reward_rule_ref, effects_json, discount_minor_units, currency
+      ) VALUES (?1, ?2, 0, ?3, ?4, ?5, ?6, 0, ?7)
+    `).bind(
+      input.evaluation.merchantId,
+      input.redemptionId,
+      decision.programRef,
+      decision.programRevision,
+      decision.rewardRuleRef ?? null,
+      JSON.stringify(decision.effects),
+      input.evaluation.request.cart.currency,
+    ),
+  ]);
+}
+
 class InMemoryAtomicRedemptionCoordinator implements AtomicRedemptionCoordinator {
   readonly #operations = new Map<string, {
     digest: string;
     externalOrderRef: string;
     result: CommitRedemptionBundleResult;
   }>();
+  readonly #orders = new Map<string, string>();
+  readonly #forcedExhaustion = new Map<string, ExhaustionReasonCode>();
+
+  forceExhaustion(
+    input: CommitRedemptionBundleInput,
+    reasonCode: ExhaustionReasonCode,
+  ): void {
+    this.#forcedExhaustion.set(
+      `${input.merchantId}:${input.idempotencyKey}`,
+      reasonCode,
+    );
+  }
 
   async commitBundle(
     input: CommitRedemptionBundleInput,
   ): Promise<CommitRedemptionBundleResult> {
     const operationKey = `${input.merchantId}:${input.idempotencyKey}`;
+    const orderKey = `${input.merchantId}:${input.externalOrderRef}`;
+    const orderOwner = this.#orders.get(orderKey);
+    if (orderOwner !== undefined && orderOwner !== input.idempotencyKey) {
+      return { kind: 'conflict' };
+    }
     const existing = this.#operations.get(operationKey);
     if (existing !== undefined) {
       if (
@@ -280,6 +359,20 @@ class InMemoryAtomicRedemptionCoordinator implements AtomicRedemptionCoordinator
       }
       if (existing.result.kind === 'terminal_retry') return existing.result;
       return existing.result;
+    }
+    this.#orders.set(orderKey, input.idempotencyKey);
+    const exhaustion = this.#forcedExhaustion.get(operationKey);
+    if (exhaustion !== undefined) {
+      this.#operations.set(operationKey, {
+        digest: input.requestDigest,
+        externalOrderRef: input.externalOrderRef,
+        result: {
+          kind: 'terminal_retry',
+          code: exhaustion,
+          retryable: false,
+        },
+      });
+      return { kind: 'exhausted', reasonCode: exhaustion };
     }
     const selected = input.evaluation.decisions.filter(
       decision => decision.outcome === 'qualified' && decision.commitRequired,
@@ -353,6 +446,10 @@ class InMemoryAtomicRedemptionCoordinator implements AtomicRedemptionCoordinator
 interface CoordinatorFixture {
   coordinator: AtomicRedemptionCoordinator;
   input: CommitRedemptionBundleInput;
+  terminalInput: CommitRedemptionBundleInput;
+  prepareExhaustion(
+    reasonCode: ExhaustionReasonCode,
+  ): Promise<CommitRedemptionBundleInput>;
 }
 
 function atomicCoordinatorContract(
@@ -384,30 +481,173 @@ function atomicCoordinatorContract(
         requestDigest: 'b'.repeat(64),
       })).resolves.toEqual({ kind: 'conflict' });
     });
+
+    test('conflicts when an external order is reused by another key', async () => {
+      const { coordinator, input } = await fixture();
+      await coordinator.commitBundle(input);
+      await expect(coordinator.commitBundle({
+        ...input,
+        idempotencyKey: `${input.idempotencyKey}-other`,
+      })).resolves.toEqual({ kind: 'conflict' });
+    });
+
+    test('persists a stable terminal outcome for exact retries', async () => {
+      const { coordinator, terminalInput } = await fixture();
+      const terminal = {
+        kind: 'terminal_retry',
+        code: 'NOTHING_TO_COMMIT',
+        retryable: false,
+      } as const;
+      await expect(coordinator.commitBundle(terminalInput)).resolves.toEqual(terminal);
+      await expect(coordinator.commitBundle(terminalInput)).resolves.toEqual(terminal);
+    });
+
+    test.each([
+      'USAGE_CAP_EXHAUSTED',
+      'BUDGET_EXHAUSTED',
+      'PER_CUSTOMER_CAP_EXHAUSTED',
+    ] satisfies ExhaustionReasonCode[])(
+      'emits %s as first exhaustion and preserves it on exact retry',
+      async (reasonCode) => {
+        const fixtureValue = await fixture();
+        const exhaustionInput = await fixtureValue.prepareExhaustion(reasonCode);
+        await expect(
+          fixtureValue.coordinator.commitBundle(exhaustionInput),
+        ).resolves.toEqual({ kind: 'exhausted', reasonCode });
+        await expect(
+          fixtureValue.coordinator.commitBundle(exhaustionInput),
+        ).resolves.toEqual({
+          kind: 'terminal_retry',
+          code: reasonCode,
+          retryable: false,
+        });
+      },
+    );
   });
 }
 
 atomicCoordinatorContract('in-memory', async () => {
   await resetData();
+  const terminalEvaluation = await evaluate();
   await seedProgram(automaticPromo('memory-contract'));
-  const evaluation = await evaluate();
+  const [evaluation, exhaustionEvaluation] = await Promise.all([
+    evaluate(),
+    evaluate(),
+  ]);
+  const coordinator = new InMemoryAtomicRedemptionCoordinator();
+  const exhaustionInput = commitInput(
+    await storedDecision(exhaustionEvaluation.evaluationId),
+    'memory-exhaustion-contract',
+  );
   return {
-    coordinator: new InMemoryAtomicRedemptionCoordinator(),
+    coordinator,
     input: commitInput(await storedDecision(evaluation.evaluationId), 'memory-contract'),
+    terminalInput: commitInput(
+      await storedDecision(terminalEvaluation.evaluationId),
+      'memory-terminal-contract',
+    ),
+    async prepareExhaustion(reasonCode) {
+      coordinator.forceExhaustion(exhaustionInput, reasonCode);
+      return exhaustionInput;
+    },
   };
 });
 
 atomicCoordinatorContract('D1', async () => {
   await resetData();
-  await seedProgram(automaticPromo('d1-contract'));
-  const evaluation = await evaluate();
+  const terminalEvaluation = await evaluate();
+  await seedProgram(automaticPromo('d1-contract', { perCustomerCap: 1 }));
+  const [evaluation, exhaustionEvaluation] = await Promise.all([
+    evaluate(),
+    evaluate(),
+  ]);
+  const coordinator = createD1AtomicRedemptionCoordinator({
+    DB: env.DB,
+    DECISION_SIGNING_SECRET: signingSecret,
+  });
+  const input = commitInput(await storedDecision(evaluation.evaluationId), 'd1-contract');
+  const exhaustionInput = commitInput(
+    await storedDecision(exhaustionEvaluation.evaluationId),
+    'd1-exhaustion-contract',
+  );
   return {
-    coordinator: createD1AtomicRedemptionCoordinator({
+    coordinator,
+    input,
+    terminalInput: commitInput(
+      await storedDecision(terminalEvaluation.evaluationId),
+      'd1-terminal-contract',
+    ),
+    async prepareExhaustion(reasonCode) {
+      if (reasonCode === 'PER_CUSTOMER_CAP_EXHAUSTED') {
+        const committed = await coordinator.commitBundle(input);
+        expect(committed.kind).toBe('committed');
+        return exhaustionInput;
+      }
+      if (reasonCode === 'USAGE_CAP_EXHAUSTED') {
+        await env.DB.batch([
+          env.DB.prepare(`
+            UPDATE program_counters SET usage_count = max_uses
+            WHERE merchant_id = ?1
+          `).bind(SEEDED_MERCHANT_ID),
+          env.DB.prepare(`
+            UPDATE programs SET usage_count = 10
+            WHERE merchant_id = ?1
+          `).bind(SEEDED_MERCHANT_ID),
+        ]);
+        return exhaustionInput;
+      }
+      await env.DB.batch([
+        env.DB.prepare(`
+          UPDATE program_counters
+          SET budget_remaining = 0, committed_spend = 10000
+          WHERE merchant_id = ?1
+        `).bind(SEEDED_MERCHANT_ID),
+        env.DB.prepare(`
+          UPDATE programs SET budget_remaining = 0
+          WHERE merchant_id = ?1
+        `).bind(SEEDED_MERCHANT_ID),
+      ]);
+      return exhaustionInput;
+    },
+  };
+});
+
+describe('D1 coordinator reconciliation', () => {
+  beforeEach(resetData);
+
+  test('repairs a pending operation after its authoritative bundle committed', async () => {
+    await seedProgram(automaticPromo('pending-reconciliation'));
+    const evaluation = await evaluate();
+    const input = commitInput(
+      await storedDecision(evaluation.evaluationId),
+      'pending-reconciliation',
+    );
+    const coordinator = createD1AtomicRedemptionCoordinator({
       DB: env.DB,
       DECISION_SIGNING_SECRET: signingSecret,
-    }),
-    input: commitInput(await storedDecision(evaluation.evaluationId), 'd1-contract'),
-  };
+    });
+    const committed = await coordinator.commitBundle(input);
+    expect(committed.kind).toBe('committed');
+    if (committed.kind !== 'committed') throw new Error('Expected committed bundle');
+    await env.DB.prepare(`
+      UPDATE redemption_operations
+      SET state = 'pending', redemption_id = NULL
+      WHERE merchant_id = ?1 AND idempotency_key = ?2
+    `).bind(input.merchantId, input.idempotencyKey).run();
+
+    await expect(coordinator.commitBundle(input)).resolves.toEqual({
+      kind: 'exact_retry',
+      bundle: committed.bundle,
+    });
+    expect(await env.DB.prepare(`
+      SELECT state, redemption_id AS redemptionId
+      FROM redemption_operations
+      WHERE merchant_id = ?1 AND idempotency_key = ?2
+    `).bind(input.merchantId, input.idempotencyKey).first()).toEqual({
+      state: 'committed',
+      redemptionId: committed.bundle.redemptionId,
+    });
+  });
 });
 
 describe('POST /v1/redemptions', () => {
@@ -443,6 +683,56 @@ describe('POST /v1/redemptions', () => {
     });
     await expectError(response, 400, 'CONTEXT_VALIDATION_FAILED');
   });
+
+  test.each([
+    {
+      identifier: 'external order',
+      legacy: { externalOrderRef: 'legacy-external-order' },
+      request: {
+        externalOrderRef: 'legacy-external-order',
+        idempotencyKey: 'fresh-key-for-legacy-order',
+      },
+    },
+    {
+      identifier: 'idempotency key',
+      legacy: { idempotencyKey: 'legacy-idempotency-key' },
+      request: {
+        externalOrderRef: 'fresh-order-for-legacy-key',
+        idempotencyKey: 'legacy-idempotency-key',
+      },
+    },
+  ])(
+    'returns stable VERSION_CONFLICT when a one-sided legacy $identifier is reused',
+    async ({ identifier, legacy, request }) => {
+      await seedProgram(automaticPromo(`legacy-${identifier.replaceAll(' ', '-')}`));
+      const evaluation = await evaluate();
+      await seedLegacyRedemption({
+        redemptionId: `legacy-${identifier.replaceAll(' ', '-')}`,
+        evaluation: await storedDecision(evaluation.evaluationId),
+        ...legacy,
+      });
+      const body = { evaluationId: evaluation.evaluationId, ...request };
+
+      const first = await expectError(
+        await redeemRaw(body, `legacy-${identifier}-correlation`),
+        409,
+        'VERSION_CONFLICT',
+      );
+      const retry = await expectError(
+        await redeemRaw(body, `legacy-${identifier}-correlation`),
+        409,
+        'VERSION_CONFLICT',
+      );
+      expect(retry).toEqual(first);
+      expect(await env.DB.prepare(`
+        SELECT COUNT(*) AS count
+        FROM redemption_operations
+        WHERE merchant_id = ?1 AND idempotency_key = ?2
+      `).bind(SEEDED_MERCHANT_ID, request.idempotencyKey).first()).toEqual({
+        count: 0,
+      });
+    },
+  );
 
   test('returns a stable NOTHING_TO_COMMIT terminal result', async () => {
     const evaluation = await evaluate();
@@ -548,7 +838,8 @@ describe('POST /v1/redemptions', () => {
     }));
     const evaluation = await evaluate({ ...baseRequest, codes: ['FIRST', 'FINAL'] });
     await env.DB.prepare(`
-      UPDATE program_counters SET budget_remaining = 0
+      UPDATE program_counters
+      SET budget_remaining = 0, committed_spend = 500
       WHERE merchant_id = ?1 AND program_id = (
         SELECT id FROM programs WHERE merchant_id = ?1 AND external_ref = 'final-child'
       )
@@ -558,11 +849,30 @@ describe('POST /v1/redemptions', () => {
       WHERE merchant_id = ?1 AND external_ref = 'final-child'
     `).bind(SEEDED_MERCHANT_ID).run();
 
-    await expectError(await redeemRaw({
+    const request = {
       evaluationId: evaluation.evaluationId,
       externalOrderRef: 'rollback-order',
       idempotencyKey: 'rollback-key',
-    }), 409, 'EXHAUSTED');
+    };
+    const first = await expectError(
+      await redeemRaw(request, 'rollback-correlation'),
+      409,
+      'BUDGET_EXHAUSTED',
+    );
+    const retry = await expectError(
+      await redeemRaw(request, 'rollback-correlation'),
+      409,
+      'BUDGET_EXHAUSTED',
+    );
+    expect(retry).toEqual(first);
+    expect(await env.DB.prepare(`
+      SELECT state, terminal_error_code AS terminalErrorCode
+      FROM redemption_operations
+      WHERE merchant_id = ?1 AND idempotency_key = 'rollback-key'
+    `).bind(SEEDED_MERCHANT_ID).first()).toEqual({
+      state: 'rejected',
+      terminalErrorCode: 'BUDGET_EXHAUSTED',
+    });
     expect((await env.DB.prepare(`
       SELECT external_ref AS programRef, usage_count AS usageCount
       FROM programs WHERE merchant_id = ?1 ORDER BY external_ref
@@ -574,6 +884,68 @@ describe('POST /v1/redemptions', () => {
       .toEqual({ count: 0 });
     expect(await env.DB.prepare('SELECT COUNT(*) AS count FROM redemption_entries').first())
       .toEqual({ count: 0 });
+  });
+
+  test('preserves USAGE_CAP_EXHAUSTED across the first failure and exact retry', async () => {
+    await seedProgram(automaticPromo('usage-exhaustion', { usageCap: 1 }));
+    const evaluation = await evaluate();
+    await env.DB.batch([
+      env.DB.prepare(`
+        UPDATE program_counters SET usage_count = 1
+        WHERE merchant_id = ?1
+      `).bind(SEEDED_MERCHANT_ID),
+      env.DB.prepare(`
+        UPDATE programs SET usage_count = 1
+        WHERE merchant_id = ?1
+      `).bind(SEEDED_MERCHANT_ID),
+    ]);
+    const request = {
+      evaluationId: evaluation.evaluationId,
+      externalOrderRef: 'usage-exhaustion-order',
+      idempotencyKey: 'usage-exhaustion-key',
+    };
+
+    const first = await expectError(
+      await redeemRaw(request, 'usage-exhaustion-correlation'),
+      409,
+      'USAGE_CAP_EXHAUSTED',
+    );
+    const retry = await expectError(
+      await redeemRaw(request, 'usage-exhaustion-correlation'),
+      409,
+      'USAGE_CAP_EXHAUSTED',
+    );
+    expect(retry).toEqual(first);
+  });
+
+  test('preserves PER_CUSTOMER_CAP_EXHAUSTED across first failure and exact retry', async () => {
+    await seedProgram(automaticPromo('customer-exhaustion', { perCustomerCap: 1 }));
+    const [firstEvaluation, exhaustedEvaluation] = await Promise.all([
+      evaluate(),
+      evaluate(),
+    ]);
+    await redeem({
+      evaluationId: firstEvaluation.evaluationId,
+      externalOrderRef: 'customer-cap-first-order',
+      idempotencyKey: 'customer-cap-first-key',
+    });
+    const request = {
+      evaluationId: exhaustedEvaluation.evaluationId,
+      externalOrderRef: 'customer-cap-exhausted-order',
+      idempotencyKey: 'customer-cap-exhausted-key',
+    };
+
+    const first = await expectError(
+      await redeemRaw(request, 'customer-cap-exhausted-correlation'),
+      409,
+      'PER_CUSTOMER_CAP_EXHAUSTED',
+    );
+    const retry = await expectError(
+      await redeemRaw(request, 'customer-cap-exhausted-correlation'),
+      409,
+      'PER_CUSTOMER_CAP_EXHAUSTED',
+    );
+    expect(retry).toEqual(first);
   });
 
   test('revalidates every selected active revision and reward rule before committing', async () => {
@@ -776,6 +1148,7 @@ describe('terminal coordinator contract', () => {
     'DECISION_EXPIRED',
     'INVALID_DECISION',
     'PROGRAM_UNAVAILABLE',
+    'USAGE_CAP_EXHAUSTED',
     'PER_CUSTOMER_CAP_EXHAUSTED',
     'BUDGET_EXHAUSTED',
   ] satisfies TerminalRedemptionErrorCode[])(

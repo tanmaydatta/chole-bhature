@@ -42,6 +42,13 @@ const TerminalRedemptionErrorCodeSchema = z.enum([
   'DECISION_EXPIRED',
   'INVALID_DECISION',
   'PROGRAM_UNAVAILABLE',
+  'USAGE_CAP_EXHAUSTED',
+  'PER_CUSTOMER_CAP_EXHAUSTED',
+  'BUDGET_EXHAUSTED',
+]);
+
+const ExhaustionReasonCodeSchema = z.enum([
+  'USAGE_CAP_EXHAUSTED',
   'PER_CUSTOMER_CAP_EXHAUSTED',
   'BUDGET_EXHAUSTED',
 ]);
@@ -194,6 +201,26 @@ export function createD1AtomicRedemptionCoordinator(
     );
   }
 
+  async function hasOneSidedLegacyIdentifierCollision(
+    input: CommitRedemptionBundleInput,
+  ): Promise<boolean> {
+    const row = await env.DB.prepare(`
+      SELECT id
+      FROM redemptions
+      WHERE merchant_id = ?1
+        AND (
+          (external_order_ref = ?2 AND idempotency_key IS NULL)
+          OR (idempotency_key = ?3 AND external_order_ref IS NULL)
+        )
+      LIMIT 1
+    `).bind(
+      input.merchantId,
+      input.externalOrderRef,
+      input.idempotencyKey,
+    ).first<{ id: string }>();
+    return row !== null;
+  }
+
   function matchesOperation(
     operation: RedemptionOperationRow,
     input: CommitRedemptionBundleInput,
@@ -252,6 +279,9 @@ export function createD1AtomicRedemptionCoordinator(
     input: CommitRedemptionBundleInput,
     signingSecret: string,
   ): Promise<CommitRedemptionBundleResult | null> {
+    if (await hasOneSidedLegacyIdentifierCollision(input)) {
+      return { kind: 'conflict' };
+    }
     await env.DB.prepare(`
       INSERT INTO redemption_operations (
         merchant_id, idempotency_key, external_order_ref, evaluation_id,
@@ -290,7 +320,7 @@ export function createD1AtomicRedemptionCoordinator(
     code: TerminalRedemptionErrorCode,
     signingSecret: string,
   ): Promise<CommitRedemptionBundleResult> {
-    await env.DB.prepare(`
+    const persisted = await env.DB.prepare(`
       UPDATE redemption_operations
       SET state = 'rejected', terminal_error_code = ?1, retryable = 0,
         updated_at = ?2
@@ -306,6 +336,10 @@ export function createD1AtomicRedemptionCoordinator(
       input.evaluation.evaluationId,
       input.requestDigest,
     ).run();
+    const exhaustion = ExhaustionReasonCodeSchema.safeParse(code);
+    if (persisted.meta.changes === 1 && exhaustion.success) {
+      return { kind: 'exhausted', reasonCode: exhaustion.data };
+    }
     const current = await loadOperationByKey(input.merchantId, input.idempotencyKey);
     if (current === null) return { kind: 'unavailable', retryable: true };
     const result = await existingOperationResult(current, input, signingSecret);
@@ -410,7 +444,7 @@ export function createD1AtomicRedemptionCoordinator(
       if (
         program.program.usageCap !== undefined
         && counters.usageCount >= program.program.usageCap
-      ) return { kind: 'terminal', code: 'PROGRAM_UNAVAILABLE' };
+      ) return { kind: 'terminal', code: 'USAGE_CAP_EXHAUSTED' };
       if (
         counters.budgetRemaining !== undefined
         && counters.budgetRemaining < discountMinorUnits
@@ -459,11 +493,11 @@ export function createD1AtomicRedemptionCoordinator(
       }
       if (
         !programIsEffective(program, input.committedAt)
-        || (
-          program.program.usageCap !== undefined
-          && counters.usageCount >= program.program.usageCap
-        )
       ) return 'PROGRAM_UNAVAILABLE';
+      if (
+        program.program.usageCap !== undefined
+        && counters.usageCount >= program.program.usageCap
+      ) return 'USAGE_CAP_EXHAUSTED';
       if (
         child.perCustomerCap !== undefined
         && child.customerRef !== undefined
