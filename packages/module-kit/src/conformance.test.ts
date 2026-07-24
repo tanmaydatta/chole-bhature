@@ -1,7 +1,5 @@
 import { describe, expect, test } from 'vitest';
 
-import { resolveDecisionConflicts } from '@incentives/engine';
-
 import type { IncentiveModule, ModuleConformanceFixture } from './index.js';
 import { runModuleConformanceSuite } from './index.js';
 
@@ -58,13 +56,6 @@ describe('runModuleConformanceSuite', () => {
     await expect(runModuleConformanceSuite(fakeModule, fixture())).resolves.toEqual({
       passed: true,
     });
-  });
-
-  test('emits decisions directly consumable by the central conflict resolver', async () => {
-    const value = fixture();
-    const decisions = await fakeModule.evaluate(value.context, value.config);
-
-    expect(resolveDecisionConflicts(decisions)).toEqual(decisions);
   });
 
   test('rejects a decision whose program type differs from its module', async () => {

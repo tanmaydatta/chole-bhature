@@ -1,10 +1,14 @@
 import { describe, expect, test } from 'vitest';
 
-import type { ConflictCandidate } from './index.js';
-import { resolveDecisionConflicts } from './index.js';
+import type { ConflictCandidate, RankedProgram } from './index.js';
+import {
+  compareProgramRank,
+  selectAutomaticDecision,
+  selectCodedDecisionCombination,
+} from './index.js';
 
-const lowerPriority: ConflictCandidate = {
-  programRef: 'lower-priority',
+const qualifiedDecision: ConflictCandidate = {
+  programRef: 'promo-a',
   programRevision: 1,
   programType: 'promo',
   outcome: 'qualified',
@@ -16,80 +20,154 @@ const lowerPriority: ConflictCandidate = {
   stackable: false,
 };
 
-const higherPriority: ConflictCandidate = {
-  ...lowerPriority,
-  programRef: 'higher-priority',
-  priority: 20,
-};
+function qualified(
+  overrides: Partial<ConflictCandidate> = {},
+): ConflictCandidate {
+  return { ...qualifiedDecision, ...overrides };
+}
 
-describe('resolveDecisionConflicts', () => {
-  test('resolves non-stacking qualified decisions deterministically', () => {
-    expect(resolveDecisionConflicts([lowerPriority, higherPriority])).toEqual([
-      expect.objectContaining({
-        programRef: higherPriority.programRef,
-        outcome: 'qualified',
-      }),
-      expect.objectContaining({
-        programRef: lowerPriority.programRef,
-        outcome: 'conflict',
-        reasonCodes: ['STACKING_CONFLICT'],
-        commitRequired: false,
-        eligible: false,
-      }),
+function notQualified(
+  overrides: Partial<ConflictCandidate> = {},
+): ConflictCandidate {
+  return {
+    ...qualifiedDecision,
+    outcome: 'not_qualified',
+    effects: [],
+    reasonCodes: ['MINIMUM_CART_NOT_MET'],
+    commitRequired: false,
+    eligible: false,
+    ...overrides,
+  };
+}
+
+function invalidCode(
+  overrides: Partial<ConflictCandidate> = {},
+): ConflictCandidate {
+  return {
+    ...qualifiedDecision,
+    outcome: 'invalid_code',
+    effects: [],
+    reasonCodes: ['INVALID_PROMO_CODE'],
+    commitRequired: false,
+    eligible: false,
+    ...overrides,
+  };
+}
+
+describe('compareProgramRank', () => {
+  test('orders higher priorities first', () => {
+    expect(compareProgramRank(
+      { priority: 20, programRef: 'promo-z' },
+      { priority: 10, programRef: 'promo-a' },
+    )).toBeLessThan(0);
+  });
+
+  test('uses ascending binary program-reference order for equal priorities', () => {
+    expect(compareProgramRank(
+      { priority: 10, programRef: 'promo-a' },
+      { priority: 10, programRef: 'promo-b' },
+    )).toBeLessThan(0);
+
+    const ranked: RankedProgram[] = [
+      { priority: 10, programRef: 'promo-é' },
+      { priority: 10, programRef: 'promo-z' },
+    ];
+    expect(ranked.sort(compareProgramRank).map(({ programRef }) => programRef))
+      .toEqual(['promo-z', 'promo-é']);
+  });
+});
+
+describe('selectAutomaticDecision', () => {
+  test('returns only the highest-ranked qualified Promo decision', () => {
+    expect(selectAutomaticDecision([
+      notQualified({ priority: 30, programRef: 'promo-a' }),
+      qualified({ priority: 20, programRef: 'promo-b' }),
+      qualified({ priority: 10, programRef: 'promo-c' }),
+    ])).toEqual([
+      expect.objectContaining({ programRef: 'promo-b' }),
     ]);
   });
 
-  test('retains mutually stackable qualified decisions ordered by program reference', () => {
-    const stackableB: ConflictCandidate = {
-      ...lowerPriority,
-      programRef: 'program-b',
-      priority: 5,
+  test('returns no decisions when no Promo candidate qualifies', () => {
+    expect(selectAutomaticDecision([
+      notQualified({ programRef: 'promo-a' }),
+      invalidCode({ programRef: 'promo-b' }),
+    ])).toEqual([]);
+  });
+});
+
+describe('selectCodedDecisionCombination', () => {
+  test('returns an empty selection when no coded Promo qualifies', () => {
+    expect(selectCodedDecisionCombination([
+      notQualified({ programRef: 'promo-a' }),
+      invalidCode({ programRef: 'promo-b' }),
+    ])).toEqual({
+      decisions: [],
+      rejectedProgramRefs: [],
+    });
+  });
+
+  test('selects one qualified non-stackable coded Promo', () => {
+    const decision = qualified({
+      programRef: 'promo-a',
+      stackable: false,
+    });
+
+    expect(selectCodedDecisionCombination([decision])).toEqual({
+      decisions: [decision],
+      rejectedProgramRefs: [],
+    });
+  });
+
+  test('selects several stackable coded Promos in deterministic rank order', () => {
+    const lowerPriority = qualified({
+      programRef: 'promo-a',
+      priority: 10,
       stackable: true,
-    };
-    const stackableA: ConflictCandidate = {
-      ...stackableB,
-      programRef: 'program-a',
-    };
-
-    expect(resolveDecisionConflicts([stackableB, stackableA])).toEqual([
-      stackableA,
-      stackableB,
-    ]);
-  });
-
-  test('orders opaque program references by locale-independent code units', () => {
-    const accented: ConflictCandidate = {
-      ...lowerPriority,
-      programRef: 'program-é',
-      priority: 5,
+    });
+    const equalPriorityB = qualified({
+      programRef: 'promo-b',
+      priority: 20,
       stackable: true,
-    };
-    const ascii: ConflictCandidate = {
-      ...accented,
-      programRef: 'program-z',
-    };
+    });
+    const equalPriorityA = qualified({
+      programRef: 'promo-a',
+      priority: 20,
+      stackable: true,
+    });
 
-    expect(resolveDecisionConflicts([accented, ascii])).toEqual([
-      ascii,
-      accented,
-    ]);
-  });
-
-  test('retains decisions that were not qualified', () => {
-    const notQualified: ConflictCandidate = {
-      ...lowerPriority,
-      programRef: 'not-qualified',
-      outcome: 'not_qualified',
-      effects: [],
-      reasonCodes: ['MINIMUM_CART_NOT_MET'],
-      commitRequired: false,
-      eligible: false,
-      priority: 30,
-    };
-
-    expect(resolveDecisionConflicts([lowerPriority, notQualified])).toEqual([
-      notQualified,
+    expect(selectCodedDecisionCombination([
       lowerPriority,
-    ]);
+      equalPriorityB,
+      equalPriorityA,
+    ])).toEqual({
+      decisions: [equalPriorityA, equalPriorityB, lowerPriority],
+      rejectedProgramRefs: [],
+    });
+  });
+
+  test('identifies every qualified Promo when a coded combination is not allowed', () => {
+    expect(selectCodedDecisionCombination([
+      qualified({ programRef: 'a', stackable: true }),
+      qualified({ programRef: 'b', stackable: false }),
+      invalidCode({ programRef: 'c' }),
+    ])).toEqual({
+      decisions: [],
+      rejectedProgramRefs: ['a', 'b'],
+    });
+  });
+
+  test('does not let non-qualified decisions participate in a coded conflict', () => {
+    const first = qualified({ programRef: 'a', stackable: true });
+    const second = qualified({ programRef: 'b', stackable: true });
+
+    expect(selectCodedDecisionCombination([
+      first,
+      notQualified({ programRef: 'c', stackable: false }),
+      second,
+    ])).toEqual({
+      decisions: [first, second],
+      rejectedProgramRefs: [],
+    });
   });
 });

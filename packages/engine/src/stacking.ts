@@ -1,14 +1,19 @@
 import type { IncentiveDecision } from '@incentives/contracts';
 
 export interface ConflictCandidate extends IncentiveDecision {
+  programType: 'promo';
   priority: number;
   stackable: boolean;
-  stackingGroup?: string;
 }
 
-function byPriorityThenProgramRef(
-  left: ConflictCandidate,
-  right: ConflictCandidate,
+export interface RankedProgram {
+  priority: number;
+  programRef: string;
+}
+
+export function compareProgramRank(
+  left: RankedProgram,
+  right: RankedProgram,
 ): number {
   const priorityOrder = right.priority - left.priority;
   if (priorityOrder !== 0) return priorityOrder;
@@ -17,30 +22,29 @@ function byPriorityThenProgramRef(
   return 0;
 }
 
-export function resolveDecisionConflicts(
-  decisions: readonly ConflictCandidate[],
+export function selectAutomaticDecision(
+  candidates: readonly ConflictCandidate[],
 ): ConflictCandidate[] {
-  const sorted = [...decisions].sort(byPriorityThenProgramRef);
-  let hasQualifiedWinner = false;
-  let allQualifiedWinnersAreStackable = true;
+  const winner = [...candidates]
+    .sort(compareProgramRank)
+    .find(candidate => candidate.outcome === 'qualified');
+  return winner === undefined ? [] : [winner];
+}
 
-  return sorted.map((decision) => {
-    if (decision.outcome !== 'qualified') return decision;
-
-    if (!hasQualifiedWinner) {
-      hasQualifiedWinner = true;
-      allQualifiedWinnersAreStackable = decision.stackable;
-      return decision;
-    }
-
-    if (decision.stackable && allQualifiedWinnersAreStackable) return decision;
-
-    return {
-      ...decision,
-      outcome: 'conflict',
-      reasonCodes: ['STACKING_CONFLICT'],
-      commitRequired: false,
-      eligible: false,
-    };
-  });
+export function selectCodedDecisionCombination(
+  candidates: readonly ConflictCandidate[],
+): {
+  decisions: ConflictCandidate[];
+  rejectedProgramRefs: string[];
+} {
+  const qualified = candidates
+    .filter(candidate => candidate.outcome === 'qualified')
+    .sort(compareProgramRank);
+  if (qualified.length <= 1 || qualified.every(candidate => candidate.stackable)) {
+    return { decisions: qualified, rejectedProgramRefs: [] };
+  }
+  return {
+    decisions: [],
+    rejectedProgramRefs: qualified.map(candidate => candidate.programRef),
+  };
 }

@@ -86,14 +86,10 @@ function assertDecisionConforms(
   if (typeof decision.stackable !== 'boolean') {
     throw new Error('Decision stackable metadata must be a boolean');
   }
-  if (decision.stackingGroup !== undefined && decision.stackingGroup.length === 0) {
-    throw new Error('Decision stacking group must not be empty');
-  }
 
   const {
     priority: _priority,
     stackable: _stackable,
-    stackingGroup: _stackingGroup,
     ...canonicalDecision
   } = decision;
   const parsed = IncentiveDecisionSchema.safeParse(canonicalDecision);

@@ -19,7 +19,6 @@ export interface ModuleEvaluationContext {
 export interface ModuleDecision extends IncentiveDecision {
   priority: number;
   stackable: boolean;
-  stackingGroup?: string;
 }
 
 export interface CommitContext {

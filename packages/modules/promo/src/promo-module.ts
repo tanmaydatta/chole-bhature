@@ -23,7 +23,6 @@ function baseDecision(config: PromoProgram): Pick<
   | 'programType'
   | 'priority'
   | 'stackable'
-  | 'stackingGroup'
 > {
   return {
     programRef: config.id,
@@ -31,9 +30,6 @@ function baseDecision(config: PromoProgram): Pick<
     programType: 'promo',
     priority: config.priority,
     stackable: config.stackable,
-    ...(config.stackingGroup === undefined
-      ? {}
-      : { stackingGroup: config.stackingGroup }),
   };
 }
 
@@ -113,20 +109,6 @@ export const PromoModule: IncentiveModule<PromoProgram> = {
 
   async evaluate(context, config) {
     if (!isAvailable(context, config)) return [unavailableDecision(config)];
-
-    if (
-      !config.autoApply
-      && (config.code === undefined || context.request.code !== config.code)
-    ) {
-      return [{
-        ...baseDecision(config),
-        outcome: 'invalid_code',
-        effects: [],
-        reasonCodes: ['INVALID_PROMO_CODE'],
-        commitRequired: false,
-        eligible: false,
-      }];
-    }
 
     const evaluation = evaluateConditionGroup(
       config.eligibility,
