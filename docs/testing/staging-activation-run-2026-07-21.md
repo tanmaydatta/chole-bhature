@@ -222,7 +222,8 @@ This evidence is local only. It was freshly established from the current Task
 
 > **Superseded rollout draft — do not execute the inline commands in this
 > section.** The reviewed procedure is the
-> [Task 10 protected staging cutover and recovery guide](./task10-staging-cutover.md).
+> [Task 10 protected staging cutover and recovery guide](./task10-staging-cutover.md)
+> ([Notion mirror](https://app.notion.com/p/Task-10-protected-staging-cutover-and-recovery-3a7e5c7c2b8e817f9c0cf0acab3e8c2e)).
 > It routes every D1 export/query and deployment-status read through the
 > generated mode-`0600` protected runner, adds the exact legacy-redemption
 > precheck, requires a continuous quiet window and pre-deployment health check,

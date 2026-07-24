@@ -2,6 +2,8 @@
 
 **Status:** Prepared; not executed
 
+**Notion mirror:** https://app.notion.com/p/Task-10-protected-staging-cutover-and-recovery-3a7e5c7c2b8e817f9c0cf0acab3e8c2e
+
 **Scope:** Product D1 migration `0006`, API Worker, and Operator Web Worker
 
 This is the canonical Task 10 staging procedure. It replaces direct
