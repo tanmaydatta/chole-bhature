@@ -135,3 +135,68 @@ PASS
   emitted exactly once at the public API boundary and never receives arbitrary
   error objects.
 - `.pnpm-store/` and `CLAUDE.md` remain untouched and untracked.
+
+## Review follow-up: repository dependency boundary
+
+Review found that the initial evaluation-service wrapper labeled every failure
+from a repository method as `d1`, including persisted-data parsing and injected
+application failures. The follow-up moves attribution to the concrete D1
+adapter boundary:
+
+- `RepositoryDependencyError` is a provider-neutral typed repository error
+  carrying only the safe dependency category and its internal cause.
+- The D1 adapter wraps only awaited D1/Drizzle query and insert driver calls for
+  published-schema lookup, customer lookup, active-program listing,
+  published-code lookup, and decision creation.
+- Request parsing, stored-row decoding, program/schema/customer validation,
+  decision validation, and canonicalization remain outside the driver wrapper.
+- The evaluation service preserves a typed repository dependency failure as
+  `d1`; all other evaluation application failures remain dependency-unknown and
+  therefore omit the field from the public failure event.
+- The logger projects its input into the exact `ApiFailureLog` shape before
+  serialization, so runtime-only extra properties cannot leak.
+
+Strict RED evidence for the review follow-up:
+
+```text
+pnpm --filter @incentives/api exec vitest run test/app.test.ts test/evaluate.test.ts test/redemptions.test.ts test/repositories.test.ts
+4 test files; 200 tests; 196 passed, 4 failed
+```
+
+The four failures proved the missing boundaries: runtime extra-field leakage,
+false `d1` attribution for an injected application failure, false `d1`
+attribution for corrupt persisted program data, and missing typed attribution
+for an actual D1 insert failure.
+
+Fresh GREEN verification after the boundary correction:
+
+```text
+pnpm --filter @incentives/api exec vitest run test/app.test.ts test/evaluate.test.ts test/redemptions.test.ts test/repositories.test.ts
+4 test files passed; 200 tests passed
+```
+
+```text
+pnpm --filter @incentives/api exec vitest run
+14 test files passed; 442 tests passed
+```
+
+```text
+pnpm --filter @incentives/api build
+PASS
+```
+
+```text
+pnpm --filter @incentives/api lint
+PASS
+```
+
+```text
+git diff --check
+PASS
+```
+
+Additional review-follow-up files:
+
+- `apps/api/src/repositories/types.ts`
+- `apps/api/src/repositories/d1-repositories.ts`
+- `apps/api/test/repositories.test.ts`

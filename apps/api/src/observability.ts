@@ -1,7 +1,9 @@
+import type { RepositoryDependency } from './repositories/types.js';
+
 export type ApiFailureDependency =
   | 'atomic_redemption'
-  | 'd1'
-  | 'decision_integrity';
+  | 'decision_integrity'
+  | RepositoryDependency;
 
 export interface ApiFailureLog {
   event: 'api_request_failed';
@@ -17,5 +19,17 @@ export interface ApiFailureLog {
 }
 
 export function logApiFailure(input: ApiFailureLog): void {
-  console.error(JSON.stringify(input));
+  const event: ApiFailureLog = {
+    event: input.event,
+    correlationId: input.correlationId,
+    route: input.route,
+    method: input.method,
+    code: input.code,
+    status: input.status,
+    retryable: input.retryable,
+    ...(input.merchantId === undefined ? {} : { merchantId: input.merchantId }),
+    ...(input.credentialId === undefined ? {} : { credentialId: input.credentialId }),
+    ...(input.dependency === undefined ? {} : { dependency: input.dependency }),
+  };
+  console.error(JSON.stringify(event));
 }

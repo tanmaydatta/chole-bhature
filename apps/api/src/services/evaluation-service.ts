@@ -25,6 +25,7 @@ import {
   NotFoundError,
 } from '../errors.js';
 import { canonicalJson } from '../json.js';
+import { RepositoryDependencyError } from '../repositories/types.js';
 import type {
   EvaluationDecisionRecord,
   EvaluationFactsSnapshot,
@@ -43,14 +44,6 @@ const SigningSecretSchema = z.string().min(16).max(4_096);
 const TtlSchema = z.coerce.number().int().positive().max(86_400);
 const encoder = new TextEncoder();
 
-async function d1Operation<T>(operation: () => Promise<T>): Promise<T> {
-  try {
-    return await operation();
-  } catch (cause) {
-    throw new EvaluationPipelineError('d1', cause);
-  }
-}
-
 async function decisionIntegrityOperation<T>(
   operation: () => Promise<T>,
 ): Promise<T> {
@@ -59,6 +52,17 @@ async function decisionIntegrityOperation<T>(
   } catch (cause) {
     throw new EvaluationPipelineError('decision_integrity', cause);
   }
+}
+
+function throwEvaluationPipelineFailure(error: unknown): never {
+  if (
+    error instanceof EvaluationPipelineError
+    || error instanceof NotFoundError
+  ) throw error;
+  if (error instanceof RepositoryDependencyError) {
+    throw new EvaluationPipelineError(error.dependency, error);
+  }
+  throw new EvaluationPipelineError(undefined, error);
 }
 
 function decisionSigningSecret(env: Env): string {
@@ -801,9 +805,12 @@ export function createEvaluationService(
       correlationId: string,
     ): Promise<EvaluationResponse> {
       const fixedRequest = EvaluationRequestSchema.parse(input);
-      const published = await d1Operation(() => (
-        repositories.schemas.getLatestVersion(merchantId, 'published')
-      ));
+      let published: Awaited<ReturnType<Repositories['schemas']['getLatestVersion']>>;
+      try {
+        published = await repositories.schemas.getLatestVersion(merchantId, 'published');
+      } catch (error) {
+        throwEvaluationPipelineFailure(error);
+      }
       if (published === null) {
         throw new NotFoundError('No schema has been published', 'SCHEMA_NOT_PUBLISHED');
       }
@@ -814,9 +821,7 @@ export function createEvaluationService(
       try {
         const customer = request.customerRef === undefined
           ? null
-          : await d1Operation(() => (
-            repositories.customers.get(merchantId, request.customerRef!)
-          ));
+          : await repositories.customers.get(merchantId, request.customerRef!);
         if (request.customerRef !== undefined && customer === null) {
           throw new NotFoundError('Customer not found', 'CUSTOMER_NOT_FOUND');
         }
@@ -874,9 +879,7 @@ export function createEvaluationService(
         if (mode === 'automatic') {
           decisions = [];
           codeResults = [];
-          for (const candidate of await d1Operation(() => (
-            automaticCandidates(repositories, merchantId, now)
-          ))) {
+          for (const candidate of await automaticCandidates(repositories, merchantId, now)) {
             const evaluated = await evaluateSingleProgram(candidate, singleProgramContext);
             if (evaluated.decision.outcome !== 'qualified') continue;
             decisions = [stableDecision(evaluated.decision)];
@@ -888,12 +891,10 @@ export function createEvaluationService(
             decision?: PromoDecision;
           }> = [];
           for (const code of normalizedCodes) {
-            const record = await d1Operation(() => (
-              repositories.programs.getPublishedByNormalizedCode(
-                merchantId,
-                code.normalized,
-              )
-            ));
+            const record = await repositories.programs.getPublishedByNormalizedCode(
+              merchantId,
+              code.normalized,
+            );
             const evaluated = record === null
               ? undefined
               : await evaluateSingleProgram(record, singleProgramContext);
@@ -964,7 +965,7 @@ export function createEvaluationService(
           decisions,
           ...(mode === 'coded' ? { codeResults } : {}),
         });
-        await d1Operation(() => repositories.decisions.create(record));
+        await repositories.decisions.create(record);
         preparedReservations.length = 0;
 
         return response;
@@ -976,11 +977,7 @@ export function createEvaluationService(
             cleanupContext,
           );
         }
-        if (
-          error instanceof EvaluationPipelineError
-          || error instanceof NotFoundError
-        ) throw error;
-        throw new EvaluationPipelineError(undefined, error);
+        throwEvaluationPipelineFailure(error);
       }
     },
   };

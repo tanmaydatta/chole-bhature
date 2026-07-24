@@ -23,6 +23,18 @@ import type {
 
 export type SchemaState = 'draft' | 'published';
 export type DefinitionState = SchemaState | 'deprecated';
+export type RepositoryDependency = 'd1';
+
+export class RepositoryDependencyError extends Error {
+  override readonly name = 'RepositoryDependencyError';
+
+  constructor(
+    readonly dependency: RepositoryDependency,
+    cause: unknown,
+  ) {
+    super('Repository dependency failed', { cause });
+  }
+}
 
 export interface VariableDefinitionCreate {
   id: string;

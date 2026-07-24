@@ -1152,6 +1152,7 @@ describe('POST /v1/evaluate', () => {
     )).rejects.toMatchObject({
       message: 'Evaluation pipeline failed',
       cause: persistenceFailure,
+      dependency: undefined,
     });
     expect(cancel).toHaveBeenCalledExactlyOnceWith({
       programRef: 'automatic-persistence-failure',
@@ -1998,7 +1999,65 @@ describe('POST /v1/evaluate', () => {
     await expect(signDecisionSnapshot(cyclic, signingSecret)).rejects.toThrow(/JSON/i);
   });
 
-  test('returns retryable 503 rather than ineligibility when stored evaluation state is corrupt', async () => {
+  test('attributes actual D1 decision persistence failures without leaking request data', async () => {
+    await seedCustomer();
+    await seedProgram(promo('forced-d1-persistence-failure'));
+    await env.DB.prepare(`
+      CREATE TRIGGER force_evaluation_decision_insert_failure
+      BEFORE INSERT ON evaluation_decisions
+      BEGIN
+        SELECT RAISE(FAIL, 'forced D1 decision insert failure');
+      END
+    `).run();
+
+    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      const response = await evaluateRaw(
+        baseRequest,
+        'pk_test_publishable_credential_material_00000001',
+        'correlation-d1-query-failure',
+      );
+      await expectError(response, 503, 'EVALUATION_UNAVAILABLE');
+      expect(errorLog).toHaveBeenCalledTimes(1);
+
+      const serialized = String(errorLog.mock.calls[0]?.[0]);
+      const logged = JSON.parse(serialized) as Record<string, unknown>;
+      expect(Object.keys(logged).sort()).toEqual([
+        'code',
+        'correlationId',
+        'credentialId',
+        'dependency',
+        'event',
+        'merchantId',
+        'method',
+        'retryable',
+        'route',
+        'status',
+      ]);
+      expect(logged).toMatchObject({
+        event: 'api_request_failed',
+        correlationId: 'correlation-d1-query-failure',
+        route: '/v1/evaluate',
+        method: 'POST',
+        code: 'EVALUATION_UNAVAILABLE',
+        status: 503,
+        retryable: true,
+        merchantId: SEEDED_MERCHANT_ID,
+        credentialId: expect.any(String),
+        dependency: 'd1',
+      });
+      expect(serialized).not.toContain('forced D1 decision insert failure');
+      expect(serialized).not.toContain('customer-1');
+      expect(serialized).not.toContain('6500');
+    } finally {
+      errorLog.mockRestore();
+      await env.DB.prepare(
+        'DROP TRIGGER IF EXISTS force_evaluation_decision_insert_failure',
+      ).run();
+    }
+  });
+
+  test('returns retryable 503 without dependency attribution when stored evaluation state is corrupt', async () => {
     await seedCustomer();
     await seedProgram(promo('corrupt'));
     await env.DB.prepare(`
@@ -2031,7 +2090,19 @@ describe('POST /v1/evaluate', () => {
       expect(errorLog).toHaveBeenCalledTimes(1);
 
       const serialized = String(errorLog.mock.calls[0]?.[0]);
-      expect(JSON.parse(serialized)).toMatchObject({
+      const logged = JSON.parse(serialized) as Record<string, unknown>;
+      expect(Object.keys(logged).sort()).toEqual([
+        'code',
+        'correlationId',
+        'credentialId',
+        'event',
+        'merchantId',
+        'method',
+        'retryable',
+        'route',
+        'status',
+      ]);
+      expect(logged).toMatchObject({
         event: 'api_request_failed',
         correlationId: 'correlation-123',
         route: '/v1/evaluate',
@@ -2041,7 +2112,6 @@ describe('POST /v1/evaluate', () => {
         retryable: true,
         merchantId: SEEDED_MERCHANT_ID,
         credentialId: expect.any(String),
-        dependency: 'd1',
       });
       expect(serialized).not.toContain('Authorization');
       expect(serialized).not.toContain('00000001');

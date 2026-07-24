@@ -46,6 +46,7 @@ import {
   OptimisticVersionConflictError,
   PromoCodeConflictError,
   ProgramConflictError,
+  RepositoryDependencyError,
   SchemaRevisionConflictError,
   type CustomerRecord,
   type CustomerUpsert,
@@ -64,6 +65,16 @@ import {
   type VariableDefinitionCreate,
   type VariableDefinitionRecord,
 } from './types.js';
+
+async function d1DependencyOperation<T>(
+  operation: () => Promise<T>,
+): Promise<T> {
+  try {
+    return await operation();
+  } catch (cause) {
+    throw new RepositoryDependencyError('d1', cause);
+  }
+}
 
 const AttributesSchema = z.record(z.string(), z.unknown());
 const DefinitionsSchema = z.array(VariableDefinitionSchema);
@@ -1043,10 +1054,12 @@ export function createRepositories(env: Env): Repositories {
     merchantId: string,
     externalRef: string,
   ): Promise<ProgramRecord | null> {
-    const row = await env.DB.prepare(`${programProjection('active')}
-      WHERE logical.merchant_id = ?1 AND logical.external_ref = ?2
-        AND logical.active_revision IS NOT NULL
-    `).bind(merchantId, externalRef).first<StoredProgramRow>();
+    const row = await d1DependencyOperation(() => (
+      env.DB.prepare(`${programProjection('active')}
+        WHERE logical.merchant_id = ?1 AND logical.external_ref = ?2
+          AND logical.active_revision IS NOT NULL
+      `).bind(merchantId, externalRef).first<StoredProgramRow>()
+    ));
     return row === null ? null : programFromRow(row);
   }
 
@@ -1054,10 +1067,12 @@ export function createRepositories(env: Env): Repositories {
     merchantId: string,
     state: 'draft' | 'published',
   ): Promise<SchemaVersionRecord | null> {
-    const row = await db.select().from(schemaVersions).where(and(
-      eq(schemaVersions.merchantId, merchantId),
-      eq(schemaVersions.state, state),
-    )).orderBy(desc(schemaVersions.version)).get();
+    const row = await d1DependencyOperation(() => (
+      db.select().from(schemaVersions).where(and(
+        eq(schemaVersions.merchantId, merchantId),
+        eq(schemaVersions.state, state),
+      )).orderBy(desc(schemaVersions.version)).get()
+    ));
     return row === undefined ? null : schemaVersionFromRow(row);
   }
 
@@ -1129,10 +1144,12 @@ export function createRepositories(env: Env): Repositories {
     merchantId: string,
     externalRef: string,
   ): Promise<CustomerRecord | null> {
-    const row = await db.select().from(customers).where(and(
-      eq(customers.merchantId, merchantId),
-      eq(customers.externalRef, externalRef),
-    )).get();
+    const row = await d1DependencyOperation(() => (
+      db.select().from(customers).where(and(
+        eq(customers.merchantId, merchantId),
+        eq(customers.externalRef, externalRef),
+      )).get()
+    ));
     return row === undefined ? null : customerFromRow(row);
   }
 
@@ -2237,32 +2254,36 @@ export function createRepositories(env: Env): Repositories {
       },
 
       async getPublishedByNormalizedCode(merchantId, normalizedCode) {
-        const claim = await env.DB.prepare(`
-          SELECT code_claim.program_ref AS programRef
-          FROM promo_code_claims AS code_claim
-          INNER JOIN programs AS logical
-            ON logical.merchant_id = code_claim.merchant_id
-            AND logical.id = code_claim.program_id
-            AND logical.active_revision = code_claim.active_revision
-          WHERE code_claim.merchant_id = ?1
-            AND code_claim.normalized_code = ?2
-            AND code_claim.released_at IS NULL
-            AND logical.status IN ('active', 'scheduled', 'paused')
-            AND COALESCE(code_claim.ends_at, '9999-12-31') >= date('now')
-          ORDER BY
-            CASE
-              WHEN COALESCE(code_claim.starts_at, '0001-01-01') <= date('now')
-                THEN 0
-              ELSE 1
-            END,
-            COALESCE(code_claim.starts_at, '0001-01-01T00:00:00.000Z'),
-            code_claim.created_at,
-            code_claim.program_ref
-          LIMIT 1
-        `).bind(
-          z.string().min(1).parse(merchantId),
-          z.string().min(1).parse(normalizedCode),
-        ).first<{ programRef: string }>();
+        const parsedMerchantId = z.string().min(1).parse(merchantId);
+        const parsedNormalizedCode = z.string().min(1).parse(normalizedCode);
+        const claim = await d1DependencyOperation(() => (
+          env.DB.prepare(`
+            SELECT code_claim.program_ref AS programRef
+            FROM promo_code_claims AS code_claim
+            INNER JOIN programs AS logical
+              ON logical.merchant_id = code_claim.merchant_id
+              AND logical.id = code_claim.program_id
+              AND logical.active_revision = code_claim.active_revision
+            WHERE code_claim.merchant_id = ?1
+              AND code_claim.normalized_code = ?2
+              AND code_claim.released_at IS NULL
+              AND logical.status IN ('active', 'scheduled', 'paused')
+              AND COALESCE(code_claim.ends_at, '9999-12-31') >= date('now')
+            ORDER BY
+              CASE
+                WHEN COALESCE(code_claim.starts_at, '0001-01-01') <= date('now')
+                  THEN 0
+                ELSE 1
+              END,
+              COALESCE(code_claim.starts_at, '0001-01-01T00:00:00.000Z'),
+              code_claim.created_at,
+              code_claim.program_ref
+            LIMIT 1
+          `).bind(
+            parsedMerchantId,
+            parsedNormalizedCode,
+          ).first<{ programRef: string }>()
+        ));
         return claim === null
           ? null
           : getActiveProgramByExternalRef(merchantId, claim.programRef);
@@ -2277,10 +2298,12 @@ export function createRepositories(env: Env): Repositories {
       },
 
       async listActive(merchantId) {
-        const rows = await env.DB.prepare(`${programProjection('active')}
-          WHERE logical.merchant_id = ?1 AND logical.active_revision IS NOT NULL
-          ORDER BY logical.created_at, logical.external_ref
-        `).bind(merchantId).all<StoredProgramRow>();
+        const rows = await d1DependencyOperation(() => (
+          env.DB.prepare(`${programProjection('active')}
+            WHERE logical.merchant_id = ?1 AND logical.active_revision IS NOT NULL
+            ORDER BY logical.created_at, logical.external_ref
+          `).bind(merchantId).all<StoredProgramRow>()
+        ));
         return rows.results.map(programFromRow);
       },
 
@@ -3000,7 +3023,7 @@ export function createRepositories(env: Env): Repositories {
     decisions: {
       async create(input) {
         const parsed = parseDecision(input);
-        await db.insert(evaluationDecisions).values({
+        const values = {
           id: parsed.evaluationId,
           merchantId: parsed.merchantId,
           customerRef: parsed.customerRef ?? null,
@@ -3017,7 +3040,10 @@ export function createRepositories(env: Env): Repositories {
           integrityHash: parsed.integrityHash,
           expiresAt: parsed.expiresAt,
           createdAt: parsed.createdAt,
-        }).run();
+        };
+        await d1DependencyOperation(() => (
+          db.insert(evaluationDecisions).values(values).run()
+        ));
       },
 
       async get(merchantId, evaluationId) {

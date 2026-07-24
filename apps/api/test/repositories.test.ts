@@ -13,6 +13,7 @@ import { beforeEach, describe, expect, test } from 'vitest';
 
 import { canonicalJson } from '../src/json.js';
 import { createRepositories } from '../src/repositories/d1-repositories.js';
+import { RepositoryDependencyError } from '../src/repositories/types.js';
 import type {
   EvaluationDecisionRecord,
   RedemptionBundleCreate,
@@ -568,6 +569,34 @@ describe('D1 repositories', () => {
 
     await expect(repositories.decisions.get('merchant-a', 'coded-snapshot'))
       .resolves.toEqual(snapshot);
+  });
+
+  test('decision writes type actual D1 driver failures at the repository boundary', async () => {
+    await seedMerchant('merchant-a');
+    await seedPublishedSchema('merchant-a');
+    const repositories = createRepositories({ DB: env.DB });
+    const snapshot = decision('merchant-a', 'forced-d1-driver-failure');
+    snapshot.integrityHash = await signDecisionSnapshot(snapshot, signingSecret);
+    await env.DB.prepare(`
+      CREATE TRIGGER force_repository_decision_insert_failure
+      BEFORE INSERT ON evaluation_decisions
+      BEGIN
+        SELECT RAISE(FAIL, 'forced repository D1 failure');
+      END
+    `).run();
+
+    try {
+      const failure = await repositories.decisions.create(snapshot).catch(error => error);
+      expect(failure).toBeInstanceOf(RepositoryDependencyError);
+      expect(failure).toMatchObject({
+        dependency: 'd1',
+        cause: expect.anything(),
+      });
+    } finally {
+      await env.DB.prepare(
+        'DROP TRIGGER IF EXISTS force_repository_decision_insert_failure',
+      ).run();
+    }
   });
 
   test('decision reads reject stored code diagnostics that require canonicalization', async () => {

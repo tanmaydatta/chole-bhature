@@ -15,6 +15,10 @@ import {
   ExhaustedError,
   NotFoundError,
 } from '../src/errors.js';
+import {
+  logApiFailure,
+  type ApiFailureLog,
+} from '../src/observability.js';
 import { OptimisticVersionConflictError } from '../src/repositories/types.js';
 import { SEEDED_MERCHANT_ID } from './test-credentials.js';
 import workerSource from '../src/worker.ts?raw';
@@ -256,7 +260,19 @@ describe('Worker API composition', () => {
       expect(errorLog).toHaveBeenCalledTimes(1);
 
       const serialized = String(errorLog.mock.calls[0]?.[0]);
-      expect(JSON.parse(serialized)).toMatchObject({
+      const logged = JSON.parse(serialized) as Record<string, unknown>;
+      expect(Object.keys(logged).sort()).toEqual([
+        'code',
+        'correlationId',
+        'credentialId',
+        'event',
+        'merchantId',
+        'method',
+        'retryable',
+        'route',
+        'status',
+      ]);
+      expect(logged).toMatchObject({
         event: 'api_request_failed',
         correlationId: 'correlation-123',
         route: '/unknown',
@@ -273,6 +289,85 @@ describe('Worker API composition', () => {
       expect(serialized).not.toContain('private-customer');
       expect(serialized).not.toContain('private-tier');
       expect(serialized).not.toContain('private dependency stack');
+    } finally {
+      errorLog.mockRestore();
+    }
+  });
+
+  test('emits only the unauthenticated failure allowlist at the error boundary', async () => {
+    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      const response = await request(
+        '/v1/schema/published',
+        undefined,
+        'correlation-unauthenticated',
+      );
+      await expectCanonicalError(response, {
+        status: 401,
+        code: 'UNAUTHORIZED',
+        retryable: false,
+      });
+      expect(errorLog).toHaveBeenCalledTimes(1);
+
+      const serialized = String(errorLog.mock.calls[0]?.[0]);
+      const logged = JSON.parse(serialized) as Record<string, unknown>;
+      expect(Object.keys(logged).sort()).toEqual([
+        'code',
+        'correlationId',
+        'event',
+        'method',
+        'retryable',
+        'route',
+        'status',
+      ]);
+      expect(logged).toEqual({
+        event: 'api_request_failed',
+        correlationId: 'correlation-unauthenticated',
+        route: '/v1/schema',
+        method: 'GET',
+        code: 'UNAUTHORIZED',
+        status: 401,
+        retryable: false,
+      });
+    } finally {
+      errorLog.mockRestore();
+    }
+  });
+
+  test('projects runtime log inputs onto the approved failure allowlist', () => {
+    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      logApiFailure({
+        event: 'api_request_failed',
+        correlationId: 'correlation-runtime-projection',
+        route: '/v1/evaluate',
+        method: 'POST',
+        code: 'EVALUATION_UNAVAILABLE',
+        status: 503,
+        retryable: true,
+        merchantId: SEEDED_MERCHANT_ID,
+        credentialId: 'credential-runtime-projection',
+        dependency: 'd1',
+        privateDetail: 'must-not-be-serialized',
+      } as ApiFailureLog & { privateDetail: string });
+
+      expect(errorLog).toHaveBeenCalledTimes(1);
+      const serialized = String(errorLog.mock.calls[0]?.[0]);
+      const logged = JSON.parse(serialized) as Record<string, unknown>;
+      expect(Object.keys(logged).sort()).toEqual([
+        'code',
+        'correlationId',
+        'credentialId',
+        'dependency',
+        'event',
+        'merchantId',
+        'method',
+        'retryable',
+        'route',
+        'status',
+      ]);
+      expect(serialized).not.toContain('privateDetail');
+      expect(serialized).not.toContain('must-not-be-serialized');
     } finally {
       errorLog.mockRestore();
     }

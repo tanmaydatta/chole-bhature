@@ -15,6 +15,7 @@ import {
 import {
   OptimisticVersionConflictError,
   ProgramConflictError,
+  RepositoryDependencyError,
   SchemaRevisionConflictError,
 } from './repositories/types.js';
 
@@ -216,7 +217,9 @@ function safeMethod(method: string): string {
 }
 
 function failureDependency(error: unknown): ApiFailureDependency | undefined {
-  return error instanceof ApiFailure || error instanceof EvaluationPipelineError
+  return error instanceof ApiFailure
+    || error instanceof EvaluationPipelineError
+    || error instanceof RepositoryDependencyError
     ? error.dependency
     : undefined;
 }
