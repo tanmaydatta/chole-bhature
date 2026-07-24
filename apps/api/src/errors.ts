@@ -28,7 +28,7 @@ export class AuthorizedPromoCodeConflictError extends ApiFailure {
   readonly status = 409;
 
   constructor(readonly conflictingProgramRef: string) {
-    super(`This code overlaps published Promo "${conflictingProgramRef}"`);
+    super(`PROMO_CODE_CONFLICT:${JSON.stringify({ conflictingProgramRef })}`);
   }
 }
 
@@ -182,6 +182,20 @@ function mapFailure(error: unknown, correlationId: string): MappedFailure {
         message: error.message,
         correlationId,
         retryable: false,
+      },
+    };
+  }
+
+  if (error instanceof AuthorizedPromoCodeConflictError) {
+    return {
+      status: error.status,
+      error: {
+        code: error.code,
+        message: `This code overlaps published Promo ${JSON.stringify(
+          error.conflictingProgramRef,
+        )}`,
+        correlationId,
+        retryable: error.retryable,
       },
     };
   }

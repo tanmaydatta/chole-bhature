@@ -106,6 +106,24 @@ function matchedRoute(pathname: string, method: string): {
   return null;
 }
 
+function remotePromoCodeConflictRef(name: string, message: string): string | null {
+  const prefix = 'PROMO_CODE_CONFLICT:';
+  if (name !== 'PromoCodeConflictError' || !message.startsWith(prefix)) return null;
+  try {
+    const payload = JSON.parse(message.slice(prefix.length)) as unknown;
+    if (
+      typeof payload !== 'object'
+      || payload === null
+      || Object.keys(payload).length !== 1
+      || typeof Reflect.get(payload, 'conflictingProgramRef') !== 'string'
+      || (Reflect.get(payload, 'conflictingProgramRef') as string).length < 1
+    ) return null;
+    return Reflect.get(payload, 'conflictingProgramRef') as string;
+  } catch {
+    return null;
+  }
+}
+
 function downstreamError(id: string, downstream: 'identity' | 'core', error: unknown): ApiError {
   if (typeof error === 'object' && error !== null) {
     const name = typeof Reflect.get(error, 'name') === 'string'
@@ -117,6 +135,16 @@ function downstreamError(id: string, downstream: 'identity' | 'core', error: unk
     const message = typeof Reflect.get(error, 'message') === 'string'
       ? Reflect.get(error, 'message') as string
       : '';
+    const conflictingProgramRef = downstream === 'core'
+      ? remotePromoCodeConflictRef(name, message)
+      : null;
+    if (conflictingProgramRef !== null) {
+      return apiError(
+        id,
+        'PROMO_CODE_CONFLICT',
+        `This code overlaps published Promo ${JSON.stringify(conflictingProgramRef)}`,
+      );
+    }
     if (name === 'NotFoundError' || code === 'NOT_FOUND' || code.endsWith('_NOT_FOUND')) {
       return apiError(id, 'NOT_FOUND', 'The requested resource was not found');
     }

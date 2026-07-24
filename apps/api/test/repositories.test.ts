@@ -1627,6 +1627,114 @@ describe('D1 repositories', () => {
     )).resolves.toBeNull();
   });
 
+  test('resolves the current claim before elapsed reuse and the earliest future claim', async () => {
+    await seedMerchant('merchant-a');
+    await seedPublishedSchema('merchant-a');
+    const repositories = createRepositories({ DB: env.DB });
+    const dates = await env.DB.prepare(`
+      SELECT
+        date('now', '-10 days') AS expiredStart,
+        date('now', '-1 day') AS expiredEnd,
+        date('now') AS currentStart,
+        date('now', '+5 days') AS earlyFutureStart,
+        date('now', '+10 days') AS earlyFutureEnd,
+        date('now', '+20 days') AS lateFutureStart,
+        date('now', '+30 days') AS lateFutureEnd
+    `).first<{
+      expiredStart: string;
+      expiredEnd: string;
+      currentStart: string;
+      earlyFutureStart: string;
+      earlyFutureEnd: string;
+      lateFutureStart: string;
+      lateFutureEnd: string;
+    }>();
+    expect(dates).not.toBeNull();
+
+    async function publishCoded(
+      id: string,
+      codeValue: string,
+      startDate: string,
+      endDate: string,
+      status: 'active' | 'scheduled',
+    ) {
+      const draft = {
+        ...program,
+        id,
+        status: 'draft',
+        autoApply: false,
+        code: codeValue,
+        startDate,
+        endDate,
+      } as PromoProgram;
+      const stored = await repositories.programs.create({
+        merchantId: 'merchant-a',
+        program: draft,
+        schema: await repositories.schemas.getLatestVersion('merchant-a', 'published'),
+        createdAt,
+      });
+      if (draft.autoApply) throw new Error('Expected a coded repository fixture');
+      const code = normalizePromoCode(draft.code);
+      return repositories.programs.publishDraftWithCodeClaim({
+        merchantId: 'merchant-a',
+        externalRef: draft.id,
+        expectedDraftRevision: 1,
+        status,
+        publishedAt: createdAt,
+        publishedBy: 'repository-test',
+        codeClaim: {
+          merchantId: 'merchant-a',
+          programId: stored.id,
+          programRef: draft.id,
+          activeRevision: 1,
+          displayCode: code.display,
+          normalizedCode: code.normalized,
+          startsAt: startDate,
+          endsAt: endDate,
+          claimedAt: createdAt,
+        },
+      });
+    }
+
+    await publishCoded(
+      'elapsed-code-owner',
+      'reused',
+      dates!.expiredStart,
+      dates!.expiredEnd,
+      'active',
+    );
+    await publishCoded(
+      'current-code-owner',
+      'REUSED',
+      dates!.currentStart,
+      dates!.earlyFutureEnd,
+      'active',
+    );
+    await expect(repositories.programs.getPublishedByNormalizedCode(
+      'merchant-a',
+      'REUSED',
+    )).resolves.toMatchObject({ externalRef: 'current-code-owner' });
+
+    await publishCoded(
+      'late-future-code-owner',
+      'future',
+      dates!.lateFutureStart,
+      dates!.lateFutureEnd,
+      'scheduled',
+    );
+    await publishCoded(
+      'early-future-code-owner',
+      'FUTURE',
+      dates!.earlyFutureStart,
+      dates!.earlyFutureEnd,
+      'scheduled',
+    );
+    await expect(repositories.programs.getPublishedByNormalizedCode(
+      'merchant-a',
+      'FUTURE',
+    )).resolves.toMatchObject({ externalRef: 'early-future-code-owner' });
+  });
+
   test('program reads prefer owned revision and counter rows over legacy shadows', async () => {
     await seedMerchant('merchant-a');
     await seedPublishedSchema('merchant-a');

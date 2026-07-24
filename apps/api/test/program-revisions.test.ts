@@ -454,6 +454,76 @@ describe('immutable Promo revisions and lifecycle', () => {
     });
   });
 
+  test('reports the guarded conflicting owner when that claim is released after the batch', async () => {
+    const service = operatorService();
+    const owner = codedDraftProgram('released-conflict-owner', 'release-race');
+    const conflict = codedDraftProgram('released-conflict-candidate', 'RELEASE-RACE');
+    await service.createProgramDraft(operatorContext('programs:manage'), owner);
+    await service.publishProgram(operatorContext('programs:publish'), owner.id);
+    await service.createProgramDraft(operatorContext('programs:manage'), conflict);
+
+    const stored = await createRepositories(env).programs.get(
+      SEEDED_MERCHANT_ID,
+      conflict.id,
+    );
+    expect(stored).not.toBeNull();
+    const code = normalizePromoCode(conflict.code);
+    let releasedAfterConflict = false;
+    async function releaseOwnerClaim() {
+      releasedAfterConflict = true;
+      await env.DB.prepare(`
+        UPDATE promo_code_claims SET released_at = ?1
+        WHERE merchant_id = ?2 AND program_ref = ?3 AND released_at IS NULL
+      `).bind(
+        '2026-07-20T12:00:01.000Z',
+        SEEDED_MERCHANT_ID,
+        owner.id,
+      ).run();
+    }
+    const racingDb = new Proxy(env.DB, {
+      get(target, property) {
+        if (property === 'batch') {
+          return async (statements: D1PreparedStatement[]) => {
+            try {
+              const results = await target.batch(statements);
+              if (results[0]?.meta.changes === 0) await releaseOwnerClaim();
+              return results;
+            } catch (error) {
+              await releaseOwnerClaim();
+              throw error;
+            }
+          };
+        }
+        const value = Reflect.get(target, property) as unknown;
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    }) as D1Database;
+    const repositories = createRepositories({ DB: racingDb });
+    const publishedAt = '2026-07-20T12:00:00.000Z';
+
+    await expect(repositories.programs.publishDraftWithCodeClaim({
+      merchantId: SEEDED_MERCHANT_ID,
+      externalRef: conflict.id,
+      expectedDraftRevision: 1,
+      status: 'active',
+      publishedAt,
+      publishedBy: 'program-operator',
+      codeClaim: {
+        merchantId: SEEDED_MERCHANT_ID,
+        programId: stored!.id,
+        programRef: conflict.id,
+        activeRevision: 1,
+        displayCode: code.display,
+        normalizedCode: code.normalized,
+        claimedAt: publishedAt,
+      },
+    })).rejects.toMatchObject({
+      name: 'PromoCodeConflictError',
+      conflictingProgramRef: owner.id,
+    });
+    expect(releasedAfterConflict).toBe(true);
+  });
+
   test('serializes concurrent overlapping publications to one winner', async () => {
     const service = operatorService();
     const first = codedDraftProgram('concurrent-code-first', 'race-safe');
@@ -828,6 +898,93 @@ describe('immutable Promo revisions and lifecycle', () => {
     `).bind(SEEDED_MERCHANT_ID).first()).toEqual({
       publishedAt: null,
       publishedBy: null,
+    });
+  });
+
+  test('rolls back a replacement code claim when publication loses its counter CAS', async () => {
+    const service = operatorService();
+    const first = codedDraftProgram('coded-cas-miss', 'original-code');
+    await service.createProgramDraft(operatorContext('programs:manage'), first);
+    await service.publishProgram(operatorContext('programs:publish'), first.id);
+    const replacement = codedDraftProgram(first.id, 'replacement-code', {
+      name: 'Coded CAS replacement',
+    });
+    await service.updateProgramDraft(
+      operatorContext('programs:manage'),
+      first.id,
+      replacement,
+    );
+    const stored = await createRepositories(env).programs.get(
+      SEEDED_MERCHANT_ID,
+      first.id,
+    );
+    expect(stored).not.toBeNull();
+
+    let injectedRace = false;
+    const racingDb = new Proxy(env.DB, {
+      get(target, property) {
+        if (property === 'batch') {
+          return async (statements: D1PreparedStatement[]) => {
+            injectedRace = true;
+            await target.prepare(`
+              UPDATE program_counters SET usage_count = usage_count + 1
+              WHERE merchant_id = ?1 AND program_id = ?2
+            `).bind(SEEDED_MERCHANT_ID, stored!.id).run();
+            return target.batch(statements);
+          };
+        }
+        const value = Reflect.get(target, property) as unknown;
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    }) as D1Database;
+    const repositories = createRepositories({ DB: racingDb });
+    const code = normalizePromoCode(replacement.code);
+    const publishedAt = '2026-07-20T12:00:00.000Z';
+
+    await expect(repositories.programs.publishDraftWithCodeClaim({
+      merchantId: SEEDED_MERCHANT_ID,
+      externalRef: first.id,
+      expectedDraftRevision: 2,
+      status: 'active',
+      publishedAt,
+      publishedBy: 'program-operator',
+      codeClaim: {
+        merchantId: SEEDED_MERCHANT_ID,
+        programId: stored!.id,
+        programRef: first.id,
+        activeRevision: 2,
+        displayCode: code.display,
+        normalizedCode: code.normalized,
+        claimedAt: publishedAt,
+      },
+    })).rejects.toMatchObject({ name: 'ProgramConflictError' });
+    expect(injectedRace).toBe(true);
+    expect(await env.DB.prepare(`
+      SELECT active_revision AS activeRevision, normalized_code AS normalizedCode,
+        released_at AS releasedAt
+      FROM promo_code_claims
+      WHERE merchant_id = ?1 AND program_ref = ?2
+      ORDER BY active_revision
+    `).bind(SEEDED_MERCHANT_ID, first.id).all()).toMatchObject({
+      results: [{
+        activeRevision: 1,
+        normalizedCode: normalizePromoCode(first.code).normalized,
+        releasedAt: null,
+      }],
+    });
+    expect(await env.DB.prepare(`
+      SELECT active_revision AS activeRevision, draft_revision AS draftRevision
+      FROM programs WHERE merchant_id = ?1 AND external_ref = ?2
+    `).bind(SEEDED_MERCHANT_ID, first.id).first()).toEqual({
+      activeRevision: 1,
+      draftRevision: 2,
+    });
+    expect(await env.DB.prepare(`
+      SELECT published_at AS publishedAt
+      FROM program_revisions
+      WHERE merchant_id = ?1 AND program_id = ?2 AND revision = 2
+    `).bind(SEEDED_MERCHANT_ID, stored!.id).first()).toEqual({
+      publishedAt: null,
     });
   });
 

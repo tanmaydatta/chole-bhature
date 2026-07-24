@@ -36,6 +36,7 @@ export function apiErrorStatus(error: ApiError): number {
     case 'VERSION_CONFLICT':
     case 'SCHEMA_CONFLICT':
     case 'PROGRAM_CONFLICT':
+    case 'PROMO_CODE_CONFLICT':
     case 'OPERATION_FAILED': return 409;
     case 'IDENTITY_UNAVAILABLE':
     case 'CORE_UNAVAILABLE':

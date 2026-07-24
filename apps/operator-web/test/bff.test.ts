@@ -854,6 +854,35 @@ describe('live session and tenant boundary', () => {
 });
 
 describe('correlation and safe downstream failures', () => {
+  test('maps a real operator publish conflict to a non-retryable 409', async () => {
+    const handler = await worker();
+    const env = createEnv(admin);
+    const remoteConflict = new Error(
+      'PROMO_CODE_CONFLICT:{"conflictingProgramRef":"existing-promo"}',
+    );
+    remoteConflict.name = 'PromoCodeConflictError';
+    env.CORE.publishProgram.mockRejectedValue(remoteConflict);
+
+    const response = await handler?.fetch(request(
+      '/operator/v1/programs/conflicting-promo/publish',
+      { method: 'POST', body: '{}' },
+    ), env);
+
+    expect(response?.status).toBe(409);
+    expect(await json(response)).toEqual(apiError(
+      'PROMO_CODE_CONFLICT',
+      'This code overlaps published Promo "existing-promo"',
+      false,
+    ));
+    expect(env.CORE.publishProgram).toHaveBeenCalledWith(
+      expect.objectContaining({
+        merchantId: 'merchant-a',
+        permission: 'programs:publish',
+      }),
+      'conflicting-promo',
+    );
+  });
+
   test('marks authenticated and show-once credential responses as non-cacheable', async () => {
     const handler = await worker();
     const env = createEnv(admin);

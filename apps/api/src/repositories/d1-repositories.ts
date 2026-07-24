@@ -55,7 +55,6 @@ import {
   type MerchantProvision,
   type MerchantRecord,
   type ProgramCounterRecord,
-  type PromoCodeClaimInput,
   type ProgramRecord,
   type ProgramRevisionRecord,
   type RedemptionCreate,
@@ -1083,32 +1082,6 @@ export function createRepositories(env: Env): Repositories {
         AND logical.active_revision IS NOT NULL
     `).bind(merchantId, externalRef).first<StoredProgramRow>();
     return row === null ? null : programFromRow(row);
-  }
-
-  async function conflictingPromoCodeProgramRef(
-    claim: PromoCodeClaimInput,
-  ): Promise<string | null> {
-    const row = await env.DB.prepare(`
-      SELECT existing.program_ref AS programRef
-      FROM promo_code_claims AS existing
-      WHERE existing.released_at IS NULL
-        AND existing.merchant_id = ?1
-        AND existing.normalized_code = ?2
-        AND existing.program_ref <> ?3
-        AND COALESCE(existing.ends_at, '9999-12-31T23:59:59.999Z')
-          >= COALESCE(?4, '0001-01-01T00:00:00.000Z')
-        AND COALESCE(?5, '9999-12-31T23:59:59.999Z')
-          >= COALESCE(existing.starts_at, '0001-01-01T00:00:00.000Z')
-      ORDER BY existing.created_at, existing.program_ref
-      LIMIT 1
-    `).bind(
-      claim.merchantId,
-      claim.normalizedCode,
-      claim.programRef,
-      claim.startsAt ?? null,
-      claim.endsAt ?? null,
-    ).first<{ programRef: string }>();
-    return row?.programRef ?? null;
   }
 
   async function getLatestSchemaVersion(
@@ -2309,7 +2282,13 @@ export function createRepositories(env: Env): Repositories {
             AND code_claim.normalized_code = ?2
             AND code_claim.released_at IS NULL
             AND logical.status IN ('active', 'scheduled', 'paused')
+            AND COALESCE(code_claim.ends_at, '9999-12-31') >= date('now')
           ORDER BY
+            CASE
+              WHEN COALESCE(code_claim.starts_at, '0001-01-01') <= date('now')
+                THEN 0
+              ELSE 1
+            END,
             COALESCE(code_claim.starts_at, '0001-01-01T00:00:00.000Z'),
             code_claim.created_at,
             code_claim.program_ref
@@ -2646,6 +2625,7 @@ export function createRepositories(env: Env): Repositories {
         const updatedAt = nextProgramTimestamp(current.updatedAt, publishedAt);
         const legacyMirrorJson = storedProgramJson({ ...draft, status });
         const requiresCodeClaim = codeClaim !== undefined && status !== 'ended';
+        const claimId = crypto.randomUUID();
         let results: D1Result[];
         try {
           results = await env.DB.batch([
@@ -2677,7 +2657,7 @@ export function createRepositories(env: Env): Repositories {
                     )
                 )
             `).bind(
-              crypto.randomUUID(),
+              claimId,
               merchantId,
               current.programId,
               externalRef,
@@ -2690,17 +2670,46 @@ export function createRepositories(env: Env): Repositories {
               requiresCodeClaim ? 1 : 0,
             ),
             env.DB.prepare(`
-              SELECT CASE
-                WHEN ?1 = 0 OR changes() = 1
-                  THEN json_extract('null', '$')
-                ELSE json_extract('null', 'promo-code-conflict')
-              END
-            `).bind(requiresCodeClaim ? 1 : 0),
+              SELECT existing.program_ref AS programRef
+              FROM promo_code_claims AS existing
+              WHERE ?1 = 1
+                AND NOT EXISTS (
+                  SELECT 1 FROM promo_code_claims AS inserted WHERE inserted.id = ?2
+                )
+                AND existing.released_at IS NULL
+                AND existing.merchant_id = ?3
+                AND existing.normalized_code = ?4
+                AND existing.program_ref <> ?5
+                AND COALESCE(
+                  existing.ends_at,
+                  '9999-12-31T23:59:59.999Z'
+                ) >= COALESCE(?6, '0001-01-01T00:00:00.000Z')
+                AND COALESCE(
+                  ?7,
+                  '9999-12-31T23:59:59.999Z'
+                ) >= COALESCE(
+                  existing.starts_at,
+                  '0001-01-01T00:00:00.000Z'
+                )
+              ORDER BY existing.created_at, existing.program_ref
+              LIMIT 1
+            `).bind(
+              requiresCodeClaim ? 1 : 0,
+              claimId,
+              merchantId,
+              codeClaim?.normalizedCode ?? '',
+              externalRef,
+              codeClaim?.startsAt ?? null,
+              codeClaim?.endsAt ?? null,
+            ),
             env.DB.prepare(`
               UPDATE program_revisions
               SET published_at = ?1, published_by = ?2
               WHERE merchant_id = ?3 AND revision = ?4
                 AND published_at IS NULL AND published_by IS NULL
+                AND (?11 = 0 OR EXISTS (
+                  SELECT 1 FROM promo_code_claims AS inserted WHERE inserted.id = ?12
+                ))
                 AND program_id = (
                   SELECT logical.id FROM programs AS logical
                   INNER JOIN program_counters AS counter
@@ -2726,6 +2735,8 @@ export function createRepositories(env: Env): Repositories {
               current.maxUses,
               current.budgetRemaining,
               current.committedSpend,
+              requiresCodeClaim ? 1 : 0,
+              claimId,
             ),
             env.DB.prepare(`
               UPDATE program_counters
@@ -2789,10 +2800,16 @@ export function createRepositories(env: Env): Repositories {
             ),
             env.DB.prepare(`
               SELECT json_extract(
-                CASE WHEN changes() = 1 THEN 'null' ELSE 'publication-cas-miss' END,
+                CASE
+                  WHEN changes() = 1 THEN 'null'
+                  WHEN ?1 = 1 AND NOT EXISTS (
+                    SELECT 1 FROM promo_code_claims AS inserted WHERE inserted.id = ?2
+                  ) THEN 'null'
+                  ELSE 'publication-cas-miss'
+                END,
                 '$'
               )
-            `),
+            `).bind(requiresCodeClaim ? 1 : 0, claimId),
             env.DB.prepare(`
               UPDATE promo_code_claims
               SET released_at = ?1
@@ -2814,16 +2831,6 @@ export function createRepositories(env: Env): Repositories {
             ),
           ]);
         } catch (error) {
-          if (
-            codeClaim !== undefined
-            && error instanceof Error
-            && /promo-code-conflict/u.test(error.message)
-          ) {
-            const conflictingProgramRef = await conflictingPromoCodeProgramRef(codeClaim);
-            if (conflictingProgramRef !== null) {
-              throw new PromoCodeConflictError(conflictingProgramRef);
-            }
-          }
           if (error instanceof Error && /malformed JSON/u.test(error.message)) {
             throw new ProgramConflictError('The program draft changed before publication');
           }
@@ -2831,14 +2838,22 @@ export function createRepositories(env: Env): Repositories {
         }
         const [
           claimResult,
-          _claimGuardResult,
+          conflictResult,
           revisionResult,
           counterResult,
           logicalResult,
         ] = results;
+        if (requiresCodeClaim && claimResult?.meta.changes !== 1) {
+          const conflict = z.object({ programRef: z.string().min(1) }).safeParse(
+            conflictResult?.results[0],
+          );
+          if (conflict.success) {
+            throw new PromoCodeConflictError(conflict.data.programRef);
+          }
+          throw new ProgramConflictError('The Promo code claim could not be acquired');
+        }
         if (
-          (requiresCodeClaim && claimResult?.meta.changes !== 1)
-          || revisionResult?.meta.changes !== 1
+          revisionResult?.meta.changes !== 1
           || counterResult?.meta.changes !== 1
           || (logicalResult?.meta.changes ?? 0) < 1
         ) {
