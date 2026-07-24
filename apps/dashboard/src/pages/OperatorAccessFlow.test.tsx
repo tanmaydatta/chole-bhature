@@ -183,6 +183,12 @@ function installFetch(session: object | null, overrides: Record<string, unknown>
         fallbackReward: { id: 'fallback', name: 'Shipping', reward: { type: 'free_shipping' } },
         stackable: false, priority: 10, autoApply: true,
       },
+      draftConfiguration: {
+        id: 'promo-draft-1', type: 'promo', name: 'Draft Summer Sale', status: 'draft',
+        eligibility: { match: 'ALL', conditions: [] }, rewardRules: [],
+        fallbackReward: { id: 'fallback', name: 'Shipping', reward: { type: 'free_shipping' } },
+        stackable: false, priority: 10, autoApply: true,
+      },
       lifecycle: {
         programRef: 'promo-draft-1', status: 'draft', draftRevision: 1,
         updatedAt: '2026-07-20T10:00:00.000Z',
@@ -511,6 +517,21 @@ describe('operator access flow', () => {
 
     expect(await screen.findByText('You do not have permission to view this page.')).toBeInTheDocument();
     expect(calls.some(call => call.path === bffPath)).toBe(false);
+  });
+
+  test('does not fetch or expose a Promo code or trigger controls without program access', async () => {
+    const underPermissioned = {
+      ...sessions.viewer,
+      permissions: ['schemas:read'],
+    };
+    const { calls } = installFetch(underPermissioned);
+    renderApp('/promo/coded-secret');
+
+    expect(await screen.findByText('You do not have permission to view this page.')).toBeInTheDocument();
+    expect(calls.some(call => call.path === '/operator/v1/programs/coded-secret')).toBe(false);
+    expect(screen.queryByText('GATECSECRET')).not.toBeInTheDocument();
+    expect(screen.queryByRole('radio', { name: 'Automatic' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('radio', { name: 'Code-triggered' })).not.toBeInTheDocument();
   });
 
   test('requires root to select a client before merchant routes and keeps both context markers visible', async () => {

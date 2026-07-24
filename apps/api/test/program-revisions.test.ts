@@ -767,6 +767,8 @@ describe('immutable Promo revisions and lifecycle', () => {
     ));
     expect(refreshedDraft).toEqual({
       configuration: replacement,
+      activeConfiguration: first,
+      draftConfiguration: replacement,
       lifecycle: expect.objectContaining({
         programRef: first.id,
         status: 'active',

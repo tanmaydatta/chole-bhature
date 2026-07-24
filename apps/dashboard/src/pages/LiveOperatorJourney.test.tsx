@@ -98,10 +98,18 @@ function installLiveBff() {
   let publishedVersion: number | undefined;
   let customer: null | { externalRef: string; attributes: Record<string, unknown>; version: number; updatedAt: string } = null;
   let conflictNext = false;
+  let promoCodeConflictNext = false;
   let program: Record<string, any> = programConfiguration();
+  let activeProgram: Record<string, any> | null = null;
   let lifecycle = { programRef: program.id, status: 'draft', draftRevision: 1, updatedAt: now } as {
     programRef: string; status: string; activeRevision?: number; draftRevision?: number; updatedAt: string;
   };
+  const operatorView = () => ({
+    configuration: program,
+    ...(activeProgram === null ? {} : { activeConfiguration: activeProgram }),
+    ...(lifecycle.draftRevision === undefined ? {} : { draftConfiguration: program }),
+    lifecycle,
+  });
 
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const path = String(input);
@@ -151,10 +159,11 @@ function installLiveBff() {
     if (path === '/operator/v1/programs') {
       if (method === 'POST') {
         program = body;
+        activeProgram = null;
         lifecycle = { programRef: program.id, status: 'draft', draftRevision: 1, updatedAt: now };
-        return response({ configuration: program, lifecycle }, 201);
+        return response(operatorView(), 201);
       }
-      return response({ programs: [{ configuration: program, lifecycle }] });
+      return response({ programs: [operatorView()] });
     }
     if (path === '/operator/v1/programs/gold-launch') {
       if (method === 'PUT') {
@@ -163,17 +172,22 @@ function installLiveBff() {
           programRef: program.id, status: lifecycle.status,
           activeRevision: lifecycle.activeRevision, draftRevision: 2, updatedAt: now,
         };
-        return response({ configuration: program, lifecycle });
+        return response(operatorView());
       }
-      return response({ configuration: program, lifecycle });
+      return response(operatorView());
     }
     if (path === '/operator/v1/programs/gold-launch/publish') {
+      if (promoCodeConflictNext) {
+        promoCodeConflictNext = false;
+        return error(409, 'PROMO_CODE_CONFLICT', 'This code overlaps another published Promo');
+      }
       const revision = lifecycle.draftRevision ?? 1;
       lifecycle = {
         programRef: program.id,
         status: program.startDate && program.startDate > '2026-07-20' ? 'scheduled' : lifecycle.status === 'paused' || lifecycle.status === 'ended' ? lifecycle.status : 'active',
         activeRevision: revision, updatedAt: now,
       };
+      activeProgram = program;
       program = { ...program, status: lifecycle.status };
       return response({ ...lifecycle, warnings: [{
         code: 'OVERLAPPING_REWARD_RULES', message: 'Two reward rules may overlap',
@@ -196,6 +210,7 @@ function installLiveBff() {
   return {
     calls,
     conflictOnce() { conflictNext = true; },
+    promoCodeConflictOnce() { promoCodeConflictNext = true; },
     currentProgram() { return { program, lifecycle }; },
   };
 }
@@ -218,6 +233,105 @@ afterEach(() => {
 });
 
 describe('live operator authoring journey', () => {
+  test('starts a Promo as a minimal draft and makes trigger mode explicit', async () => {
+    const server = installLiveBff();
+    renderApp('/promo/new');
+
+    expect(await screen.findByLabelText('External reference')).toBeInTheDocument();
+    expect(screen.queryByText('Large basket')).not.toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: 'Automatic' })).toBeChecked();
+    expect(screen.getByRole('radio', { name: 'Code-triggered' })).not.toBeChecked();
+    expect(screen.queryByLabelText('Code')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Stackable')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Stacking group')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Save draft' })).toBeDisabled();
+
+    await userEvent.type(screen.getByLabelText('External reference'), 'gold-launch');
+    await userEvent.type(screen.getByLabelText('Promo name'), 'Gold launch');
+    await userEvent.click(screen.getByRole('button', { name: 'Use complete authoring example' }));
+    expect(screen.getByDisplayValue('Large basket')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('radio', { name: 'Code-triggered' }));
+    expect(screen.getByLabelText('Code')).toBeInTheDocument();
+    expect(screen.getByLabelText('Stackable')).toBeInTheDocument();
+
+    await userEvent.type(screen.getByLabelText('Code'), 'GATEC20');
+    await userEvent.click(screen.getByLabelText('Stackable'));
+    vi.mocked(window.confirm).mockReturnValueOnce(false);
+    await userEvent.click(screen.getByRole('radio', { name: 'Automatic' }));
+    expect(screen.getByRole('radio', { name: 'Code-triggered' })).toBeChecked();
+    expect(screen.getByLabelText('Code')).toHaveValue('GATEC20');
+    expect(screen.getByLabelText('Stackable')).toBeChecked();
+
+    vi.mocked(window.confirm).mockReturnValueOnce(true);
+    await userEvent.click(screen.getByRole('radio', { name: 'Automatic' }));
+    expect(screen.getByRole('radio', { name: 'Automatic' })).toBeChecked();
+    expect(screen.queryByLabelText('Code')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Stackable')).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Save draft' }));
+    expect(await screen.findByText('Draft revision 1')).toBeInTheDocument();
+    const createCall = server.calls.find(call => (
+      call.path === '/operator/v1/programs' && call.method === 'POST'
+    ));
+    expect(createCall?.body).toEqual(expect.objectContaining({
+      autoApply: true,
+      stackable: false,
+    }));
+    expect(createCall?.body).not.toHaveProperty('code');
+    expect(createCall?.body).not.toHaveProperty('stackingGroup');
+  });
+
+  test('shows coded trigger details and reviews, cancels, then explains a publication code conflict', async () => {
+    const server = installLiveBff();
+    renderApp('/promo/new');
+
+    await userEvent.type(await screen.findByLabelText('External reference'), 'gold-launch');
+    await userEvent.type(screen.getByLabelText('Promo name'), 'Gold launch coded');
+    await userEvent.click(screen.getByRole('button', { name: 'Use complete authoring example' }));
+    await userEvent.click(screen.getByRole('radio', { name: 'Code-triggered' }));
+    await userEvent.type(screen.getByLabelText('Code'), 'GATEC20');
+    await userEvent.click(screen.getByLabelText('Stackable'));
+    await userEvent.click(screen.getByRole('button', { name: 'Save draft' }));
+    expect(await screen.findByText('Draft revision 1')).toBeInTheDocument();
+
+    cleanup();
+    renderApp('/promo');
+    const row = (await screen.findByText('Gold launch coded')).closest('tr');
+    if (!row) throw new Error('Expected coded Promo list row');
+    expect(within(row).getByText('Code-triggered')).toBeInTheDocument();
+    await userEvent.click(row);
+
+    expect(await screen.findByText('Draft revision 1')).toBeInTheDocument();
+    expect(screen.getByText('Code-triggered')).toBeInTheDocument();
+    expect(screen.getByText('GATEC20')).toBeInTheDocument();
+    expect(screen.getByText('Yes')).toBeInTheDocument();
+    expect(screen.getByText('20% off order')).toBeInTheDocument();
+    expect(screen.getByText(/"basisPoints": 2000/u)).toBeInTheDocument();
+
+    const publishCalls = () => server.calls.filter(call => (
+      call.path === '/operator/v1/programs/gold-launch/publish' && call.method === 'POST'
+    ));
+    await userEvent.click(screen.getByRole('button', { name: 'Publish revision' }));
+    const review = (await screen.findByRole('heading', { name: 'Review publication' }))
+      .closest<HTMLElement>('[role="dialog"]');
+    if (!review) throw new Error('Expected publication review dialog');
+    expect(within(review).getByText('Trigger: Code-triggered')).toBeInTheDocument();
+    expect(within(review).getByText('GATEC20')).toBeInTheDocument();
+    expect(within(review).getByText('Stackable: Yes')).toBeInTheDocument();
+    expect(publishCalls()).toHaveLength(0);
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel publication' }));
+    expect(screen.queryByRole('heading', { name: 'Review publication' })).not.toBeInTheDocument();
+    expect(publishCalls()).toHaveLength(0);
+
+    server.promoCodeConflictOnce();
+    await userEvent.click(screen.getByRole('button', { name: 'Publish revision' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Confirm publish' }));
+    expect(await screen.findByText(/another published Promo already uses this code/iu)).toBeInTheDocument();
+    expect(screen.getByText(/Change the code or schedule/u)).toBeInTheDocument();
+    expect(publishCalls()).toHaveLength(1);
+  });
+
   test('defines and publishes schema, then creates and version-updates one exact typed customer', async () => {
     const server = installLiveBff();
     renderApp('/variables');
@@ -322,7 +436,19 @@ describe('live operator authoring journey', () => {
     const readsBeforePublish = server.calls.filter(call => (
       call.path === '/operator/v1/programs/gold-launch' && call.method === 'GET'
     )).length;
+    const publishesBeforeReview = server.calls.filter(call => (
+      call.path === '/operator/v1/programs/gold-launch/publish' && call.method === 'POST'
+    )).length;
     await userEvent.click(screen.getByRole('button', { name: 'Publish revision' }));
+    expect(await screen.findByRole('heading', { name: 'Review publication' })).toBeInTheDocument();
+    expect(screen.getByText('Trigger: Automatic')).toBeInTheDocument();
+    expect(screen.getByText('Priority: 10')).toBeInTheDocument();
+    expect(screen.getByText('Draft revision: 1')).toBeInTheDocument();
+    expect(screen.getByText('Active revision: none')).toBeInTheDocument();
+    expect(server.calls.filter(call => (
+      call.path === '/operator/v1/programs/gold-launch/publish' && call.method === 'POST'
+    ))).toHaveLength(publishesBeforeReview);
+    await userEvent.click(screen.getByRole('button', { name: 'Confirm publish' }));
     expect(await screen.findByText('Active revision 1')).toBeInTheDocument();
     expect(server.calls.filter(call => (
       call.path === '/operator/v1/programs/gold-launch' && call.method === 'GET'
@@ -332,8 +458,11 @@ describe('live operator authoring journey', () => {
     cleanup();
     renderApp('/promo');
     const row = await screen.findByText('Gold launch');
+    expect(within(row.closest('tr')!).getByText('Automatic')).toBeInTheDocument();
     await userEvent.click(row.closest('tr')!);
     expect(await screen.findByText('Active revision 1')).toBeInTheDocument();
+    expect(screen.getByText('Trigger')).toBeInTheDocument();
+    expect(screen.getByText('Automatic')).toBeInTheDocument();
     await userEvent.click(screen.getByRole('link', { name: 'Edit Promo' }));
     expect(await screen.findByLabelText('Promo name')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Use complete authoring example' })).not.toBeInTheDocument();
@@ -352,7 +481,13 @@ describe('live operator authoring journey', () => {
     expect(await screen.findByText('Active revision 1')).toBeInTheDocument();
     expect(screen.getByText('Draft revision 2')).toBeInTheDocument();
     await userEvent.click(screen.getByText('Gold launch revision 2').closest('tr')!);
+    expect(await screen.findByRole('heading', { name: 'Active configuration' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Draft configuration' })).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Publish revision' }));
+    expect(await screen.findByRole('heading', { name: 'Review publication' })).toBeInTheDocument();
+    expect(screen.getByText('Active revision: 1')).toBeInTheDocument();
+    expect(screen.getByText('Draft revision: 2')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Confirm publish' }));
     expect(await screen.findByText('Active revision 2')).toBeInTheDocument();
 
     const readsBeforePause = server.calls.filter(call => (
@@ -572,6 +707,11 @@ describe('live operator authoring journey', () => {
       });
       if (path === '/operator/v1/programs/gold-launch') return response({
         configuration: invalid,
+        activeConfiguration: {
+          ...programConfiguration('Active Promo'),
+          status: 'active',
+        },
+        draftConfiguration: invalid,
         lifecycle: { programRef: 'gold-launch', status: 'active', activeRevision: 1, draftRevision: 2, updatedAt: now },
       });
       throw new Error(`Unexpected ${path}`);
@@ -598,6 +738,11 @@ describe('live operator authoring journey', () => {
       });
       if (path === '/operator/v1/programs/gold-launch' && method === 'GET') return response({
         configuration: programConfiguration('Server Promo'),
+        activeConfiguration: {
+          ...programConfiguration('Active Promo'),
+          status: 'active',
+        },
+        draftConfiguration: programConfiguration('Server Promo'),
         lifecycle: { programRef: 'gold-launch', status: 'active', activeRevision: 1, draftRevision: 2, updatedAt: now },
       });
       if (path === '/operator/v1/programs/gold-launch' && method === 'PUT') {
@@ -648,6 +793,7 @@ describe('live operator authoring journey', () => {
       }
       if (path === '/operator/v1/programs/existing-ref' && method === 'GET') return response({
         configuration: { ...programConfiguration('Existing server Promo'), id: 'existing-ref' },
+        draftConfiguration: { ...programConfiguration('Existing server Promo'), id: 'existing-ref' },
         lifecycle: { programRef: 'existing-ref', status: 'draft', draftRevision: 1, updatedAt: now },
       });
       throw new Error(`Unexpected ${method} ${path}`);

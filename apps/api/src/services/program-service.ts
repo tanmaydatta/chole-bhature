@@ -174,14 +174,48 @@ export function createProgramService(repositories: Repositories) {
     merchantId: string,
     record: Awaited<ReturnType<typeof find>>,
   ): Promise<OperatorProgramView> {
-    const activeRecord = record.activeRevision === undefined
-      ? null
-      : await repositories.programs.getActive(merchantId, record.externalRef);
+    const [activeRecord, activeRevisionRecord, draftRevisionRecord] = await Promise.all([
+      record.activeRevision === undefined
+        ? Promise.resolve(null)
+        : repositories.programs.getActive(merchantId, record.externalRef),
+      record.activeRevision === undefined
+        ? Promise.resolve(null)
+        : repositories.programs.getRevision(
+          merchantId,
+          record.externalRef,
+          record.activeRevision,
+        ),
+      record.draftRevision === undefined
+        ? Promise.resolve(null)
+        : repositories.programs.getRevision(
+          merchantId,
+          record.externalRef,
+          record.draftRevision,
+        ),
+    ]);
+    if (
+      (record.activeRevision !== undefined && activeRevisionRecord === null)
+      || (record.draftRevision !== undefined && draftRevisionRecord === null)
+    ) {
+      throw new ProgramConflictError('A referenced program revision is missing');
+    }
+    const status = activeRecord?.program.status ?? record.program.status;
+    const activeConfiguration = activeRevisionRecord === null
+      ? undefined
+      : activeRevisionRecord.configuration;
+    const draftConfiguration = draftRevisionRecord === null
+      ? undefined
+      : draftRevisionRecord.configuration;
+    if (draftConfiguration === undefined && activeConfiguration === undefined) {
+      throw new ProgramConflictError('The program has no addressable revision');
+    }
     return {
       configuration: record.program,
+      ...(activeConfiguration === undefined ? {} : { activeConfiguration }),
+      ...(draftConfiguration === undefined ? {} : { draftConfiguration }),
       lifecycle: {
         programRef: record.externalRef,
-        status: activeRecord?.program.status ?? record.program.status,
+        status,
         ...(record.activeRevision === undefined
           ? {}
           : { activeRevision: record.activeRevision }),

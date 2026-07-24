@@ -49,7 +49,17 @@ export const OperatorProgramDraftRequestSchema = PromoProgramSchema;
 export const OperatorProgramViewSchema = z.object({
   configuration: PromoProgramSchema,
   lifecycle: ProgramLifecycleSchema,
+  activeConfiguration: PromoProgramSchema.optional(),
+  draftConfiguration: PromoProgramSchema.optional(),
 }).strict().superRefine((view, context) => {
+  const sameConfiguration = (
+    left: typeof view.configuration,
+    right: typeof view.configuration,
+  ) => JSON.stringify(left) === JSON.stringify(right);
+  const sameConfigurationExceptStatus = (
+    left: typeof view.configuration,
+    right: typeof view.configuration,
+  ) => JSON.stringify({ ...left, status: right.status }) === JSON.stringify(right);
   if (view.configuration.id !== view.lifecycle.programRef) {
     context.addIssue({
       code: 'custom',
@@ -58,13 +68,74 @@ export const OperatorProgramViewSchema = z.object({
     });
   }
   if (
-    view.lifecycle.draftRevision !== undefined
-    && view.configuration.status !== 'draft'
+    (view.activeConfiguration === undefined)
+    !== (view.lifecycle.activeRevision === undefined)
   ) {
     context.addIssue({
       code: 'custom',
-      path: ['configuration', 'status'],
-      message: 'the working configuration must be draft while draftRevision is present',
+      path: ['activeConfiguration'],
+      message: 'activeConfiguration must be present exactly when activeRevision is present',
+    });
+  }
+  if (
+    (view.draftConfiguration === undefined)
+    !== (view.lifecycle.draftRevision === undefined)
+  ) {
+    context.addIssue({
+      code: 'custom',
+      path: ['draftConfiguration'],
+      message: 'draftConfiguration must be present exactly when draftRevision is present',
+    });
+  }
+  if (
+    view.activeConfiguration !== undefined
+    && view.activeConfiguration.id !== view.lifecycle.programRef
+  ) {
+    context.addIssue({
+      code: 'custom',
+      path: ['activeConfiguration', 'id'],
+      message: 'activeConfiguration id must match lifecycle programRef',
+    });
+  }
+  if (
+    view.draftConfiguration !== undefined
+    && view.draftConfiguration.id !== view.lifecycle.programRef
+  ) {
+    context.addIssue({
+      code: 'custom',
+      path: ['draftConfiguration', 'id'],
+      message: 'draftConfiguration id must match lifecycle programRef',
+    });
+  }
+  if (
+    view.draftConfiguration !== undefined
+    && view.draftConfiguration.status !== 'draft'
+  ) {
+    context.addIssue({
+      code: 'custom',
+      path: ['draftConfiguration', 'status'],
+      message: 'draftConfiguration status must be draft',
+    });
+  }
+  if (
+    view.draftConfiguration !== undefined
+    && !sameConfiguration(view.configuration, view.draftConfiguration)
+  ) {
+    context.addIssue({
+      code: 'custom',
+      path: ['configuration'],
+      message: 'configuration must be the exact draft configuration while a draft is present',
+    });
+  }
+  if (
+    view.draftConfiguration === undefined
+    && view.activeConfiguration !== undefined
+    && !sameConfigurationExceptStatus(view.configuration, view.activeConfiguration)
+  ) {
+    context.addIssue({
+      code: 'custom',
+      path: ['configuration'],
+      message: 'configuration may differ from the active revision only by lifecycle status',
     });
   }
   if (
@@ -74,7 +145,7 @@ export const OperatorProgramViewSchema = z.object({
     context.addIssue({
       code: 'custom',
       path: ['configuration', 'status'],
-      message: 'configuration status must match lifecycle without a draft revision',
+      message: 'working configuration status must match lifecycle without a draft revision',
     });
   }
   if (
