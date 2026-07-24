@@ -9,7 +9,7 @@
 This is the canonical Task 10 staging procedure. It replaces direct
 `wrangler d1`, export, and deployment-status commands previously drafted in
 the dated activation record. The Cloudflare account owner runs each
-command, checks the stated result, and stops on any deviation. The
+Cloudflare command, checks the stated result, and stops on any deviation. The
 implementation agent does not run Cloudflare reads or writes.
 
 The protected runner:
@@ -26,9 +26,12 @@ The protected runner:
   `STAGING_*` values;
 - fails closed on malformed Wrangler JSON; and
 - captures every supported non-interactive remote action and prints only
-  approved count, timestamp, deployment-version, or fixed structural
-  completion summaries. In particular, it never prints remote migration or
-  deployment logs, account metadata, or D1 export signed URLs.
+  approved counts, timestamps, deployment versions, the D1 Time Travel
+  bookmark, or fixed structural completion summaries. It never prints remote
+  migration/deployment logs, account metadata, or database metadata.
+
+The runner can read the current Time Travel bookmark. It deliberately cannot
+restore Product D1, roll back a Worker, or perform any other recovery write.
 
 ## 1. Approve the source and open a quiet window
 
@@ -71,27 +74,10 @@ verification, and the final write-marker decision:
 The quiet window matters even though migration `0006` is additive. A
 pre-`0006` API Worker can still write its legacy evaluation/redemption rows
 after migration, but those writes bypass the new atomic operation and entry
-ledgers.
+ledgers. It also ensures that an emergency Time Travel restore cannot discard
+legitimate writes made after the pre-migration bookmark.
 
-## 2. Create the private evidence directory
-
-Create an owner-controlled, non-symlink, mode-`0700` directory outside the
-repository. The runner accepts only an absolute path with the fixed export
-basename:
-
-```sh
-umask 077
-TASK10_BACKUP_DIR="$(mktemp -d "${TMPDIR%/}/incentives-task10.XXXXXX")"
-chmod 700 "$TASK10_BACKUP_DIR"
-TASK10_BACKUP_DIR="$(cd "$TASK10_BACKUP_DIR" && pwd -P)"
-TASK10_BACKUP_PATH="$TASK10_BACKUP_DIR/incentives-staging-before-0006.sql"
-export TASK10_BACKUP_DIR TASK10_BACKUP_PATH
-```
-
-Expected: no value is printed. Do not place this directory inside the
-repository, use a symlink, relax its permissions, or pre-create the SQL file.
-
-## 3. Capture protected pre-migration evidence
+## 2. Capture protected pre-migration evidence
 
 Run the count-only inventory:
 
@@ -112,13 +98,23 @@ Run both fail-loud migration-equivalent prechecks:
 
 ```sh
 node scripts/staging-wrangler-runner.mjs api task10-precheck-promos
-node scripts/staging-wrangler-runner.mjs api task10-precheck-redemptions
 ```
 
 Expected:
 
 ```json
 {"invalid_trigger_rows":0,"unsafe_normalization_rows":0,"overlapping_claim_pairs":0}
+```
+
+Then:
+
+```sh
+node scripts/staging-wrangler-runner.mjs api task10-precheck-redemptions
+```
+
+Expected:
+
+```json
 {"invalid_legacy_redemption_rows":0}
 ```
 
@@ -129,41 +125,53 @@ procedure.
 Capture the pre-cutover Product write marker:
 
 ```sh
-node scripts/staging-wrangler-runner.mjs api task10-write-marker \
-  > "$TASK10_BACKUP_DIR/write-marker-before.txt"
+node scripts/staging-wrangler-runner.mjs api task10-write-marker
 ```
 
-Expected: the file contains only the protected target-confirmation line plus
-evaluation/redemption counts and nullable latest-write timestamps.
+Expected: only the protected target-confirmation line plus
+evaluation/redemption counts and nullable latest-write timestamps. Record the
+sanitized result in the private rollout record.
 
 Capture the currently deployed versions:
 
 ```sh
 node scripts/staging-wrangler-runner.mjs api task10-status
+```
+
+Expected: a sanitized API deployment time and version/traffic summary.
+
+Then:
+
+```sh
 node scripts/staging-wrangler-runner.mjs operator-web task10-status
 ```
 
-Expected: sanitized deployment time and version/traffic summaries. Record the
-version UUIDs as rollout evidence only. They are not rollback authorization or
-an executable recovery target. There is no Task 10 Identity deployment or
-Identity status step.
+Expected: a sanitized Operator Web deployment time and version/traffic
+summary. Record both version UUIDs as rollout evidence only. A UUID is not by
+itself authorization to roll back or proof that a version is compatible with
+the restored database. There is no Task 10 Identity deployment or Identity
+status step.
 
-Export Product D1:
+Capture the Product D1 Time Travel bookmark last, immediately before applying
+the migration:
 
 ```sh
-node scripts/staging-wrangler-runner.mjs api task10-export \
-  "$TASK10_BACKUP_PATH"
-test -s "$TASK10_BACKUP_PATH"
-test ! -L "$TASK10_BACKUP_PATH"
-chmod 600 "$TASK10_BACKUP_PATH"
+node scripts/staging-wrangler-runner.mjs api task10-bookmark
 ```
 
-Expected: the runner reports only `Product D1 export completed.` and the file
-is a non-empty regular file. It suppresses Wrangler's temporary signed URL.
-Treat both the URL and the export as sensitive even though the URL is not
-shown.
+Expected:
 
-## 4. Apply migration `0006`
+```text
+Authenticated staging Product D1 target confirmed.
+{"bookmark":"<opaque Cloudflare bookmark>"}
+```
+
+Store the exact bookmark in the private rollout record. Do not alter it,
+commit it, or paste it into public tickets or chat. This is a read-only action.
+The continuous quiet window makes this bookmark an exact pre-migration
+recovery point rather than a point followed by unrecorded application writes.
+
+## 3. Apply migration `0006`
 
 Run the repository migration command:
 
@@ -180,10 +188,10 @@ Authenticated staging Product D1 target confirmed.
 {"application":"api","action":"migrate","status":"completed"}
 ```
 
-Stop on any failure. Product D1 migrations are forward-only; never attempt a
-schema downgrade or import the pre-migration export over the migrated
-database. The structural success line confirms Wrangler exited successfully;
-the next protected query is the authoritative schema-state verification.
+Stop on any failure. Do not automatically restore the database. First preserve
+the quiet window and use the recovery decision in section 7. The structural
+success line confirms Wrangler exited successfully; the next protected query
+is the authoritative schema-state verification.
 
 Verify only the migration and target-table counts:
 
@@ -209,7 +217,7 @@ Expected: HTTP `200` and `{"status":"ok"}`. This is only a pre-deployment
 availability check. It does not authorize reopening traffic or prove that the
 old Worker populates the new ledgers; keep the quiet window in place.
 
-## 5. Deploy and verify the API Worker
+## 4. Deploy and verify the API Worker
 
 ```sh
 pnpm --filter @incentives/api deploy:staging
@@ -237,16 +245,16 @@ curl --silent --show-error --fail-with-body \
 
 Expected: HTTP `200` and `{"status":"ok"}`.
 
-Fetch OpenAPI into the private directory and validate only the clean-break
-schema facts:
+Stream OpenAPI directly into a local validator. This does not create an
+evidence directory or leave a copy of the document on disk:
 
 ```sh
+set -o pipefail
 curl --silent --show-error --fail-with-body \
-  --output "$TASK10_BACKUP_DIR/openapi.json" \
-  "$STAGING_API_ORIGIN/v1/openapi.json"
-node -e '
+  "$STAGING_API_ORIGIN/v1/openapi.json" |
+  node -e '
 const { readFileSync } = require("node:fs");
-const document = JSON.parse(readFileSync(process.argv[1], "utf8"));
+const document = JSON.parse(readFileSync(0, "utf8"));
 const evaluation = document.components?.schemas?.EvaluationRequest;
 const redemption = document.components?.schemas?.RedemptionRequest;
 if (
@@ -267,7 +275,7 @@ console.log(JSON.stringify({
   redemptionEvaluationId: true,
   redemptionProgramRef: false
 }));
-' "$TASK10_BACKUP_DIR/openapi.json"
+'
 ```
 
 Expected:
@@ -284,14 +292,13 @@ node scripts/staging-wrangler-runner.mjs api task10-status
 
 Expected: the new API version receives `100` percent traffic.
 
-## 6. Deploy and verify Operator Web
+## 5. Deploy and verify Operator Web
 
 Identity is deliberately omitted: Task 10 does not change its contract,
 binding, or implementation.
 
 ```sh
 pnpm --filter @incentives/operator-web deploy:staging
-node scripts/staging-wrangler-runner.mjs operator-web task10-status
 ```
 
 Expected: the package's local contracts/dashboard build output may appear
@@ -302,10 +309,15 @@ Authenticated staging Product D1 target confirmed.
 {"application":"operator-web","action":"deploy","status":"completed"}
 ```
 
-The following protected status command must show the new Operator Web version
-receiving `100` percent traffic.
+Then:
 
-## 7. Run the fresh manual Gate C cases
+```sh
+node scripts/staging-wrangler-runner.mjs operator-web task10-status
+```
+
+Expected: the new Operator Web version receives `100` percent traffic.
+
+## 6. Run the fresh manual Gate C cases
 
 Follow the canonical
 [Gate C manual end-to-end test](./gate-c-manual-test.md) from **Per-run test
@@ -324,78 +336,87 @@ The mandatory correction cases are:
 Record expected versus actual status, safe evaluation/redemption identifiers,
 correlation IDs, and deployed API/Operator version IDs. Never record bearer
 tokens, credential plaintext/digests, codes, customer attributes, request
-bodies, cookies, invitation links, activation grants, recovery codes, D1 IDs,
-or the export contents.
+bodies, cookies, invitation links, activation grants, recovery codes, or D1
+IDs.
 
 After verification, capture the post-cutover write marker:
 
 ```sh
-node scripts/staging-wrangler-runner.mjs api task10-write-marker \
-  > "$TASK10_BACKUP_DIR/write-marker-after.txt"
+node scripts/staging-wrangler-runner.mjs api task10-write-marker
 ```
 
-Only now may the owner decide whether to reopen traffic. Reopen it only when
-the migration, health/OpenAPI checks, both deployments, protected status
-checks, and required manual cases all pass.
+Record the sanitized result in the private rollout record. Only now may the
+owner decide whether to reopen traffic. Reopen it only when the migration,
+health/OpenAPI checks, both deployments, protected status checks, and required
+manual cases all pass.
 
-## 8. Recovery decision
+## 7. Recovery decision
 
-Migration `0006` is forward-only. The normal recovery path is containment plus
-a reviewed forward fix:
+### Normal recovery: contain and fix forward
+
+The normal path is:
 
 1. keep or restore the quiet window;
 2. disable integrations and operator writes;
-3. preserve the private export and safe evidence;
+3. preserve the bookmark and sanitized before/after evidence;
 4. leave Product D1 on the migrated schema; and
 5. deploy a reviewed API/Operator correction.
 
-Protected Task 10 Worker rollback is deliberately disabled. The runner rejects
-every rollback action before it can spawn Wrangler. Do not use direct Wrangler
-rollback commands as a workaround: interactive confirmation can be
-misinterpreted or silently answered, deployed-version metadata does not prove
-which reviewed source produced a version, and an older Worker may have
-incompatible bindings, secrets, or behavior even when the D1 migration is
-additive.
+This avoids discarding valid data written after the bookmark and is the
+required path once traffic has reopened or the bookmark is outside
+Cloudflare's retention window.
 
-Until a reviewed fail-closed preflight or Cloudflare API tool can prove the
-exact version-to-source mapping, binding/secret compatibility, target account,
-and confirmation semantics, all Task 10 recovery is containment plus a
-reviewed forward fix. Preserve the before/after write markers and sanitized
-deployment-version summaries as incident evidence only.
+### Exceptional recovery: coordinated Time Travel restore
+
+Use an in-place Time Travel restore only when all of the following are true:
+
+- the quiet window remained continuous, or all post-bookmark writes are
+  explicitly accepted as disposable;
+- the exact pre-migration bookmark from this rollout is still within
+  Cloudflare's retention period;
+- migration `0006` or the new application release cannot safely be corrected
+  forward within the incident window;
+- the exact reviewed previous API and Operator source/version is known; and
+- an owner explicitly approves the destructive database restore.
+
+Then perform this coordinated sequence:
+
+1. Keep the quiet window closed and stop every Product D1 reader and writer.
+2. Verify the saved bookmark, retention eligibility, previous reviewed source,
+   Worker bindings/secrets, and database compatibility without exposing
+   secrets or D1 identifiers.
+3. Restore the previous compatible API and Operator Workers while traffic is
+   still stopped. The old Worker on the additive migrated database is the
+   safer temporary ordering; do not let the new Worker run against the restored
+   pre-`0006` database.
+4. The owner performs a D1 Time Travel restore to the exact saved bookmark.
+   Treat this as destructive: it restores Product D1 in place, discards every
+   later Product D1 change, and can cancel in-flight queries.
+5. Verify that `migration_0006_rows` and the target-table state match the
+   expected pre-migration state. Then verify health and the previous
+   application contract before reopening traffic.
+6. Record the restore time, bookmark, source/version mapping, verification
+   results, and owner approval in the private incident record.
+
+Do not improvise the restore during rollout. The protected runner intentionally
+does not expose Time Travel restore or Worker rollback actions; an incident
+owner must prepare and review the exact Cloudflare restore/deployment commands
+against the current Cloudflare interface before executing them.
 
 Task 10 does not change Identity or the static demo. They remain untouched
-during cutover and recovery; neither is a Task 10 forward-deployment or
-rollback target.
+during cutover and recovery.
 
-## 9. Export retention and explicit disposition
+## 8. Evidence retention
 
-Retain the export and private evidence until the rollout evidence is reviewed
-and explicitly accepted by the owner. Do not commit, paste, email, or
-automatically delete them. The owner chooses either an approved encrypted
-archive with a documented retention date or explicit deletion after evidence
-acceptance.
+Keep these items in the private rollout record until the rollout is explicitly
+accepted:
 
-For deletion, first verify the exact fixed targets:
+- the exact pre-migration Time Travel bookmark;
+- sanitized pre- and post-cutover write markers;
+- sanitized pre- and post-deployment version summaries;
+- migration/precheck results; and
+- the required manual case results.
 
-```sh
-test -n "${TASK10_BACKUP_DIR:-}"
-test -n "${TASK10_BACKUP_PATH:-}"
-test "$TASK10_BACKUP_PATH" = \
-  "$TASK10_BACKUP_DIR/incentives-staging-before-0006.sql"
-test ! -L "$TASK10_BACKUP_DIR"
-test ! -L "$TASK10_BACKUP_PATH"
-```
-
-Only after all checks pass and the owner has accepted the evidence may the
-owner explicitly remove the known files and empty directory:
-
-```sh
-rm -- "$TASK10_BACKUP_PATH"
-rm -- "$TASK10_BACKUP_DIR/openapi.json"
-rm -- "$TASK10_BACKUP_DIR/write-marker-before.txt"
-rm -- "$TASK10_BACKUP_DIR/write-marker-after.txt"
-rmdir -- "$TASK10_BACKUP_DIR"
-unset TASK10_BACKUP_PATH TASK10_BACKUP_DIR
-```
-
-No script or agent performs this deletion automatically.
+Do not commit, paste, email, or automatically delete the bookmark or private
+rollout record. This procedure creates no SQL export, OpenAPI file, write-marker
+file, or temporary evidence directory, so it has no local cleanup step.

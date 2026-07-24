@@ -149,9 +149,10 @@ the account owner.
   selected bundle atomically.
 - Local implementation status: Tasks 1–9 of `GAP-026` are implemented and
   focused verification passes. Task 10 review remediation adds protected
-  Product-D1 confirmation/queries/export/status, the migration-equivalent
-  legacy-redemption guard, the compatibility proof for old column-list
-  inserts, and a forward-only cutover/recovery procedure. The plan remains
+  Product-D1 confirmation/queries/status plus a read-only Time Travel
+  bookmark, the migration-equivalent legacy-redemption guard, the
+  compatibility proof for old column-list inserts, and a coordinated
+  cutover/recovery procedure. The plan remains
   **In progress** because final verification, reviewed merge,
   owner-controlled staging deployment, and manual evidence do not yet exist.
   See the
@@ -224,13 +225,14 @@ This evidence is local only. It was freshly established from the current Task
 > section.** The reviewed procedure is the
 > [Task 10 protected staging cutover and recovery guide](./task10-staging-cutover.md)
 > ([Notion mirror](https://app.notion.com/p/Task-10-protected-staging-cutover-and-recovery-3a7e5c7c2b8e817f9c0cf0acab3e8c2e)).
-> It routes every D1 export/query and deployment-status read through the
-> generated mode-`0600` protected runner, adds the exact legacy-redemption
-> precheck, requires a continuous quiet window and pre-deployment health check,
-> and defines the forward-only recovery and sensitive-export disposition
-> rules. Protected Worker rollback is deliberately disabled pending reviewed
-> safe preflight/API tooling. This historical draft remains only to preserve
-> the activation record.
+> It routes every D1 query, read-only Time Travel bookmark lookup, and
+> deployment-status read through the generated mode-`0600` protected runner,
+> adds the exact legacy-redemption precheck, requires a continuous quiet window
+> and pre-deployment health check, and defines normal forward recovery plus an
+> exceptional coordinated Time Travel restore. It creates no SQL export or
+> temporary evidence directory. Protected D1 restore and Worker rollback are
+> deliberately unavailable in the runner. This historical draft remains only
+> to preserve the activation record.
 
 **Status:** Not run. No Cloudflare query, export, migration, deployment,
 secret operation, or manual staging case below was executed by the

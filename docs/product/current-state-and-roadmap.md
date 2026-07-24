@@ -24,12 +24,12 @@ deferred issue remains in the
 | Question | Current answer |
 |---|---|
 | Overall phase | Production Operator Platform, Delivery Gate C |
-| Current activity | Complete reviewed integration, then have the owner run the protected cutover and manually verify the clean-break Promo selection and atomic bundle correction |
+| Current activity | Finalize the protected rollout commit, then have the owner run the cutover and manually verify the clean-break Promo selection and atomic bundle correction before reviewed PR/merge |
 | Current product-code baseline | PR #8 merge commit `e15cbba` on `dev` |
 | Local feature state | Promo-selection plan Tasks 1–9 and Task 10 review remediation are implemented and verified locally; protected rollout tooling, migration prechecks, compatibility proof, and recovery guidance are prepared; merge and staging evidence remain open |
 | Current deployment gap | The new migration/API/operator build is not deployed; staging still runs the historical singular selection/redemption contract |
 | Current blocker | Owner-controlled staging deployment and the 12 documented selection/bundle/tenant/log cases have not run |
-| Gate C finish line | Merge by reviewed PR, execute the protected owner-run cutover one command at a time, pass all manual cases, and close remaining tenant/security evidence |
+| Gate C finish line | Execute the protected owner-run cutover one command at a time from the approved commit, pass all manual cases, merge by reviewed PR, and close remaining tenant/security evidence |
 | Next plan work | Close Gate C, then write the approved free-shipping financial-authority implementation plan |
 
 ## Source-of-truth map
@@ -86,13 +86,14 @@ test observations to make the current state look cleaner.
   `operator.staging.wastd.dev`; Identity remains private.
 - API, Identity, and Operator Web persist staging logs at 100% sampling.
 - Task 10 staging operations now have a protected runner boundary for
-  Product-D1 identity confirmation, count-only migration/precheck queries,
-  private export, API/Operator deployment status, and cutover write markers.
-  The child environment is fail-closed and deployment status accepts only
-  canonical, unique Cloudflare version UUIDs. Protected Worker rollback is
-  deliberately disabled pending reviewed safe preflight/API tooling; recovery
-  is containment plus a forward fix. These operations are prepared, not
-  executed.
+  Product-D1 identity confirmation, count-only migration/precheck queries, a
+  read-only Time Travel bookmark, API/Operator deployment status, and cutover
+  write markers. The child environment is fail-closed and deployment status
+  accepts only canonical, unique Cloudflare version UUIDs. The runner exposes
+  neither D1 restore nor Worker rollback. Normal recovery is containment plus
+  a forward fix; the canonical guide also records the tightly controlled
+  exceptional Time Travel restore sequence. These operations are prepared,
+  not executed.
 
 ## What is verified in staging
 
@@ -150,16 +151,17 @@ incomplete.
 
 The immediate sequence is:
 
-1. Merge the locally verified Task 10 review-remediation candidate through a
-   reviewed PR into `dev`; never push directly to `dev`.
-2. Confirm the merged source and protected-runner revision before staging.
+1. Commit and approve the locally verified Task 10 rollout candidate; never
+   push directly to `dev`.
+2. Confirm that exact source and protected-runner revision before staging.
 3. The account owner follows the protected cutover guide one command at a
-   time: continuous quiet window, Product-D1 confirmation/prechecks/export,
-   forward-only migration, pre-deployment health, API deployment, and Operator
-   deployment. Identity is not part of this cutover.
+   time: continuous quiet window, Product-D1 confirmation/prechecks, exact
+   pre-migration Time Travel bookmark, migration, pre-deployment health, API
+   deployment, and Operator deployment. Identity is not part of this cutover.
 4. Repeat the documented automatic, coded, stacking, bundle-idempotency, and
    concurrency cases with fresh references.
-5. Complete the remaining tenant-isolation and security closeout checks.
+5. Record the staging evidence, merge the reviewed PR into `dev`, and then
+   complete the remaining tenant-isolation and security closeout checks.
 6. Reconcile the staging report, follow-up register, active plans, this page,
    and their Notion mirrors with the final Gate C result.
 

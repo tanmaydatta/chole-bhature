@@ -1,11 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import {
-  accessSync,
-  constants,
-  lstatSync,
-  realpathSync,
-  statSync,
-} from 'node:fs';
+import { accessSync, constants, statSync } from 'node:fs';
 import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -20,6 +14,7 @@ import {
 
 const defaultRepositoryRoot = fileURLToPath(new URL('../', import.meta.url));
 const CLOUDFLARE_UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
+const D1_TIME_TRAVEL_BOOKMARK_PATTERN = /^[a-z0-9._:-]{1,512}$/iu;
 const CHILD_ENVIRONMENT_KEYS = Object.freeze([
   'PATH',
   'HOME',
@@ -71,7 +66,7 @@ const CAPTURED_REMOTE_ACTIONS = new Set([
   'deploy',
   ...Object.keys(TASK10_QUERY_FIELDS),
   'task10-status',
-  'task10-export',
+  'task10-bookmark',
 ]);
 
 function capturedText(value) {
@@ -189,6 +184,20 @@ function safeDeploymentStatusOutput(stdout) {
   });
 }
 
+function safeTimeTravelBookmarkOutput(stdout) {
+  const response = parseJson(capturedText(stdout));
+  if (
+    response === null
+    || Array.isArray(response)
+    || typeof response !== 'object'
+    || typeof response.bookmark !== 'string'
+    || !D1_TIME_TRAVEL_BOOKMARK_PATTERN.test(response.bookmark)
+  ) {
+    throw new Error('Wrangler returned an invalid protected response.');
+  }
+  return JSON.stringify({ bookmark: response.bookmark });
+}
+
 function stagingWranglerChildEnvironment(environment) {
   const childEnvironment = {};
   for (const key of CHILD_ENVIRONMENT_KEYS) {
@@ -197,58 +206,6 @@ function stagingWranglerChildEnvironment(environment) {
     }
   }
   return childEnvironment;
-}
-
-function privateExportDestination(outputPath) {
-  const parent = path.dirname(outputPath);
-  let parentMetadata;
-  try {
-    parentMetadata = lstatSync(parent);
-  } catch {
-    throw new Error('Task 10 export directory must already exist.');
-  }
-  if (
-    !parentMetadata.isDirectory()
-    || parentMetadata.isSymbolicLink()
-    || (parentMetadata.mode & 0o777) !== 0o700
-    || (
-      typeof process.getuid === 'function'
-      && parentMetadata.uid !== process.getuid()
-    )
-    || realpathSync(parent) !== path.resolve(parent)
-  ) {
-    throw new Error(
-      'Task 10 export directory must be an owner-controlled non-symlink directory with mode 0700.',
-    );
-  }
-  try {
-    lstatSync(outputPath);
-    throw new Error('Task 10 export destination must not already exist.');
-  } catch (error) {
-    if (error?.code !== 'ENOENT') {
-      throw error;
-    }
-  }
-  return Object.freeze({
-    path: outputPath,
-    parent,
-    parentDevice: parentMetadata.dev,
-    parentInode: parentMetadata.ino,
-  });
-}
-
-function verifyPrivateExport(destination) {
-  const parentMetadata = lstatSync(destination.parent);
-  const outputMetadata = lstatSync(destination.path);
-  if (
-    parentMetadata.dev !== destination.parentDevice
-    || parentMetadata.ino !== destination.parentInode
-    || parentMetadata.isSymbolicLink()
-    || !outputMetadata.isFile()
-    || outputMetadata.isSymbolicLink()
-  ) {
-    throw new Error('Task 10 export destination changed during export.');
-  }
 }
 
 export function resolveAppWranglerInvocation(repositoryRoot, app) {
@@ -299,9 +256,6 @@ export async function runStagingWrangler({
       actionArgument,
     );
     const configuration = loadStagingConfiguration(environment);
-    const exportDestination = action === 'task10-export'
-      ? privateExportDestination(actionArgument)
-      : null;
     const rendered = renderStagingWranglerConfig(app, configuration, repositoryRoot);
     temporaryDirectory = await mkdtemp(path.join(tmpdir(), 'incentives-staging-wrangler-'));
     const configPath = path.join(temporaryDirectory, `${app}.wrangler.toml`);
@@ -375,9 +329,8 @@ export async function runStagingWrangler({
       reportOutput(safeD1QueryOutput(action, result.stdout));
     } else if (action === 'task10-status') {
       reportOutput(safeDeploymentStatusOutput(result.stdout));
-    } else if (action === 'task10-export') {
-      verifyPrivateExport(exportDestination);
-      reportOutput('Product D1 export completed.');
+    } else if (action === 'task10-bookmark') {
+      reportOutput(safeTimeTravelBookmarkOutput(result.stdout));
     } else if (action === 'migrate' || action === 'deploy') {
       reportOutput(JSON.stringify({
         application: app,

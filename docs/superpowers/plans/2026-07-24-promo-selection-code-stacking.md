@@ -1653,21 +1653,22 @@ account owner one at a time in this order:
 2. authenticate and confirm Product D1 through generated configuration;
 3. run count-only inventory plus legacy Promo and redemption prechecks;
 4. capture protected API/Operator status and Product write markers;
-5. export Product D1 to an owner-only directory;
+5. capture the exact pre-migration Product D1 Time Travel bookmark;
 6. apply D1 migration and verify the migration/table counts;
 7. verify API health before deployment while the previous Worker is live;
 8. deploy and verify the API Worker and clean-break OpenAPI;
 9. deploy and verify Operator Web; Identity is not part of this rollout;
 10. run the manual staging guide with fresh references;
 11. record safe versions/evidence; and
-12. retain or explicitly delete the sensitive export only after evidence
+12. retain the bookmark and sanitized rollout evidence privately until
     acceptance.
 
-Task 10 recovery is quiet-window containment plus a reviewed forward fix.
-Protected Worker rollback is deliberately unavailable until reviewed,
-fail-closed preflight or Cloudflare API tooling can prove the exact
-version-to-source mapping, target account, bindings/secrets compatibility, and
-confirmation semantics.
+Normal Task 10 recovery is quiet-window containment plus a reviewed forward
+fix. The protected runner exposes neither D1 restore nor Worker rollback. The
+canonical guide records a coordinated exceptional Time Travel restore only
+when the exact bookmark is in retention, post-bookmark writes are disposable,
+the previous compatible Worker source is known, and the owner explicitly
+approves the destructive restore.
 
 The implementation agent does not execute these external writes.
 

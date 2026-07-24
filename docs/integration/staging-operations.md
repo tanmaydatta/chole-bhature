@@ -172,35 +172,37 @@ is never forwarded.
 
 Task 10 adds protected owner-run actions for count-only inventory, legacy Promo
 and redemption prechecks, post-migration verification, cutover write markers,
-Product D1 export, and API/Operator deployment status. Protected action output
-is parsed fail-closed and reduced to approved counts, timestamps, canonical
-Cloudflare version UUIDs, traffic percentages, or a generic completion
-message. Empty, malformed, or case-insensitively duplicated version IDs fail
-closed.
-Wrangler stdout/stderr, D1 metadata, account details, and export signed URLs are
-not forwarded. Product export additionally requires a caller-supplied absolute
-path under an existing owner-controlled, non-symlink, mode-`0700` directory
-with the fixed basename `incentives-staging-before-0006.sql`.
+a read-only Product D1 Time Travel bookmark, and API/Operator deployment
+status. Protected action output is parsed fail-closed and reduced to approved
+counts, timestamps, canonical Cloudflare version UUIDs, traffic percentages,
+the validated opaque bookmark, or a generic completion message. Empty,
+malformed, or case-insensitively duplicated version IDs fail closed.
+Wrangler stdout/stderr, D1 metadata, and account details are not forwarded.
+The runner deliberately exposes no Time Travel restore or Worker rollback
+action.
 
 The canonical ordered commands, expected safe outputs, quiet-window rules,
-pre-deployment health check, compatibility conditions, and explicit
-export-retention/disposition steps are in the
+pre-deployment health check, compatibility conditions, coordinated exceptional
+restore sequence, and evidence-retention rules are in the
 [Task 10 protected staging cutover and recovery guide](../testing/task10-staging-cutover.md).
 The dated activation record's older inline direct-Wrangler rollout draft is
 historical and must not be executed.
 
 ### Failure and recovery rules
 
-- A failed migration stops activation. Never attempt a destructive D1 downgrade.
+- A failed migration stops activation. Do not automatically restore Product D1.
 - A failed Worker deployment leaves its previous deployed version active.
-- Product D1 migrations are forward-only. After migration, leave the migrated
-  schema in place and use quiet-window containment plus a reviewed forward
-  migration/fix. Never restore the pre-migration export over staging.
+- Normal Product D1 recovery is quiet-window containment plus a reviewed
+  forward migration/fix. A Time Travel restore is exceptional and requires
+  continuous write isolation, an in-retention exact pre-migration bookmark,
+  known compatible previous Worker source, and explicit owner approval.
 - Protected Task 10 Worker rollback is deliberately disabled. The runner
   rejects rollback before spawning Wrangler. Do not bypass it with direct
   Wrangler rollback commands: interactive confirmation, version-to-source
   mapping, bindings, and secret compatibility are not safely preflighted.
-- API and Operator Web recovery is containment plus a reviewed forward
+- The runner also rejects D1 restore. Any approved exceptional restore must
+  follow the coordinated ordering in the canonical cutover guide.
+- API and Operator Web normal recovery is containment plus a reviewed forward
   deployment.
 - Identity and the static demo are unchanged by Task 10. Do not deploy, roll
   back, or otherwise modify either one as part of Task 10 recovery.

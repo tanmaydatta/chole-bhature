@@ -1,15 +1,4 @@
-import {
-  chmodSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  realpathSync,
-  rmSync,
-  statSync,
-  symlinkSync,
-  writeFileSync,
-} from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 
 import { describe, expect, test, vi } from 'vitest';
@@ -27,6 +16,7 @@ import {
 const productId = 'd918b5cc-7ce4-4bf6-a33e-90c8335f2ef1';
 const authId = '6a65017f-df57-474e-bebb-e676e09377e5';
 const apiVersionId = 'de4beb41-e346-481d-a793-3742d91b5861';
+const timeTravelBookmark = '00000085-0000024c-00004c6d-8e61117bf38d7adb71b934ebbf891683';
 
 function validEnvironment(): NodeJS.ProcessEnv {
   return {
@@ -100,25 +90,19 @@ describe('Task 10 staging Wrangler allowlist', () => {
         '--json', '--config', '/tmp/api.wrangler.toml',
       ],
     ],
+    [
+      'task10-bookmark',
+      [
+        'd1', 'time-travel', 'info', 'incentives-staging',
+        '--json', '--config', '/tmp/api.wrangler.toml',
+      ],
+    ],
   ])('builds exact %s arguments', (action, expected) => {
     expect(stagingWranglerArguments(
       'api',
       action,
       '/tmp/api.wrangler.toml',
     )).toEqual(expected);
-  });
-
-  test('allows only the fixed private backup filename', () => {
-    const output = '/private/owner-task10/incentives-staging-before-0006.sql';
-    expect(stagingWranglerArguments(
-      'api',
-      'task10-export',
-      '/tmp/api.wrangler.toml',
-      output,
-    )).toEqual([
-      'd1', 'export', 'incentives-staging', '--remote',
-      '--output', output, '--config', '/tmp/api.wrangler.toml',
-    ]);
   });
 
   test('does not expose a protected Task 10 rollback action', () => {
@@ -133,9 +117,13 @@ describe('Task 10 staging Wrangler allowlist', () => {
   test.each([
     ['identity', 'task10-counts', undefined],
     ['operator-web', 'task10-export', '/tmp/incentives-staging-before-0006.sql'],
+    ['api', 'task10-export', '/private/owner-task10/incentives-staging-before-0006.sql'],
     ['api', 'task10-export', undefined],
     ['api', 'task10-export', 'incentives-staging-before-0006.sql'],
     ['api', 'task10-export', '/tmp/arbitrary.sql'],
+    ['identity', 'task10-bookmark', undefined],
+    ['operator-web', 'task10-bookmark', undefined],
+    ['api', 'task10-bookmark', 'unexpected'],
     ['api', 'task10-status', 'unexpected'],
     ['api', 'task10-rollback', 'not-a-version-id'],
     ['operator-web', 'task10-rollback', apiVersionId],
@@ -487,156 +475,88 @@ describe('Task 10 protected remote execution', () => {
     expect(errors.join('\n')).not.toContain(otherId);
   });
 
-  test('suppresses Wrangler signed export output', async () => {
-    const directory = mkdtempSync(path.join(tmpdir(), 'task10-private-export-'));
-    const outputPath = path.join(
-      realpathSync(directory),
-      'incentives-staging-before-0006.sql',
-    );
+  test('reports only the validated D1 Time Travel bookmark', async () => {
     const spawn = vi.fn((_command: string, args: string[]) => {
       if (args[1] === 'd1' && args[2] === 'info') {
         return { status: 0, stdout: JSON.stringify({ uuid: productId }), stderr: '' };
       }
-      writeFileSync(outputPath, '-- private export\n', { mode: 0o600 });
       return {
         status: 0,
-        stdout: 'Download: https://signed.example.invalid/private-export',
-        stderr: 'temporary signed URL',
+        stdout: JSON.stringify({
+          bookmark: timeTravelBookmark,
+          account_id: 'must-not-escape',
+          database_name: 'must-not-escape',
+        }),
+        stderr: '',
       };
     });
     const output: string[] = [];
 
-    try {
-      const status = await runStagingWrangler({
-        app: 'api',
-        action: 'task10-export',
-        actionArgument: outputPath,
-        environment: validEnvironment(),
-        repositoryRoot: '/repository',
-        resolver: () => ({
-          command: '/trusted/node',
-          argumentsPrefix: ['/trusted/wrangler.js'],
-        }),
-        spawn,
-        reportOutput: message => output.push(message),
-      });
+    const status = await runStagingWrangler({
+      app: 'api',
+      action: 'task10-bookmark',
+      environment: validEnvironment(),
+      repositoryRoot: '/repository',
+      resolver: () => ({
+        command: '/trusted/node',
+        argumentsPrefix: ['/trusted/wrangler.js'],
+      }),
+      spawn,
+      reportOutput: message => output.push(message),
+    });
 
-      expect(status).toBe(0);
-      expect(output.join('\n')).toContain('Product D1 export completed.');
-      expect(output.join('\n')).not.toContain('signed.example');
-    } finally {
-      rmSync(directory, { recursive: true, force: true });
-    }
+    expect(status).toBe(0);
+    expect(output).toEqual([
+      'Authenticated staging Product D1 target confirmed.',
+      JSON.stringify({ bookmark: timeTravelBookmark }),
+    ]);
+    expect(output.join('\n')).not.toContain('account');
+    expect(output.join('\n')).not.toContain('database_name');
   });
 
-  test('suppresses a signed export URL when Wrangler fails', async () => {
-    const directory = mkdtempSync(path.join(tmpdir(), 'task10-private-export-'));
-    const outputPath = path.join(
-      realpathSync(directory),
-      'incentives-staging-before-0006.sql',
-    );
+  test.each([
+    ['missing bookmark', {}],
+    ['empty bookmark', { bookmark: '' }],
+    ['bookmark containing whitespace', { bookmark: `${timeTravelBookmark}\nprivate` }],
+    ['bookmark containing punctuation', { bookmark: `${timeTravelBookmark}/private` }],
+  ])('fails closed on %s without forwarding protected metadata', async (
+    _caseName,
+    protectedResponse,
+  ) => {
     const spawn = vi.fn((_command: string, args: string[]) => {
       if (args[1] === 'd1' && args[2] === 'info') {
         return { status: 0, stdout: JSON.stringify({ uuid: productId }), stderr: '' };
       }
       return {
-        status: 1,
-        stdout: 'https://signed.example.invalid/private-export',
-        stderr: 'Download failed at https://signed.example.invalid/private-export',
+        status: 0,
+        stdout: JSON.stringify({
+          ...protectedResponse,
+          account_id: 'private-account',
+        }),
+        stderr: 'private-error',
       };
     });
     const errors: string[] = [];
     const output: string[] = [];
 
-    try {
-      const status = await runStagingWrangler({
-        app: 'api',
-        action: 'task10-export',
-        actionArgument: outputPath,
-        environment: validEnvironment(),
-        repositoryRoot: '/repository',
-        resolver: () => ({
-          command: '/trusted/node',
-          argumentsPrefix: ['/trusted/wrangler.js'],
-        }),
-        spawn,
-        reportError: message => errors.push(message),
-        reportOutput: message => output.push(message),
-      });
+    const status = await runStagingWrangler({
+      app: 'api',
+      action: 'task10-bookmark',
+      environment: validEnvironment(),
+      repositoryRoot: '/repository',
+      resolver: () => ({
+        command: '/trusted/node',
+        argumentsPrefix: ['/trusted/wrangler.js'],
+      }),
+      spawn,
+      reportError: message => errors.push(message),
+      reportOutput: message => output.push(message),
+    });
 
-      expect(status).toBe(1);
-      expect(errors).toEqual(['Unable to execute Wrangler.']);
-      expect([...errors, ...output].join('\n')).not.toContain('signed.example');
-    } finally {
-      rmSync(directory, { recursive: true, force: true });
-    }
-  });
-
-  test('rejects an export parent that is not mode 0700 before invoking Wrangler', async () => {
-    const directory = mkdtempSync(path.join(tmpdir(), 'task10-export-mode-'));
-    chmodSync(directory, 0o755);
-    const outputPath = path.join(
-      realpathSync(directory),
-      'incentives-staging-before-0006.sql',
-    );
-    const spawn = vi.fn();
-    const errors: string[] = [];
-
-    try {
-      const status = await runStagingWrangler({
-        app: 'api',
-        action: 'task10-export',
-        actionArgument: outputPath,
-        environment: validEnvironment(),
-        repositoryRoot: '/repository',
-        resolver: () => ({
-          command: '/trusted/node',
-          argumentsPrefix: ['/trusted/wrangler.js'],
-        }),
-        spawn,
-        reportError: message => errors.push(message),
-      });
-
-      expect(status).toBe(1);
-      expect(spawn).not.toHaveBeenCalled();
-      expect(errors.join('\n')).toContain('mode 0700');
-    } finally {
-      chmodSync(directory, 0o700);
-      rmSync(directory, { recursive: true, force: true });
-    }
-  });
-
-  test('rejects an export path whose parent is a symlink before invoking Wrangler', async () => {
-    const directory = mkdtempSync(path.join(tmpdir(), 'task10-export-link-'));
-    const realParent = path.join(directory, 'private-parent');
-    const linkedParent = path.join(directory, 'linked-parent');
-    mkdirSync(realParent, { mode: 0o700 });
-    symlinkSync(realParent, linkedParent);
-    const outputPath = path.join(linkedParent, 'incentives-staging-before-0006.sql');
-    const spawn = vi.fn();
-    const errors: string[] = [];
-
-    try {
-      const status = await runStagingWrangler({
-        app: 'api',
-        action: 'task10-export',
-        actionArgument: outputPath,
-        environment: validEnvironment(),
-        repositoryRoot: '/repository',
-        resolver: () => ({
-          command: '/trusted/node',
-          argumentsPrefix: ['/trusted/wrangler.js'],
-        }),
-        spawn,
-        reportError: message => errors.push(message),
-      });
-
-      expect(status).toBe(1);
-      expect(spawn).not.toHaveBeenCalled();
-      expect(errors.join('\n')).toContain('non-symlink');
-    } finally {
-      rmSync(directory, { recursive: true, force: true });
-    }
+    expect(status).toBe(1);
+    expect(errors).toEqual(['Wrangler returned an invalid protected response.']);
+    expect(output).toEqual(['Authenticated staging Product D1 target confirmed.']);
+    expect([...errors, ...output].join('\n')).not.toContain('private');
   });
 
   test('keeps the count-only redemption precheck equivalent to migration 0006', () => {

@@ -240,12 +240,6 @@ function taskTenD1ExecuteArguments(sql, configPath) {
   ];
 }
 
-function isExactTaskTenExportPath(value) {
-  return typeof value === 'string'
-    && path.isAbsolute(value)
-    && path.basename(value) === 'incentives-staging-before-0006.sql';
-}
-
 export function stagingWranglerArguments(app, action, configPath, actionArgument) {
   if (!['api', 'identity', 'operator-web'].includes(app)) {
     throw new Error('Unsupported staging Wrangler command.');
@@ -301,14 +295,13 @@ export function stagingWranglerArguments(app, action, configPath, actionArgument
   if (action === 'task10-write-marker' && actionArgument === undefined) {
     return taskTenD1ExecuteArguments(TASK10_CUTOVER_WRITE_MARKER_SQL, configPath);
   }
-  if (action === 'task10-export' && isExactTaskTenExportPath(actionArgument)) {
+  if (action === 'task10-bookmark' && actionArgument === undefined) {
     return [
       'd1',
-      'export',
+      'time-travel',
+      'info',
       'incentives-staging',
-      '--remote',
-      '--output',
-      actionArgument,
+      '--json',
       '--config',
       configPath,
     ];
