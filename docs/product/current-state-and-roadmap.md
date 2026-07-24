@@ -2,8 +2,8 @@
 
 **Updated:** 2026-07-24
 
-**Status:** Active — clean-break correction and Task 10 review remediation
-verified locally; reviewed merge and owner-run staging evidence pending
+**Status:** Active — clean-break correction merged through PR #10; owner-run
+staging cutover and manual evidence pending
 
 **Notion mirror:** https://app.notion.com/p/Product-Current-State-and-Roadmap-3a6e5c7c2b8e81f6b412c45a2bc7b344
 
@@ -24,12 +24,12 @@ deferred issue remains in the
 | Question | Current answer |
 |---|---|
 | Overall phase | Production Operator Platform, Delivery Gate C |
-| Current activity | Merge the protected rollout commit through a reviewed PR, then have the owner run the cutover from merged `dev` and manually verify the clean-break Promo selection and atomic bundle correction |
-| Current product-code baseline | PR #8 merge commit `e15cbba` on `dev` |
-| Local feature state | Promo-selection plan Tasks 1–9 and Task 10 review remediation are implemented and verified locally; protected rollout tooling, migration prechecks, compatibility proof, and recovery guidance are prepared; merge and staging evidence remain open |
+| Current activity | Have the owner run the protected cutover from merged `dev` commit `1ebc5fe`, then manually verify the clean-break Promo selection and atomic bundle correction |
+| Current product-code baseline | PR #10 merge commit `1ebc5fe` on `dev` |
+| Local feature state | Promo-selection plan Tasks 1–9 and Task 10 review remediation are implemented, verified, independently reviewed, and merged; protected rollout tooling, migration prechecks, compatibility proof, and recovery guidance are prepared; staging evidence remains open |
 | Current deployment gap | The new migration/API/operator build is not deployed; staging still runs the historical singular selection/redemption contract |
 | Current blocker | Owner-controlled staging deployment and the 12 documented selection/bundle/tenant/log cases have not run |
-| Gate C finish line | Merge by reviewed PR, execute the protected owner-run cutover one command at a time from the exact merged `dev` commit, pass all manual cases, and close remaining tenant/security evidence |
+| Gate C finish line | Execute the protected owner-run cutover one command at a time from exact merged `dev` commit `1ebc5fe`, pass all manual cases, and close remaining tenant/security evidence |
 | Next plan work | Close Gate C, then write the approved free-shipping financial-authority implementation plan |
 
 ## Source-of-truth map
@@ -146,25 +146,23 @@ but bypass the new ledgers, and the
 Every protected remote action uses generated mode-`0600` configuration,
 authenticates and confirms Product D1 without printing IDs, and emits only
 allowlisted summaries. The design is not marked implemented because the
-reviewed merge, owner-controlled staging cutover, and manual evidence remain
-incomplete.
+owner-controlled staging cutover and manual evidence remain incomplete.
 
 The immediate sequence is:
 
-1. Commit and approve the locally verified Task 10 rollout candidate; never
-   push directly to `dev`.
-2. Merge the candidate into `dev` through a reviewed PR.
-3. Confirm the exact merged `dev` commit and protected-runner revision before
-   staging.
-4. The account owner follows the protected cutover guide one command at a
+1. Completed: PR #10 merged the locally verified Task 10 rollout candidate
+   into `dev` as commit `1ebc5fe`; no direct push to `dev` was used.
+2. Confirm exact merged `dev` commit `1ebc5fe` and the protected-runner
+   revision before staging.
+3. The account owner follows the protected cutover guide one command at a
    time: continuous quiet window, Product-D1 confirmation/prechecks, exact
    pre-migration Time Travel bookmark, migration, pre-deployment health, API
    deployment, and Operator deployment. Identity is not part of this cutover.
-5. Repeat the documented automatic, coded, stacking, bundle-idempotency, and
+4. Repeat the documented automatic, coded, stacking, bundle-idempotency, and
    concurrency cases with fresh references.
-6. Record the staging evidence and complete the remaining tenant-isolation and
+5. Record the staging evidence and complete the remaining tenant-isolation and
    security closeout checks.
-7. Reconcile the staging report, follow-up register, active plans, this page,
+6. Reconcile the staging report, follow-up register, active plans, this page,
    and their Notion mirrors with the final Gate C result.
 
 No assistant-run Cloudflare mutation is permitted. The assistant supplies one

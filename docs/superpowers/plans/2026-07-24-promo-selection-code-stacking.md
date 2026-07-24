@@ -8,8 +8,9 @@
 
 **Tech Stack:** TypeScript, Zod, Hono, Cloudflare Workers, D1/Drizzle, React, React Router, Vitest, Testing Library, pnpm.
 
-**Status:** In progress — Tasks 1–9 and Task 10 review remediation implemented
-and verified locally; reviewed merge and owner-run staging evidence pending
+**Status:** In progress — Tasks 1–9 and Task 10 review remediation implemented,
+verified, independently reviewed, and merged through PR #10; owner-run staging
+evidence pending
 
 **Notion mirror:** https://app.notion.com/p/Promo-Selection-Code-Stacking-and-Atomic-Redemption-Implementation-Plan-3a7e5c7c2b8e811791dee0d21803c8e2
 
@@ -1672,7 +1673,7 @@ approves the destructive restore.
 
 The implementation agent does not execute these external writes.
 
-- [ ] **Step 6: Finish and merge the development branch**
+- [x] **Step 6: Finish and merge the development branch**
 
 Use `superpowers:verification-before-completion`, then
 `superpowers:finishing-a-development-branch`. Create a reviewed PR into `dev`
@@ -1686,6 +1687,9 @@ Merge evidence must include:
 - remaining follow-ups;
 - PR URL and merge commit; and
 - confirmation that repository and Notion plan statuses match.
+
+Completed through PR #10 at merge commit
+`1ebc5fe723684fb3e4e9551c545e6627b21a3b3c`.
 
 - [x] **Step 7: Request code review**
 
