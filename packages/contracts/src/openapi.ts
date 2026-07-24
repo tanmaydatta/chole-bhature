@@ -6,14 +6,20 @@ import {
 import { ApiErrorSchema } from './errors.js';
 import { AffiliateProgramSchema } from './affiliate-program.js';
 import {
+  CodeEvaluationResultSchema,
   EffectSchema,
   EvaluationRequestSchema,
   EvaluationResponseSchema,
+  RedemptionEntrySchema,
   RedemptionRequestSchema,
   RedemptionResponseSchema,
 } from './evaluation.js';
 import { LoyaltyProgramSchema } from './loyalty-program.js';
 import { MoneySchema } from './money.js';
+import {
+  NormalizedPromoCodeSchema,
+  PromoCodeSchema,
+} from './promo-codes.js';
 import { PromoProgramSchema } from './programs.js';
 import { ReferralProgramSchema } from './referral-program.js';
 import {
@@ -66,6 +72,10 @@ export function buildOpenApiDocument(): OpenApiDocument {
   registry.register('Money', MoneySchema);
   registry.register('VariableDefinition', VariableDefinitionSchema);
   registry.register('Effect', EffectSchema);
+  registry.register('PromoCode', PromoCodeSchema);
+  registry.register('NormalizedPromoCode', NormalizedPromoCodeSchema);
+  registry.register('CodeEvaluationResult', CodeEvaluationResultSchema);
+  registry.register('RedemptionEntry', RedemptionEntrySchema);
   registry.register('CommerceReward', CommerceRewardSchema);
   registry.register('RewardRule', PromoRewardRuleSchema);
   const evaluationRequest = registry.register('EvaluationRequest', EvaluationRequestSchema);
@@ -184,7 +194,7 @@ export function buildOpenApiDocument(): OpenApiDocument {
   registry.registerPath({
     method: 'post',
     path: '/v1/evaluate',
-    summary: 'Evaluate configured incentive programs',
+    summary: 'Evaluate automatic or submitted coded incentive programs',
     security: publishableSecurity,
     request: { body: { required: true, content: jsonContent(evaluationRequest) } },
     responses: {
@@ -199,7 +209,7 @@ export function buildOpenApiDocument(): OpenApiDocument {
   registry.registerPath({
     method: 'post',
     path: '/v1/redemptions',
-    summary: 'Commit a selected qualified incentive decision',
+    summary: 'Commit the complete selected evaluation bundle',
     security: secretSecurity,
     request: { body: { required: true, content: jsonContent(redemptionRequest) } },
     responses: {
@@ -219,7 +229,7 @@ export function buildOpenApiDocument(): OpenApiDocument {
     info: {
       title: 'Incentives Core API',
       version: '1.0.0',
-      description: 'Platform-neutral runtime API for typed customer data, Promo evaluation, and redemption.',
+      description: 'Platform-neutral runtime API for typed customer data, Promo selection, and bundle redemption.',
     },
   });
 }

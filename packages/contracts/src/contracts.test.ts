@@ -2,20 +2,26 @@ import { describe, expect, test } from 'vitest';
 
 import {
   CartSnapshotSchema,
+  CodeEvaluationResultSchema,
   CommerceRewardSchema,
   CustomerSnapshotSchema,
   EffectSchema,
   EvaluationResponseSchema,
   EvaluationRequestSchema,
   MoneySchema,
+  NormalizedPromoCodeSchema,
   OrderSnapshotSchema,
   PromoConditionalRewardsSchema,
+  PromoCodeSchema,
   PromoProgramSchema,
+  RedemptionEntrySchema,
   RedemptionRequestSchema,
   RedemptionResponseSchema,
   VariableDefinitionSchema,
   buildOpenApiDocument,
   buildPublishedEvaluationJsonSchema,
+  normalizeDistinctPromoCodes,
+  normalizePromoCode,
 } from './index.js';
 import type { CommerceReward, RewardRule } from './index.js';
 
@@ -66,6 +72,23 @@ const fallback = {
   id: 'default-reward',
   name: 'Default reward',
   reward: { type: 'free_shipping' as const },
+};
+
+const validCart = {
+  currency: 'GBP',
+  subtotal: 6_500,
+  items: [],
+};
+
+const basePromo = {
+  id: 'promo-a',
+  type: 'promo' as const,
+  name: 'Promo A',
+  status: 'active' as const,
+  eligibility: { match: 'ALL' as const, conditions: [] },
+  rewardRules: [],
+  fallbackReward: fallback,
+  priority: 10,
 };
 
 describe('canonical contracts', () => {
@@ -213,6 +236,103 @@ describe('canonical contracts', () => {
     expect(result.success).toBe(false);
   });
 
+  test('uses omitted or empty codes for automatic evaluation', () => {
+    expect(EvaluationRequestSchema.parse({ cart: validCart })).toEqual({
+      cart: validCart,
+    });
+    expect(EvaluationRequestSchema.parse({ codes: [], cart: validCart })).toEqual({
+      codes: [],
+      cart: validCart,
+    });
+  });
+
+  test('accepts up to ten distinct submitted codes and rejects eleven', () => {
+    const tenCodes = Array.from({ length: 10 }, (_, index) => `code-${index}`);
+    expect(EvaluationRequestSchema.safeParse({
+      codes: tenCodes,
+      cart: validCart,
+    }).success).toBe(true);
+    expect(EvaluationRequestSchema.safeParse({
+      codes: [...tenCodes, 'code-10'],
+      cart: validCart,
+    }).success).toBe(false);
+  });
+
+  test('counts distinct normalized codes rather than raw entries', () => {
+    expect(EvaluationRequestSchema.safeParse({
+      codes: [
+        ' code-0 ',
+        'CODE-0',
+        'code-1',
+        'code-2',
+        'code-3',
+        'code-4',
+        'code-5',
+        'code-6',
+        'code-7',
+        'code-8',
+        'code-9',
+      ],
+      cart: validCart,
+    }).success).toBe(true);
+  });
+
+  test('rejects the removed singular evaluation code', () => {
+    expect(() => EvaluationRequestSchema.parse({
+      code: 'GATEC15',
+      cart: validCart,
+    })).toThrow();
+  });
+
+  test('normalizes codes by trimming and default uppercase conversion', () => {
+    expect(normalizePromoCode('  gatec15  ')).toEqual({
+      display: 'gatec15',
+      normalized: 'GATEC15',
+    });
+    expect(normalizePromoCode('ß')).toEqual({
+      display: 'ß',
+      normalized: 'SS',
+    });
+    expect(NormalizedPromoCodeSchema.parse(' gatec15 ')).toBe('GATEC15');
+  });
+
+  test('deduplicates normalized codes while preserving the first display value', () => {
+    expect(normalizeDistinctPromoCodes([' gatec15 ', 'GATEC15', 'vip20'])).toEqual([
+      { display: 'gatec15', normalized: 'GATEC15' },
+      { display: 'vip20', normalized: 'VIP20' },
+    ]);
+  });
+
+  test('uses Unicode code-point length for promo code bounds', () => {
+    expect(PromoCodeSchema.safeParse('😀'.repeat(128)).success).toBe(true);
+    expect(PromoCodeSchema.safeParse('😀'.repeat(129)).success).toBe(false);
+    expect(PromoCodeSchema.safeParse('  ').success).toBe(false);
+  });
+
+  test('reports an invalid submitted code without throwing from safe parsing', () => {
+    expect(() => EvaluationRequestSchema.safeParse({
+      codes: ['  '],
+      cart: validCart,
+    })).not.toThrow();
+    expect(EvaluationRequestSchema.safeParse({
+      codes: ['  '],
+      cart: validCart,
+    }).success).toBe(false);
+  });
+
+  test('does not apply compatibility or fuzzy normalization', () => {
+    expect(normalizeDistinctPromoCodes(['gatec15', 'ｇａｔｅｃ１５'])).toEqual([
+      { display: 'gatec15', normalized: 'GATEC15' },
+      { display: 'ｇａｔｅｃ１５', normalized: 'ＧＡＴＥＣ１５' },
+    ]);
+  });
+
+  test('rejects more than ten distinct normalized codes in shared helpers', () => {
+    expect(() => normalizeDistinctPromoCodes(
+      Array.from({ length: 11 }, (_, index) => `code-${index}`),
+    )).toThrow(RangeError);
+  });
+
   test('accepts a typed line-item extension definition', () => {
     expect(VariableDefinitionSchema.parse({
       key: 'line_item.category',
@@ -351,61 +471,94 @@ describe('canonical contracts', () => {
     }).success).toBe(false);
   });
 
-  test.each([
-    ['external order reference only', { externalOrderRef: 'order-1' }],
-    ['idempotency key only', { idempotencyKey: 'key-1' }],
-    ['both identifiers', { externalOrderRef: 'order-1', idempotencyKey: 'key-1' }],
-  ])('accepts redemption requests with %s', (_name, identifiers) => {
-    expect(RedemptionRequestSchema.safeParse({
+  test('accepts only the bundle redemption request shape', () => {
+    expect(RedemptionRequestSchema.parse({
+      evaluationId: 'evaluation-1',
+      externalOrderRef: 'order-1',
+      idempotencyKey: 'checkout-1',
+    })).toBeTruthy();
+    expect(() => RedemptionRequestSchema.parse({
       evaluationId: 'evaluation-1',
       programRef: 'promo-1',
-      ...identifiers,
-    }).success).toBe(true);
-  });
-
-  test('rejects redemption requests without an idempotency identifier', () => {
-    expect(RedemptionRequestSchema.safeParse({
-      evaluationId: 'evaluation-1',
-      programRef: 'promo-1',
-    }).success).toBe(false);
+      externalOrderRef: 'order-1',
+      idempotencyKey: 'checkout-1',
+    })).toThrow();
   });
 
   test.each([
-    ['external order reference only', { externalOrderRef: 'order-1' }],
-    ['idempotency key only', { idempotencyKey: 'key-1' }],
-    ['both identifiers', { externalOrderRef: 'order-1', idempotencyKey: 'key-1' }],
-  ])('accepts redemption responses with %s', (_name, identifiers) => {
-    expect(RedemptionResponseSchema.safeParse({
-      redemptionId: 'redemption-1',
-      evaluationId: 'evaluation-1',
-      programRef: 'promo-1',
-      rewardRuleRef: 'default-reward',
-      status: 'committed',
-      effects: [],
-      ...identifiers,
-    }).success).toBe(true);
+    'selected',
+    'invalid_code',
+    'not_qualified',
+    'unavailable',
+    'exhausted',
+    'combination_rejected',
+  ] as const)('accepts the coded diagnostic outcome %s', (outcome) => {
+    const result = CodeEvaluationResultSchema.parse({
+      code: 'gatec15',
+      normalizedCode: ' gatec15 ',
+      outcome,
+      programRef: outcome === 'invalid_code' ? undefined : 'promo-a',
+      reasonCodes: outcome === 'selected' ? [] : ['CODE_NOT_SELECTED'],
+    });
+    expect(result.normalizedCode).toBe('GATEC15');
   });
 
-  test('rejects an empty redemption reward rule reference', () => {
-    expect(RedemptionResponseSchema.safeParse({
-      redemptionId: 'redemption-1',
+  test('adds optional code results to the strict evaluation response', () => {
+    const response = {
       evaluationId: 'evaluation-1',
-      programRef: 'promo-1',
-      rewardRuleRef: '',
-      status: 'committed',
-      effects: [],
-      idempotencyKey: 'key-1',
-    }).success).toBe(false);
+      schemaVersion: 1,
+      expiresAt: '2026-07-24T10:00:00.000Z',
+      decisions: [],
+    };
+    expect(EvaluationResponseSchema.parse(response)).toEqual(response);
+    expect(EvaluationResponseSchema.parse({
+      ...response,
+      codeResults: [{
+        code: 'GATEC15',
+        normalizedCode: 'GATEC15',
+        outcome: 'invalid_code',
+        reasonCodes: ['INVALID_PROMO_CODE'],
+      }],
+    }).codeResults).toHaveLength(1);
   });
 
-  test('rejects redemption responses without an idempotency identifier', () => {
-    expect(RedemptionResponseSchema.safeParse({
+  test('defines strict ordered redemption bundle entries', () => {
+    const response = {
       redemptionId: 'redemption-1',
       evaluationId: 'evaluation-1',
-      programRef: 'promo-1',
+      externalOrderRef: 'order-1',
+      status: 'committed',
+      entries: [
+        {
+          programRef: 'promo-a',
+          programRevision: 4,
+          rewardRuleRef: 'rule-a',
+          effects: [],
+        },
+        {
+          programRef: 'promo-b',
+          programRevision: 2,
+          effects: [{ type: 'free_shipping' }],
+        },
+      ],
+      idempotencyKey: 'checkout-1',
+    } as const;
+
+    expect(RedemptionEntrySchema.parse(response.entries[0])).toEqual(response.entries[0]);
+    expect(RedemptionResponseSchema.parse(response)).toEqual(response);
+    expect(() => RedemptionResponseSchema.parse({
+      ...response,
+      programRef: 'promo-a',
+    })).toThrow();
+    expect(() => RedemptionResponseSchema.parse({
+      redemptionId: 'redemption-1',
+      evaluationId: 'evaluation-1',
+      externalOrderRef: 'order-1',
       status: 'committed',
       effects: [],
-    }).success).toBe(false);
+      idempotencyKey: 'checkout-1',
+      entries: [],
+    })).toThrow();
   });
 
   test('accepts canonical reward rules in promo programs', () => {
@@ -473,6 +626,38 @@ describe('canonical contracts', () => {
       fallbackReward: fallback,
       stackable: false,
       priority: 10,
+    }).success).toBe(false);
+  });
+
+  test('enforces the strict automatic and coded Promo trigger union', () => {
+    expect(PromoProgramSchema.safeParse({
+      ...basePromo,
+      autoApply: true,
+      stackable: false,
+    }).success).toBe(true);
+    expect(PromoProgramSchema.safeParse({
+      ...basePromo,
+      autoApply: true,
+      code: 'AUTO',
+      stackable: false,
+    }).success).toBe(false);
+    expect(PromoProgramSchema.safeParse({
+      ...basePromo,
+      autoApply: true,
+      stackable: true,
+    }).success).toBe(false);
+    expect(PromoProgramSchema.safeParse({
+      ...basePromo,
+      autoApply: false,
+      code: 'SAVE20',
+      stackable: true,
+    }).success).toBe(true);
+    expect(PromoProgramSchema.safeParse({
+      ...basePromo,
+      autoApply: false,
+      code: 'SAVE20',
+      stackable: false,
+      stackingGroup: 'legacy',
     }).success).toBe(false);
   });
 
@@ -631,6 +816,11 @@ describe('canonical contracts', () => {
     expect(document.paths).not.toHaveProperty('/v1/test-secret');
     expect(document.paths?.['/v1/schema/published']?.get?.responses).toHaveProperty('429');
     expect(document.paths?.['/v1/evaluate']?.post?.responses).toHaveProperty('429');
+    expect(document.components?.schemas).toMatchObject({
+      PromoCode: {},
+      CodeEvaluationResult: {},
+      RedemptionEntry: {},
+    });
     const effectSchema = document.components?.schemas?.Effect;
     const variants = (effectSchema as { anyOf?: unknown[] } | undefined)?.anyOf;
     expect(variants?.[0]).toMatchObject({
@@ -658,88 +848,66 @@ describe('canonical contracts', () => {
     expect(effectSchema).not.toHaveProperty('anyOf.2.properties.basisPoints');
     expect(effectSchema).not.toHaveProperty('anyOf.3.properties.amount');
 
-    const redemptionRequestSchema = document.components?.schemas?.RedemptionRequest as {
-      anyOf?: Array<{ required?: string[] }>;
+    const evaluationRequestSchema = document.components?.schemas?.EvaluationRequest as {
+      properties?: Record<string, unknown>;
+      required?: string[];
+      additionalProperties?: boolean;
     } | undefined;
-    expect(redemptionRequestSchema?.anyOf).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        required: expect.arrayContaining(['evaluationId', 'programRef', 'externalOrderRef']),
-      }),
-      expect.objectContaining({
-        required: expect.arrayContaining(['evaluationId', 'programRef', 'idempotencyKey']),
-      }),
-    ]));
+    expect(evaluationRequestSchema).toMatchObject({
+      properties: { codes: {}, cart: {} },
+      required: ['cart'],
+      additionalProperties: false,
+    });
+    expect(evaluationRequestSchema?.properties).not.toHaveProperty('code');
+
+    const evaluationResponseSchema = document.components?.schemas?.EvaluationResponse as {
+      properties?: Record<string, unknown>;
+    } | undefined;
+    expect(evaluationResponseSchema?.properties).toHaveProperty('codeResults');
+
+    const redemptionRequestSchema = document.components?.schemas?.RedemptionRequest as {
+      properties?: Record<string, unknown>;
+      required?: string[];
+      additionalProperties?: boolean;
+    } | undefined;
+    expect(redemptionRequestSchema).toMatchObject({
+      properties: {
+        evaluationId: {},
+        externalOrderRef: {},
+        idempotencyKey: {},
+      },
+      required: ['evaluationId', 'externalOrderRef', 'idempotencyKey'],
+      additionalProperties: false,
+    });
+    expect(redemptionRequestSchema?.properties).not.toHaveProperty('programRef');
 
     const redemptionResponseSchema = document.components?.schemas?.RedemptionResponse as {
-      anyOf?: Array<{ required?: string[] }>;
+      properties?: Record<string, unknown>;
+      required?: string[];
+      additionalProperties?: boolean;
     } | undefined;
-    expect(redemptionResponseSchema?.anyOf).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        required: expect.arrayContaining(['redemptionId', 'externalOrderRef']),
-      }),
-      expect.objectContaining({
-        required: expect.arrayContaining(['redemptionId', 'idempotencyKey']),
-      }),
-    ]));
-
-    const matchesStructuralVariant = (
-      schema: {
-        anyOf?: Array<{
-          required?: string[];
-          properties?: Record<string, unknown>;
-          additionalProperties?: boolean;
-        }>;
-      } | undefined,
-      value: Record<string, unknown>,
-    ) => schema?.anyOf?.some(variant => (
-      (variant.required ?? []).every(key => key in value)
-      && (
-        variant.additionalProperties !== false
-        || Object.keys(value).every(key => key in (variant.properties ?? {}))
-      )
-    )) ?? false;
-
-    const requestBase = { evaluationId: 'evaluation-1', programRef: 'promo-1' };
-    expect([
-      matchesStructuralVariant(redemptionRequestSchema, {
-        ...requestBase,
-        externalOrderRef: 'order-1',
-      }),
-      matchesStructuralVariant(redemptionRequestSchema, {
-        ...requestBase,
-        idempotencyKey: 'key-1',
-      }),
-      matchesStructuralVariant(redemptionRequestSchema, {
-        ...requestBase,
-        externalOrderRef: 'order-1',
-        idempotencyKey: 'key-1',
-      }),
-      matchesStructuralVariant(redemptionRequestSchema, requestBase),
-    ]).toEqual([true, true, true, false]);
-
-    const responseBase = {
-      redemptionId: 'redemption-1',
-      evaluationId: 'evaluation-1',
-      programRef: 'promo-1',
-      status: 'committed',
-      effects: [],
-    };
-    expect([
-      matchesStructuralVariant(redemptionResponseSchema, {
-        ...responseBase,
-        externalOrderRef: 'order-1',
-      }),
-      matchesStructuralVariant(redemptionResponseSchema, {
-        ...responseBase,
-        idempotencyKey: 'key-1',
-      }),
-      matchesStructuralVariant(redemptionResponseSchema, {
-        ...responseBase,
-        externalOrderRef: 'order-1',
-        idempotencyKey: 'key-1',
-      }),
-      matchesStructuralVariant(redemptionResponseSchema, responseBase),
-    ]).toEqual([true, true, true, false]);
+    expect(redemptionResponseSchema).toMatchObject({
+      properties: {
+        redemptionId: {},
+        evaluationId: {},
+        externalOrderRef: {},
+        status: {},
+        entries: {},
+        idempotencyKey: {},
+      },
+      required: [
+        'redemptionId',
+        'evaluationId',
+        'externalOrderRef',
+        'status',
+        'entries',
+        'idempotencyKey',
+      ],
+      additionalProperties: false,
+    });
+    expect(redemptionResponseSchema?.properties).not.toHaveProperty('programRef');
+    expect(redemptionResponseSchema?.properties).not.toHaveProperty('rewardRuleRef');
+    expect(redemptionResponseSchema?.properties).not.toHaveProperty('effects');
 
     const promoSchema = document.components?.schemas?.PromoProgram as {
       anyOf?: Array<Record<string, unknown>>;
@@ -764,13 +932,19 @@ describe('canonical contracts', () => {
     ));
     expect(manualVariant).toMatchObject({
       properties: { autoApply: {}, code: {} },
-      required: expect.arrayContaining(['autoApply', 'code']),
+      required: expect.arrayContaining(['autoApply', 'code', 'stackable']),
     });
     expect(automaticVariant).toMatchObject({
-      properties: { autoApply: {}, code: {} },
+      properties: { autoApply: {}, stackable: {} },
     });
+    expect((automaticVariant as { properties?: Record<string, unknown> } | undefined)?.properties)
+      .not.toHaveProperty('code');
     expect((automaticVariant as { required?: string[] } | undefined)?.required)
       .not.toContain('code');
+    for (const variant of promoVariants ?? []) {
+      const properties = (variant as { properties?: Record<string, unknown> }).properties;
+      expect(properties).not.toHaveProperty('stackingGroup');
+    }
   });
 
   test('publishes conditional reward and future program components without widening Promo routes', () => {
@@ -812,11 +986,10 @@ describe('canonical contracts', () => {
       .toHaveProperty('rewardRuleRef');
 
     const redemptionResponse = schemas?.RedemptionResponse as {
-      anyOf?: Array<{ properties?: Record<string, unknown> }>;
+      properties?: Record<string, unknown>;
     } | undefined;
-    for (const variant of redemptionResponse?.anyOf ?? []) {
-      expect(variant.properties).toHaveProperty('rewardRuleRef');
-    }
+    expect(redemptionResponse?.properties).toHaveProperty('entries');
+    expect(redemptionResponse?.properties).not.toHaveProperty('rewardRuleRef');
 
     type Operation = {
       requestBody?: {

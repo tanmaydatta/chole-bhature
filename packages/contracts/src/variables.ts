@@ -128,7 +128,7 @@ export function buildPublishedEvaluationJsonSchema(
       ? cartExtensions.schema
       : cartExtensions.schema.optional(),
   });
-  const evaluationRequestSchema = EvaluationRequestSchema.extend({
+  const evaluationRequestSchema = EvaluationRequestSchema.safeExtend({
     cart: cartSchema,
     context: contextExtensions.required
       ? contextExtensions.schema

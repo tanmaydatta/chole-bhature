@@ -23,6 +23,7 @@ import {
   canonicalApiCredentialView,
   canonicalApiError,
   canonicalAuditEntry,
+  canonicalCodedEvaluationResponse,
   canonicalCommittedRedemption,
   canonicalCustomer,
   canonicalCustomerPatch,
@@ -82,6 +83,8 @@ describe('core contract documentation examples', () => {
       .toEqual(canonicalFallbackResponse);
     expect(EvaluationResponseSchema.parse(canonicalNoMatchResponse))
       .toEqual(canonicalNoMatchResponse);
+    expect(EvaluationResponseSchema.parse(canonicalCodedEvaluationResponse))
+      .toEqual(canonicalCodedEvaluationResponse);
     expect(RedemptionRequestSchema.parse(canonicalRedemptionRequest))
       .toEqual(canonicalRedemptionRequest);
     expect(RedemptionResponseSchema.parse(canonicalCommittedRedemption))

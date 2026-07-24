@@ -1,5 +1,6 @@
 import { ConditionGroupSchema } from './conditions.js';
 import { MoneySchema } from './money.js';
+import { PromoCodeSchema } from './promo-codes.js';
 import {
   PromoFallbackRewardSchema,
   PromoRewardRuleSchema,
@@ -32,22 +33,22 @@ const PromoProgramBaseSchema = z.object({
   perCustomerCap: z.number().int().positive().optional(),
   stackable: z.boolean(),
   priority: z.number().int(),
-  stackingGroup: z.string().min(1).optional(),
 }).strict();
-
-const ManualPromoProgramSchema = PromoProgramBaseSchema.extend({
-  autoApply: z.literal(false),
-  code: z.string().min(1),
-});
 
 const AutomaticPromoProgramSchema = PromoProgramBaseSchema.extend({
   autoApply: z.literal(true),
-  code: z.string().min(1).optional(),
+  stackable: z.literal(false),
+});
+
+const CodedPromoProgramSchema = PromoProgramBaseSchema.extend({
+  autoApply: z.literal(false),
+  code: PromoCodeSchema,
+  stackable: z.boolean(),
 });
 
 export const PromoProgramSchema = z.discriminatedUnion('autoApply', [
-  ManualPromoProgramSchema,
   AutomaticPromoProgramSchema,
+  CodedPromoProgramSchema,
 ]).superRefine((program, context) => {
   if (program.startDate && program.endDate && program.startDate > program.endDate) {
     context.addIssue({

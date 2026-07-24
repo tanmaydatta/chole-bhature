@@ -93,7 +93,7 @@ export const canonicalCustomer = {
 
 export const canonicalEvaluationRequest = {
   customerRef: 'customer-123',
-  code: 'WELCOME10',
+  codes: ['WELCOME10'],
   cart: {
     currency: 'GBP',
     subtotal: 6_500,
@@ -316,9 +316,20 @@ export const canonicalNoMatchResponse = {
   }],
 } as const satisfies EvaluationResponse;
 
+export const canonicalCodedEvaluationResponse = {
+  ...canonicalEvaluationResponseBase,
+  decisions: [canonicalDecision],
+  codeResults: [{
+    code: 'WELCOME10',
+    normalizedCode: 'WELCOME10',
+    outcome: 'selected',
+    programRef: 'welcome-10',
+    reasonCodes: [],
+  }],
+} as const satisfies EvaluationResponse;
+
 export const canonicalRedemptionRequest = {
   evaluationId: 'evaluation-789',
-  programRef: 'gold-web-rewards',
   externalOrderRef: 'order-456',
   idempotencyKey: 'checkout-attempt-abc',
 } as const satisfies RedemptionRequest;
@@ -326,16 +337,19 @@ export const canonicalRedemptionRequest = {
 export const canonicalCommittedRedemption = {
   redemptionId: 'redemption-123',
   evaluationId: 'evaluation-789',
-  programRef: 'gold-web-rewards',
-  rewardRuleRef: 'large-cart-20-percent',
   externalOrderRef: 'order-456',
-  idempotencyKey: 'checkout-attempt-abc',
   status: 'committed',
-  effects: [{
-    type: 'order_discount',
-    calculation: 'percent',
-    basisPoints: 2_000,
+  entries: [{
+    programRef: 'gold-web-rewards',
+    programRevision: 1,
+    rewardRuleRef: 'large-cart-20-percent',
+    effects: [{
+      type: 'order_discount',
+      calculation: 'percent',
+      basisPoints: 2_000,
+    }],
   }],
+  idempotencyKey: 'checkout-attempt-abc',
 } as const satisfies RedemptionResponse;
 
 export const canonicalApiError = {

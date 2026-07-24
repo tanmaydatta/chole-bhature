@@ -1,4 +1,9 @@
 import { MoneySchema } from './money.js';
+import {
+  NormalizedPromoCodeSchema,
+  PromoCodeSchema,
+  normalizeDistinctPromoCodes,
+} from './promo-codes.js';
 import { z } from './zod.js';
 
 const AttributesSchema = z.record(z.string(), z.unknown());
@@ -18,12 +23,31 @@ export const CartSchema = z.object({
   attributes: AttributesSchema.optional(),
 }).strict();
 
+const validateDistinctCodeLimit = (
+  request: { codes?: string[] | undefined },
+  context: z.core.$RefinementCtx<{ codes?: string[] | undefined }>,
+) => {
+  if (request.codes?.some(code => !PromoCodeSchema.safeParse(code).success)) return;
+
+  try {
+    normalizeDistinctPromoCodes(request.codes ?? []);
+  } catch (error) {
+    if (!(error instanceof RangeError)) throw error;
+    context.addIssue({
+      code: 'custom',
+      path: ['codes'],
+      message: error.message,
+      input: request,
+    });
+  }
+};
+
 export const EvaluationRequestSchema = z.object({
   customerRef: z.string().min(1).optional(),
-  code: z.string().min(1).optional(),
+  codes: z.array(PromoCodeSchema).optional(),
   cart: CartSchema,
   context: AttributesSchema.optional(),
-}).strict();
+}).strict().superRefine(validateDistinctCodeLimit);
 
 export const DecisionOutcomeSchema = z.enum([
   'qualified',
@@ -111,6 +135,8 @@ export const ProgramTypeSchema = z.enum([
   'loyalty',
 ]);
 
+export const ReasonCodeSchema = z.string().regex(/^[A-Z][A-Z0-9_]*$/);
+
 export const IncentiveDecisionSchema = z.object({
   programRef: z.string().min(1),
   programRevision: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
@@ -118,7 +144,7 @@ export const IncentiveDecisionSchema = z.object({
   outcome: DecisionOutcomeSchema,
   rewardRuleRef: z.string().min(1).optional(),
   effects: z.array(EffectSchema),
-  reasonCodes: z.array(z.string().regex(/^[A-Z][A-Z0-9_]*$/)),
+  reasonCodes: z.array(ReasonCodeSchema),
   message: z.string().min(1).optional(),
   commitRequired: z.boolean(),
   eligible: z.boolean().optional(),
@@ -135,6 +161,21 @@ export const IncentiveDecisionSchema = z.object({
   }
 });
 
+export const CodeEvaluationResultSchema = z.object({
+  code: PromoCodeSchema,
+  normalizedCode: NormalizedPromoCodeSchema,
+  outcome: z.enum([
+    'selected',
+    'invalid_code',
+    'not_qualified',
+    'unavailable',
+    'exhausted',
+    'combination_rejected',
+  ]),
+  programRef: z.string().min(1).optional(),
+  reasonCodes: z.array(ReasonCodeSchema),
+}).strict();
+
 export const EvaluationResponseSchema = z.object({
   evaluationId: z.string().min(1),
   customerRef: z.string().min(1).optional(),
@@ -142,47 +183,30 @@ export const EvaluationResponseSchema = z.object({
   schemaVersion: z.number().int().positive(),
   expiresAt: z.iso.datetime({ offset: true }),
   decisions: z.array(IncentiveDecisionSchema),
+  codeResults: z.array(CodeEvaluationResultSchema).optional(),
 }).strict();
 
-const RedemptionRequestFields = {
+export const RedemptionRequestSchema = z.object({
   evaluationId: z.string().min(1),
+  externalOrderRef: z.string().min(1),
+  idempotencyKey: z.string().min(1),
+}).strict();
+
+export const RedemptionEntrySchema = z.object({
   programRef: z.string().min(1),
-};
+  programRevision: z.number().int().positive(),
+  rewardRuleRef: z.string().min(1).optional(),
+  effects: z.array(EffectSchema),
+}).strict();
 
-export const RedemptionRequestSchema = z.union([
-  z.object({
-    ...RedemptionRequestFields,
-    externalOrderRef: z.string().min(1),
-    idempotencyKey: z.string().min(1).optional(),
-  }).strict(),
-  z.object({
-    ...RedemptionRequestFields,
-    externalOrderRef: z.string().min(1).optional(),
-    idempotencyKey: z.string().min(1),
-  }).strict(),
-]);
-
-const RedemptionResponseFields = {
+export const RedemptionResponseSchema = z.object({
   redemptionId: z.string().min(1),
   evaluationId: z.string().min(1),
-  programRef: z.string().min(1),
-  rewardRuleRef: z.string().min(1).optional(),
+  externalOrderRef: z.string().min(1),
   status: z.literal('committed'),
-  effects: z.array(EffectSchema),
-};
-
-export const RedemptionResponseSchema = z.union([
-  z.object({
-    ...RedemptionResponseFields,
-    externalOrderRef: z.string().min(1),
-    idempotencyKey: z.string().min(1).optional(),
-  }).strict(),
-  z.object({
-    ...RedemptionResponseFields,
-    externalOrderRef: z.string().min(1).optional(),
-    idempotencyKey: z.string().min(1),
-  }).strict(),
-]);
+  entries: z.array(RedemptionEntrySchema),
+  idempotencyKey: z.string().min(1),
+}).strict();
 
 export type CartLineItem = z.infer<typeof CartLineItemSchema>;
 export type Cart = z.infer<typeof CartSchema>;
@@ -190,7 +214,10 @@ export type EvaluationRequest = z.infer<typeof EvaluationRequestSchema>;
 export type DecisionOutcome = z.infer<typeof DecisionOutcomeSchema>;
 export type Effect = z.infer<typeof EffectSchema>;
 export type ProgramType = z.infer<typeof ProgramTypeSchema>;
+export type ReasonCode = z.infer<typeof ReasonCodeSchema>;
 export type IncentiveDecision = z.infer<typeof IncentiveDecisionSchema>;
+export type CodeEvaluationResult = z.infer<typeof CodeEvaluationResultSchema>;
 export type EvaluationResponse = z.infer<typeof EvaluationResponseSchema>;
 export type RedemptionRequest = z.infer<typeof RedemptionRequestSchema>;
+export type RedemptionEntry = z.infer<typeof RedemptionEntrySchema>;
 export type RedemptionResponse = z.infer<typeof RedemptionResponseSchema>;
