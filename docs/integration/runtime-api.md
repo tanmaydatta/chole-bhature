@@ -4,7 +4,7 @@
 
 **Mirror state:** Repository and Notion copies synchronized and read back successfully on 2026-07-24.
 
-This is the platform-neutral HTTP boundary for the first client integration. A custom checkout, a manual backend integration, and a future Shopify adapter all follow the same sequence: define typed fields, store customer attributes, configure a Promo program, evaluate a cart, apply the selected effects, and commit the selected decision before payment capture.
+This is the platform-neutral HTTP boundary for the first client integration. A custom checkout, a manual backend integration, and a future Shopify adapter all follow the same sequence: define typed fields, store customer attributes, configure a Promo program, evaluate a cart, apply the complete selected effect set, and commit the complete selected bundle before payment capture.
 
 The generated OpenAPI document is served at `GET /v1/openapi.json`. It is produced by `@incentives/contracts`; the Worker does not keep a handwritten copy.
 
@@ -92,7 +92,15 @@ Do not send persistent customer attributes to evaluation. Evaluation accepts onl
 
 ## 3. Configure a Promo program
 
-Use the secret-gated `/v1/programs` routes to create, list, read, and replace Promo programs. Conditions may reference only built-in fields or fields defined in the current schema, and operators and values must match the field type.
+Create, review, publish, and manage Promo revisions through the authorized
+Operator **Promos** workflow. Operator Web calls private Core operator methods
+with a signed session and explicit program permissions. The public HTTP app does
+not mount `/v1/programs`; requests to that path return `404 NOT_FOUND` even with
+a valid `sk_…` credential.
+
+Use the following as the configuration to enter and review in Operator.
+Conditions may reference only built-in fields or fields defined in the current
+schema, and operators and values must match the field type.
 
 ```json
 {
@@ -181,7 +189,7 @@ Use the secret-gated `/v1/programs` routes to create, list, read, and replace Pr
 
 Money is always an ISO currency plus integer minor units. Fixed rewards and budgets must use the same currency; evaluation currency must also match. In the current runtime, a free-shipping reward has no monetary charge and cannot coexist with a budget because evaluation does not yet accept an authoritative shipping cost. The approved future authority will make free-shipping budgets and per-order caps optional, require a client-supplied actual shipping cost in the same currency with no conversion, apply a full waiver or none, and use a configurable reservation TTL that defaults to 15 minutes. Expiry and failure recovery are money movements, with event-driven reversals planned rather than implemented here. Lifecycle values are `draft`, `scheduled`, `active`, `paused`, and `ended`. Only a draft program can be edited, and its external `id` is immutable.
 
-The OpenAPI document also publishes `AffiliateProgram`, `ReferralProgram`, and `LoyaltyProgram` as future configuration contracts. They are not accepted by any current `/v1/programs` request or returned by its responses, and no runtime evaluates or persists them. Loyalty `assetRef` values are opaque references; preserve them byte-for-byte. Defining and resolving them through a Wallet Asset Catalog is deferred.
+The OpenAPI document also publishes `AffiliateProgram`, `ReferralProgram`, and `LoyaltyProgram` as future configuration contracts. The current Operator program workflow accepts only Promo configuration, and no runtime evaluates or persists those future program types. Loyalty `assetRef` values are opaque references; preserve them byte-for-byte. Defining and resolving them through a Wallet Asset Catalog is deferred.
 
 ## 4. Evaluate automatic or submitted coded Promos
 
@@ -479,15 +487,12 @@ curl --fail-with-body --silent --request PATCH \
   --data '{"attributes":{"tier":"gold"}}'
 ```
 
-Create the schema-validated tiered Promo from section 3:
-
-```bash
-curl --fail-with-body --silent --request POST \
-  "$INCENTIVES_API_URL/v1/programs" \
-  --header "Authorization: Bearer $INCENTIVES_SECRET_TOKEN" \
-  --header 'Content-Type: application/json' \
-  --data '{"id":"gold-web-rewards","type":"promo","name":"Gold web rewards","status":"active","eligibility":{"match":"ALL","conditions":[{"id":"gold-tier","variable":"customer.tier","operator":"eq","value":"gold"},{"id":"web-channel","variable":"context.channel","operator":"eq","value":"web"}]},"rewardRules":[{"id":"large-cart-20-percent","name":"Twenty percent off large carts","conditions":{"match":"ALL","conditions":[{"id":"cart-at-least-100","variable":"cart.subtotal","operator":"gte","value":10000}]},"reward":{"type":"order_discount","calculation":"percent","basisPoints":2000}},{"id":"medium-cart-10-off","name":"Ten pounds off medium carts","conditions":{"match":"ALL","conditions":[{"id":"cart-at-least-50","variable":"cart.subtotal","operator":"gte","value":5000}]},"reward":{"type":"order_discount","calculation":"fixed","amount":{"currency":"GBP","minorUnits":1000}}}],"fallbackReward":{"id":"fallback-5-off","name":"Fallback five pounds off","reward":{"type":"order_discount","calculation":"fixed","amount":{"currency":"GBP","minorUnits":500}}},"budget":{"currency":"GBP","minorUnits":100000},"usageCap":100,"perCustomerCap":1,"stackable":false,"priority":10,"autoApply":true}'
-```
+In the authorized Operator **Promos** workflow, create an Automatic Promo with
+external reference `gold-web-rewards`, enter the configuration from section 3,
+save the draft, inspect the publication review, and publish revision 1. Confirm
+the canonical reload shows it as Active before continuing. Do not try to create
+it with the public credential: `/v1/programs` is deliberately absent from the
+public app.
 
 Evaluate both sides of the threshold. Neither evaluation resends customer attributes:
 

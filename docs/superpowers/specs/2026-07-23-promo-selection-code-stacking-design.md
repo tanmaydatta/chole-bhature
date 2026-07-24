@@ -306,12 +306,14 @@ Example coded response:
   "codeResults": [
     {
       "code": "VIP20",
+      "normalizedCode": "VIP20",
       "outcome": "selected",
       "programRef": "vip-shipping",
       "reasonCodes": []
     },
     {
       "code": "UNKNOWN",
+      "normalizedCode": "UNKNOWN",
       "outcome": "invalid_code",
       "reasonCodes": ["INVALID_PROMO_CODE"]
     }
@@ -319,14 +321,19 @@ Example coded response:
 }
 ```
 
-The API echoes only normalized forms of codes the caller already supplied. It
-does not return codes belonging to unrelated programs.
+Every coded response entry includes both required representations. `code` is the
+first distinct caller-supplied display form after trimming, with caller casing
+preserved; `normalizedCode` is the locale-independent uppercase lookup form.
+The API echoes only codes the caller supplied and does not return codes
+belonging to unrelated programs.
 
 For a stacking conflict, `decisions` is empty and each otherwise-qualified
 conflicting `codeResults` entry contains:
 
 ```json
 {
+  "code": "VIP20",
+  "normalizedCode": "VIP20",
   "outcome": "combination_rejected",
   "reasonCodes": ["CODE_COMBINATION_NOT_ALLOWED"]
 }

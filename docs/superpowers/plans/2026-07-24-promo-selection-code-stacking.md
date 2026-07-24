@@ -1660,7 +1660,12 @@ The implementation agent does not execute these external writes.
 
 - [ ] **Step 6: Run the documented manual staging guide**
 
-The account owner performs each case with a freshly created test program/code/order reference. Record:
+The account owner generates one new `RUN_SUFFIX` for the complete staging run
+and follows the Gate C manual's derived-value table. Every client identity,
+program reference, Promo code, customer reference, credential label, external
+order reference, and idempotency key uses that suffix consistently; generated
+evaluation/redemption IDs are copied from the current run. Do not reuse a
+suffix or refresh only a subset of the references. Record:
 
 - expected versus actual result;
 - HTTP status;
