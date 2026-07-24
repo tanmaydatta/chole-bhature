@@ -50,9 +50,9 @@ describe('staging Wrangler executable resolution', () => {
       path.join(wranglerBin, 'wrangler.js'),
       `import { writeFileSync } from 'node:fs';
 const args = process.argv.slice(2);
-writeFileSync(process.env.LOCAL_CAPTURE, 'local');
+writeFileSync(${JSON.stringify(localCapture)}, 'local');
 if (args[0] === 'd1' && args[1] === 'info') {
-  process.stdout.write(JSON.stringify({ uuid: process.env.FAKE_PRODUCT_D1_ID }));
+  process.stdout.write(JSON.stringify({ uuid: 'd918b5cc-7ce4-4bf6-a33e-90c8335f2ef1' }));
 }
 `,
     );
@@ -60,7 +60,7 @@ if (args[0] === 'd1' && args[1] === 'info') {
       const hostileExecutable = path.join(hostileBin, executable);
       await writeFile(
         hostileExecutable,
-        `#!/bin/sh\nprintf hostile > "$HOSTILE_CAPTURE"\nexit 91\n`,
+        `#!/bin/sh\nprintf hostile > ${JSON.stringify(hostileCapture)}\nexit 91\n`,
         { mode: 0o700 },
       );
       await chmod(hostileExecutable, 0o700);
@@ -78,9 +78,6 @@ if (args[0] === 'd1' && args[1] === 'info') {
     await execFileAsync(process.execPath, ['--input-type=module', '--eval', invocation], {
       env: validEnvironment({
         TEST_REPOSITORY_ROOT: repositoryRoot,
-        FAKE_PRODUCT_D1_ID: 'd918b5cc-7ce4-4bf6-a33e-90c8335f2ef1',
-        LOCAL_CAPTURE: localCapture,
-        HOSTILE_CAPTURE: hostileCapture,
         PATH: `${hostileBin}${path.delimiter}${process.env.PATH ?? ''}`,
       }),
     });

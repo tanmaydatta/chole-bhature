@@ -147,10 +147,13 @@ pnpm --filter @incentives/operator-web exec wrangler secret put OPERATOR_SELECTI
 ```
 
 The staging runner generates a mode-`0600` temporary Wrangler config for the selected app, invokes
-that app's installed Wrangler entrypoint through the current absolute Node executable, removes the
-temporary files on success or failure, and strips application secrets and `STAGING_*` inputs from
-the Wrangler child environment. Staging `dev` commands may create a temporary `.dev.vars`; migrate
-and deploy commands never put application secrets in the generated TOML.
+that app's installed Wrangler entrypoint through the current absolute Node executable, and removes
+the temporary files on success or failure. Its child environment is a fail-closed allowlist:
+required platform/temp/locale values and Cloudflare API token/account values only. It does not
+forward `NODE_OPTIONS`, `NODE_PATH`, endpoint or `WRANGLER_*` controls, proxy/output controls,
+unrelated cloud/service credentials, application secrets, or `STAGING_*` inputs. OAuth login still
+works through the allowed home/config paths. Staging `dev` commands may create a temporary
+`.dev.vars`; migrate and deploy commands never put application secrets in the generated TOML.
 
 Before every remote runner action, authenticated Wrangler resolves Product D1
 through a separate generated API config pinned to `STAGING_PRODUCT_D1_ID`. The
@@ -161,9 +164,11 @@ Worker/database name, and an exact argument allowlist.
 
 Task 10 adds protected owner-run actions for count-only inventory, legacy Promo
 and redemption prechecks, post-migration verification, cutover write markers,
-Product D1 export, API/Operator deployment status, and an emergency API-only
-rollback. Protected action output is parsed fail-closed and reduced to approved
-counts, timestamps, deployment versions, or a generic completion message.
+Product D1 export, and API/Operator deployment status. Protected action output
+is parsed fail-closed and reduced to approved counts, timestamps, canonical
+Cloudflare version UUIDs, traffic percentages, or a generic completion
+message. Empty, malformed, or case-insensitively duplicated version IDs fail
+closed.
 Wrangler stdout/stderr, D1 metadata, account details, and export signed URLs are
 not forwarded. Product export additionally requires a caller-supplied absolute
 path under an existing owner-controlled, non-symlink, mode-`0700` directory
@@ -176,19 +181,18 @@ export-retention/disposition steps are in the
 The dated activation record's older inline direct-Wrangler rollout draft is
 historical and must not be executed.
 
-### Failure and rollback rules
+### Failure and recovery rules
 
 - A failed migration stops activation. Never attempt a destructive D1 downgrade.
 - A failed Worker deployment leaves its previous deployed version active.
 - Product migrations are forward-only. After migration, normal recovery is a
   quiet-window containment plus a reviewed forward fix.
-- An emergency API Worker rollback is a separate owner-only Cloudflare
-  mutation. It is permitted only when protected pre/post write markers prove
-  zero evaluation/redemption writes after migration, the exact prior API
-  version was captured, that version is mapped to reviewed local source, and
-  local tests prove that source remains compatible with the migrated schema.
-  Any write or uncertainty forbids rollback.
-- Task 10 does not roll back Operator Web, Identity, Product D1, or the static
-  demo.
+- Protected Task 10 Worker rollback is deliberately disabled. The runner
+  rejects rollback before spawning Wrangler. Do not bypass it with direct
+  Wrangler rollback commands: interactive confirmation, version-to-source
+  mapping, bindings, and secret compatibility are not safely preflighted.
+- Until reviewed fail-closed preflight or API tooling exists, Task 10 recovery
+  is containment plus a reviewed forward deployment. This applies to API,
+  Operator Web, Identity, Product D1, and the static demo.
 - Identity must remain private. Stop if Cloudflare shows a public Identity route or hostname.
 - The static demo is never an operator-platform rollback target and remains unchanged.

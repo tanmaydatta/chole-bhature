@@ -350,22 +350,5 @@ export function stagingWranglerArguments(app, action, configPath, actionArgument
       configPath,
     ];
   }
-  if (
-    action === 'task10-rollback'
-    && typeof actionArgument === 'string'
-    && UUID_PATTERN.test(actionArgument)
-  ) {
-    return [
-      'rollback',
-      actionArgument,
-      '--name',
-      STAGING_WORKER_NAMES.api,
-      '--message',
-      'Task 10 emergency rollback after a verified zero-write cutover',
-      '--yes',
-      '--config',
-      configPath,
-    ];
-  }
   throw new Error('Unsupported staging Wrangler command.');
 }

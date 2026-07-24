@@ -210,11 +210,11 @@ This evidence is local only. It was freshly established from the current Task
 | Gate | Current review-remediation result |
 | --- | --- |
 | Six focused package suites (`contracts`, `engine`, `module-kit`, `promo`, `api`, `dashboard`) | Pass: 905/905 tests |
-| Protected-runner suites (`staging-wrangler-resolution`, `staging-wrangler-runner`, `staging-wrangler-task10`) | Pass: 65/65 tests |
-| `pnpm test` | Pass: 1,285/1,285 workspace tests |
+| Protected-runner suites (`staging-wrangler-resolution`, `staging-wrangler-runner`, `staging-wrangler-task10`) | Pass: 71/71 tests |
+| `pnpm test` | Pass: 1,291/1,291 workspace tests |
 | `pnpm build` | Pass; the existing dashboard main-chunk warning above 500 kB remains |
 | `pnpm lint` | Pass; only the two existing dashboard Fast Refresh warnings remain (`ThemeProvider.tsx:9:14` and `Toast.tsx:15:17`) |
-| `pnpm verify:clean-tests` | Pass against the committed candidate, including the new protected-runner and migration-compatibility tests |
+| `pnpm verify:clean-tests` | Pass against the committed review-remediation candidate, including the protected-runner and migration-compatibility tests |
 | `apps/api/test/production-migration.test.ts` | Pass: 21/21 tests, including the production baseline, fail-loud legacy guards, readable legacy redemption backfill, and additive compatibility proof |
 | Task 10 review | Rollout-safety findings remediated; final parent review and merge remain pending |
 
@@ -223,12 +223,13 @@ This evidence is local only. It was freshly established from the current Task
 > **Superseded rollout draft — do not execute the inline commands in this
 > section.** The reviewed procedure is the
 > [Task 10 protected staging cutover and recovery guide](./task10-staging-cutover.md).
-> It routes every D1 export/query, deployment-status read, and possible API
-> rollback through the generated mode-`0600` protected runner, adds the exact
-> legacy-redemption precheck, requires a continuous quiet window and
-> pre-deployment health check, and defines the forward-only recovery and
-> sensitive-export disposition rules. This historical draft remains only to
-> preserve the activation record.
+> It routes every D1 export/query and deployment-status read through the
+> generated mode-`0600` protected runner, adds the exact legacy-redemption
+> precheck, requires a continuous quiet window and pre-deployment health check,
+> and defines the forward-only recovery and sensitive-export disposition
+> rules. Protected Worker rollback is deliberately disabled pending reviewed
+> safe preflight/API tooling. This historical draft remains only to preserve
+> the activation record.
 
 **Status:** Not run. No Cloudflare query, export, migration, deployment,
 secret operation, or manual staging case below was executed by the

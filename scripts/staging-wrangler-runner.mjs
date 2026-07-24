@@ -23,6 +23,27 @@ import {
 } from './staging-wrangler-config.mjs';
 
 const defaultRepositoryRoot = fileURLToPath(new URL('../', import.meta.url));
+const CLOUDFLARE_UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
+const CHILD_ENVIRONMENT_KEYS = Object.freeze([
+  'PATH',
+  'HOME',
+  'XDG_CONFIG_HOME',
+  'TMPDIR',
+  'TMP',
+  'TEMP',
+  'LANG',
+  'LANGUAGE',
+  'LC_ALL',
+  'LC_CTYPE',
+  'SystemRoot',
+  'ComSpec',
+  'PATHEXT',
+  'USERPROFILE',
+  'APPDATA',
+  'LOCALAPPDATA',
+  'CLOUDFLARE_API_TOKEN',
+  'CLOUDFLARE_ACCOUNT_ID',
+]);
 const TASK10_QUERY_FIELDS = Object.freeze({
   'task10-counts': Object.freeze({
     promo_rows: 'integer',
@@ -53,7 +74,6 @@ const CAPTURED_TASK10_ACTIONS = new Set([
   ...Object.keys(TASK10_QUERY_FIELDS),
   'task10-status',
   'task10-export',
-  'task10-rollback',
 ]);
 
 function capturedText(value) {
@@ -141,20 +161,27 @@ function safeDeploymentStatusOutput(stdout) {
   ) {
     throw new Error('Wrangler returned an invalid protected response.');
   }
+  const seenVersionIds = new Set();
   const versions = deployment.versions.map(version => {
     if (
       version === null
       || Array.isArray(version)
       || typeof version !== 'object'
       || typeof version.version_id !== 'string'
+      || !CLOUDFLARE_UUID_PATTERN.test(version.version_id)
       || !Number.isFinite(version.percentage)
       || version.percentage < 0
       || version.percentage > 100
     ) {
       throw new Error('Wrangler returned an invalid protected response.');
     }
+    const versionId = version.version_id.toLowerCase();
+    if (seenVersionIds.has(versionId)) {
+      throw new Error('Wrangler returned an invalid protected response.');
+    }
+    seenVersionIds.add(versionId);
     return {
-      versionId: version.version_id,
+      versionId,
       percentage: version.percentage,
     };
   });
@@ -162,6 +189,16 @@ function safeDeploymentStatusOutput(stdout) {
     createdOn: deployment.created_on,
     versions,
   });
+}
+
+function stagingWranglerChildEnvironment(environment) {
+  const childEnvironment = {};
+  for (const key of CHILD_ENVIRONMENT_KEYS) {
+    if (typeof environment[key] === 'string') {
+      childEnvironment[key] = environment[key];
+    }
+  }
+  return childEnvironment;
 }
 
 function privateExportDestination(outputPath) {
@@ -302,14 +339,7 @@ export async function runStagingWrangler({
       await chmod(apiConfigPath, 0o600);
     }
 
-    const childEnvironment = { ...environment };
-    for (const key of Object.keys(childEnvironment)) {
-      if (key.startsWith('STAGING_')) delete childEnvironment[key];
-    }
-    delete childEnvironment.AUTH_SECRET;
-    delete childEnvironment.RESEND_API_KEY;
-    delete childEnvironment.RESEND_FROM;
-    delete childEnvironment.OPERATOR_SELECTION_SECRET;
+    const childEnvironment = stagingWranglerChildEnvironment(environment);
 
     const confirmationInvocation = resolver(repositoryRoot, 'api');
     const confirmation = spawn(
@@ -366,8 +396,6 @@ export async function runStagingWrangler({
     } else if (action === 'task10-export') {
       verifyPrivateExport(exportDestination);
       reportOutput('Product D1 export completed.');
-    } else if (action === 'task10-rollback') {
-      reportOutput('API Worker rollback completed.');
     }
     return 0;
   } catch (error) {

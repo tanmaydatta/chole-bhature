@@ -1663,6 +1663,12 @@ account owner one at a time in this order:
 12. retain or explicitly delete the sensitive export only after evidence
     acceptance.
 
+Task 10 recovery is quiet-window containment plus a reviewed forward fix.
+Protected Worker rollback is deliberately unavailable until reviewed,
+fail-closed preflight or Cloudflare API tooling can prove the exact
+version-to-source mapping, target account, bindings/secrets compatibility, and
+confirmation semantics.
+
 The implementation agent does not execute these external writes.
 
 - [ ] **Step 6: Run the documented manual staging guide**

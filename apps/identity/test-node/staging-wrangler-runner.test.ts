@@ -41,7 +41,8 @@ async function testHarness() {
   const directory = await mkdtemp(path.join(tmpdir(), 'staging-wrangler-test-'));
   temporaryDirectories.push(directory);
   const testRepositoryRoot = path.join(directory, 'repository');
-  const capture = path.join(directory, 'capture.json');
+  const capture = path.join(testRepositoryRoot, 'capture.json');
+  const exitStatus = path.join(testRepositoryRoot, 'fake-exit-status.txt');
   for (const app of ['api', 'identity', 'operator-web']) {
     const wranglerPackage = path.join(
       testRepositoryRoot, 'apps', app, 'node_modules', 'wrangler',
@@ -53,16 +54,21 @@ async function testHarness() {
     await writeFile(fakeWrangler, `
 import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 const args = process.argv.slice(2);
 const configPath = args[args.indexOf('--config') + 1];
 const isProductConfirmation = args[0] === 'd1' && args[1] === 'info';
+const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../../..');
+const capturePath = path.join(repositoryRoot, 'capture.json');
+const exitStatusPath = path.join(repositoryRoot, 'fake-exit-status.txt');
 const devVarsPath = path.join(path.dirname(configPath), '.dev.vars');
 const hasDevVars = existsSync(devVarsPath);
 const devVars = hasDevVars ? readFileSync(devVarsPath, 'utf8') : '';
-writeFileSync(process.env.FAKE_WRANGLER_CAPTURE, JSON.stringify({
+const config = readFileSync(configPath, 'utf8');
+writeFileSync(capturePath, JSON.stringify({
   args,
   configPath,
-  config: readFileSync(configPath, 'utf8'),
+  config,
   mode: statSync(configPath).mode & 0o777,
   hasAuthSecret: Object.hasOwn(process.env, 'AUTH_SECRET'),
   hasResendApiKey: Object.hasOwn(process.env, 'RESEND_API_KEY'),
@@ -78,19 +84,18 @@ writeFileSync(process.env.FAKE_WRANGLER_CAPTURE, JSON.stringify({
     devVars.includes('OPERATOR_SELECTION_SECRET=') && devVars.includes('must-not-reach'),
 }));
 if (isProductConfirmation) {
-  process.stdout.write(JSON.stringify({ uuid: process.env.FAKE_PRODUCT_D1_ID }));
+  const productId = config.match(/database_id = "([^"]+)"/)?.[1];
+  process.stdout.write(JSON.stringify({ uuid: productId }));
 } else {
-  process.exit(Number(process.env.FAKE_WRANGLER_EXIT ?? '0'));
+  process.exit(Number(existsSync(exitStatusPath) ? readFileSync(exitStatusPath, 'utf8') : '0'));
 }
 `);
   }
   return {
     capture,
+    exitStatus,
     repositoryRoot: testRepositoryRoot,
-    environment: validEnvironment({
-      FAKE_WRANGLER_CAPTURE: capture,
-      FAKE_PRODUCT_D1_ID: productId,
-    }),
+    environment: validEnvironment(),
   };
 }
 
@@ -305,10 +310,8 @@ head_sampling_rate = 1`);
 
   test('preserves Wrangler failure status, cleans config, and redacts all inputs', async () => {
     const harness = await testHarness();
-    const environment = validEnvironment({
-      ...harness.environment,
-      FAKE_WRANGLER_EXIT: '17',
-    });
+    await writeFile(harness.exitStatus, '17');
+    const environment = validEnvironment({ ...harness.environment });
 
     let failure: unknown;
     try {

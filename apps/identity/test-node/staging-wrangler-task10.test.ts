@@ -30,6 +30,12 @@ const apiVersionId = 'de4beb41-e346-481d-a793-3742d91b5861';
 
 function validEnvironment(): NodeJS.ProcessEnv {
   return {
+    PATH: '/reviewed/bin',
+    HOME: '/reviewed/home',
+    XDG_CONFIG_HOME: '/reviewed/xdg',
+    TMPDIR: '/reviewed/tmp',
+    LANG: 'en_GB.UTF-8',
+    LC_ALL: 'C',
     STAGING_ENVIRONMENT: 'staging',
     STAGING_PRODUCT_D1_ID: productId,
     STAGING_AUTH_D1_ID: authId,
@@ -42,6 +48,20 @@ function validEnvironment(): NodeJS.ProcessEnv {
     RESEND_FROM: 'must-not-reach-wrangler',
     OPERATOR_SELECTION_SECRET: 'must-not-reach-wrangler',
     CLOUDFLARE_API_TOKEN: 'cloudflare-auth-token-required-by-wrangler',
+    CLOUDFLARE_ACCOUNT_ID: 'cloudflare-account-required-by-wrangler',
+    NODE_OPTIONS: '--require=/tmp/hostile-node-options.cjs',
+    NODE_PATH: '/tmp/hostile-node-path',
+    WRANGLER_LOG: 'debug',
+    WRANGLER_API_ENVIRONMENT: 'staging',
+    CLOUDFLARE_API_BASE_URL: 'https://hostile-cloudflare-endpoint.invalid',
+    HTTP_PROXY: 'https://hostile-proxy.invalid',
+    HTTPS_PROXY: 'https://hostile-proxy.invalid',
+    ALL_PROXY: 'https://hostile-proxy.invalid',
+    NO_PROXY: '*',
+    FORCE_COLOR: '3',
+    NO_COLOR: '1',
+    AWS_ACCESS_KEY_ID: 'unrelated-cloud-credential',
+    GITHUB_TOKEN: 'unrelated-service-credential',
   };
 }
 
@@ -101,23 +121,13 @@ describe('Task 10 staging Wrangler allowlist', () => {
     ]);
   });
 
-  test('uses Wrangler 4.112 rollback syntax and the exact API Worker name', () => {
-    expect(stagingWranglerArguments(
+  test('does not expose a protected Task 10 rollback action', () => {
+    expect(() => stagingWranglerArguments(
       'api',
       'task10-rollback',
       '/tmp/api.wrangler.toml',
       apiVersionId,
-    )).toEqual([
-      'rollback',
-      apiVersionId,
-      '--name',
-      'incentives-api-staging',
-      '--message',
-      'Task 10 emergency rollback after a verified zero-write cutover',
-      '--yes',
-      '--config',
-      '/tmp/api.wrangler.toml',
-    ]);
+    )).toThrow('Unsupported staging Wrangler command.');
   });
 
   test.each([
@@ -140,6 +150,76 @@ describe('Task 10 staging Wrangler allowlist', () => {
 });
 
 describe('Task 10 protected remote execution', () => {
+  test('passes only the reviewed child environment to Wrangler', async () => {
+    const childEnvironments: NodeJS.ProcessEnv[] = [];
+    const spawn = vi.fn((_command: string, args: string[], options: {
+      env: NodeJS.ProcessEnv;
+    }) => {
+      childEnvironments.push(options.env);
+      if (args[1] === 'd1' && args[2] === 'info') {
+        return { status: 0, stdout: JSON.stringify({ uuid: productId }), stderr: '' };
+      }
+      return {
+        status: 0,
+        stdout: JSON.stringify({
+          created_on: '2026-07-24T08:00:00.000Z',
+          versions: [{ version_id: apiVersionId, percentage: 100 }],
+        }),
+        stderr: '',
+      };
+    });
+
+    const status = await runStagingWrangler({
+      app: 'api',
+      action: 'task10-status',
+      environment: validEnvironment(),
+      repositoryRoot: '/repository',
+      resolver: () => ({
+        command: '/trusted/node',
+        argumentsPrefix: ['/trusted/wrangler.js'],
+      }),
+      spawn,
+    });
+
+    expect(status).toBe(0);
+    expect(childEnvironments).toHaveLength(2);
+    for (const childEnvironment of childEnvironments) {
+      expect(childEnvironment).toEqual({
+        PATH: '/reviewed/bin',
+        HOME: '/reviewed/home',
+        XDG_CONFIG_HOME: '/reviewed/xdg',
+        TMPDIR: '/reviewed/tmp',
+        LANG: 'en_GB.UTF-8',
+        LC_ALL: 'C',
+        CLOUDFLARE_API_TOKEN: 'cloudflare-auth-token-required-by-wrangler',
+        CLOUDFLARE_ACCOUNT_ID: 'cloudflare-account-required-by-wrangler',
+      });
+    }
+  });
+
+  test('rejects protected Task 10 rollback before invoking Wrangler', async () => {
+    const spawn = vi.fn();
+    const errors: string[] = [];
+
+    const status = await runStagingWrangler({
+      app: 'api',
+      action: 'task10-rollback',
+      actionArgument: apiVersionId,
+      environment: validEnvironment(),
+      repositoryRoot: '/repository',
+      resolver: () => ({
+        command: '/trusted/node',
+        argumentsPrefix: ['/trusted/wrangler.js'],
+      }),
+      spawn,
+      reportError: message => errors.push(message),
+    });
+
+    expect(status).toBe(1);
+    expect(spawn).not.toHaveBeenCalled();
+    expect(errors).toEqual(['Unsupported staging Wrangler command.']);
+  });
+
   test('reports only allowlisted count fields from Wrangler D1 JSON', async () => {
     const spawn = vi.fn((_command: string, args: string[]) => {
       if (args[1] === 'd1' && args[2] === 'info') {
@@ -249,7 +329,14 @@ describe('Task 10 protected remote execution', () => {
         status: 0,
         stdout: JSON.stringify({
           created_on: '2026-07-24T08:00:00.000Z',
-          versions: [{ version_id: apiVersionId, percentage: 100 }],
+          account_id: 'must-not-escape',
+          author_email: 'must-not-escape@example.com',
+          versions: [{
+            version_id: apiVersionId.toUpperCase(),
+            percentage: 100,
+            author_email: 'must-not-escape@example.com',
+            metadata: { account_name: 'must-not-escape' },
+          }],
         }),
         stderr: '',
       };
@@ -275,6 +362,100 @@ describe('Task 10 protected remote execution', () => {
         versions: [{ versionId: apiVersionId, percentage: 100 }],
       }),
     ]);
+    expect(output.join('\n')).not.toContain('author');
+    expect(output.join('\n')).not.toContain('account');
+    expect(output.join('\n')).not.toContain('must-not-escape');
+  });
+
+  test.each([
+    ['empty version id', [{ version_id: '', percentage: 100 }]],
+    ['malformed version id', [{ version_id: 'not-a-cloudflare-uuid', percentage: 100 }]],
+    [
+      'case-insensitive duplicate version ids',
+      [
+        { version_id: apiVersionId, percentage: 50 },
+        { version_id: apiVersionId.toUpperCase(), percentage: 50 },
+      ],
+    ],
+  ])('fails closed on %s without forwarding protected metadata', async (
+    _caseName,
+    versions,
+  ) => {
+    const spawn = vi.fn((_command: string, args: string[]) => {
+      if (args[1] === 'd1' && args[2] === 'info') {
+        return { status: 0, stdout: JSON.stringify({ uuid: productId }), stderr: '' };
+      }
+      return {
+        status: 0,
+        stdout: JSON.stringify({
+          created_on: '2026-07-24T08:00:00.000Z',
+          author_email: 'private-author@example.com',
+          account_id: 'private-account',
+          versions,
+        }),
+        stderr: 'private-status-error',
+      };
+    });
+    const errors: string[] = [];
+    const output: string[] = [];
+
+    const status = await runStagingWrangler({
+      app: 'api',
+      action: 'task10-status',
+      environment: validEnvironment(),
+      repositoryRoot: '/repository',
+      resolver: () => ({
+        command: '/trusted/node',
+        argumentsPrefix: ['/trusted/wrangler.js'],
+      }),
+      spawn,
+      reportError: message => errors.push(message),
+      reportOutput: message => output.push(message),
+    });
+
+    expect(status).toBe(1);
+    expect(spawn).toHaveBeenCalledTimes(2);
+    expect(errors).toEqual(['Wrangler returned an invalid protected response.']);
+    expect(output).toEqual(['Authenticated staging Product D1 target confirmed.']);
+    expect([...errors, ...output].join('\n')).not.toContain('private');
+  });
+
+  test('fails a protected status read without forwarding Wrangler output', async () => {
+    const spawn = vi.fn((_command: string, args: string[]) => {
+      if (args[1] === 'd1' && args[2] === 'info') {
+        return { status: 0, stdout: JSON.stringify({ uuid: productId }), stderr: '' };
+      }
+      return {
+        status: 1,
+        stdout: JSON.stringify({
+          author_email: 'private-author@example.com',
+          account_id: 'private-account',
+        }),
+        stderr: 'private-status-error',
+      };
+    });
+    const errors: string[] = [];
+    const output: string[] = [];
+
+    const status = await runStagingWrangler({
+      app: 'api',
+      action: 'task10-status',
+      environment: validEnvironment(),
+      repositoryRoot: '/repository',
+      resolver: () => ({
+        command: '/trusted/node',
+        argumentsPrefix: ['/trusted/wrangler.js'],
+      }),
+      spawn,
+      reportError: message => errors.push(message),
+      reportOutput: message => output.push(message),
+    });
+
+    expect(status).toBe(1);
+    expect(spawn).toHaveBeenCalledTimes(2);
+    expect(errors).toEqual(['Unable to execute Wrangler.']);
+    expect(output).toEqual(['Authenticated staging Product D1 target confirmed.']);
+    expect([...errors, ...output].join('\n')).not.toContain('private');
   });
 
   test('fails closed on a Product D1 identity mismatch without printing either ID', async () => {

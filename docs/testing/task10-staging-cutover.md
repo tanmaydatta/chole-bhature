@@ -5,8 +5,8 @@
 **Scope:** Product D1 migration `0006`, API Worker, and Operator Web Worker
 
 This is the canonical Task 10 staging procedure. It replaces direct
-`wrangler d1`, export, deployment-status, and rollback commands previously
-drafted in the dated activation record. The Cloudflare account owner runs each
+`wrangler d1`, export, and deployment-status commands previously drafted in
+the dated activation record. The Cloudflare account owner runs each
 command, checks the stated result, and stops on any deviation. The
 implementation agent does not run Cloudflare reads or writes.
 
@@ -17,7 +17,10 @@ The protected runner:
 - separately asks authenticated Wrangler to resolve Product D1 before every
   remote operation and compares that identity without printing either ID;
 - invokes the installed Wrangler entrypoint with `shell: false`, an exact
-  argument allowlist, and an environment stripped of application secrets and
+  argument allowlist, and a minimal child environment containing only required
+  platform/temp/locale values plus Cloudflare authentication;
+- excludes `NODE_OPTIONS`, `NODE_PATH`, endpoint and `WRANGLER_*` controls,
+  proxy/output controls, unrelated cloud credentials, application secrets, and
   `STAGING_*` values;
 - fails closed on malformed Wrangler JSON; and
 - prints only approved count, timestamp, deployment-version, or completion
@@ -137,8 +140,9 @@ node scripts/staging-wrangler-runner.mjs operator-web task10-status
 ```
 
 Expected: sanitized deployment time and version/traffic summaries. Record the
-current API version UUID as the possible emergency target. There is no Task 10
-Identity deployment or Identity status step.
+version UUIDs as rollout evidence only. They are not rollback authorization or
+an executable recovery target. There is no Task 10 Identity deployment or
+Identity status step.
 
 Export Product D1:
 
@@ -314,50 +318,19 @@ a reviewed forward fix:
 4. leave Product D1 on the migrated schema; and
 5. deploy a reviewed API/Operator correction.
 
-An emergency **API Worker-only** rollback is permitted only when all of these
-are proven:
+Protected Task 10 Worker rollback is deliberately disabled. The runner rejects
+every rollback action before it can spawn Wrangler. Do not use direct Wrangler
+rollback commands as a workaround: interactive confirmation can be
+misinterpreted or silently answered, deployed-version metadata does not prove
+which reviewed source produced a version, and an older Worker may have
+incompatible bindings, secrets, or behavior even when the D1 migration is
+additive.
 
-- the quiet window was continuous from the pre-cutover write marker;
-- a fresh protected write marker is byte-for-byte equal to
-  `write-marker-before.txt`, proving zero evaluation/redemption writes after
-  migration;
-- the exact prior API version UUID was captured before deployment;
-- that version is mapped to reviewed local source; and
-- local migration compatibility tests prove that exact source remains
-  schema-compatible with migrated Product D1.
-
-The repository compatibility proof establishes that pre-`0006` column-list
-inserts remain accepted because migration `0006` is additive and supplies
-defaults, while also proving that those legacy inserts do not populate the new
-operation/entry ledgers. It does not by itself map an arbitrary Cloudflare
-version UUID to source.
-
-Compare a fresh marker without printing raw Wrangler output:
-
-```sh
-node scripts/staging-wrangler-runner.mjs api task10-write-marker \
-  > "$TASK10_BACKUP_DIR/write-marker-recovery-check.txt"
-cmp -s \
-  "$TASK10_BACKUP_DIR/write-marker-before.txt" \
-  "$TASK10_BACKUP_DIR/write-marker-recovery-check.txt"
-```
-
-Expected for a rollback candidate: `cmp` exits `0`. Any difference,
-uncertainty, missing source mapping, or missing compatibility proof forbids
-rollback; use containment and a forward fix.
-
-The rollback is a separate owner-only mutation. It is documented for an
-already-approved emergency only and was not run while preparing this guide:
-
-```sh
-TASK10_PRIOR_API_VERSION_ID="<captured-prior-api-version-uuid>"
-node scripts/staging-wrangler-runner.mjs api task10-rollback \
-  "$TASK10_PRIOR_API_VERSION_ID"
-```
-
-Expected only under the conditions above: `API Worker rollback completed.`
-Immediately repeat API health and protected API status checks. Never use this
-command for Operator Web, Identity, Product D1, or the static demo.
+Until a reviewed fail-closed preflight or Cloudflare API tool can prove the
+exact version-to-source mapping, binding/secret compatibility, target account,
+and confirmation semantics, all Task 10 recovery is containment plus a
+reviewed forward fix. Preserve the before/after write markers and sanitized
+deployment-version summaries as incident evidence only.
 
 ## 9. Export retention and explicit disposition
 
@@ -386,11 +359,8 @@ rm -- "$TASK10_BACKUP_PATH"
 rm -- "$TASK10_BACKUP_DIR/openapi.json"
 rm -- "$TASK10_BACKUP_DIR/write-marker-before.txt"
 rm -- "$TASK10_BACKUP_DIR/write-marker-after.txt"
-if test -f "$TASK10_BACKUP_DIR/write-marker-recovery-check.txt"; then
-  rm -- "$TASK10_BACKUP_DIR/write-marker-recovery-check.txt"
-fi
 rmdir -- "$TASK10_BACKUP_DIR"
-unset TASK10_BACKUP_PATH TASK10_BACKUP_DIR TASK10_PRIOR_API_VERSION_ID
+unset TASK10_BACKUP_PATH TASK10_BACKUP_DIR
 ```
 
 No script or agent performs this deletion automatically.

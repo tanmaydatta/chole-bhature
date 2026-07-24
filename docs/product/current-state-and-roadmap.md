@@ -87,9 +87,12 @@ test observations to make the current state look cleaner.
 - API, Identity, and Operator Web persist staging logs at 100% sampling.
 - Task 10 staging operations now have a protected runner boundary for
   Product-D1 identity confirmation, count-only migration/precheck queries,
-  private export, API/Operator deployment status, cutover write markers, and a
-  narrowly gated API-only emergency rollback. These operations are prepared,
-  not executed.
+  private export, API/Operator deployment status, and cutover write markers.
+  The child environment is fail-closed and deployment status accepts only
+  canonical, unique Cloudflare version UUIDs. Protected Worker rollback is
+  deliberately disabled pending reviewed safe preflight/API tooling; recovery
+  is containment plus a forward fix. These operations are prepared, not
+  executed.
 
 ## What is verified in staging
 
