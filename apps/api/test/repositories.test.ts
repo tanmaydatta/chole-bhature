@@ -7,6 +7,7 @@ import type {
   RedemptionResponse,
   VariableDefinition,
 } from '@incentives/contracts';
+import { normalizePromoCode } from '@incentives/contracts';
 import { env } from 'cloudflare:workers';
 import { beforeEach, describe, expect, test } from 'vitest';
 
@@ -1561,6 +1562,69 @@ describe('D1 repositories', () => {
     });
     expect(await repositories.programs.getRevision('merchant-b', program.id, 1)).toBeNull();
     expect(await repositories.programs.getCounters('merchant-b', program.id)).toBeNull();
+  });
+
+  test('claims and resolves the same normalized code independently per merchant', async () => {
+    await seedMerchant('merchant-a');
+    await seedMerchant('merchant-b');
+    await seedPublishedSchema('merchant-a');
+    await seedPublishedSchema('merchant-b');
+    const repositories = createRepositories({ DB: env.DB });
+    const expectedCode = normalizePromoCode('  Straße  ');
+
+    for (const merchantId of ['merchant-a', 'merchant-b']) {
+      const draft = {
+        ...program,
+        id: `${merchantId}-coded`,
+        status: 'draft',
+        autoApply: false,
+        code: merchantId === 'merchant-a' ? '  Straße  ' : 'STRASSE',
+      } as PromoProgram;
+      const stored = await repositories.programs.create({
+        merchantId,
+        program: draft,
+        schema: await repositories.schemas.getLatestVersion(merchantId, 'published'),
+        createdAt,
+      });
+      if (draft.autoApply) throw new Error('Expected a coded repository fixture');
+      const code = normalizePromoCode(draft.code);
+      await repositories.programs.publishDraftWithCodeClaim({
+        merchantId,
+        externalRef: draft.id,
+        expectedDraftRevision: 1,
+        status: 'active',
+        publishedAt: createdAt,
+        publishedBy: 'repository-test',
+        codeClaim: {
+          merchantId,
+          programId: stored.id,
+          programRef: draft.id,
+          activeRevision: 1,
+          displayCode: code.display,
+          normalizedCode: code.normalized,
+          claimedAt: createdAt,
+        },
+      });
+    }
+
+    await expect(repositories.programs.getPublishedByNormalizedCode(
+      'merchant-a',
+      expectedCode.normalized,
+    )).resolves.toMatchObject({
+      merchantId: 'merchant-a',
+      externalRef: 'merchant-a-coded',
+    });
+    await expect(repositories.programs.getPublishedByNormalizedCode(
+      'merchant-b',
+      expectedCode.normalized,
+    )).resolves.toMatchObject({
+      merchantId: 'merchant-b',
+      externalRef: 'merchant-b-coded',
+    });
+    await expect(repositories.programs.getPublishedByNormalizedCode(
+      'merchant-c',
+      expectedCode.normalized,
+    )).resolves.toBeNull();
   });
 
   test('program reads prefer owned revision and counter rows over legacy shadows', async () => {

@@ -18,6 +18,7 @@ import {
   RedemptionResponseSchema,
   VariableDefinitionSchema,
   normalizeDistinctPromoCodes,
+  normalizePromoCode,
   type VariableDefinition,
 } from '@incentives/contracts';
 import { and, asc, desc, eq } from 'drizzle-orm';
@@ -43,6 +44,7 @@ import { MerchantIdentityConflictError } from '../errors/merchant-errors.js';
 import { canonicalJson } from '../json.js';
 import {
   OptimisticVersionConflictError,
+  PromoCodeConflictError,
   ProgramConflictError,
   SchemaRevisionConflictError,
   type CustomerRecord,
@@ -53,6 +55,7 @@ import {
   type MerchantProvision,
   type MerchantRecord,
   type ProgramCounterRecord,
+  type PromoCodeClaimInput,
   type ProgramRecord,
   type ProgramRevisionRecord,
   type RedemptionCreate,
@@ -78,6 +81,7 @@ const FactsSchema = z.object({
   }).strict()),
 }).strict();
 const DateTimeSchema = z.iso.datetime({ offset: true });
+const CalendarDateSchema = z.iso.date();
 const SchemaStateSchema = z.enum(['draft', 'published']);
 const DefinitionStateSchema = z.enum(['draft', 'published', 'deprecated']);
 const PositiveIntegerSchema = z.number().int().positive();
@@ -1079,6 +1083,32 @@ export function createRepositories(env: Env): Repositories {
         AND logical.active_revision IS NOT NULL
     `).bind(merchantId, externalRef).first<StoredProgramRow>();
     return row === null ? null : programFromRow(row);
+  }
+
+  async function conflictingPromoCodeProgramRef(
+    claim: PromoCodeClaimInput,
+  ): Promise<string | null> {
+    const row = await env.DB.prepare(`
+      SELECT existing.program_ref AS programRef
+      FROM promo_code_claims AS existing
+      WHERE existing.released_at IS NULL
+        AND existing.merchant_id = ?1
+        AND existing.normalized_code = ?2
+        AND existing.program_ref <> ?3
+        AND COALESCE(existing.ends_at, '9999-12-31T23:59:59.999Z')
+          >= COALESCE(?4, '0001-01-01T00:00:00.000Z')
+        AND COALESCE(?5, '9999-12-31T23:59:59.999Z')
+          >= COALESCE(existing.starts_at, '0001-01-01T00:00:00.000Z')
+      ORDER BY existing.created_at, existing.program_ref
+      LIMIT 1
+    `).bind(
+      claim.merchantId,
+      claim.normalizedCode,
+      claim.programRef,
+      claim.startsAt ?? null,
+      claim.endsAt ?? null,
+    ).first<{ programRef: string }>();
+    return row?.programRef ?? null;
   }
 
   async function getLatestSchemaVersion(
@@ -2267,6 +2297,32 @@ export function createRepositories(env: Env): Repositories {
         return getActiveProgramByExternalRef(merchantId, externalRef);
       },
 
+      async getPublishedByNormalizedCode(merchantId, normalizedCode) {
+        const claim = await env.DB.prepare(`
+          SELECT code_claim.program_ref AS programRef
+          FROM promo_code_claims AS code_claim
+          INNER JOIN programs AS logical
+            ON logical.merchant_id = code_claim.merchant_id
+            AND logical.id = code_claim.program_id
+            AND logical.active_revision = code_claim.active_revision
+          WHERE code_claim.merchant_id = ?1
+            AND code_claim.normalized_code = ?2
+            AND code_claim.released_at IS NULL
+            AND logical.status IN ('active', 'scheduled', 'paused')
+          ORDER BY
+            COALESCE(code_claim.starts_at, '0001-01-01T00:00:00.000Z'),
+            code_claim.created_at,
+            code_claim.program_ref
+          LIMIT 1
+        `).bind(
+          z.string().min(1).parse(merchantId),
+          z.string().min(1).parse(normalizedCode),
+        ).first<{ programRef: string }>();
+        return claim === null
+          ? null
+          : getActiveProgramByExternalRef(merchantId, claim.programRef);
+      },
+
       async list(merchantId) {
         const rows = await env.DB.prepare(`${programProjection()}
           WHERE logical.merchant_id = ?1
@@ -2480,7 +2536,7 @@ export function createRepositories(env: Env): Repositories {
         return stored;
       },
 
-      async publishDraft(input) {
+      async publishDraftWithCodeClaim(input) {
         const merchantId = z.string().min(1).parse(input.merchantId);
         const externalRef = z.string().min(1).parse(input.externalRef);
         const expectedDraftRevision = PositiveIntegerSchema.parse(input.expectedDraftRevision);
@@ -2536,6 +2592,38 @@ export function createRepositories(env: Env): Repositories {
         const active = current.activeConfigJson === null
           ? null
           : parseJson(current.activeConfigJson, PromoProgramSchema);
+        const codeClaim = input.codeClaim;
+        if (draft.autoApply) {
+          if (codeClaim !== undefined) {
+            throw new ProgramConflictError('Automatic Promos cannot claim a code');
+          }
+        } else {
+          if (codeClaim === undefined) {
+            throw new ProgramConflictError('Coded Promos require a publication claim');
+          }
+          const normalized = normalizePromoCode(draft.code);
+          if (
+            z.string().min(1).parse(codeClaim.merchantId) !== merchantId
+            || z.string().min(1).parse(codeClaim.programId) !== current.programId
+            || z.string().min(1).parse(codeClaim.programRef) !== externalRef
+            || PositiveIntegerSchema.parse(codeClaim.activeRevision) !== expectedDraftRevision
+            || z.string().min(1).parse(codeClaim.displayCode) !== normalized.display
+            || z.string().min(1).parse(codeClaim.normalizedCode) !== normalized.normalized
+            || DateTimeSchema.parse(codeClaim.claimedAt) !== publishedAt
+            || (
+              codeClaim.startsAt === undefined
+                ? draft.startDate !== undefined
+                : CalendarDateSchema.parse(codeClaim.startsAt) !== draft.startDate
+            )
+            || (
+              codeClaim.endsAt === undefined
+                ? draft.endDate !== undefined
+                : CalendarDateSchema.parse(codeClaim.endsAt) !== draft.endDate
+            )
+          ) {
+            throw new ProgramConflictError('The Promo code claim does not match its draft');
+          }
+        }
         const nextMaxUses = draft.usageCap ?? null;
         if (nextMaxUses !== null && current.usageCount > nextMaxUses) {
           throw new ProgramConflictError('The replacement usage cap is below current usage');
@@ -2557,9 +2645,57 @@ export function createRepositories(env: Env): Repositories {
         }
         const updatedAt = nextProgramTimestamp(current.updatedAt, publishedAt);
         const legacyMirrorJson = storedProgramJson({ ...draft, status });
+        const requiresCodeClaim = codeClaim !== undefined && status !== 'ended';
         let results: D1Result[];
         try {
           results = await env.DB.batch([
+            env.DB.prepare(`
+              INSERT INTO promo_code_claims (
+                id, merchant_id, program_id, program_ref, active_revision,
+                display_code, normalized_code, starts_at, ends_at,
+                released_at, created_at
+              )
+              SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, NULL, ?10
+              WHERE ?11 = 1
+                AND NOT EXISTS (
+                  SELECT 1
+                  FROM promo_code_claims AS existing
+                  WHERE existing.released_at IS NULL
+                    AND existing.merchant_id = ?2
+                    AND existing.normalized_code = ?7
+                    AND existing.program_ref <> ?4
+                    AND COALESCE(
+                      existing.ends_at,
+                      '9999-12-31T23:59:59.999Z'
+                    ) >= COALESCE(?8, '0001-01-01T00:00:00.000Z')
+                    AND COALESCE(
+                      ?9,
+                      '9999-12-31T23:59:59.999Z'
+                    ) >= COALESCE(
+                      existing.starts_at,
+                      '0001-01-01T00:00:00.000Z'
+                    )
+                )
+            `).bind(
+              crypto.randomUUID(),
+              merchantId,
+              current.programId,
+              externalRef,
+              expectedDraftRevision,
+              codeClaim?.displayCode ?? '',
+              codeClaim?.normalizedCode ?? '',
+              codeClaim?.startsAt ?? null,
+              codeClaim?.endsAt ?? null,
+              codeClaim?.claimedAt ?? publishedAt,
+              requiresCodeClaim ? 1 : 0,
+            ),
+            env.DB.prepare(`
+              SELECT CASE
+                WHEN ?1 = 0 OR changes() = 1
+                  THEN json_extract('null', '$')
+                ELSE json_extract('null', 'promo-code-conflict')
+              END
+            `).bind(requiresCodeClaim ? 1 : 0),
             env.DB.prepare(`
               UPDATE program_revisions
               SET published_at = ?1, published_by = ?2
@@ -2657,16 +2793,52 @@ export function createRepositories(env: Env): Repositories {
                 '$'
               )
             `),
+            env.DB.prepare(`
+              UPDATE promo_code_claims
+              SET released_at = ?1
+              WHERE merchant_id = ?2 AND program_id = ?3
+                AND active_revision <> ?4
+                AND released_at IS NULL
+                AND EXISTS (
+                  SELECT 1 FROM programs AS logical
+                  WHERE logical.merchant_id = ?2 AND logical.id = ?3
+                    AND logical.active_revision = ?4
+                    AND logical.draft_revision IS NULL
+                    AND logical.updated_at = ?1
+                )
+            `).bind(
+              updatedAt,
+              merchantId,
+              current.programId,
+              expectedDraftRevision,
+            ),
           ]);
         } catch (error) {
+          if (
+            codeClaim !== undefined
+            && error instanceof Error
+            && /promo-code-conflict/u.test(error.message)
+          ) {
+            const conflictingProgramRef = await conflictingPromoCodeProgramRef(codeClaim);
+            if (conflictingProgramRef !== null) {
+              throw new PromoCodeConflictError(conflictingProgramRef);
+            }
+          }
           if (error instanceof Error && /malformed JSON/u.test(error.message)) {
             throw new ProgramConflictError('The program draft changed before publication');
           }
           throw error;
         }
-        const [revisionResult, counterResult, logicalResult] = results;
+        const [
+          claimResult,
+          _claimGuardResult,
+          revisionResult,
+          counterResult,
+          logicalResult,
+        ] = results;
         if (
-          revisionResult?.meta.changes !== 1
+          (requiresCodeClaim && claimResult?.meta.changes !== 1)
+          || revisionResult?.meta.changes !== 1
           || counterResult?.meta.changes !== 1
           || (logicalResult?.meta.changes ?? 0) < 1
         ) {
@@ -2696,23 +2868,67 @@ export function createRepositories(env: Env): Repositories {
         }>();
         if (current === null) throw new ProgramConflictError('The program lifecycle changed');
         const updatedAt = nextProgramTimestamp(current.updatedAt, candidateUpdatedAt);
-        const result = await env.DB.prepare(`
-          UPDATE programs
-          SET status = ?1,
-            config_json = json_set(config_json, '$.status', ?1),
-            updated_at = ?2
-          WHERE merchant_id = ?3 AND external_ref = ?4
-            AND status = ?5 AND active_revision = ?6 AND updated_at = ?7
-        `).bind(
-          status,
-          updatedAt,
-          merchantId,
-          externalRef,
-          expectedStatus,
-          current.activeRevision,
-          current.updatedAt,
-        ).run();
-        if (result.meta.changes !== 1) throw new ProgramConflictError('The program lifecycle changed');
+        let results: D1Result[];
+        try {
+          results = await env.DB.batch([
+            env.DB.prepare(`
+              UPDATE programs
+              SET status = ?1,
+                config_json = json_set(config_json, '$.status', ?1),
+                updated_at = ?2
+              WHERE merchant_id = ?3 AND external_ref = ?4
+                AND status = ?5 AND active_revision = ?6 AND updated_at = ?7
+            `).bind(
+              status,
+              updatedAt,
+              merchantId,
+              externalRef,
+              expectedStatus,
+              current.activeRevision,
+              current.updatedAt,
+            ),
+            env.DB.prepare(`
+              UPDATE promo_code_claims
+              SET released_at = ?1
+              WHERE ?2 = 'ended'
+                AND changes() = 1
+                AND merchant_id = ?3
+                AND program_ref = ?4
+                AND active_revision = ?5
+                AND released_at IS NULL
+            `).bind(
+              updatedAt,
+              status,
+              merchantId,
+              externalRef,
+              current.activeRevision,
+            ),
+            env.DB.prepare(`
+              SELECT json_extract(
+                CASE WHEN EXISTS (
+                  SELECT 1 FROM programs
+                  WHERE merchant_id = ?1 AND external_ref = ?2
+                    AND status = ?3 AND active_revision = ?4 AND updated_at = ?5
+                ) THEN 'null' ELSE 'lifecycle-cas-miss' END,
+                '$'
+              )
+            `).bind(
+              merchantId,
+              externalRef,
+              status,
+              current.activeRevision,
+              updatedAt,
+            ),
+          ]);
+        } catch (error) {
+          if (error instanceof Error && /malformed JSON/u.test(error.message)) {
+            throw new ProgramConflictError('The program lifecycle changed');
+          }
+          throw error;
+        }
+        if ((results[0]?.meta.changes ?? 0) < 1) {
+          throw new ProgramConflictError('The program lifecycle changed');
+        }
         return ProgramLifecycleSchema.parse({
           programRef: externalRef,
           status,

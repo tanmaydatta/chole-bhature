@@ -235,21 +235,40 @@ export interface ProgramCounterRecord {
   committedSpend: number;
 }
 
+export interface PromoCodeClaimInput {
+  merchantId: string;
+  programId: string;
+  programRef: string;
+  activeRevision: number;
+  displayCode: string;
+  normalizedCode: string;
+  startsAt?: string;
+  endsAt?: string;
+  claimedAt: string;
+}
+
+export interface PublishProgramInput {
+  merchantId: string;
+  externalRef: string;
+  expectedDraftRevision: number;
+  status: Exclude<ProgramStatus, 'draft'>;
+  publishedAt: string;
+  publishedBy: string;
+  codeClaim?: PromoCodeClaimInput;
+}
+
 export interface ProgramRepository {
   create(input: ProgramCreate): Promise<ProgramRecord>;
   get(merchantId: string, externalRef: string): Promise<ProgramRecord | null>;
   getActive(merchantId: string, externalRef: string): Promise<ProgramRecord | null>;
+  getPublishedByNormalizedCode(
+    merchantId: string,
+    normalizedCode: string,
+  ): Promise<ProgramRecord | null>;
   list(merchantId: string): Promise<ProgramRecord[]>;
   listActive(merchantId: string): Promise<ProgramRecord[]>;
   updateDraft(input: ProgramUpdate): Promise<ProgramRecord>;
-  publishDraft(input: {
-    merchantId: string;
-    externalRef: string;
-    expectedDraftRevision: number;
-    status: Exclude<ProgramStatus, 'draft'>;
-    publishedAt: string;
-    publishedBy: string;
-  }): Promise<ProgramRecord>;
+  publishDraftWithCodeClaim(input: PublishProgramInput): Promise<ProgramRecord>;
   updateLifecycle(input: {
     merchantId: string;
     externalRef: string;
@@ -407,5 +426,13 @@ export class ProgramConflictError extends Error {
 
   constructor(message: string) {
     super(message);
+  }
+}
+
+export class PromoCodeConflictError extends Error {
+  override readonly name = 'PromoCodeConflictError';
+
+  constructor(readonly conflictingProgramRef: string) {
+    super('This code overlaps another published Promo');
   }
 }

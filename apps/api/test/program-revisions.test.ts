@@ -4,6 +4,7 @@ import {
   OperatorProgramViewSchema,
   PromoProgramSchema,
   ProgramPublicationResultSchema,
+  normalizePromoCode,
   type OperatorCallContext,
   type PermissionKey,
   type ProgramLifecycle,
@@ -112,6 +113,19 @@ function draftProgram(
     autoApply: true,
     ...overrides,
   } as PromoProgram;
+}
+
+function codedDraftProgram(
+  id: string,
+  code: string,
+  overrides: Partial<PromoProgram> = {},
+): PromoProgram {
+  return draftProgram(id, {
+    autoApply: false,
+    code,
+    stackable: false,
+    ...overrides,
+  } as Partial<PromoProgram>);
 }
 
 interface PlanTwoProgramRow {
@@ -272,6 +286,295 @@ describe('immutable Promo revisions and lifecycle', () => {
     expect(ProgramPublicationResultSchema.parse(await service.publishProgram(
       operatorContext('programs:publish'), example.id,
     ))).toMatchObject({ programRef: example.id, activeRevision: 1, status: 'active' });
+  });
+
+  test('rejects the same normalized code across overlapping active intervals', async () => {
+    const service = operatorService();
+    const first = codedDraftProgram('normalized-code-owner', '  gatec15  ');
+    const second = codedDraftProgram('normalized-code-conflict', 'GATEC15');
+    await service.createProgramDraft(operatorContext('programs:manage'), first);
+    await service.createProgramDraft(operatorContext('programs:manage'), second);
+    await service.publishProgram(operatorContext('programs:publish'), first.id);
+
+    await expect(service.publishProgram(
+      operatorContext('programs:publish'),
+      second.id,
+    )).rejects.toMatchObject({
+      name: 'PromoCodeConflictError',
+      conflictingProgramRef: first.id,
+    });
+    await expect(service.getProgram(
+      operatorContext('programs:read'),
+      second.id,
+    )).resolves.toMatchObject({
+      configuration: second,
+      lifecycle: { draftRevision: 1 },
+    });
+    expect(await service.getProgram(
+      operatorContext('programs:read'),
+      second.id,
+    )).not.toHaveProperty('lifecycle.activeRevision');
+  });
+
+  test('keeps paused and future scheduled code claims reserved', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-01T12:00:00.000Z'));
+    const service = operatorService();
+    const paused = codedDraftProgram('paused-code-owner', 'reserved', {
+      startDate: '2026-08-02',
+      endDate: '2026-08-10',
+    });
+    await service.createProgramDraft(operatorContext('programs:manage'), paused);
+    await service.publishProgram(operatorContext('programs:publish'), paused.id);
+    await service.pauseProgram(operatorContext('programs:manage'), paused.id);
+
+    const overlap = codedDraftProgram('paused-code-conflict', 'RESERVED', {
+      startDate: '2026-08-10',
+      endDate: '2026-08-12',
+    });
+    await service.createProgramDraft(operatorContext('programs:manage'), overlap);
+    await expect(service.publishProgram(
+      operatorContext('programs:publish'),
+      overlap.id,
+    )).rejects.toMatchObject({
+      name: 'PromoCodeConflictError',
+      conflictingProgramRef: paused.id,
+    });
+
+    const claim = await env.DB.prepare(`
+      SELECT released_at AS releasedAt
+      FROM promo_code_claims
+      WHERE merchant_id = ?1 AND program_ref = ?2
+    `).bind(SEEDED_MERCHANT_ID, paused.id).first<{ releasedAt: string | null }>();
+    expect(claim).toEqual({ releasedAt: null });
+  });
+
+  test('allows the same code for non-overlapping scheduled intervals', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-01T12:00:00.000Z'));
+    const service = operatorService();
+    const first = codedDraftProgram('scheduled-code-first', 'seasonal', {
+      startDate: '2026-08-02',
+      endDate: '2026-08-10',
+    });
+    const second = codedDraftProgram('scheduled-code-second', 'SEASONAL', {
+      startDate: '2026-08-11',
+      endDate: '2026-08-20',
+    });
+    await service.createProgramDraft(operatorContext('programs:manage'), first);
+    await service.createProgramDraft(operatorContext('programs:manage'), second);
+
+    await expect(service.publishProgram(
+      operatorContext('programs:publish'),
+      first.id,
+    )).resolves.toMatchObject({ status: 'scheduled' });
+    await expect(service.publishProgram(
+      operatorContext('programs:publish'),
+      second.id,
+    )).resolves.toMatchObject({ status: 'scheduled' });
+
+    const claims = await env.DB.prepare(`
+      SELECT normalized_code AS normalizedCode, released_at AS releasedAt
+      FROM promo_code_claims
+      WHERE merchant_id = ?1
+      ORDER BY starts_at
+    `).bind(SEEDED_MERCHANT_ID).all<{
+      normalizedCode: string;
+      releasedAt: string | null;
+    }>();
+    expect(claims.results).toEqual([
+      { normalizedCode: normalizePromoCode(first.code).normalized, releasedAt: null },
+      { normalizedCode: normalizePromoCode(second.code).normalized, releasedAt: null },
+    ]);
+  });
+
+  test('ending releases a code claim while pausing does not', async () => {
+    const service = operatorService();
+    const first = codedDraftProgram('ended-code-owner', 'reusable');
+    await service.createProgramDraft(operatorContext('programs:manage'), first);
+    await service.publishProgram(operatorContext('programs:publish'), first.id);
+    await service.pauseProgram(operatorContext('programs:manage'), first.id);
+
+    const blocked = codedDraftProgram('paused-code-blocked', 'REUSABLE');
+    await service.createProgramDraft(operatorContext('programs:manage'), blocked);
+    await expect(service.publishProgram(
+      operatorContext('programs:publish'),
+      blocked.id,
+    )).rejects.toMatchObject({ name: 'PromoCodeConflictError' });
+
+    await service.endProgram(operatorContext('programs:manage'), first.id);
+    await expect(service.publishProgram(
+      operatorContext('programs:publish'),
+      blocked.id,
+    )).resolves.toMatchObject({ activeRevision: 1 });
+
+    const oldClaim = await env.DB.prepare(`
+      SELECT released_at AS releasedAt
+      FROM promo_code_claims
+      WHERE merchant_id = ?1 AND program_ref = ?2
+    `).bind(SEEDED_MERCHANT_ID, first.id).first<{ releasedAt: string | null }>();
+    expect(oldClaim?.releasedAt).not.toBeNull();
+  });
+
+  test('automatic publication owns no code claim while coded publication does', async () => {
+    const service = operatorService();
+    const automatic = draftProgram('automatic-without-claim');
+    const coded = codedDraftProgram('coded-with-claim', 'claimed-code');
+    await service.createProgramDraft(operatorContext('programs:manage'), automatic);
+    await service.createProgramDraft(operatorContext('programs:manage'), coded);
+    await service.publishProgram(operatorContext('programs:publish'), automatic.id);
+    await service.publishProgram(operatorContext('programs:publish'), coded.id);
+
+    const claims = await env.DB.prepare(`
+      SELECT program_ref AS programRef
+      FROM promo_code_claims
+      WHERE merchant_id = ?1
+      ORDER BY program_ref
+    `).bind(SEEDED_MERCHANT_ID).all<{ programRef: string }>();
+    expect(claims.results).toEqual([{ programRef: coded.id }]);
+  });
+
+  test('saves a conflicting draft but refuses to publish it', async () => {
+    const service = operatorService();
+    const owner = codedDraftProgram('draft-conflict-owner', 'draftable');
+    const conflict = codedDraftProgram('draft-conflict-candidate', 'DRAFTABLE');
+    await service.createProgramDraft(operatorContext('programs:manage'), owner);
+    await service.publishProgram(operatorContext('programs:publish'), owner.id);
+
+    await expect(service.createProgramDraft(
+      operatorContext('programs:manage'),
+      conflict,
+    )).resolves.toMatchObject({ configuration: conflict });
+    await expect(service.publishProgram(
+      operatorContext('programs:publish'),
+      conflict.id,
+    )).rejects.toMatchObject({
+      name: 'PromoCodeConflictError',
+      conflictingProgramRef: owner.id,
+    });
+  });
+
+  test('serializes concurrent overlapping publications to one winner', async () => {
+    const service = operatorService();
+    const first = codedDraftProgram('concurrent-code-first', 'race-safe');
+    const second = codedDraftProgram('concurrent-code-second', 'RACE-SAFE');
+    await service.createProgramDraft(operatorContext('programs:manage'), first);
+    await service.createProgramDraft(operatorContext('programs:manage'), second);
+
+    const publications = await Promise.allSettled([
+      service.publishProgram(operatorContext('programs:publish'), first.id),
+      service.publishProgram(operatorContext('programs:publish'), second.id),
+    ]);
+    expect(publications.filter(result => result.status === 'fulfilled')).toHaveLength(1);
+    const rejected = publications.filter(
+      (result): result is PromiseRejectedResult => result.status === 'rejected',
+    );
+    expect(rejected).toHaveLength(1);
+    expect(rejected[0]!.reason).toMatchObject({ name: 'PromoCodeConflictError' });
+
+    const claims = await env.DB.prepare(`
+      SELECT program_ref AS programRef
+      FROM promo_code_claims
+      WHERE merchant_id = ?1 AND normalized_code = ?2 AND released_at IS NULL
+    `).bind(
+      SEEDED_MERCHANT_ID,
+      normalizePromoCode(first.code).normalized,
+    ).all<{ programRef: string }>();
+    expect(claims.results).toHaveLength(1);
+  });
+
+  test('claims an edited interval before releasing the published revision claim', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-01T12:00:00.000Z'));
+    const service = operatorService();
+    const edited = codedDraftProgram('edited-code-owner', 'moving-window', {
+      startDate: '2026-08-02',
+      endDate: '2026-08-10',
+    });
+    await service.createProgramDraft(operatorContext('programs:manage'), edited);
+    await service.publishProgram(operatorContext('programs:publish'), edited.id);
+
+    const blocker = codedDraftProgram('edited-code-blocker', 'MOVING-WINDOW', {
+      startDate: '2026-08-11',
+      endDate: '2026-08-20',
+    });
+    await service.createProgramDraft(operatorContext('programs:manage'), blocker);
+    await service.publishProgram(operatorContext('programs:publish'), blocker.id);
+
+    await service.updateProgramDraft(
+      operatorContext('programs:manage'),
+      edited.id,
+      codedDraftProgram(edited.id, ' moving-window ', {
+        startDate: '2026-08-11',
+        endDate: '2026-08-20',
+      }),
+    );
+    await expect(service.publishProgram(
+      operatorContext('programs:publish'),
+      edited.id,
+    )).rejects.toMatchObject({
+      name: 'PromoCodeConflictError',
+      conflictingProgramRef: blocker.id,
+    });
+
+    const claims = await env.DB.prepare(`
+      SELECT active_revision AS activeRevision, released_at AS releasedAt
+      FROM promo_code_claims
+      WHERE merchant_id = ?1 AND program_ref = ?2
+      ORDER BY active_revision
+    `).bind(SEEDED_MERCHANT_ID, edited.id).all<{
+      activeRevision: number;
+      releasedAt: string | null;
+    }>();
+    expect(claims.results).toEqual([{ activeRevision: 1, releasedAt: null }]);
+
+    await service.endProgram(operatorContext('programs:manage'), blocker.id);
+    await expect(service.publishProgram(
+      operatorContext('programs:publish'),
+      edited.id,
+    )).resolves.toMatchObject({ activeRevision: 2 });
+    const swappedClaims = await env.DB.prepare(`
+      SELECT active_revision AS activeRevision, released_at AS releasedAt
+      FROM promo_code_claims
+      WHERE merchant_id = ?1 AND program_ref = ?2
+      ORDER BY active_revision
+    `).bind(SEEDED_MERCHANT_ID, edited.id).all<{
+      activeRevision: number;
+      releasedAt: string | null;
+    }>();
+    expect(swappedClaims.results).toEqual([
+      { activeRevision: 1, releasedAt: expect.any(String) as string },
+      { activeRevision: 2, releasedAt: null },
+    ]);
+  });
+
+  test('releases a coded claim only after an automatic replacement is durable', async () => {
+    const service = operatorService();
+    const coded = codedDraftProgram('automatic-replacement', 'retired-code');
+    await service.createProgramDraft(operatorContext('programs:manage'), coded);
+    await service.publishProgram(operatorContext('programs:publish'), coded.id);
+    await service.updateProgramDraft(
+      operatorContext('programs:manage'),
+      coded.id,
+      draftProgram(coded.id, { name: 'Automatic replacement' }),
+    );
+
+    await expect(service.publishProgram(
+      operatorContext('programs:publish'),
+      coded.id,
+    )).resolves.toMatchObject({ activeRevision: 2 });
+    const claims = await env.DB.prepare(`
+      SELECT active_revision AS activeRevision, released_at AS releasedAt
+      FROM promo_code_claims
+      WHERE merchant_id = ?1 AND program_ref = ?2
+    `).bind(SEEDED_MERCHANT_ID, coded.id).all<{
+      activeRevision: number;
+      releasedAt: string | null;
+    }>();
+    expect(claims.results).toEqual([{
+      activeRevision: 1,
+      releasedAt: expect.any(String) as string,
+    }]);
   });
 
   test('keeps the legacy programs row readable by the exact Plan-2 reader across new Worker lifecycle writes', async () => {
@@ -503,7 +806,7 @@ describe('immutable Promo revisions and lifecycle', () => {
     }) as D1Database;
     const repositories = createRepositories({ DB: racingDb });
 
-    await expect(repositories.programs.publishDraft({
+    await expect(repositories.programs.publishDraftWithCodeClaim({
       merchantId: SEEDED_MERCHANT_ID,
       externalRef: first.id,
       expectedDraftRevision: 2,

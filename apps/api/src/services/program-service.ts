@@ -1,5 +1,6 @@
 import {
   PromoProgramSchema,
+  normalizePromoCode,
   type ApiFieldError,
   type CommerceReward,
   type OperatorProgramView,
@@ -329,13 +330,36 @@ export function createProgramService(repositories: Repositories) {
         : priorStatus === 'paused'
         ? priorStatus
         : effectiveStatus(draft.program);
-      const published = await repositories.programs.publishDraft({
+      const publishedAt = now.toISOString();
+      const code = draft.program.autoApply
+        ? undefined
+        : normalizePromoCode(draft.program.code);
+      const published = await repositories.programs.publishDraftWithCodeClaim({
         merchantId,
         externalRef,
         expectedDraftRevision: draft.draftRevision,
         status,
-        publishedAt: now.toISOString(),
+        publishedAt,
         publishedBy: actorUserId,
+        ...(code === undefined
+          ? {}
+          : {
+              codeClaim: {
+                merchantId,
+                programId: draft.id,
+                programRef: externalRef,
+                activeRevision: draft.draftRevision,
+                displayCode: code.display,
+                normalizedCode: code.normalized,
+                ...(draft.program.startDate === undefined
+                  ? {}
+                  : { startsAt: draft.program.startDate }),
+                ...(draft.program.endDate === undefined
+                  ? {}
+                  : { endsAt: draft.program.endDate }),
+                claimedAt: publishedAt,
+              },
+            }),
       });
       return {
         ...lifecycle(published),

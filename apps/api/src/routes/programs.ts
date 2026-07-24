@@ -8,8 +8,12 @@ import {
 import { requireSecret } from '../auth/api-credentials.js';
 import { requireOperatorContext } from '../auth/operator-context.js';
 import type { AppEnvironment, Env } from '../env.js';
-import { ContextValidationError } from '../errors.js';
+import {
+  AuthorizedPromoCodeConflictError,
+  ContextValidationError,
+} from '../errors.js';
 import { createRepositories } from '../repositories/d1-repositories.js';
+import { PromoCodeConflictError } from '../repositories/types.js';
 import { createProgramService } from '../services/program-service.js';
 
 async function requestJson(context: Context<AppEnvironment>): Promise<unknown> {
@@ -107,9 +111,16 @@ export async function publishProgram(
   externalRef: string,
 ) {
   const { operator, service } = operatorProgramService(env, context, 'programs:publish');
-  return ProgramPublicationResultSchema.parse(
-    await service.publish(operator.merchantId, externalRef, operator.actorUserId),
-  );
+  try {
+    return ProgramPublicationResultSchema.parse(
+      await service.publish(operator.merchantId, externalRef, operator.actorUserId),
+    );
+  } catch (error) {
+    if (error instanceof PromoCodeConflictError) {
+      throw new AuthorizedPromoCodeConflictError(error.conflictingProgramRef);
+    }
+    throw error;
+  }
 }
 
 export async function pauseProgram(

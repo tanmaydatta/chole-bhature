@@ -22,6 +22,16 @@ abstract class ApiFailure extends Error {
   readonly retryable: boolean = false;
 }
 
+export class AuthorizedPromoCodeConflictError extends ApiFailure {
+  override readonly name = 'PromoCodeConflictError';
+  readonly code = 'PROMO_CODE_CONFLICT';
+  readonly status = 409;
+
+  constructor(readonly conflictingProgramRef: string) {
+    super(`This code overlaps published Promo "${conflictingProgramRef}"`);
+  }
+}
+
 export class UnauthorizedError extends ApiFailure {
   override readonly name = 'UnauthorizedError';
   readonly code = 'UNAUTHORIZED';
