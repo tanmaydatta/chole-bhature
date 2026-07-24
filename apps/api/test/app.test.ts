@@ -2,7 +2,7 @@ import { ApiErrorSchema } from '@incentives/contracts';
 import { SELF } from 'cloudflare:test';
 import { env } from 'cloudflare:workers';
 import { z } from 'zod';
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test, vi } from 'vitest';
 
 import { createApp } from '../src/app.js';
 import {
@@ -219,6 +219,102 @@ describe('Worker API composition', () => {
       code: 'NOT_FOUND',
       retryable: false,
     });
+  });
+
+  test('emits one sanitized structured event at the authenticated error boundary', async () => {
+    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      const app = createApp();
+      app.post('/v1/error-test', requirePublishable, () => {
+        throw new Error('private dependency stack and request detail');
+      });
+      const response = await app.request(
+        'https://example.test/v1/error-test?customerRef=private-customer',
+        {
+          method: 'POST',
+          headers: {
+            authorization: 'Bearer pk_test_publishable_credential_material_00000001',
+            'content-type': 'application/json',
+            [correlationHeader]: 'correlation-123',
+          },
+          body: JSON.stringify({
+            code: 'PRIVATE-CODE',
+            customerRef: 'private-customer',
+            attributes: { tier: 'private-tier' },
+          }),
+        },
+        { DB: env.DB },
+      );
+
+      const body = await expectCanonicalError(response, {
+        status: 503,
+        code: 'EVALUATION_UNAVAILABLE',
+        retryable: true,
+      });
+      expect(response.headers.get(correlationHeader)).toBe('correlation-123');
+      expect(body.error.correlationId).toBe('correlation-123');
+      expect(errorLog).toHaveBeenCalledTimes(1);
+
+      const serialized = String(errorLog.mock.calls[0]?.[0]);
+      expect(JSON.parse(serialized)).toMatchObject({
+        event: 'api_request_failed',
+        correlationId: 'correlation-123',
+        route: '/unknown',
+        method: 'POST',
+        code: 'EVALUATION_UNAVAILABLE',
+        status: 503,
+        retryable: true,
+        merchantId: SEEDED_MERCHANT_ID,
+        credentialId: expect.any(String),
+      });
+      expect(serialized).not.toContain('Authorization');
+      expect(serialized).not.toContain('00000001');
+      expect(serialized).not.toContain('PRIVATE-CODE');
+      expect(serialized).not.toContain('private-customer');
+      expect(serialized).not.toContain('private-tier');
+      expect(serialized).not.toContain('private dependency stack');
+    } finally {
+      errorLog.mockRestore();
+    }
+  });
+
+  test.each([
+    ['unsafe characters', 'unsafe correlation'],
+    ['oversized value', `correlation-${'x'.repeat(200)}`],
+  ])('replaces an inbound correlation ID with $unsafeCase before responding or logging', async (
+    _unsafeCase,
+    suppliedCorrelationId,
+  ) => {
+    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      const app = createApp();
+      app.post('/v1/error-test', requirePublishable, () => {
+        throw new Error('private dependency stack');
+      });
+      const response = await app.request('https://example.test/v1/error-test', {
+        method: 'POST',
+        headers: {
+          authorization: 'Bearer pk_test_publishable_credential_material_00000001',
+          [correlationHeader]: suppliedCorrelationId,
+        },
+      }, { DB: env.DB });
+      const body = await expectCanonicalError(response, {
+        status: 503,
+        code: 'EVALUATION_UNAVAILABLE',
+        retryable: true,
+      });
+
+      const replacement = response.headers.get(correlationHeader);
+      expect(replacement).toMatch(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/u);
+      expect(replacement).not.toBe(suppliedCorrelationId);
+      expect(body.error.correlationId).toBe(replacement);
+      expect(errorLog).toHaveBeenCalledTimes(1);
+      const serialized = String(errorLog.mock.calls[0]?.[0]);
+      expect(JSON.parse(serialized)).toMatchObject({ correlationId: replacement });
+      expect(serialized).not.toContain(suppliedCorrelationId);
+    } finally {
+      errorLog.mockRestore();
+    }
   });
 
   test.each([

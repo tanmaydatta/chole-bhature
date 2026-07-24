@@ -1798,36 +1798,47 @@ describe('POST /v1/evaluate', () => {
   });
 
   test.each([
-    ['missing signing secret', undefined, undefined],
-    ['weak signing secret', 'weak', undefined],
-    ['zero TTL', signingSecret, '0'],
-    ['fractional TTL', signingSecret, '1.5'],
-    ['oversized TTL', signingSecret, '86401'],
-    ['non-numeric TTL', signingSecret, 'not-a-number'],
+    ['missing signing secret', undefined, undefined, 'decision_integrity'],
+    ['weak signing secret', 'weak', undefined, 'decision_integrity'],
+    ['zero TTL', signingSecret, '0', undefined],
+    ['fractional TTL', signingSecret, '1.5', undefined],
+    ['oversized TTL', signingSecret, '86401', undefined],
+    ['non-numeric TTL', signingSecret, 'not-a-number', undefined],
   ])('fails closed for %s without leaking configuration', async (
     _name,
     secret,
     ttl,
+    expectedDependency,
   ) => {
     await seedCustomer();
     await seedProgram(promo('config-failure'));
-    const response = await createApp().request('https://example.test/v1/evaluate', {
-      method: 'POST',
-      headers: {
-        authorization: 'Bearer pk_test_publishable_credential_material_00000001',
-        'content-type': 'application/json',
-      },
-      body: JSON.stringify(baseRequest),
-    }, {
-      DB: env.DB,
-      ...(secret === undefined ? {} : { DECISION_SIGNING_SECRET: secret }),
-      ...(ttl === undefined ? {} : { EVALUATION_TTL_SECONDS: ttl }),
-    });
-    const error = await expectError(response, 503, 'EVALUATION_UNAVAILABLE');
-    expect(error.error.retryable).toBe(true);
-    expect(JSON.stringify(error)).not.toContain(secret ?? 'missing-secret');
-    if (ttl !== undefined && ttl.length > 1) {
-      expect(JSON.stringify(error)).not.toContain(ttl);
+    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      const response = await createApp().request('https://example.test/v1/evaluate', {
+        method: 'POST',
+        headers: {
+          authorization: 'Bearer pk_test_publishable_credential_material_00000001',
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify(baseRequest),
+      }, {
+        DB: env.DB,
+        ...(secret === undefined ? {} : { DECISION_SIGNING_SECRET: secret }),
+        ...(ttl === undefined ? {} : { EVALUATION_TTL_SECONDS: ttl }),
+      });
+      const error = await expectError(response, 503, 'EVALUATION_UNAVAILABLE');
+      expect(error.error.retryable).toBe(true);
+      expect(JSON.stringify(error)).not.toContain(secret ?? 'missing-secret');
+      if (ttl !== undefined && ttl.length > 1) {
+        expect(JSON.stringify(error)).not.toContain(ttl);
+      }
+      expect(errorLog).toHaveBeenCalledTimes(1);
+      const log = JSON.parse(String(errorLog.mock.calls[0]?.[0])) as {
+        dependency?: string;
+      };
+      expect(log.dependency).toBe(expectedDependency);
+    } finally {
+      errorLog.mockRestore();
     }
     expect(await env.DB.prepare('SELECT COUNT(*) AS count FROM evaluation_decisions')
       .first<{ count: number }>()).toEqual({ count: 0 });
@@ -2001,13 +2012,47 @@ describe('POST /v1/evaluate', () => {
       )
     `).bind(SEEDED_MERCHANT_ID).run();
 
-    const error = await expectError(
-      await evaluateRaw(baseRequest),
-      503,
-      'EVALUATION_UNAVAILABLE',
-    );
-    expect(error.error.retryable).toBe(true);
-    expect(JSON.stringify(error)).not.toContain('not_qualified');
+    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      const response = await evaluateRaw(
+        baseRequest,
+        'pk_test_publishable_credential_material_00000001',
+        'correlation-123',
+      );
+      const error = await expectError(
+        response,
+        503,
+        'EVALUATION_UNAVAILABLE',
+      );
+      expect(error.error.retryable).toBe(true);
+      expect(error.error.correlationId).toBe('correlation-123');
+      expect(response.headers.get('x-correlation-id')).toBe('correlation-123');
+      expect(JSON.stringify(error)).not.toContain('not_qualified');
+      expect(errorLog).toHaveBeenCalledTimes(1);
+
+      const serialized = String(errorLog.mock.calls[0]?.[0]);
+      expect(JSON.parse(serialized)).toMatchObject({
+        event: 'api_request_failed',
+        correlationId: 'correlation-123',
+        route: '/v1/evaluate',
+        method: 'POST',
+        code: 'EVALUATION_UNAVAILABLE',
+        status: 503,
+        retryable: true,
+        merchantId: SEEDED_MERCHANT_ID,
+        credentialId: expect.any(String),
+        dependency: 'd1',
+      });
+      expect(serialized).not.toContain('Authorization');
+      expect(serialized).not.toContain('00000001');
+      expect(serialized).not.toContain('customer-1');
+      expect(serialized).not.toContain('6500');
+      expect(serialized).not.toContain('"cart"');
+      expect(serialized).not.toContain('"context"');
+      expect(serialized).not.toContain('invalid');
+    } finally {
+      errorLog.mockRestore();
+    }
     expect(await env.DB.prepare('SELECT COUNT(*) AS count FROM evaluation_decisions')
       .first<{ count: number }>()).toEqual({ count: 0 });
   });

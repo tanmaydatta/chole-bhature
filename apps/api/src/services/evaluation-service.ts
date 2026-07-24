@@ -20,7 +20,10 @@ import { PromoModule } from '@incentives/promo';
 import { z } from 'zod';
 
 import type { Env } from '../env.js';
-import { NotFoundError } from '../errors.js';
+import {
+  EvaluationPipelineError,
+  NotFoundError,
+} from '../errors.js';
 import { canonicalJson } from '../json.js';
 import type {
   EvaluationDecisionRecord,
@@ -39,6 +42,32 @@ const DEFAULT_TTL_SECONDS = 300;
 const SigningSecretSchema = z.string().min(16).max(4_096);
 const TtlSchema = z.coerce.number().int().positive().max(86_400);
 const encoder = new TextEncoder();
+
+async function d1Operation<T>(operation: () => Promise<T>): Promise<T> {
+  try {
+    return await operation();
+  } catch (cause) {
+    throw new EvaluationPipelineError('d1', cause);
+  }
+}
+
+async function decisionIntegrityOperation<T>(
+  operation: () => Promise<T>,
+): Promise<T> {
+  try {
+    return await operation();
+  } catch (cause) {
+    throw new EvaluationPipelineError('decision_integrity', cause);
+  }
+}
+
+function decisionSigningSecret(env: Env): string {
+  try {
+    return SigningSecretSchema.parse(env.DECISION_SIGNING_SECRET);
+  } catch (cause) {
+    throw new EvaluationPipelineError('decision_integrity', cause);
+  }
+}
 
 function valueSchema(definition: VariableDefinition): z.ZodType {
   switch (definition.type) {
@@ -772,10 +801,9 @@ export function createEvaluationService(
       correlationId: string,
     ): Promise<EvaluationResponse> {
       const fixedRequest = EvaluationRequestSchema.parse(input);
-      const published = await repositories.schemas.getLatestVersion(merchantId, 'published')
-        .catch((error: unknown) => {
-          throw new Error('Published schema lookup failed', { cause: error });
-        });
+      const published = await d1Operation(() => (
+        repositories.schemas.getLatestVersion(merchantId, 'published')
+      ));
       if (published === null) {
         throw new NotFoundError('No schema has been published', 'SCHEMA_NOT_PUBLISHED');
       }
@@ -786,14 +814,16 @@ export function createEvaluationService(
       try {
         const customer = request.customerRef === undefined
           ? null
-          : await repositories.customers.get(merchantId, request.customerRef);
+          : await d1Operation(() => (
+            repositories.customers.get(merchantId, request.customerRef!)
+          ));
         if (request.customerRef !== undefined && customer === null) {
           throw new NotFoundError('Customer not found', 'CUSTOMER_NOT_FOUND');
         }
         if (customer !== null) {
           validateCustomerAttributes(customer.attributes, published.definitions);
         }
-        const signingSecret = SigningSecretSchema.parse(env.DECISION_SIGNING_SECRET);
+        const signingSecret = decisionSigningSecret(env);
         const verifyHistoricalIntegrity: RedemptionIntegrityVerifiers = {
           verifyDecision: (snapshot: EvaluationDecisionRecord) => (
             verifyDecisionIntegrity(snapshot, signingSecret)
@@ -844,7 +874,9 @@ export function createEvaluationService(
         if (mode === 'automatic') {
           decisions = [];
           codeResults = [];
-          for (const candidate of await automaticCandidates(repositories, merchantId, now)) {
+          for (const candidate of await d1Operation(() => (
+            automaticCandidates(repositories, merchantId, now)
+          ))) {
             const evaluated = await evaluateSingleProgram(candidate, singleProgramContext);
             if (evaluated.decision.outcome !== 'qualified') continue;
             decisions = [stableDecision(evaluated.decision)];
@@ -856,10 +888,12 @@ export function createEvaluationService(
             decision?: PromoDecision;
           }> = [];
           for (const code of normalizedCodes) {
-            const record = await repositories.programs.getPublishedByNormalizedCode(
-              merchantId,
-              code.normalized,
-            );
+            const record = await d1Operation(() => (
+              repositories.programs.getPublishedByNormalizedCode(
+                merchantId,
+                code.normalized,
+              )
+            ));
             const evaluated = record === null
               ? undefined
               : await evaluateSingleProgram(record, singleProgramContext);
@@ -914,10 +948,9 @@ export function createEvaluationService(
         };
         const record: EvaluationDecisionRecord = {
           ...unsigned,
-          integrityHash: await signDecisionSnapshot(
-            unsigned,
-            signingSecret,
-          ),
+          integrityHash: await decisionIntegrityOperation(() => (
+            signDecisionSnapshot(unsigned, signingSecret)
+          )),
           createdAt,
         };
         const response = EvaluationResponseSchema.parse({
@@ -931,7 +964,7 @@ export function createEvaluationService(
           decisions,
           ...(mode === 'coded' ? { codeResults } : {}),
         });
-        await repositories.decisions.create(record);
+        await d1Operation(() => repositories.decisions.create(record));
         preparedReservations.length = 0;
 
         return response;
@@ -943,8 +976,11 @@ export function createEvaluationService(
             cleanupContext,
           );
         }
-        if (error instanceof NotFoundError) throw error;
-        throw new Error('Evaluation pipeline failed', { cause: error });
+        if (
+          error instanceof EvaluationPipelineError
+          || error instanceof NotFoundError
+        ) throw error;
+        throw new EvaluationPipelineError(undefined, error);
       }
     },
   };

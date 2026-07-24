@@ -44,10 +44,16 @@ export function createRedemptionService(
       const request = RedemptionRequestSchema.parse(input);
       try {
         SigningSecretSchema.parse(env.DECISION_SIGNING_SECRET);
+      } catch {
+        throw new RedemptionUnavailableError('decision_integrity');
+      }
+      try {
         const evaluation = await repositories.decisions.get(
           merchantId,
           request.evaluationId,
-        );
+        ).catch(() => {
+          throw new RedemptionUnavailableError('d1');
+        });
         if (evaluation === null) throw new NotFoundError('Evaluation decision not found');
 
         const requestDigest = await sha256(canonicalJson({
@@ -71,6 +77,8 @@ export function createRedemptionService(
           requestDigest,
           correlationId,
           committedAt: new Date().toISOString(),
+        }).catch(() => {
+          throw new RedemptionUnavailableError('atomic_redemption');
         });
 
         switch (result.kind) {
@@ -82,7 +90,7 @@ export function createRedemptionService(
           case 'exhausted':
             throw new ExhaustedError(result.reasonCode);
           case 'unavailable':
-            throw new RedemptionUnavailableError();
+            throw new RedemptionUnavailableError('atomic_redemption');
           case 'terminal_retry':
             switch (result.code) {
               case 'NOTHING_TO_COMMIT':

@@ -9,7 +9,7 @@ import {
 } from '@incentives/contracts';
 import { SELF } from 'cloudflare:test';
 import { env } from 'cloudflare:workers';
-import { beforeEach, describe, expect, test } from 'vitest';
+import { beforeEach, describe, expect, test, vi } from 'vitest';
 
 import { SEEDED_MERCHANT_ID } from './test-credentials.js';
 import { createApp } from '../src/app.js';
@@ -156,13 +156,18 @@ async function seedProgram(program: PromoProgram): Promise<void> {
   }
 }
 
-function evaluateRaw(request: EvaluationRequest = baseRequest): Promise<Response> {
+function evaluateRaw(
+  request: EvaluationRequest = baseRequest,
+  correlationId?: string,
+): Promise<Response> {
+  const headers = new Headers({
+    authorization: `Bearer ${publishableToken}`,
+    'content-type': 'application/json',
+  });
+  if (correlationId !== undefined) headers.set('x-correlation-id', correlationId);
   return SELF.fetch('https://example.test/v1/evaluate', {
     method: 'POST',
-    headers: {
-      authorization: `Bearer ${publishableToken}`,
-      'content-type': 'application/json',
-    },
+    headers,
     body: JSON.stringify(request),
   });
 }
@@ -654,24 +659,33 @@ describe('POST /v1/redemptions', () => {
   beforeEach(resetData);
 
   test('maps invalid signing configuration to a retryable coordinator failure', async () => {
-    const response = await createApp().request('https://example.test/v1/redemptions', {
-      method: 'POST',
-      headers: {
-        authorization: `Bearer ${secretToken}`,
-        'content-type': 'application/json',
-      },
-      body: JSON.stringify({
-        evaluationId: 'evaluation-1',
-        externalOrderRef: 'order-1',
-        idempotencyKey: 'key-1',
-      }),
-    }, {
-      DB: env.DB,
-      DECISION_SIGNING_SECRET: 'weak',
-    });
-    const error = await expectError(response, 503, 'REDEMPTION_UNAVAILABLE');
-    expect(error.error.retryable).toBe(true);
-    expect(JSON.stringify(error)).not.toContain('weak');
+    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      const response = await createApp().request('https://example.test/v1/redemptions', {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${secretToken}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          evaluationId: 'evaluation-1',
+          externalOrderRef: 'order-1',
+          idempotencyKey: 'key-1',
+        }),
+      }, {
+        DB: env.DB,
+        DECISION_SIGNING_SECRET: 'weak',
+      });
+      const error = await expectError(response, 503, 'REDEMPTION_UNAVAILABLE');
+      expect(error.error.retryable).toBe(true);
+      expect(JSON.stringify(error)).not.toContain('weak');
+      expect(errorLog).toHaveBeenCalledTimes(1);
+      expect(JSON.parse(String(errorLog.mock.calls[0]?.[0]))).toMatchObject({
+        dependency: 'decision_integrity',
+      });
+    } finally {
+      errorLog.mockRestore();
+    }
   });
 
   test('rejects the removed child program selector', async () => {
@@ -723,7 +737,11 @@ describe('POST /v1/redemptions', () => {
         409,
         'VERSION_CONFLICT',
       );
-      expect(retry).toEqual(first);
+      expect(retry.error).toMatchObject({
+        code: first.error.code,
+        message: first.error.message,
+        retryable: first.error.retryable,
+      });
       expect(await env.DB.prepare(`
         SELECT COUNT(*) AS count
         FROM redemption_operations
@@ -1113,7 +1131,12 @@ describe('POST /v1/redemptions', () => {
 
   test('does not expose a committed response when the complete D1 batch fails', async () => {
     await seedProgram(automaticPromo('batch-failure'));
-    const evaluation = await evaluate();
+    const correlationId = 'bundle-redemption-correlation';
+    const evaluationResponse = await evaluateRaw(baseRequest, correlationId);
+    expect(evaluationResponse.status).toBe(200);
+    const evaluation = EvaluationResponseSchema.parse(await evaluationResponse.json());
+    expect(evaluationResponse.headers.get('x-correlation-id')).toBe(correlationId);
+    expect((await storedDecision(evaluation.evaluationId)).correlationId).toBe(correlationId);
     await env.DB.prepare(`
       CREATE TRIGGER force_redemption_entry_failure
       BEFORE INSERT ON redemption_entries
@@ -1121,13 +1144,39 @@ describe('POST /v1/redemptions', () => {
         SELECT RAISE(ABORT, 'forced redemption entry failure');
       END
     `).run();
+    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     try {
-      await expectError(await redeemRaw({
+      const response = await redeemRaw({
         evaluationId: evaluation.evaluationId,
         externalOrderRef: 'batch-failure-order',
         idempotencyKey: 'batch-failure-key',
-      }), 503, 'REDEMPTION_UNAVAILABLE');
+      }, correlationId);
+      const error = await expectError(response, 503, 'REDEMPTION_UNAVAILABLE');
+      expect(response.headers.get('x-correlation-id')).toBe(correlationId);
+      expect(error.error.correlationId).toBe(correlationId);
+      expect(errorLog).toHaveBeenCalledTimes(1);
+
+      const serialized = String(errorLog.mock.calls[0]?.[0]);
+      expect(JSON.parse(serialized)).toMatchObject({
+        event: 'api_request_failed',
+        correlationId,
+        route: '/v1/redemptions',
+        method: 'POST',
+        code: 'REDEMPTION_UNAVAILABLE',
+        status: 503,
+        retryable: true,
+        merchantId: SEEDED_MERCHANT_ID,
+        credentialId: expect.any(String),
+        dependency: 'atomic_redemption',
+      });
+      expect(serialized).not.toContain('Authorization');
+      expect(serialized).not.toContain('000000000001');
+      expect(serialized).not.toContain(evaluation.evaluationId);
+      expect(serialized).not.toContain('batch-failure-order');
+      expect(serialized).not.toContain('batch-failure-key');
+      expect(serialized).not.toContain('forced redemption entry failure');
     } finally {
+      errorLog.mockRestore();
       await env.DB.prepare('DROP TRIGGER force_redemption_entry_failure').run();
     }
     expect(await env.DB.prepare('SELECT COUNT(*) AS count FROM redemptions').first())
