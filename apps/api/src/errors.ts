@@ -95,6 +95,27 @@ export class ExhaustedError extends ApiFailure {
   }
 }
 
+export class NothingToCommitError extends ApiFailure {
+  override readonly name = 'NothingToCommitError';
+  readonly code = 'NOTHING_TO_COMMIT';
+  readonly status = 409;
+
+  constructor() {
+    super('The evaluation contains no selected committable decision');
+  }
+}
+
+export class RedemptionUnavailableError extends ApiFailure {
+  override readonly name = 'RedemptionUnavailableError';
+  readonly code = 'REDEMPTION_UNAVAILABLE';
+  readonly status = 503;
+  override readonly retryable = true;
+
+  constructor() {
+    super('The redemption coordinator is temporarily unavailable');
+  }
+}
+
 export class VersionConflictError extends ApiFailure {
   override readonly name = 'VersionConflictError';
   readonly code = 'VERSION_CONFLICT';

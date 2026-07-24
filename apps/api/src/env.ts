@@ -1,4 +1,5 @@
 import type { Repositories } from './repositories/types.js';
+import type { AtomicRedemptionCoordinator } from './redemption/atomic-redemption-coordinator.js';
 
 export interface Env {
   DB: D1Database;
@@ -11,6 +12,7 @@ export interface AppVariables {
   merchantId: string;
   credentialId: string;
   repositories: Repositories;
+  atomicRedemptions: AtomicRedemptionCoordinator;
 }
 
 export interface AppEnvironment {

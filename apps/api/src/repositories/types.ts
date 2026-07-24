@@ -345,15 +345,6 @@ export interface RedemptionBundleCreate {
 
 export type RedemptionCreate = RedemptionBundleCreate;
 
-export interface AtomicRedemptionCommit extends RedemptionBundleCreate {
-  programId: string;
-  programRef: string;
-  expectedActiveRevision: number;
-  expectedProgram: PromoProgram;
-  customerRef?: string;
-  perCustomerCap?: number;
-}
-
 export type DecisionIntegrityVerifier = (
   record: EvaluationDecisionRecord,
 ) => Promise<boolean>;
@@ -369,7 +360,6 @@ export interface RedemptionIntegrityVerifiers {
 
 export interface RedemptionRepository {
   create(input: RedemptionBundleCreate): Promise<void>;
-  commitAtomically(input: AtomicRedemptionCommit): Promise<boolean>;
   getByExternalOrderRef(
     merchantId: string,
     externalOrderRef: string,

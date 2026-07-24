@@ -206,6 +206,9 @@ function lifecyclePromo(
 
 async function resetData(): Promise<void> {
   await env.DB.batch([
+    env.DB.prepare('DELETE FROM redemption_commit_guards'),
+    env.DB.prepare('DELETE FROM redemption_entries'),
+    env.DB.prepare('DELETE FROM redemption_operations'),
     env.DB.prepare('DELETE FROM redemptions'),
     env.DB.prepare('DELETE FROM evaluation_decisions'),
     env.DB.prepare('DELETE FROM programs'),
@@ -333,7 +336,6 @@ describe('integration-ready runtime', () => {
 
     const firstRedemption = await jsonRequest('POST', '/v1/redemptions', {
       evaluationId: oldEvaluation.evaluationId,
-      programRef: firstRevision.id,
       externalOrderRef: 'first-old-revision-order',
       idempotencyKey: 'first-old-revision-attempt',
     });
@@ -363,23 +365,18 @@ describe('integration-ready runtime', () => {
 
     const redemptionResponse = await jsonRequest('POST', '/v1/redemptions', {
       evaluationId: secondOldEvaluation.evaluationId,
-      programRef: firstRevision.id,
       externalOrderRef: 'old-revision-order',
       idempotencyKey: 'old-revision-attempt',
     });
-    expect(redemptionResponse.status).toBe(200);
-    expect(RedemptionResponseSchema.parse(await redemptionResponse.json())).toMatchObject({
-      programRef: firstRevision.id,
-      rewardRuleRef: 'stable-rule',
-      effects: [firstRevision.rewardRules[0].reward],
-      status: 'committed',
-    });
+    expect(redemptionResponse.status).toBe(409);
+    expect(ApiErrorSchema.parse(await redemptionResponse.json()).error.code)
+      .toBe('VERSION_CONFLICT');
     expect(await env.DB.prepare(`
       SELECT usage_count AS usageCount, budget_remaining AS budgetRemaining
       FROM program_counters WHERE merchant_id = ?1
     `).bind(SEEDED_MERCHANT_ID).first()).toEqual({
-      usageCount: 2,
-      budgetRemaining: 1_500,
+      usageCount: 1,
+      budgetRemaining: 2_000,
     });
 
     const currentEvaluationResponse = await jsonRequest('POST', '/v1/evaluate', {
@@ -404,9 +401,9 @@ describe('integration-ready runtime', () => {
     expect(JSON.parse(snapshot!.factsJson).programs).toContainEqual(expect.objectContaining({
       programRef: firstRevision.id,
       system: expect.objectContaining({
-        redemptions_total: 2,
-        customer_uses_count: 2,
-        budget_remaining: 1_500,
+        redemptions_total: 1,
+        customer_uses_count: 1,
+        budget_remaining: 2_000,
       }),
     }));
   });
@@ -443,7 +440,6 @@ describe('integration-ready runtime', () => {
 
     const redemption = await jsonRequest('POST', '/v1/redemptions', {
       evaluationId: evaluation.evaluationId,
-      programRef: first.id,
       externalOrderRef: 'currency-order',
       idempotencyKey: 'currency-attempt',
     });
@@ -475,7 +471,6 @@ describe('integration-ready runtime', () => {
     const evaluation = EvaluationResponseSchema.parse(await evaluationResponse.json());
     expect((await jsonRequest('POST', '/v1/redemptions', {
       evaluationId: evaluation.evaluationId,
-      programRef: first.id,
       externalOrderRef: 'budget-order',
       idempotencyKey: 'budget-attempt',
     })).status).toBe(200);
@@ -521,7 +516,6 @@ describe('integration-ready runtime', () => {
     );
     expect((await jsonRequest('POST', '/v1/redemptions', {
       evaluationId: firstEvaluation.evaluationId,
-      programRef: first.id,
       externalOrderRef: 'lower-budget-first-order',
       idempotencyKey: 'lower-budget-first-attempt',
     })).status).toBe(200);
@@ -560,7 +554,6 @@ describe('integration-ready runtime', () => {
     const nextEvaluation = EvaluationResponseSchema.parse(await nextEvaluationResponse.json());
     expect((await jsonRequest('POST', '/v1/redemptions', {
       evaluationId: nextEvaluation.evaluationId,
-      programRef: first.id,
       externalOrderRef: 'lower-budget-second-order',
       idempotencyKey: 'lower-budget-second-attempt',
     })).status).toBe(200);
@@ -606,7 +599,6 @@ describe('integration-ready runtime', () => {
       const evaluation = EvaluationResponseSchema.parse(await evaluationResponse.json());
       expect((await jsonRequest('POST', '/v1/redemptions', {
         evaluationId: evaluation.evaluationId,
-        programRef: first.id,
         externalOrderRef: `active-budget-${label}-order`,
         idempotencyKey: `active-budget-${label}-attempt`,
       })).status).toBe(200);
@@ -651,7 +643,6 @@ describe('integration-ready runtime', () => {
     );
     expect((await jsonRequest('POST', '/v1/redemptions', {
       evaluationId: firstEvaluation.evaluationId,
-      programRef: first.id,
       externalOrderRef: 'rollback-unlimited-first-order',
       idempotencyKey: 'rollback-unlimited-first-attempt',
     })).status).toBe(200);
@@ -669,6 +660,7 @@ describe('integration-ready runtime', () => {
     const rollbackEvaluation = EvaluationResponseSchema.parse(
       await rollbackEvaluationResponse.json(),
     );
+    const rollbackRedemptionId = crypto.randomUUID();
 
     await env.DB.batch([
       env.DB.prepare(`
@@ -685,13 +677,19 @@ describe('integration-ready runtime', () => {
           discount_minor_units, currency, created_at
         ) VALUES (?1, ?2, ?3, ?4, ?5, 500, 'GBP', ?6)
       `).bind(
-        crypto.randomUUID(),
+        rollbackRedemptionId,
         SEEDED_MERCHANT_ID,
         'rollback-unlimited-order',
         rollbackEvaluation.evaluationId,
         JSON.stringify({ result: { programRef: first.id } }),
         new Date().toISOString(),
       ),
+      env.DB.prepare(`
+        INSERT INTO redemption_entries (
+          merchant_id, redemption_id, position, program_ref, program_revision,
+          reward_rule_ref, effects_json, discount_minor_units, currency
+        ) VALUES (?1, ?2, 0, ?3, 2, 'rule', '[]', 500, 'GBP')
+      `).bind(SEEDED_MERCHANT_ID, rollbackRedemptionId, first.id),
     ]);
 
     await service.updateProgramDraft(
@@ -699,36 +697,7 @@ describe('integration-ready runtime', () => {
       first.id,
       lifecyclePromo(first.id, { budget: { currency: 'GBP', minorUnits: 2_000 } }),
     );
-    const logical = await env.DB.prepare(`
-      SELECT id, draft_revision AS draftRevision FROM programs
-      WHERE merchant_id = ?1 AND external_ref = ?2
-    `).bind(SEEDED_MERCHANT_ID, first.id).first<{
-      id: string;
-      draftRevision: number;
-    }>();
-    expect(logical).not.toBeNull();
-    const rollbackPublishedAt = new Date().toISOString();
-    await env.DB.batch([
-      env.DB.prepare(`
-        UPDATE program_revisions SET published_at = ?1, published_by = 'rollback-operator'
-        WHERE merchant_id = ?2 AND program_id = ?3 AND revision = ?4
-      `).bind(
-        rollbackPublishedAt,
-        SEEDED_MERCHANT_ID,
-        logical!.id,
-        logical!.draftRevision,
-      ),
-      env.DB.prepare(`
-        UPDATE program_counters SET max_uses = 10, budget_remaining = 2_000
-        WHERE merchant_id = ?1 AND program_id = ?2
-      `).bind(SEEDED_MERCHANT_ID, logical!.id),
-      env.DB.prepare(`
-        UPDATE programs SET active_revision = draft_revision, draft_revision = NULL,
-          status = 'active', max_uses = 10, budget_remaining = 2_000,
-          updated_at = ?1
-        WHERE merchant_id = ?2 AND id = ?3
-      `).bind(rollbackPublishedAt, SEEDED_MERCHANT_ID, logical!.id),
-    ]);
+    await service.publishProgram(operatorContext('programs:publish'), first.id);
     expect(await env.DB.prepare(`
       SELECT usage_count AS usageCount, budget_remaining AS budgetRemaining,
         committed_spend AS committedSpend
@@ -748,7 +717,6 @@ describe('integration-ready runtime', () => {
     );
     expect((await jsonRequest('POST', '/v1/redemptions', {
       evaluationId: rollForwardEvaluation.evaluationId,
-      programRef: first.id,
       externalOrderRef: 'roll-forward-order',
       idempotencyKey: 'roll-forward-attempt',
     })).status).toBe(200);
@@ -789,7 +757,6 @@ describe('integration-ready runtime', () => {
     vi.setSystemTime(new Date('2026-08-04T00:00:00.000Z'));
     const redemption = await jsonRequest('POST', '/v1/redemptions', {
       evaluationId: evaluation.evaluationId,
-      programRef: ending.id,
       externalOrderRef: 'ended-order',
       idempotencyKey: 'ended-attempt',
     });
@@ -884,7 +851,6 @@ describe('integration-ready runtime', () => {
 
     const redemptionResponse = await jsonRequest('POST', '/v1/redemptions', {
       evaluationId: lowerEvaluation.evaluationId,
-      programRef: tieredGoldWebPromo.id,
       externalOrderRef: 'order-1',
       idempotencyKey: 'checkout-attempt-1',
     });
@@ -892,17 +858,18 @@ describe('integration-ready runtime', () => {
     const redemption = RedemptionResponseSchema.parse(await redemptionResponse.json());
     expect(redemption).toMatchObject({
       evaluationId: lowerEvaluation.evaluationId,
-      programRef: tieredGoldWebPromo.id,
-      rewardRuleRef: 'under-100',
       externalOrderRef: 'order-1',
       idempotencyKey: 'checkout-attempt-1',
       status: 'committed',
-      effects: [underHundredReward],
+      entries: [{
+        programRef: tieredGoldWebPromo.id,
+        rewardRuleRef: 'under-100',
+        effects: [underHundredReward],
+      }],
     });
 
     const retryResponse = await jsonRequest('POST', '/v1/redemptions', {
       evaluationId: lowerEvaluation.evaluationId,
-      programRef: tieredGoldWebPromo.id,
       externalOrderRef: 'order-1',
       idempotencyKey: 'checkout-attempt-1',
     });

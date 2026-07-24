@@ -49,7 +49,6 @@ import {
   SchemaRevisionConflictError,
   type CustomerRecord,
   type CustomerUpsert,
-  type AtomicRedemptionCommit,
   type CredentialCreate,
   type EvaluationDecisionRecord,
   type MerchantProvision,
@@ -791,7 +790,7 @@ function parseRedemptionEntry(input: RedemptionEntryRecord): RedemptionEntryReco
   };
 }
 
-function parseRedemption(input: RedemptionCreate): RedemptionCreate {
+export function parseRedemption(input: RedemptionCreate): RedemptionCreate {
   const redemptionId = z.string().min(1).parse(input.redemptionId);
   const evaluationId = z.string().min(1).parse(input.evaluationId);
   const externalOrderRef = z.string().min(1).parse(input.externalOrderRef);
@@ -832,7 +831,7 @@ function parseRedemption(input: RedemptionCreate): RedemptionCreate {
   };
 }
 
-function redemptionTotals(redemption: RedemptionCreate): {
+export function redemptionTotals(redemption: RedemptionCreate): {
   discountMinorUnits: number;
   currency: string;
 } {
@@ -963,7 +962,7 @@ function redemptionFromRows(
   });
 }
 
-function redemptionEnvelope(redemption: RedemptionCreate): string {
+export function redemptionEnvelope(redemption: RedemptionCreate): string {
   return JSON.stringify(StoredRedemptionEnvelopeSchema.parse({
     version: 2,
     result: redemption.result,
@@ -981,39 +980,6 @@ async function verifiedRedemptionFromRows(
     throw new Error('Redemption receipt integrity verification failed');
   }
   return redemption;
-}
-
-function parseAtomicRedemption(input: AtomicRedemptionCommit): AtomicRedemptionCommit {
-  const parsed = parseRedemption(input);
-  const programRef = z.string().min(1).parse(input.programRef);
-  const expectedActiveRevision = PositiveIntegerSchema.parse(input.expectedActiveRevision);
-  const expectedProgram = PromoProgramSchema.parse(input.expectedProgram);
-  if (
-    expectedProgram.id !== programRef
-    || parsed.entries.length !== 1
-    || parsed.entries[0]?.programRef !== programRef
-    || parsed.entries.some(entry => entry.programRevision !== expectedActiveRevision)
-  ) {
-    throw new Error('Atomic redemption program identity does not match');
-  }
-  const customerRef = input.customerRef === undefined
-    ? undefined
-    : z.string().min(1).parse(input.customerRef);
-  const perCustomerCap = input.perCustomerCap === undefined
-    ? undefined
-    : PositiveIntegerSchema.parse(input.perCustomerCap);
-  if (perCustomerCap !== undefined && customerRef === undefined) {
-    throw new Error('A per-customer cap requires a customer reference');
-  }
-  return {
-    ...parsed,
-    programId: z.string().min(1).parse(input.programId),
-    programRef,
-    expectedActiveRevision,
-    expectedProgram,
-    ...optional('customerRef', customerRef),
-    ...optional('perCustomerCap', perCustomerCap),
-  };
 }
 
 export function createRepositories(env: Env): Repositories {
@@ -2532,12 +2498,10 @@ export function createRepositories(env: Env): Repositories {
             counter.budget_remaining AS budgetRemaining,
             counter.committed_spend AS committedSpend,
             COALESCE((
-              SELECT SUM(redemption.discount_minor_units)
-              FROM redemptions AS redemption
-              WHERE redemption.merchant_id = logical.merchant_id
-                AND json_valid(redemption.result_json)
-                AND json_extract(redemption.result_json, '$.result.programRef')
-                  = logical.external_ref
+              SELECT SUM(entry.discount_minor_units)
+              FROM redemption_entries AS entry
+              WHERE entry.merchant_id = logical.merchant_id
+                AND entry.program_ref = logical.external_ref
             ), 0) AS ledgerCommittedSpend
           FROM programs AS logical
           INNER JOIN program_revisions AS draft
@@ -3119,194 +3083,6 @@ export function createRepositories(env: Env): Repositories {
             parsed.createdAt,
           ),
         ]);
-      },
-
-      async commitAtomically(input) {
-        const parsed = parseAtomicRedemption(input);
-        const totals = redemptionTotals(parsed);
-        let results;
-        try {
-          results = await env.DB.batch([
-            env.DB.prepare(`
-            UPDATE program_counters
-            SET usage_count = usage_count + 1,
-                committed_spend = committed_spend + ?1,
-                budget_remaining = CASE
-                  WHEN budget_remaining IS NULL THEN NULL
-                  ELSE budget_remaining - ?1
-                END
-            WHERE program_id = ?2 AND merchant_id = ?3
-              AND EXISTS (
-                SELECT 1 FROM programs AS logical
-                INNER JOIN program_revisions AS active
-                  ON active.merchant_id = logical.merchant_id
-                  AND active.program_id = logical.id
-                  AND active.revision = logical.active_revision
-                WHERE logical.id = ?2 AND logical.merchant_id = ?3
-                  AND logical.external_ref = ?4
-                  AND logical.active_revision = ?11
-                  AND logical.status IN ('active', 'scheduled')
-                  AND (
-                    json_extract(active.config_json, '$.startDate') IS NULL
-                    OR json_extract(active.config_json, '$.startDate') <= substr(?12, 1, 10)
-                  )
-                  AND (
-                    json_extract(active.config_json, '$.endDate') IS NULL
-                    OR json_extract(active.config_json, '$.endDate') >= substr(?12, 1, 10)
-                  )
-              )
-              AND (
-                (?9 IS NULL AND max_uses IS NULL)
-                OR (?9 IS NOT NULL AND max_uses = ?9)
-              )
-              AND usage_count >= 0
-              AND (?9 IS NULL OR usage_count <= ?9)
-              AND (
-                (?10 IS NULL AND budget_remaining IS NULL)
-                OR (
-                  ?10 IS NOT NULL AND budget_remaining IS NOT NULL
-                  AND budget_remaining >= 0
-                  AND budget_remaining + committed_spend = ?10
-                )
-              )
-              AND committed_spend >= 0
-              AND (max_uses IS NULL OR usage_count < max_uses)
-              AND (budget_remaining IS NULL OR budget_remaining >= ?1)
-              AND (?5 IS NULL OR NOT EXISTS (
-                SELECT 1 FROM redemptions
-                WHERE merchant_id = ?3 AND external_order_ref = ?5
-              ))
-              AND (?6 IS NULL OR NOT EXISTS (
-                SELECT 1 FROM redemptions
-                WHERE merchant_id = ?3 AND idempotency_key = ?6
-              ))
-              AND (
-                ?7 IS NULL OR (
-                  ?8 IS NOT NULL AND (
-                    SELECT COUNT(DISTINCT prior.id)
-                    FROM redemptions AS prior
-                    INNER JOIN evaluation_decisions AS prior_decision
-                      ON prior.merchant_id = prior_decision.merchant_id
-                      AND prior.evaluation_id = prior_decision.id
-                    INNER JOIN redemption_entries AS prior_entry
-                      ON prior_entry.merchant_id = prior.merchant_id
-                      AND prior_entry.redemption_id = prior.id
-                    WHERE prior.merchant_id = ?3
-                      AND prior_decision.customer_ref = ?8
-                      AND prior_entry.program_ref = ?4
-                  ) < ?7
-                )
-              )
-          `).bind(
-            totals.discountMinorUnits,
-            parsed.programId,
-            parsed.merchantId,
-            parsed.programRef,
-            parsed.externalOrderRef ?? null,
-            parsed.idempotencyKey ?? null,
-            parsed.perCustomerCap ?? null,
-            parsed.customerRef ?? null,
-            parsed.expectedProgram.usageCap ?? null,
-            parsed.expectedProgram.budget?.minorUnits ?? null,
-            parsed.expectedActiveRevision,
-            parsed.createdAt,
-          ),
-            env.DB.prepare(`
-            UPDATE programs
-            SET usage_count = (
-                  SELECT usage_count FROM program_counters
-                  WHERE merchant_id = ?1 AND program_id = ?2
-                ),
-                budget_remaining = (
-                  SELECT budget_remaining FROM program_counters
-                  WHERE merchant_id = ?1 AND program_id = ?2
-                )
-            WHERE merchant_id = ?1 AND id = ?2 AND external_ref = ?3
-              AND changes() = 1
-          `).bind(parsed.merchantId, parsed.programId, parsed.programRef),
-            env.DB.prepare(`
-            INSERT INTO redemptions (
-              id, merchant_id, external_order_ref, idempotency_key, evaluation_id,
-              result_json, discount_minor_units, currency, created_at, request_digest
-            )
-            SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10
-            WHERE changes() = 1
-          `).bind(
-            parsed.redemptionId,
-            parsed.merchantId,
-            parsed.externalOrderRef ?? null,
-            parsed.idempotencyKey ?? null,
-            parsed.evaluationId,
-            redemptionEnvelope(parsed),
-            totals.discountMinorUnits,
-            totals.currency,
-            parsed.createdAt,
-            parsed.requestDigest,
-          ),
-            ...parsed.entries.map(entry => env.DB.prepare(`
-              INSERT INTO redemption_entries (
-                merchant_id, redemption_id, position, program_ref, program_revision,
-                reward_rule_ref, effects_json, discount_minor_units, currency
-              )
-              SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9
-              WHERE changes() = 1
-            `).bind(
-              parsed.merchantId,
-              parsed.redemptionId,
-              entry.position,
-              entry.programRef,
-              entry.programRevision,
-              entry.rewardRuleRef ?? null,
-              canonicalJson(entry.effects),
-              entry.discountMinorUnits,
-              entry.currency,
-            )),
-            env.DB.prepare(`
-              INSERT INTO redemption_operations (
-                merchant_id, idempotency_key, external_order_ref, evaluation_id,
-                request_digest, state, terminal_error_code, retryable, redemption_id,
-                created_at, updated_at
-              )
-              SELECT ?1, ?2, ?3, ?4, ?5, 'committed', NULL, NULL, ?6, ?7, ?7
-              WHERE changes() = 1
-            `).bind(
-              parsed.merchantId,
-              parsed.idempotencyKey,
-              parsed.externalOrderRef,
-              parsed.evaluationId,
-              parsed.requestDigest,
-              parsed.redemptionId,
-              parsed.createdAt,
-            ),
-            env.DB.prepare(`
-              INSERT INTO redemption_commit_guards (
-                redemption_id, position, changed_rows
-              ) VALUES (?1, 0, changes())
-            `).bind(parsed.redemptionId),
-            env.DB.prepare(`
-              DELETE FROM redemption_commit_guards
-              WHERE redemption_id = ?1 AND position = 0 AND changes() = 1
-            `).bind(parsed.redemptionId),
-          ]);
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          if (/redemption_commit_guards|changed_rows = 1/u.test(message)) return false;
-          throw error;
-        }
-        const [counter, legacyCounter, ledger] = results;
-        if (
-          counter?.meta.changes === 0
-          && legacyCounter?.meta.changes === 0
-          && ledger?.meta.changes === 0
-        ) return false;
-        if (
-          counter?.meta.changes !== 1
-          || (legacyCounter?.meta.changes ?? 0) < 1
-          || ledger?.meta.changes !== 1
-        ) {
-          throw new Error('Atomic redemption counter and ledger diverged');
-        }
-        return true;
       },
 
       async getByExternalOrderRef(merchantId, externalOrderRef, verifyIntegrity) {

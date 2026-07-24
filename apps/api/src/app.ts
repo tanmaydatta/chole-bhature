@@ -6,6 +6,7 @@ import {
   CORRELATION_ID_HEADER,
   NotFoundError,
 } from './errors.js';
+import { createD1AtomicRedemptionCoordinator } from './redemption/d1-atomic-redemption-coordinator.js';
 import { createRepositories } from './repositories/d1-repositories.js';
 import { createCustomerRoutes } from './routes/customers.js';
 import { createEvaluationRoutes } from './routes/evaluate.js';
@@ -29,6 +30,7 @@ const correlationId: MiddlewareHandler<AppEnvironment> = async (context, next) =
 
 const requestScope: MiddlewareHandler<AppEnvironment> = async (context, next) => {
   context.set('repositories', createRepositories(context.env));
+  context.set('atomicRedemptions', createD1AtomicRedemptionCoordinator(context.env));
   await next();
 };
 
