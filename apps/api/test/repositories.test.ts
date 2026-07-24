@@ -720,6 +720,74 @@ describe('D1 repositories', () => {
     });
   });
 
+  test('atomic per-customer caps count current bundles and migrated child entries', async () => {
+    await seedMerchant('merchant-a');
+    const repositories = createRepositories({ DB: env.DB });
+    const evaluationId = await seedDecision('merchant-a', 'cap-bundle-evaluation');
+    const storedProgram = await repositories.programs.create({
+      merchantId: 'merchant-a',
+      program,
+      schema: await repositories.schemas.getLatestVersion('merchant-a', 'published'),
+      createdAt,
+    });
+    await repositories.redemptions.create(await redemption('merchant-a', evaluationId, {
+      externalOrderRef: 'current-cap-order',
+      idempotencyKey: 'current-cap-key',
+    }));
+    await env.DB.batch([
+      env.DB.prepare(`
+        INSERT INTO redemptions (
+          id, merchant_id, external_order_ref, idempotency_key, evaluation_id,
+          result_json, discount_minor_units, currency, created_at, request_digest
+        ) VALUES (
+          'migrated-cap-redemption', 'merchant-a', 'migrated-cap-order',
+          'migrated-cap-key', ?1, ?2, 500, 'GBP', ?3,
+          'legacy:migrated-cap-redemption'
+        )
+      `).bind(evaluationId, JSON.stringify({
+        version: 1,
+        result: {
+          redemptionId: 'migrated-cap-redemption',
+          evaluationId,
+          externalOrderRef: 'migrated-cap-order',
+          idempotencyKey: 'migrated-cap-key',
+          programRef: 'welcome-10',
+          rewardRuleRef: 'default-reward',
+          status: 'committed',
+          effects: incentiveDecision.effects,
+        },
+        receiptIntegrityHash: 'a'.repeat(64),
+      }), createdAt),
+      env.DB.prepare(`
+        INSERT INTO redemption_entries (
+          merchant_id, redemption_id, position, program_ref, program_revision,
+          reward_rule_ref, effects_json, discount_minor_units, currency
+        ) VALUES (
+          'merchant-a', 'migrated-cap-redemption', 0, 'welcome-10', 1,
+          'default-reward', ?1, 500, 'GBP'
+        )
+      `).bind(JSON.stringify(incentiveDecision.effects)),
+    ]);
+    const candidate = await redemption('merchant-a', evaluationId, {
+      externalOrderRef: 'rejected-cap-order',
+      idempotencyKey: 'rejected-cap-key',
+    });
+
+    await expect(repositories.redemptions.commitAtomically({
+      ...candidate,
+      programId: storedProgram.id,
+      programRef: program.id,
+      expectedActiveRevision: 1,
+      expectedProgram: program,
+      customerRef: 'shared',
+      perCustomerCap: 2,
+    })).resolves.toBe(false);
+    expect(await env.DB.prepare(`
+      SELECT COUNT(*) AS count FROM redemptions
+      WHERE merchant_id = 'merchant-a' AND id = ?1
+    `).bind(candidate.redemptionId).first()).toEqual({ count: 0 });
+  });
+
   test('decision snapshots round-trip canonical program config and reject corrupt config', async () => {
     await seedMerchant('merchant-a');
     await seedPublishedSchema('merchant-a');

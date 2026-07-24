@@ -76,6 +76,103 @@ WHERE logical.type = 'promo'
   END = 1
 LIMIT 1;
 
+CREATE TABLE promo_code_normalization_migration_guard (
+  valid INTEGER NOT NULL CHECK (valid = 1)
+);
+
+CREATE TRIGGER promo_code_normalization_migration_guard_abort
+BEFORE INSERT ON promo_code_normalization_migration_guard
+WHEN NEW.valid <> 1
+BEGIN
+  SELECT RAISE(
+    ABORT,
+    'legacy promo code requires application-assisted normalization'
+  );
+END;
+
+INSERT INTO promo_code_normalization_migration_guard (valid)
+SELECT 0
+FROM programs
+WHERE type = 'promo'
+  AND json_type(config_json, '$.autoApply') = 'false'
+  AND json_extract(config_json, '$.code') GLOB '*[^ -~]*'
+LIMIT 1;
+
+INSERT INTO promo_code_normalization_migration_guard (valid)
+SELECT 0
+FROM program_revisions AS revision
+INNER JOIN programs AS logical
+  ON logical.merchant_id = revision.merchant_id
+  AND logical.id = revision.program_id
+WHERE logical.type = 'promo'
+  AND json_type(revision.config_json, '$.autoApply') = 'false'
+  AND json_extract(revision.config_json, '$.code') GLOB '*[^ -~]*'
+LIMIT 1;
+
+DROP TABLE promo_code_normalization_migration_guard;
+
+CREATE TABLE promo_code_overlap_migration_guard (
+  valid INTEGER NOT NULL CHECK (valid = 1)
+);
+
+CREATE TRIGGER promo_code_overlap_migration_guard_abort
+BEFORE INSERT ON promo_code_overlap_migration_guard
+WHEN NEW.valid <> 1
+BEGIN
+  SELECT RAISE(
+    ABORT,
+    'overlapping legacy promo code claims require reconciliation'
+  );
+END;
+
+INSERT INTO promo_code_overlap_migration_guard (valid)
+SELECT 0
+FROM programs AS left_program
+INNER JOIN program_revisions AS left_revision
+  ON left_revision.merchant_id = left_program.merchant_id
+  AND left_revision.program_id = left_program.id
+  AND left_revision.revision = left_program.active_revision
+INNER JOIN programs AS right_program
+  ON right_program.merchant_id = left_program.merchant_id
+  AND right_program.id > left_program.id
+INNER JOIN program_revisions AS right_revision
+  ON right_revision.merchant_id = right_program.merchant_id
+  AND right_revision.program_id = right_program.id
+  AND right_revision.revision = right_program.active_revision
+WHERE left_program.type = 'promo'
+  AND right_program.type = 'promo'
+  AND left_program.status IN ('active', 'scheduled', 'paused')
+  AND right_program.status IN ('active', 'scheduled', 'paused')
+  AND json_type(left_revision.config_json, '$.autoApply') = 'false'
+  AND json_type(right_revision.config_json, '$.autoApply') = 'false'
+  AND (
+    json_extract(left_revision.config_json, '$.endDate') IS NULL
+    OR json_extract(left_revision.config_json, '$.endDate') >= date('now')
+  )
+  AND (
+    json_extract(right_revision.config_json, '$.endDate') IS NULL
+    OR json_extract(right_revision.config_json, '$.endDate') >= date('now')
+  )
+  AND upper(trim(json_extract(left_revision.config_json, '$.code')))
+    = upper(trim(json_extract(right_revision.config_json, '$.code')))
+  AND COALESCE(
+    json_extract(left_revision.config_json, '$.endDate'),
+    '9999-12-31'
+  ) >= COALESCE(
+    json_extract(right_revision.config_json, '$.startDate'),
+    '0001-01-01'
+  )
+  AND COALESCE(
+    json_extract(right_revision.config_json, '$.endDate'),
+    '9999-12-31'
+  ) >= COALESCE(
+    json_extract(left_revision.config_json, '$.startDate'),
+    '0001-01-01'
+  )
+LIMIT 1;
+
+DROP TABLE promo_code_overlap_migration_guard;
+
 UPDATE program_revisions
 SET config_json = CASE json_type(config_json, '$.autoApply')
   WHEN 'true' THEN json_remove(
@@ -193,7 +290,17 @@ SELECT
   upper(trim(json_extract(active.config_json, '$.code'))),
   json_extract(active.config_json, '$.startDate'),
   json_extract(active.config_json, '$.endDate'),
-  NULL,
+  CASE
+    WHEN logical.status = 'ended' THEN COALESCE(
+      json_extract(active.config_json, '$.endDate'),
+      logical.updated_at
+    )
+    WHEN logical.status NOT IN ('active', 'scheduled', 'paused')
+      THEN logical.updated_at
+    WHEN json_extract(active.config_json, '$.endDate') < date('now')
+      THEN json_extract(active.config_json, '$.endDate')
+    ELSE NULL
+  END,
   COALESCE(active.published_at, active.created_at)
 FROM programs AS logical
 INNER JOIN program_revisions AS active
@@ -219,6 +326,13 @@ CREATE TABLE legacy_redemption_migration_guard (
   valid INTEGER NOT NULL CHECK (valid = 1)
 );
 
+CREATE TRIGGER legacy_redemption_migration_guard_abort
+BEFORE INSERT ON legacy_redemption_migration_guard
+WHEN NEW.valid <> 1
+BEGIN
+  SELECT RAISE(ABORT, 'invalid legacy redemption requires reconciliation');
+END;
+
 INSERT INTO legacy_redemption_migration_guard (valid)
 SELECT 0
 FROM redemptions AS redemption
@@ -227,21 +341,56 @@ INNER JOIN evaluation_decisions AS decision
   AND decision.id = redemption.evaluation_id
 WHERE CASE
     WHEN json_valid(redemption.result_json) = 0 THEN 1
-    WHEN json_extract(redemption.result_json, '$.version') <> 1 THEN 1
-    WHEN json_type(redemption.result_json, '$.result') <> 'object' THEN 1
-    WHEN json_extract(redemption.result_json, '$.result.redemptionId') <> redemption.id THEN 1
+    WHEN COALESCE(
+      json_type(redemption.result_json, '$.version'),
+      'missing'
+    ) <> 'integer' THEN 1
+    WHEN json_extract(redemption.result_json, '$.version') IS NOT 1 THEN 1
+    WHEN COALESCE(
+      json_type(redemption.result_json, '$.result'),
+      'missing'
+    ) <> 'object' THEN 1
+    WHEN COALESCE(
+      json_type(redemption.result_json, '$.result.redemptionId'),
+      'missing'
+    ) <> 'text' THEN 1
+    WHEN json_extract(redemption.result_json, '$.result.redemptionId')
+      IS NOT redemption.id THEN 1
+    WHEN COALESCE(
+      json_type(redemption.result_json, '$.result.evaluationId'),
+      'missing'
+    ) <> 'text' THEN 1
     WHEN json_extract(redemption.result_json, '$.result.evaluationId')
-      <> redemption.evaluation_id THEN 1
+      IS NOT redemption.evaluation_id THEN 1
     WHEN json_extract(redemption.result_json, '$.result.externalOrderRef')
       IS NOT redemption.external_order_ref THEN 1
     WHEN json_extract(redemption.result_json, '$.result.idempotencyKey')
       IS NOT redemption.idempotency_key THEN 1
-    WHEN json_extract(redemption.result_json, '$.result.status') <> 'committed' THEN 1
-    WHEN json_type(redemption.result_json, '$.receiptIntegrityHash') <> 'text' THEN 1
-    WHEN length(json_extract(redemption.result_json, '$.receiptIntegrityHash')) <> 64 THEN 1
-    WHEN json_type(redemption.result_json, '$.result.programRef') <> 'text' THEN 1
+    WHEN COALESCE(
+      json_type(redemption.result_json, '$.result.status'),
+      'missing'
+    ) <> 'text' THEN 1
+    WHEN json_extract(redemption.result_json, '$.result.status')
+      IS NOT 'committed' THEN 1
+    WHEN COALESCE(
+      json_type(redemption.result_json, '$.receiptIntegrityHash'),
+      'missing'
+    ) <> 'text' THEN 1
+    WHEN length(json_extract(redemption.result_json, '$.receiptIntegrityHash'))
+      IS NOT 64 THEN 1
+    WHEN json_extract(redemption.result_json, '$.receiptIntegrityHash')
+      GLOB '*[^0-9a-f]*' THEN 1
+    WHEN COALESCE(
+      json_type(redemption.result_json, '$.result.programRef'),
+      'missing'
+    ) <> 'text' THEN 1
     WHEN length(json_extract(redemption.result_json, '$.result.programRef')) = 0 THEN 1
-    WHEN json_type(redemption.result_json, '$.result.effects') <> 'array' THEN 1
+    WHEN COALESCE(
+      json_type(redemption.result_json, '$.result.effects'),
+      'missing'
+    ) <> 'array' THEN 1
+    WHEN json_valid(decision.decisions_json) = 0 THEN 1
+    WHEN COALESCE(json_type(decision.decisions_json), 'missing') <> 'array' THEN 1
     WHEN (
       SELECT COUNT(*)
       FROM json_each(decision.decisions_json) AS candidate
@@ -372,6 +521,12 @@ SELECT
       = json_extract(redemption.result_json, '$.result.programRef')
       AND json_extract(candidate.value, '$.outcome') = 'qualified'
       AND json_extract(candidate.value, '$.commitRequired') = 1
+      AND json_type(candidate.value, '$.programRevision') = 'integer'
+      AND json_extract(candidate.value, '$.programRevision') > 0
+      AND json_extract(candidate.value, '$.rewardRuleRef')
+        IS json_extract(redemption.result_json, '$.result.rewardRuleRef')
+      AND json(json_extract(candidate.value, '$.effects'))
+        = json(json_extract(redemption.result_json, '$.result.effects'))
     LIMIT 1
   ),
   json_extract(redemption.result_json, '$.result.rewardRuleRef'),

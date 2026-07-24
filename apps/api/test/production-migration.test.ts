@@ -97,6 +97,62 @@ async function resetToMigrationFive(): Promise<D1Migration> {
   return requiredMigration('0006_promo_selection_redemption_bundles.sql');
 }
 
+async function insertLegacyCodedProgram(input: {
+  rowId: string;
+  programRef: string;
+  code: string;
+  status?: 'active' | 'draft' | 'ended' | 'paused' | 'scheduled';
+  startDate?: string;
+  endDate?: string;
+}): Promise<void> {
+  const status = input.status ?? 'active';
+  const config = {
+    ...programConfiguration,
+    id: input.programRef,
+    name: `Legacy ${input.programRef}`,
+    status,
+    autoApply: false,
+    code: input.code,
+    stackable: true,
+    ...(input.startDate === undefined ? {} : { startDate: input.startDate }),
+    ...(input.endDate === undefined ? {} : { endDate: input.endDate }),
+  };
+  await testEnv.DB.batch([
+    testEnv.DB.prepare(`
+      INSERT INTO programs (
+        id, merchant_id, external_ref, type, name, status, config_json, priority,
+        max_uses, usage_count, budget_remaining, active_revision, draft_revision,
+        created_at, updated_at
+      ) VALUES (
+        ?1, 'phase-0-merchant', ?2, 'promo', ?3, ?4, ?5,
+        10, 10, 0, 5000, 1, NULL, ?6, ?6
+      )
+    `).bind(
+      input.rowId,
+      input.programRef,
+      config.name,
+      status,
+      JSON.stringify(config),
+      createdAt,
+    ),
+    testEnv.DB.prepare(`
+      INSERT INTO program_revisions (
+        program_id, merchant_id, revision, config_json, created_at, created_by,
+        published_at, published_by
+      ) VALUES (
+        ?1, 'phase-0-merchant', 1, ?2, ?3, 'migration-test',
+        ?3, 'migration-test'
+      )
+    `).bind(input.rowId, JSON.stringify(config), createdAt),
+    testEnv.DB.prepare(`
+      INSERT INTO program_counters (
+        program_id, merchant_id, max_uses, usage_count, budget_remaining,
+        committed_spend
+      ) VALUES (?1, 'phase-0-merchant', 10, 0, 5000, 0)
+    `).bind(input.rowId),
+  ]);
+}
+
 async function seedRepresentativePlanTwoData(): Promise<void> {
   const definition = {
     key: 'customer.tier',
@@ -660,4 +716,133 @@ test('aborts ambiguous legacy trigger configurations instead of guessing intent'
     SELECT COUNT(*) AS count FROM sqlite_master
     WHERE type = 'table' AND name = 'promo_code_claims'
   `).first()).toEqual({ count: 0 });
+});
+
+test.each([
+  ['Unicode uppercase expansion', 'ß'],
+  ['non-ASCII edge whitespace', '\u00a0VIP20\u00a0'],
+])('aborts %s that SQL cannot normalize like the shared helper', async (_case, code) => {
+  const migration = await resetToMigrationFive();
+  await insertLegacyCodedProgram({
+    rowId: 'unsafe-normalization-row',
+    programRef: 'unsafe-normalization',
+    code,
+  });
+
+  await expect(applyD1Migrations(testEnv.DB, [migration]))
+    .rejects.toThrow(/application-assisted normalization/i);
+  expect(await testEnv.DB.prepare(`
+    SELECT COUNT(*) AS count FROM sqlite_master
+    WHERE type = 'table' AND name = 'promo_code_claims'
+  `).first()).toEqual({ count: 0 });
+});
+
+test('releases inactive and elapsed legacy claims while retaining reusable active ownership', async () => {
+  const migration = await resetToMigrationFive();
+  await insertLegacyCodedProgram({
+    rowId: 'ended-code-row',
+    programRef: 'ended-code',
+    code: 'REUSED',
+    status: 'ended',
+    endDate: '2026-07-01',
+  });
+  await insertLegacyCodedProgram({
+    rowId: 'active-code-row',
+    programRef: 'active-code',
+    code: 'reused',
+  });
+  await insertLegacyCodedProgram({
+    rowId: 'elapsed-code-row',
+    programRef: 'elapsed-code',
+    code: 'ELAPSED',
+    endDate: '2000-01-01',
+  });
+  await insertLegacyCodedProgram({
+    rowId: 'inactive-code-row',
+    programRef: 'inactive-code',
+    code: 'INACTIVE',
+    status: 'draft',
+  });
+
+  await applyD1Migrations(testEnv.DB, [migration]);
+
+  expect((await testEnv.DB.prepare(`
+    SELECT program_ref AS programRef, released_at AS releasedAt
+    FROM promo_code_claims
+    WHERE program_ref IN ('ended-code', 'active-code', 'elapsed-code', 'inactive-code')
+    ORDER BY program_ref
+  `).all()).results).toEqual([
+    { programRef: 'active-code', releasedAt: null },
+    { programRef: 'elapsed-code', releasedAt: '2000-01-01' },
+    { programRef: 'ended-code', releasedAt: '2026-07-01' },
+    { programRef: 'inactive-code', releasedAt: createdAt },
+  ]);
+});
+
+test('aborts overlapping unreleased legacy code claims before creating target tables', async () => {
+  const migration = await resetToMigrationFive();
+  await insertLegacyCodedProgram({
+    rowId: 'overlap-one-row',
+    programRef: 'overlap-one',
+    code: ' vip20 ',
+    startDate: '2026-07-01',
+  });
+  await insertLegacyCodedProgram({
+    rowId: 'overlap-two-row',
+    programRef: 'overlap-two',
+    code: 'VIP20',
+    startDate: '2026-07-15',
+  });
+
+  await expect(applyD1Migrations(testEnv.DB, [migration]))
+    .rejects.toThrow(/overlapping legacy promo code/i);
+  expect(await testEnv.DB.prepare(`
+    SELECT COUNT(*) AS count FROM sqlite_master
+    WHERE type = 'table' AND name = 'promo_code_claims'
+  `).first()).toEqual({ count: 0 });
+});
+
+test.each([
+  ['missing version', "json_remove(result_json, '$.version')"],
+  ['null committed status', "json_set(result_json, '$.result.status', json('null'))"],
+  ['missing receipt hash', "json_remove(result_json, '$.receiptIntegrityHash')"],
+])('aborts a legacy redemption with %s', async (_case, resultExpression) => {
+  const migration = await resetToMigrationFive();
+  await testEnv.DB.prepare(`
+    UPDATE redemptions SET result_json = ${resultExpression}
+    WHERE id = 'legacy-redemption'
+  `).run();
+
+  await expect(applyD1Migrations(testEnv.DB, [migration]))
+    .rejects.toThrow(/legacy redemption/i);
+  expect(await testEnv.DB.prepare(`
+    SELECT COUNT(*) AS count FROM sqlite_master
+    WHERE type = 'table' AND name = 'redemption_entries'
+  `).first()).toEqual({ count: 0 });
+});
+
+test('backfills the revision from the unique full legacy decision match', async () => {
+  const migration = await resetToMigrationFive();
+  const row = await testEnv.DB.prepare(`
+    SELECT decisions_json AS decisionsJson
+    FROM evaluation_decisions WHERE id = 'legacy-evaluation'
+  `).first<{ decisionsJson: string }>();
+  const [matchingDecision] = JSON.parse(row!.decisionsJson) as Array<Record<string, unknown>>;
+  const decoyDecision = {
+    ...matchingDecision,
+    programRevision: 99,
+    rewardRuleRef: 'decoy-rule',
+    effects: [],
+  };
+  await testEnv.DB.prepare(`
+    UPDATE evaluation_decisions SET decisions_json = ?1
+    WHERE id = 'legacy-evaluation'
+  `).bind(JSON.stringify([decoyDecision, matchingDecision])).run();
+
+  await applyD1Migrations(testEnv.DB, [migration]);
+
+  expect(await testEnv.DB.prepare(`
+    SELECT program_revision AS programRevision
+    FROM redemption_entries WHERE redemption_id = 'legacy-redemption'
+  `).first()).toEqual({ programRevision: 1 });
 });

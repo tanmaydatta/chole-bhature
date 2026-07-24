@@ -124,6 +124,35 @@ async function signingKey(secret: string): Promise<CryptoKey> {
 
 export function decisionSnapshot(record: Pick<
   EvaluationDecisionRecord,
+  | 'mode'
+  | 'submittedCodes'
+  | 'codeResults'
+  | 'requestDigest'
+  | 'correlationId'
+  | 'customerRef'
+  | 'customerVersion'
+  | 'schemaVersion'
+  | 'request'
+  | 'facts'
+  | 'decisions'
+>) {
+  return {
+    mode: record.mode,
+    submittedCodes: record.submittedCodes,
+    codeResults: record.codeResults,
+    requestDigest: record.requestDigest,
+    correlationId: record.correlationId,
+    ...(record.customerRef === undefined ? {} : { customerRef: record.customerRef }),
+    ...(record.customerVersion === undefined ? {} : { customerVersion: record.customerVersion }),
+    schemaVersion: record.schemaVersion,
+    request: record.request,
+    facts: record.facts,
+    decisions: record.decisions,
+  };
+}
+
+function legacyDecisionSnapshot(record: Pick<
+  EvaluationDecisionRecord,
   | 'customerRef'
   | 'customerVersion'
   | 'schemaVersion'
@@ -145,6 +174,11 @@ function integrityPayload(record: Pick<
   EvaluationDecisionRecord,
   | 'merchantId'
   | 'evaluationId'
+  | 'mode'
+  | 'submittedCodes'
+  | 'codeResults'
+  | 'requestDigest'
+  | 'correlationId'
   | 'customerRef'
   | 'customerVersion'
   | 'schemaVersion'
@@ -159,6 +193,25 @@ function integrityPayload(record: Pick<
     snapshot: decisionSnapshot(record),
     expiresAt: record.expiresAt,
   };
+}
+
+function legacyIntegrityPayload(record: EvaluationDecisionRecord) {
+  return {
+    merchantId: record.merchantId,
+    evaluationId: record.evaluationId,
+    snapshot: legacyDecisionSnapshot(record),
+    expiresAt: record.expiresAt,
+  };
+}
+
+function isMigratedLegacySnapshot(record: EvaluationDecisionRecord): boolean {
+  return (
+    record.requestDigest === `legacy:${record.evaluationId}`
+    && record.correlationId === `migration:${record.evaluationId}`
+    && record.mode === 'automatic'
+    && record.submittedCodes.length === 0
+    && record.codeResults.length === 0
+  );
 }
 
 export async function signDecisionSnapshot(
@@ -179,11 +232,14 @@ export async function verifyDecisionIntegrity(
 ): Promise<boolean> {
   const signature = hexToBytes(record.integrityHash);
   if (signature === null) return false;
+  const payload = isMigratedLegacySnapshot(record)
+    ? legacyIntegrityPayload(record)
+    : integrityPayload(record);
   return crypto.subtle.verify(
     'HMAC',
     await signingKey(secret),
     signature,
-    encoder.encode(canonicalJson(integrityPayload(record))),
+    encoder.encode(canonicalJson(payload)),
   );
 }
 

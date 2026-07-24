@@ -2938,14 +2938,17 @@ export function createRepositories(env: Env): Repositories {
               AND (
                 ?7 IS NULL OR (
                   ?8 IS NOT NULL AND (
-                    SELECT COUNT(*)
+                    SELECT COUNT(DISTINCT prior.id)
                     FROM redemptions AS prior
                     INNER JOIN evaluation_decisions AS prior_decision
                       ON prior.merchant_id = prior_decision.merchant_id
                       AND prior.evaluation_id = prior_decision.id
+                    INNER JOIN redemption_entries AS prior_entry
+                      ON prior_entry.merchant_id = prior.merchant_id
+                      AND prior_entry.redemption_id = prior.id
                     WHERE prior.merchant_id = ?3
                       AND prior_decision.customer_ref = ?8
-                      AND json_extract(prior.result_json, '$.result.programRef') = ?4
+                      AND prior_entry.program_ref = ?4
                   ) < ?7
                 )
               )
