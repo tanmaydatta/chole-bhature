@@ -737,6 +737,22 @@ test.each([
   `).first()).toEqual({ count: 0 });
 });
 
+test('aborts a printable ASCII legacy code above the shared 128-character limit', async () => {
+  const migration = await resetToMigrationFive();
+  await insertLegacyCodedProgram({
+    rowId: 'oversized-code-row',
+    programRef: 'oversized-code',
+    code: 'A'.repeat(129),
+  });
+
+  await expect(applyD1Migrations(testEnv.DB, [migration]))
+    .rejects.toThrow(/legacy promo trigger/i);
+  expect(await testEnv.DB.prepare(`
+    SELECT COUNT(*) AS count FROM sqlite_master
+    WHERE type = 'table' AND name = 'promo_code_claims'
+  `).first()).toEqual({ count: 0 });
+});
+
 test('releases inactive and elapsed legacy claims while retaining reusable active ownership', async () => {
   const migration = await resetToMigrationFive();
   await insertLegacyCodedProgram({

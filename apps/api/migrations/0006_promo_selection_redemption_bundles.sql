@@ -32,6 +32,7 @@ WHERE type = 'promo'
       AND (
         COALESCE(json_type(config_json, '$.code'), 'missing') <> 'text'
         OR COALESCE(length(trim(json_extract(config_json, '$.code'))), 0) = 0
+        OR length(trim(json_extract(config_json, '$.code'))) > 128
       )
       THEN 1
     ELSE 0
@@ -70,6 +71,7 @@ WHERE logical.type = 'promo'
           length(trim(json_extract(revision.config_json, '$.code'))),
           0
         ) = 0
+        OR length(trim(json_extract(revision.config_json, '$.code'))) > 128
       )
       THEN 1
     ELSE 0

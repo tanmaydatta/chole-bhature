@@ -983,11 +983,13 @@ async function verifiedRedemptionFromRows(
 function parseAtomicRedemption(input: AtomicRedemptionCommit): AtomicRedemptionCommit {
   const parsed = parseRedemption(input);
   const programRef = z.string().min(1).parse(input.programRef);
+  const expectedActiveRevision = PositiveIntegerSchema.parse(input.expectedActiveRevision);
   const expectedProgram = PromoProgramSchema.parse(input.expectedProgram);
   if (
     expectedProgram.id !== programRef
     || parsed.entries.length !== 1
     || parsed.entries[0]?.programRef !== programRef
+    || parsed.entries.some(entry => entry.programRevision !== expectedActiveRevision)
   ) {
     throw new Error('Atomic redemption program identity does not match');
   }
@@ -1004,7 +1006,7 @@ function parseAtomicRedemption(input: AtomicRedemptionCommit): AtomicRedemptionC
     ...parsed,
     programId: z.string().min(1).parse(input.programId),
     programRef,
-    expectedActiveRevision: PositiveIntegerSchema.parse(input.expectedActiveRevision),
+    expectedActiveRevision,
     expectedProgram,
     ...optional('customerRef', customerRef),
     ...optional('perCustomerCap', perCustomerCap),
@@ -3193,7 +3195,7 @@ export function createRepositories(env: Env): Repositories {
           if (redemption.evaluationId !== snapshot.evaluationId || !everyEntryMatches) {
             throw new Error('Redemption does not match a qualified decision snapshot');
           }
-          count += redemption.entries.filter(entry => entry.programRef === parsedProgramRef).length;
+          if (redemption.entries.some(entry => entry.programRef === parsedProgramRef)) count += 1;
         }
         return count;
       },

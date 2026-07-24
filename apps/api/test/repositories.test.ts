@@ -720,6 +720,44 @@ describe('D1 repositories', () => {
     });
   });
 
+  test('atomic redemption rejects a child revision that differs from the active revision', async () => {
+    await seedMerchant('merchant-a');
+    const repositories = createRepositories({ DB: env.DB });
+    const evaluationId = await seedDecision('merchant-a', 'atomic-revision-evaluation');
+    const storedProgram = await repositories.programs.create({
+      merchantId: 'merchant-a',
+      program,
+      schema: await repositories.schemas.getLatestVersion('merchant-a', 'published'),
+      createdAt,
+    });
+    const base = await redemption('merchant-a', evaluationId, {
+      externalOrderRef: 'atomic-revision-order',
+      idempotencyKey: 'atomic-revision-key',
+    });
+    const mismatched: RedemptionBundleCreate = {
+      ...base,
+      result: {
+        ...base.result,
+        entries: base.result.entries.map(entry => ({ ...entry, programRevision: 2 })),
+      },
+      entries: base.entries.map(entry => ({ ...entry, programRevision: 2 })),
+    };
+    mismatched.receiptIntegrityHash = await signRedemptionReceipt(mismatched, signingSecret);
+
+    await expect(repositories.redemptions.commitAtomically({
+      ...mismatched,
+      programId: storedProgram.id,
+      programRef: program.id,
+      expectedActiveRevision: 1,
+      expectedProgram: program,
+      customerRef: 'shared',
+    })).rejects.toThrow(/revision|identity/i);
+    expect(await env.DB.prepare(`
+      SELECT COUNT(*) AS count FROM redemptions
+      WHERE merchant_id = 'merchant-a' AND id = ?1
+    `).bind(mismatched.redemptionId).first()).toEqual({ count: 0 });
+  });
+
   test('atomic per-customer caps count current bundles and migrated child entries', async () => {
     await seedMerchant('merchant-a');
     const repositories = createRepositories({ DB: env.DB });
@@ -971,6 +1009,39 @@ describe('D1 repositories', () => {
       'merchant-a',
       'shared',
       'other-program',
+      verifyHistoricalIntegrity,
+    )).resolves.toBe(1);
+  });
+
+  test('counts duplicate matching children once per committed redemption', async () => {
+    await seedMerchant('merchant-a');
+    const repositories = createRepositories({ DB: env.DB });
+    const evaluationId = await seedDecision('merchant-a', 'duplicate-entry-evaluation');
+    const base = await redemption('merchant-a', evaluationId, {
+      externalOrderRef: 'duplicate-entry-order',
+      idempotencyKey: 'duplicate-entry-key',
+    });
+    const duplicateBundle: RedemptionBundleCreate = {
+      ...base,
+      result: {
+        ...base.result,
+        entries: [base.result.entries[0]!, { ...base.result.entries[0]! }],
+      },
+      entries: [
+        base.entries[0]!,
+        { ...base.entries[0]!, position: 1 },
+      ],
+    };
+    duplicateBundle.receiptIntegrityHash = await signRedemptionReceipt(
+      duplicateBundle,
+      signingSecret,
+    );
+    await repositories.redemptions.create(duplicateBundle);
+
+    await expect(repositories.redemptions.countCommittedForCustomerProgram(
+      'merchant-a',
+      'shared',
+      'welcome-10',
       verifyHistoricalIntegrity,
     )).resolves.toBe(1);
   });
