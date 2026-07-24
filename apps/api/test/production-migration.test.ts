@@ -737,6 +737,60 @@ test.each([
   `).first()).toEqual({ count: 0 });
 });
 
+test.each([
+  ['before Unicode', 'logical', 'A\u0000ß'],
+  ['before Unicode', 'revision', 'A\u0000ß'],
+  ['before an overlength suffix', 'logical', `A\u0000${'B'.repeat(128)}`],
+  ['before an overlength suffix', 'revision', `A\u0000${'B'.repeat(128)}`],
+] as const)(
+  'aborts an embedded NUL %s in a %s legacy code',
+  async (_case, source, code) => {
+    const migration = await resetToMigrationFive();
+    await insertLegacyCodedProgram({
+      rowId: 'nul-code-row',
+      programRef: 'nul-code',
+      code,
+    });
+    const otherSourceUpdate = source === 'logical'
+      ? `
+          UPDATE program_revisions
+          SET config_json = json_set(config_json, '$.code', 'SAFE')
+          WHERE merchant_id = 'phase-0-merchant' AND program_id = 'nul-code-row'
+        `
+      : `
+          UPDATE programs
+          SET config_json = json_set(config_json, '$.code', 'SAFE')
+          WHERE merchant_id = 'phase-0-merchant' AND id = 'nul-code-row'
+        `;
+    await testEnv.DB.prepare(otherSourceUpdate).run();
+    const nulProbe = source === 'logical'
+      ? await testEnv.DB.prepare(`
+          SELECT instr(
+            CAST(json_extract(config_json, '$.code') AS BLOB),
+            X'00'
+          ) AS nulPosition
+          FROM programs
+          WHERE merchant_id = 'phase-0-merchant' AND id = 'nul-code-row'
+        `).first()
+      : await testEnv.DB.prepare(`
+          SELECT instr(
+            CAST(json_extract(config_json, '$.code') AS BLOB),
+            X'00'
+          ) AS nulPosition
+          FROM program_revisions
+          WHERE merchant_id = 'phase-0-merchant' AND program_id = 'nul-code-row'
+        `).first();
+    expect(nulProbe).toEqual({ nulPosition: 2 });
+
+    await expect(applyD1Migrations(testEnv.DB, [migration]))
+      .rejects.toThrow(/legacy promo trigger/i);
+    expect(await testEnv.DB.prepare(`
+      SELECT COUNT(*) AS count FROM sqlite_master
+      WHERE type = 'table' AND name = 'promo_code_claims'
+    `).first()).toEqual({ count: 0 });
+  },
+);
+
 test('aborts a printable ASCII legacy code above the shared 128-character limit', async () => {
   const migration = await resetToMigrationFive();
   await insertLegacyCodedProgram({

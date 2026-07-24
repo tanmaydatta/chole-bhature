@@ -25,6 +25,12 @@ WHERE type = 'promo'
       json_type(config_json, '$.stackable'),
       'missing'
     ) NOT IN ('true', 'false') THEN 1
+    WHEN json_type(config_json, '$.code') = 'text'
+      AND instr(
+        CAST(json_extract(config_json, '$.code') AS BLOB),
+        X'00'
+      ) > 0
+      THEN 1
     WHEN json_type(config_json, '$.autoApply') = 'true'
       AND COALESCE(json_type(config_json, '$.code'), 'text') NOT IN ('null', 'text')
       THEN 1
@@ -58,6 +64,12 @@ WHERE logical.type = 'promo'
       json_type(revision.config_json, '$.stackable'),
       'missing'
     ) NOT IN ('true', 'false') THEN 1
+    WHEN json_type(revision.config_json, '$.code') = 'text'
+      AND instr(
+        CAST(json_extract(revision.config_json, '$.code') AS BLOB),
+        X'00'
+      ) > 0
+      THEN 1
     WHEN json_type(revision.config_json, '$.autoApply') = 'true'
       AND COALESCE(
         json_type(revision.config_json, '$.code'),
