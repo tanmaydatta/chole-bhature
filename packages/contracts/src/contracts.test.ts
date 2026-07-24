@@ -306,7 +306,16 @@ describe('canonical contracts', () => {
   test('uses Unicode code-point length for promo code bounds', () => {
     expect(PromoCodeSchema.safeParse('😀'.repeat(128)).success).toBe(true);
     expect(PromoCodeSchema.safeParse('😀'.repeat(129)).success).toBe(false);
+    expect(PromoCodeSchema.safeParse('ß'.repeat(64)).success).toBe(true);
+    expect(PromoCodeSchema.safeParse('ß'.repeat(65)).success).toBe(false);
     expect(PromoCodeSchema.safeParse('  ').success).toBe(false);
+  });
+
+  test('rejects Unicode control characters from promo codes', () => {
+    expect(PromoCodeSchema.safeParse('\u0000').success).toBe(false);
+    expect(PromoCodeSchema.safeParse('GATE\u0000C15').success).toBe(false);
+    expect(PromoCodeSchema.safeParse('GATE\nC15').success).toBe(false);
+    expect(PromoCodeSchema.safeParse('GATE\u0085C15').success).toBe(false);
   });
 
   test('reports an invalid submitted code without throwing from safe parsing', () => {

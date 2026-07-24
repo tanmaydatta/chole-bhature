@@ -1,18 +1,30 @@
 import { z } from './zod.js';
 
+const UNICODE_CONTROL_CHARACTER = /\p{Cc}/u;
+
+function normalizedPromoCode(value: string): string {
+  return value.trim().toUpperCase();
+}
+
 export const PromoCodeSchema = z.string().superRefine((value, context) => {
-  const trimmed = value.trim();
-  const length = [...trimmed].length;
+  const normalized = normalizedPromoCode(value);
+  const length = [...normalized].length;
   if (length < 1 || length > 128) {
     context.addIssue({
       code: 'custom',
       message: 'Promo code must contain 1 to 128 Unicode code points',
     });
   }
+  if (UNICODE_CONTROL_CHARACTER.test(normalized)) {
+    context.addIssue({
+      code: 'custom',
+      message: 'Promo code must not contain Unicode control characters',
+    });
+  }
 });
 
 export const NormalizedPromoCodeSchema = PromoCodeSchema.transform(
-  value => value.trim().toUpperCase(),
+  normalizedPromoCode,
 );
 
 export interface NormalizedPromoCode {
@@ -24,7 +36,7 @@ export function normalizePromoCode(value: string): NormalizedPromoCode {
   const display = PromoCodeSchema.parse(value).trim();
   return {
     display,
-    normalized: display.toUpperCase(),
+    normalized: normalizedPromoCode(display),
   };
 }
 

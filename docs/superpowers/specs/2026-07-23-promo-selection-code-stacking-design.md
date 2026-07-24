@@ -140,8 +140,10 @@ For matching and uniqueness, Core:
 1. removes leading and trailing Unicode whitespace;
 2. converts the result with Unicode Default Case Conversion to uppercase,
    without locale-sensitive rules or compatibility/fuzzy normalization;
-3. rejects the result unless it contains 1–128 Unicode code points; and
-4. stores a normalized lookup value separately from the merchant-facing
+3. rejects Unicode control characters (General Category `Cc`);
+4. rejects the normalized result unless it contains 1–128 Unicode code
+   points; and
+5. stores a normalized lookup value separately from the merchant-facing
    display value.
 
 For example, `GATEC15`, `gatec15`, and ` GATEC15 ` identify the same code.

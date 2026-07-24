@@ -219,6 +219,26 @@ describe('Promo program API', () => {
     expect(JSON.parse(stored?.config_json as string)).toEqual(updated);
   });
 
+  test.each([
+    ['a Unicode control character', 'GATE\u0000C15'],
+    ['more than 128 normalized code points', 'ß'.repeat(65)],
+  ])('rejects a coded Promo containing %s before persistence', async (_case, code) => {
+    await expectError(
+      await programRequest(
+        'POST',
+        '',
+        'sk_test_secret_credential_material_000000000001',
+        promo('invalid-code', { code }),
+      ),
+      400,
+      'CONTEXT_VALIDATION_FAILED',
+    );
+    expect(await createRepositories({ DB: env.DB }).programs.get(
+      SEEDED_MERCHANT_ID,
+      'invalid-code',
+    )).toBeNull();
+  });
+
   test('maps an authorized operator publication conflict to a non-retryable 409', async () => {
     const service = createProgramService(createRepositories({ DB: env.DB }));
     const owner = promo('operator-code-owner', { code: 'operator-only' });
