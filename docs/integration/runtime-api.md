@@ -13,7 +13,7 @@ The generated OpenAPI document is served at `GET /v1/openapi.json`. It is produc
 The current first-client runtime uses persisted, show-once merchant API credentials created by an authorized operator:
 
 - A `pk_…` **publishable credential** can read the published schema and call evaluation when it carries the required scope. It also has an exact-origin allowlist and per-minute rate limit.
-- An `sk_…` **secret credential** is required for customer reads/writes, Promo runtime routes, and redemption. Scoped routes require `schema:read`, `customers:write`, `evaluations:write`, or `redemptions:write` as applicable.
+- An `sk_…` **secret credential** is required for customer reads/writes and redemption. Scoped public runtime routes require `schema:read`, `customers:write`, `evaluations:write`, or `redemptions:write` as applicable.
 - Schema definition authoring/publication and immutable Promo revision publication are operator workflows behind the session-authenticated BFF, not public credential endpoints.
 - `GET /v1/health` and `GET /v1/openapi.json` are public. The two `/v1/test-*` routes only verify which access gate a token can pass.
 

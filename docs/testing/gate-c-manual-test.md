@@ -23,7 +23,7 @@ This is the canonical human procedure for Gate C. A Playwright-assisted run must
 - Do not put sensitive values in screenshots, shell history, a run report, an issue, Git, or Notion. Clear sensitive terminal output after using it.
 - Record only visible outcomes, safe HTTP status/error codes, correlation IDs, counts, names expressly allowed below, and redacted metadata.
 - A product deviation is recorded before continuing. Do not fix product code during the verification run.
-- A required `Fail`, `Blocked`, or `Not run` result keeps Gate C `In progress` and blocks Task 10.
+- A required `Fail`, `Blocked`, or `Not run` result keeps Gate C `In progress` and blocks Task 10 of the Production Operator Platform plan.
 - Chromium is the only browser in scope. A human may use a native platform passkey. A Playwright-assisted run uses a temporary Chromium CDP virtual authenticator; no Playwright files belong in the repository.
 
 ## Per-run test data
