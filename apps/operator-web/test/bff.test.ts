@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 
 import { ROLE_PERMISSIONS } from '../../identity/src/authorization/registry.js';
 import {
+  AuthorizedPromoCodeConflictError,
   ContextValidationError,
   ForbiddenError,
   NotFoundError,
@@ -854,13 +855,16 @@ describe('live session and tenant boundary', () => {
 });
 
 describe('correlation and safe downstream failures', () => {
-  test('maps a real operator publish conflict to a non-retryable 409', async () => {
+  test('maps a serialized Core RPC publish conflict to a non-retryable 409', async () => {
     const handler = await worker();
     const env = createEnv(admin);
-    const remoteConflict = new Error(
-      'PROMO_CODE_CONFLICT:{"conflictingProgramRef":"existing-promo"}',
-    );
-    remoteConflict.name = 'PromoCodeConflictError';
+    const localConflict = new AuthorizedPromoCodeConflictError('existing-promo');
+    const remoteConflict = structuredClone(localConflict);
+    expect(remoteConflict).toMatchObject({
+      name: 'Error',
+      message: 'PROMO_CODE_CONFLICT:{"conflictingProgramRef":"existing-promo"}',
+    });
+    expect(remoteConflict).not.toHaveProperty('conflictingProgramRef');
     env.CORE.publishProgram.mockRejectedValue(remoteConflict);
 
     const response = await handler?.fetch(request(

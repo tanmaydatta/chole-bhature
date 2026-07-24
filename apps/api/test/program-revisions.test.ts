@@ -18,6 +18,8 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
 import type { Env } from '../src/env.js';
 import { createRepositories } from '../src/repositories/d1-repositories.js';
+import type { Repositories } from '../src/repositories/types.js';
+import { createProgramService } from '../src/services/program-service.js';
 import { CoreOperatorService } from '../src/worker.js';
 import { PUBLISHABLE_TEST_TOKEN, SEEDED_MERCHANT_ID } from './test-credentials.js';
 
@@ -505,7 +507,6 @@ describe('immutable Promo revisions and lifecycle', () => {
       merchantId: SEEDED_MERCHANT_ID,
       externalRef: conflict.id,
       expectedDraftRevision: 1,
-      status: 'active',
       publishedAt,
       publishedBy: 'program-operator',
       codeClaim: {
@@ -880,7 +881,6 @@ describe('immutable Promo revisions and lifecycle', () => {
       merchantId: SEEDED_MERCHANT_ID,
       externalRef: first.id,
       expectedDraftRevision: 2,
-      status: 'active',
       publishedAt: '2026-07-20T12:00:00.000Z',
       publishedBy: 'program-operator',
     })).rejects.toMatchObject({ name: 'ProgramConflictError' });
@@ -945,7 +945,6 @@ describe('immutable Promo revisions and lifecycle', () => {
       merchantId: SEEDED_MERCHANT_ID,
       externalRef: first.id,
       expectedDraftRevision: 2,
-      status: 'active',
       publishedAt,
       publishedBy: 'program-operator',
       codeClaim: {
@@ -1243,6 +1242,108 @@ describe('immutable Promo revisions and lifecycle', () => {
       });
     }
   });
+
+  test.each([
+    { operation: 'pause', status: 'paused' },
+    { operation: 'end', status: 'ended' },
+  ] as const)(
+    'preserves a $operation injected before publication preflight',
+    async ({ status }) => {
+      const setupService = operatorService();
+      const externalRef = `${status}-publication-race`;
+      const first = codedDraftProgram(externalRef, `${status}-original-code`);
+      await setupService.createProgramDraft(operatorContext('programs:manage'), first);
+      await setupService.publishProgram(operatorContext('programs:publish'), externalRef);
+      const replacement = codedDraftProgram(externalRef, `${status}-replacement-code`, {
+        name: `${status} publication race replacement`,
+      });
+      await setupService.updateProgramDraft(
+        operatorContext('programs:manage'),
+        externalRef,
+        replacement,
+      );
+
+      const baseRepositories = createRepositories(env);
+      let injectedLifecycle = false;
+      async function injectLifecycle(programRef: string) {
+        if (injectedLifecycle) return;
+        injectedLifecycle = true;
+        await baseRepositories.programs.updateLifecycle({
+          merchantId: SEEDED_MERCHANT_ID,
+          externalRef: programRef,
+          expectedStatus: 'active',
+          status,
+          updatedAt: new Date().toISOString(),
+        });
+      }
+      const racingRepositories: Repositories = {
+        ...baseRepositories,
+        programs: {
+          ...baseRepositories.programs,
+          async getActive(merchantId, programRef) {
+            const stale = await baseRepositories.programs.getActive(merchantId, programRef);
+            await injectLifecycle(programRef);
+            return stale;
+          },
+          async publishDraftWithCodeClaim(input) {
+            await injectLifecycle(input.externalRef);
+            return baseRepositories.programs.publishDraftWithCodeClaim(input);
+          },
+        },
+      };
+      const service = createProgramService(racingRepositories);
+
+      await expect(service.publish(
+        SEEDED_MERCHANT_ID,
+        externalRef,
+        'program-operator',
+      )).resolves.toMatchObject({
+        programRef: externalRef,
+        status,
+        activeRevision: 2,
+      });
+      expect(injectedLifecycle).toBe(true);
+      await expect(baseRepositories.programs.getActive(
+        SEEDED_MERCHANT_ID,
+        externalRef,
+      )).resolves.toMatchObject({
+        program: { status },
+        activeRevision: 2,
+      });
+
+      const claims = await env.DB.prepare(`
+        SELECT active_revision AS activeRevision,
+          normalized_code AS normalizedCode, released_at AS releasedAt
+        FROM promo_code_claims
+        WHERE merchant_id = ?1 AND program_ref = ?2
+        ORDER BY active_revision
+      `).bind(SEEDED_MERCHANT_ID, externalRef).all<{
+        activeRevision: number;
+        normalizedCode: string;
+        releasedAt: string | null;
+      }>();
+      if (status === 'paused') {
+        expect(claims.results).toEqual([
+          {
+            activeRevision: 1,
+            normalizedCode: normalizePromoCode(first.code).normalized,
+            releasedAt: expect.any(String) as string,
+          },
+          {
+            activeRevision: 2,
+            normalizedCode: normalizePromoCode(replacement.code).normalized,
+            releasedAt: null,
+          },
+        ]);
+      } else {
+        expect(claims.results).toEqual([{
+          activeRevision: 1,
+          normalizedCode: normalizePromoCode(first.code).normalized,
+          releasedAt: expect.any(String) as string,
+        }]);
+      }
+    },
+  );
 
   test('requires publish permission for revision swaps and manage permission for lifecycle changes', async () => {
     const service = operatorService();

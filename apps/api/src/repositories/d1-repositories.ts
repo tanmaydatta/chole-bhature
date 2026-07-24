@@ -2519,12 +2519,11 @@ export function createRepositories(env: Env): Repositories {
         const merchantId = z.string().min(1).parse(input.merchantId);
         const externalRef = z.string().min(1).parse(input.externalRef);
         const expectedDraftRevision = PositiveIntegerSchema.parse(input.expectedDraftRevision);
-        const status = ProgramStatusSchema.parse(input.status);
-        if (status === 'draft') throw new ProgramConflictError('Draft is not a published status');
         const publishedAt = DateTimeSchema.parse(input.publishedAt);
         const publishedBy = z.string().min(1).parse(input.publishedBy);
         const current = await env.DB.prepare(`
           SELECT logical.id AS programId, logical.updated_at AS updatedAt,
+            logical.status AS lifecycleStatus,
             logical.active_revision AS activeRevision,
             draft.config_json AS draftConfigJson,
             active.config_json AS activeConfigJson,
@@ -2557,6 +2556,7 @@ export function createRepositories(env: Env): Repositories {
         `).bind(merchantId, externalRef, expectedDraftRevision).first<{
           programId: string;
           updatedAt: string;
+          lifecycleStatus: string;
           activeRevision: number | null;
           draftConfigJson: string;
           activeConfigJson: string | null;
@@ -2571,6 +2571,18 @@ export function createRepositories(env: Env): Repositories {
         const active = current.activeConfigJson === null
           ? null
           : parseJson(current.activeConfigJson, PromoProgramSchema);
+        const lifecycleStatus = ProgramStatusSchema.parse(current.lifecycleStatus);
+        const publicationDate = publishedAt.slice(0, 10);
+        const status = lifecycleStatus === 'ended'
+          || (active?.endDate !== undefined && active.endDate < publicationDate)
+          ? 'ended'
+          : lifecycleStatus === 'paused'
+          ? 'paused'
+          : draft.endDate !== undefined && draft.endDate < publicationDate
+          ? 'ended'
+          : draft.startDate !== undefined && draft.startDate > publicationDate
+          ? 'scheduled'
+          : 'active';
         const codeClaim = input.codeClaim;
         if (draft.autoApply) {
           if (codeClaim !== undefined) {

@@ -1592,7 +1592,6 @@ describe('D1 repositories', () => {
         merchantId,
         externalRef: draft.id,
         expectedDraftRevision: 1,
-        status: 'active',
         publishedAt: createdAt,
         publishedBy: 'repository-test',
         codeClaim: {
@@ -1675,12 +1674,14 @@ describe('D1 repositories', () => {
       });
       if (draft.autoApply) throw new Error('Expected a coded repository fixture');
       const code = normalizePromoCode(draft.code);
+      const publishedAt = status === 'active'
+        ? `${startDate}T12:00:00.000Z`
+        : createdAt;
       return repositories.programs.publishDraftWithCodeClaim({
         merchantId: 'merchant-a',
         externalRef: draft.id,
         expectedDraftRevision: 1,
-        status,
-        publishedAt: createdAt,
+        publishedAt,
         publishedBy: 'repository-test',
         codeClaim: {
           merchantId: 'merchant-a',
@@ -1691,7 +1692,7 @@ describe('D1 repositories', () => {
           normalizedCode: code.normalized,
           startsAt: startDate,
           endsAt: endDate,
-          claimedAt: createdAt,
+          claimedAt: publishedAt,
         },
       });
     }

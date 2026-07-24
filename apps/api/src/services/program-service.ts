@@ -318,18 +318,7 @@ export function createProgramService(repositories: Repositories) {
         throw new ProgramConflictError('There is no draft revision to publish');
       }
       await validateForPublishedSchema(merchantId, draft.program);
-      const previous = await repositories.programs.getActive(merchantId, externalRef);
       const now = new Date();
-      const priorStatus = previous === null
-        ? undefined
-        : effectiveProgramStatus(previous.program, now);
-      const priorNaturallyEnded = previous?.program.endDate !== undefined
-        && previous.program.endDate < now.toISOString().slice(0, 10);
-      const status = priorNaturallyEnded || priorStatus === 'ended'
-        ? 'ended'
-        : priorStatus === 'paused'
-        ? priorStatus
-        : effectiveStatus(draft.program);
       const publishedAt = now.toISOString();
       const code = draft.program.autoApply
         ? undefined
@@ -338,7 +327,6 @@ export function createProgramService(repositories: Repositories) {
         merchantId,
         externalRef,
         expectedDraftRevision: draft.draftRevision,
-        status,
         publishedAt,
         publishedBy: actorUserId,
         ...(code === undefined

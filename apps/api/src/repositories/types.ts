@@ -251,7 +251,6 @@ export interface PublishProgramInput {
   merchantId: string;
   externalRef: string;
   expectedDraftRevision: number;
-  status: Exclude<ProgramStatus, 'draft'>;
   publishedAt: string;
   publishedBy: string;
   codeClaim?: PromoCodeClaimInput;

@@ -108,7 +108,10 @@ function matchedRoute(pathname: string, method: string): {
 
 function remotePromoCodeConflictRef(name: string, message: string): string | null {
   const prefix = 'PROMO_CODE_CONFLICT:';
-  if (name !== 'PromoCodeConflictError' || !message.startsWith(prefix)) return null;
+  if (
+    (name !== 'Error' && name !== 'PromoCodeConflictError')
+    || !message.startsWith(prefix)
+  ) return null;
   try {
     const payload = JSON.parse(message.slice(prefix.length)) as unknown;
     if (
