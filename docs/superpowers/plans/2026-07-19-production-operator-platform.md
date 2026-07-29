@@ -1,6 +1,9 @@
 # Production Operator Platform and Integration Harness Implementation Plan
 
-**Status:** In progress — Tasks 1–9 and Gates A/B are complete. Gate C staging verification has passed access roles, schema, customer, and Promo lifecycle checks; PR #8 is merged and awaits Operator Web redeployment plus the remaining free-shipping, tenant-isolation, evaluation, redemption, retry, and exhaustion checks before Task 10.
+**Status:** In progress — Tasks 1–9 and Gates A/B/C are complete. The
+clean-break Promo correction is merged, migrated, deployed, and fully verified
+in staging. The Evaluation Playground remains deferred until the approved
+Promo pricing/cap correction is complete.
 
 **Notion parent:** [Plans](https://app.notion.com/p/Plans-390e5c7c2b8e8165b7f7d77392eab088)
 
@@ -243,19 +246,36 @@
 - [x] Run dashboard and workspace tests/build/lint; expect exit 0.
 - [x] Commit with `git commit -m "feat: wire live schema customer and promo operations"`.
 
-**Gate C review: in progress.** Automated verification is green. Staging
+**Gate C review: complete.** Automated verification is green. Staging
 manually passed root/client access, invitation delivery and acceptance,
-Admin/Operator/Viewer authorization, schema, exact-customer concurrency, and
-Promo revision/lifecycle flows. The invitation failure is resolved and all
-three staging Workers persist logs at 100% sampling. PR #8 is merged; Operator
-Web redeployment and the remaining free-shipping, tenant-isolation, evaluation,
-redemption, retry, and exhaustion checks remain before Task 10.
+Admin/Operator/Viewer authorization, schema, exact-customer concurrency, Promo
+revision/lifecycle, no-budget free shipping, credentials, evaluation,
+redemption idempotency/conflict, and per-customer exhaustion. The later
+clean-break Promo-selection correction was merged through PR #10, protected
+migration `0006` and the API/Operator Web deployments passed, and the fresh
+manual run passed automatic selection, `SELECT-CODE-01` through
+`SELECT-CODE-04`, `REDEEM-BUNDLE-01` through `REDEEM-BUNDLE-03`, and
+`TENANT-API-01`. Automated concurrency coverage is green. `OBS-API-01` also
+passed: the exact client-visible correlation ID
+`2f6dffe6-d497-43f1-a088-f29df0a3f015` located the matching sanitized
+Cloudflare failure event for the expected redemption conflict, with no secret
+or request payload. Gate C is closed.
 
 Gate C handoff: [developer setup](https://app.notion.com/p/3a4e5c7c2b8e8197b2daf950431552b3) · [non-technical tester guide](https://app.notion.com/p/3a4e5c7c2b8e81a8949cff0b321b04fc) · [stopped run findings](https://app.notion.com/p/3a4e5c7c2b8e81f28b7dd9455e94b71a).
 
 ---
 
 ## Delivery Gate D — Integration diagnostics
+
+Before Task 10, complete a focused design/plan and implementation for
+`GAP-030` and `GAP-031`: authoritative merchandise price breakdown from one
+shared pure calculator, plus an optional exact-currency maximum monetary amount
+for percentage discounts. The same calculated amounts must drive evaluation
+output, budget/cap checks, signed decision evidence, redemption, and
+audit/reversal evidence. Do not claim tax, shipping, or final-payment totals;
+free-shipping monetary savings wait for the authoritative cost/reservation work
+in `GAP-016`. The broader Voucherify-parity list in `GAP-032` remains deferred
+until a client requires it.
 
 ### Task 10: Build the Evaluation Playground
 

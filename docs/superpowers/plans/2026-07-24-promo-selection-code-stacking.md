@@ -8,9 +8,10 @@
 
 **Tech Stack:** TypeScript, Zod, Hono, Cloudflare Workers, D1/Drizzle, React, React Router, Vitest, Testing Library, pnpm.
 
-**Status:** In progress — Tasks 1–9 and Task 10 review remediation implemented,
-verified, independently reviewed, and merged through PR #10; owner-run staging
-evidence pending
+**Status:** Done — Tasks 1–9 and Task 10 review remediation are implemented,
+verified, independently reviewed, and merged through PR #10. Migration `0006`,
+API, and Operator Web are deployed to staging, and every mandatory manual Gate
+C case passed, including `OBS-API-01`.
 
 **Notion mirror:** https://app.notion.com/p/Promo-Selection-Code-Stacking-and-Atomic-Redemption-Implementation-Plan-3a7e5c7c2b8e811791dee0d21803c8e2
 
@@ -1708,7 +1709,7 @@ Use `superpowers:requesting-code-review`. Review specifically for:
 
 Use `superpowers:receiving-code-review` for actionable feedback, then repeat Steps 1–4. Do not mark this plan done on the strength of an earlier run.
 
-- [ ] **Step 9: Run the documented manual staging guide from merged `dev`**
+- [x] **Step 9: Run the documented manual staging guide from merged `dev`**
 
 The account owner checks out the exact merged `dev` commit, generates one new
 `RUN_SUFFIX` for the complete staging run, and follows the Gate C manual's
@@ -1724,3 +1725,40 @@ suffix or refresh only a subset of the references. Record:
 - correlation ID;
 - deployed Worker version IDs; and
 - any new gap with severity and follow-up owner.
+
+Progress recorded 2026-07-27:
+
+- protected Product-D1 prechecks, Time Travel bookmark capture, migration
+  `0006`, API deployment, Operator Web deployment, and pre/post health checks
+  passed;
+- the clean-break OpenAPI shape passed;
+- fresh-tenant automatic zero-or-one priority selection passed, including
+  failover and the no-winner case;
+- `SELECT-CODE-01` passed normalization, duplicate collapse, invalid-code
+  isolation, priority ordering, and automatic suppression; and
+- `SELECT-CODE-02` passed mixed valid/invalid stackable selection: both valid
+  Promos remained selected in priority order while the missing code retained
+  its input-aligned `INVALID_PROMO_CODE` diagnostic; and
+- `SELECT-CODE-03` passed a single non-stackable code with exactly one
+  qualified decision and one matching selected diagnostic; and
+- `SELECT-CODE-04` passed atomic rejection of a stackable/non-stackable
+  combination while preserving the independent invalid-code diagnostic; and
+- `REDEEM-BUNDLE-01` passed atomic two-Promo commit, deterministic entry order,
+  and exact canonical idempotent retry; and
+- `REDEEM-BUNDLE-02` passed changed-order idempotency-key conflict with a
+  matching safe correlation ID; and
+- `REDEEM-BUNDLE-03` passed atomic rollback: an exhausted second entry rejected
+  the complete bundle, returned no partial entries, and left the first entry's
+  budget available; and
+- `TENANT-API-01` passed submitted-code tenant isolation: Beta received an
+  opaque invalid-code diagnostic with no Alpha Promo reference, while Alpha
+  selected its own qualified Promo; and
+- automated concurrency coverage remained green; and
+- `OBS-API-01` passed: the exact client-visible correlation ID
+  `2f6dffe6-d497-43f1-a088-f29df0a3f015` located the matching sanitized
+  Cloudflare `api_request_failed` event for the expected
+  `POST /v1/redemptions` `VERSION_CONFLICT`, with no secret or request payload.
+
+The canonical manual procedure, dated staging report, follow-up register,
+current-state page, this plan, and their Notion mirrors were reconciled with
+the completed Gate C result.

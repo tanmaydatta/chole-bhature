@@ -1,9 +1,9 @@
 # Product Current State and Roadmap
 
-**Updated:** 2026-07-24
+**Updated:** 2026-07-29
 
-**Status:** Active — clean-break correction merged through PR #10; owner-run
-staging cutover and manual evidence pending
+**Status:** Active — Gate C complete; preparing the approved Promo price
+breakdown and optional percentage-cap correction
 
 **Notion mirror:** https://app.notion.com/p/Product-Current-State-and-Roadmap-3a6e5c7c2b8e81f6b412c45a2bc7b344
 
@@ -23,14 +23,15 @@ deferred issue remains in the
 
 | Question | Current answer |
 |---|---|
-| Overall phase | Production Operator Platform, Delivery Gate C |
-| Current activity | Have the owner run the protected cutover from merged `dev` commit `1ebc5fe`, then manually verify the clean-break Promo selection and atomic bundle correction |
-| Current product-code baseline | PR #10 merge commit `1ebc5fe` on `dev` |
-| Local feature state | Promo-selection plan Tasks 1–9 and Task 10 review remediation are implemented, verified, independently reviewed, and merged; protected rollout tooling, migration prechecks, compatibility proof, and recovery guidance are prepared; staging evidence remains open |
-| Current deployment gap | The new migration/API/operator build is not deployed; staging still runs the historical singular selection/redemption contract |
-| Current blocker | Owner-controlled staging deployment and the 12 documented selection/bundle/tenant/log cases have not run |
-| Gate C finish line | Execute the protected owner-run cutover one command at a time from exact merged `dev` commit `1ebc5fe`, pass all manual cases, and close remaining tenant/security evidence |
-| Next plan work | Close Gate C, then write the approved free-shipping financial-authority implementation plan |
+| Overall phase | Post-Gate-C client-readiness corrections |
+| Current activity | Design and plan `GAP-030` and `GAP-031` |
+| Current repository baseline | PR #11 merge commit `6de1d80` on `dev`; it follows the PR #10 product-code baseline with documentation-only status reconciliation |
+| Current product-code baseline | PR #10 merge commit `1ebc5fe` |
+| Local feature state | Promo-selection clean break is implemented, verified, independently reviewed, merged, migrated, deployed, and fully staging-verified |
+| Current deployment gap | None for the Task 10 correction; migration `0006`, API, and Operator Web staging rollout completed and health checks passed |
+| Current blocker | None |
+| Gate C finish line | Complete — all mandatory clean-break selection, redemption, tenant-isolation, concurrency, and observability cases passed |
+| Next plan work | Implement the approved Promo price breakdown and optional percentage cap; complete the approved free-shipping financial-authority plan/work; then resume the Evaluation Playground |
 
 ## Source-of-truth map
 
@@ -45,7 +46,7 @@ Use this page for current sequencing and status. Follow its links for detail:
 | Repeatable manual procedure | [Repository](../testing/gate-c-manual-test.md) · [Notion](https://app.notion.com/p/3a3e5c7c2b8e8155aa10c869b97b7e5a) |
 | Active delivery plan | [Repository](../superpowers/plans/2026-07-19-production-operator-platform.md) · [Notion](https://app.notion.com/p/Production-Operator-Platform-and-Integration-Harness-Implementation-Plan-3a2e5c7c2b8e8191ba1ff65dd30752b3) |
 | Approved Promo selection and atomic-redemption design | [Repository](../superpowers/specs/2026-07-23-promo-selection-code-stacking-design.md) · [Notion](https://app.notion.com/p/Promo-Selection-Code-Stacking-and-Atomic-Redemption-Design-Spec-3a6e5c7c2b8e81549b6adc7f3d096455) |
-| Next implementation plan | [Repository](../superpowers/plans/2026-07-24-promo-selection-code-stacking.md) · [Notion](https://app.notion.com/p/Promo-Selection-Code-Stacking-and-Atomic-Redemption-Implementation-Plan-3a7e5c7c2b8e811791dee0d21803c8e2) |
+| Current correction implementation plan | [Repository](../superpowers/plans/2026-07-24-promo-selection-code-stacking.md) · [Notion](https://app.notion.com/p/Promo-Selection-Code-Stacking-and-Atomic-Redemption-Implementation-Plan-3a7e5c7c2b8e811791dee0d21803c8e2) |
 | Approved free-shipping financial design | [Repository](../superpowers/specs/2026-07-23-free-shipping-budget-authority-design.md) · [Notion](https://app.notion.com/p/Free-Shipping-Budget-Authority-Reservations-and-Reversals-Design-Spec-3a6e5c7c2b8e81f49c6ecbf878d7d48c) |
 | All implementation plans and their statuses | [Notion Plans index](https://app.notion.com/p/Plans-390e5c7c2b8e8165b7f7d77392eab088) |
 
@@ -92,8 +93,9 @@ test observations to make the current state look cleaner.
   accepts only canonical, unique Cloudflare version UUIDs. The runner exposes
   neither D1 restore nor Worker rollback. Normal recovery is containment plus
   a forward fix; the canonical guide also records the tightly controlled
-  exceptional Time Travel restore sequence. These operations are prepared,
-  not executed.
+  exceptional Time Travel restore sequence. The owner used this boundary to
+  complete the protected prechecks, migration, and staging cutover; no restore
+  or rollback was needed.
 
 ## What is verified in staging
 
@@ -118,52 +120,88 @@ manually:
   conflict, second redemption, and per-customer exhaustion; and
 - manual-code draft persistence plus missing, incorrect, and correct code
   evaluation behavior.
+- protected Product-D1 prechecks, migration `0006`, API deployment, Operator
+  deployment, and post-deployment health;
+- fresh-tenant automatic zero-or-one selection, including deterministic
+  Priority failover and an empty result when no automatic Promo is available;
+  and
+- coded selection normalization/trim/case handling, duplicate collapse,
+  invalid-code diagnostics, deterministic decision order, and suppression of
+  automatic Promos in coded mode (`SELECT-CODE-01`); and
+- mixed valid/invalid stackable coded selection, including input-aligned
+  diagnostics that isolate the invalid code without removing either valid
+  priority-ordered decision (`SELECT-CODE-02`); and
+- single non-stackable coded selection, including one qualified decision and
+  one matching selected diagnostic (`SELECT-CODE-03`); and
+- atomic rejection of an incompatible multi-code combination while preserving
+  independent invalid-code diagnostics (`SELECT-CODE-04`).
+- atomic two-Promo redemption with deterministic VIP20 → GATEC15 entry order,
+  plus an identical idempotent retry returning the same committed redemption
+  (`REDEEM-BUNDLE-01`).
+- changed-order reuse of the committed bundle's idempotency key returning a
+  non-retryable `VERSION_CONFLICT` with matching header/body correlation IDs
+  (`REDEEM-BUNDLE-02`).
+- atomic rollback of an earlier valid bundle entry when a later entry's budget
+  was exhausted, followed by proof that the first entry's budget remained
+  available (`REDEEM-BUNDLE-03`); and
+- submitted-code tenant isolation: Beta received an opaque invalid-code result
+  for an Alpha-only code without an Alpha Promo reference, while Alpha selected
+  its own qualified Promo (`TENANT-API-01`); and
+- correlation-log discoverability: the client-visible correlation ID
+  `2f6dffe6-d497-43f1-a088-f29df0a3f015` located the matching sanitized
+  `api_request_failed` event for the expected `POST /v1/redemptions`
+  `VERSION_CONFLICT`, including safe merchant/credential identifiers and no
+  secret or request payload (`OBS-API-01`).
 
 ## Current work
 
 Staging proved the existing credential, schema, customer, Promo lifecycle,
 redemption-idempotency, and cap behavior. It also exposed a deeper product
-contract problem in the deployed build: unrelated Promo outcomes, ambiguous
-automatic stacking, and singular child selection at redemption. This work is
-the next clean-break runtime correction before any client commerce integration
-is allowed to depend on that old boundary.
+contract problem in the historical build: unrelated Promo outcomes, ambiguous
+automatic stacking, and singular child selection at redemption. The
+clean-break correction is now migrated, deployed, and fully verified in
+staging.
 
 The approved behavior is recorded in the
 [Promo Selection, Code Stacking, and Atomic Redemption design](../superpowers/specs/2026-07-23-promo-selection-code-stacking-design.md).
 Its
 [plan](../superpowers/plans/2026-07-24-promo-selection-code-stacking.md)
-is `In progress`: Tasks 1–9 and Task 10 review remediation are implemented and
-verified locally. The public request uses `codes[]`; automatic evaluation returns zero
-or one private winner; coded evaluation returns submitted-code diagnostics;
-compatible coded Promos can combine; the signed ordered set commits through a
-provider-neutral atomic coordinator; D1 is its initial adapter; and sanitized
-failure logs carry the client-visible correlation ID.
+is `Done`: Tasks 1–9 and Task 10 review remediation are implemented, verified
+locally and in staging, merged, migrated, and deployed. The public request
+uses `codes[]`; automatic evaluation returns zero or one private winner; coded
+evaluation returns submitted-code diagnostics; compatible coded Promos can
+combine; the signed ordered set commits through a provider-neutral atomic
+coordinator; D1 is its initial adapter; and sanitized failure logs carry the
+client-visible correlation ID.
 
-Task 10 review remediation has added a migration-equivalent count-only legacy
+Task 10 review remediation added a migration-equivalent count-only legacy
 redemption guard, a proof that pre-`0006` column-list inserts remain accepted
 but bypass the new ledgers, and the
 [protected staging cutover/recovery guide](../testing/task10-staging-cutover.md).
 Every protected remote action uses generated mode-`0600` configuration,
 authenticates and confirms Product D1 without printing IDs, and emits only
-allowlisted summaries. The design is not marked implemented because the
-owner-controlled staging cutover and manual evidence remain incomplete.
+allowlisted summaries. The owner executed the protected prechecks, captured the
+pre-migration Time Travel bookmark, applied migration `0006`, deployed API and
+Operator Web, and passed pre/post-deployment health checks. Identity was not
+part of this cutover. The complete mandatory manual evidence set passed.
 
 The immediate sequence is:
 
 1. Completed: PR #10 merged the locally verified Task 10 rollout candidate
-   into `dev` as commit `1ebc5fe`; no direct push to `dev` was used.
-2. Confirm exact merged `dev` commit `1ebc5fe` and the protected-runner
-   revision before staging.
-3. The account owner follows the protected cutover guide one command at a
-   time: continuous quiet window, Product-D1 confirmation/prechecks, exact
-   pre-migration Time Travel bookmark, migration, pre-deployment health, API
-   deployment, and Operator deployment. Identity is not part of this cutover.
-4. Repeat the documented automatic, coded, stacking, bundle-idempotency, and
-   concurrency cases with fresh references.
-5. Record the staging evidence and complete the remaining tenant-isolation and
-   security closeout checks.
-6. Reconcile the staging report, follow-up register, active plans, this page,
-   and their Notion mirrors with the final Gate C result.
+   into `dev` as product commit `1ebc5fe`; no direct push to `dev` was used.
+2. Completed: the owner ran the protected Product-D1 prechecks, captured the
+   recovery bookmark, applied migration `0006`, deployed API and Operator Web,
+   and passed health checks.
+3. Completed: fresh-tenant automatic selection, `SELECT-CODE-01` through
+   `SELECT-CODE-04`, and `REDEEM-BUNDLE-01` through `REDEEM-BUNDLE-03`
+   passed.
+4. Completed: `TENANT-API-01` proved submitted-code tenant isolation with
+   distinct Alpha and Beta credentials.
+5. Completed: automated concurrency coverage remained green.
+6. Completed: `OBS-API-01` located the expected sanitized
+   `VERSION_CONFLICT` event by the exact client-visible correlation ID.
+7. Completed: the final Gate C result was reconciled across the staging report,
+   follow-up register, active plans, this page, and their Notion mirrors.
 
 No assistant-run Cloudflare mutation is permitted. The assistant supplies one
 command at a time; the account owner runs every deployment, migration, secret,
@@ -172,15 +210,47 @@ only until separately approved; no production rollout is implied.
 
 ## What happens after Gate C
 
-### 1. Close the current verification milestone
+### 1. Gate C verification milestone — complete
 
-- Record the final pass/fail evidence without secrets or personal data.
-- Mark the no-budget free-shipping editor gap Done if the staging retest
-  passes.
-- Resolve or explicitly defer any new finding.
-- Update the Production Operator Platform and staging-activation status.
+- The final evidence was recorded without secrets or personal data.
+- The no-budget free-shipping editor gap is Done.
+- Every finding is resolved or explicitly tracked in the follow-up register.
+- The Production Operator Platform and staging-activation status are
+  reconciled.
 
-### 2. Turn the approved financial design into an implementation plan
+### 2. Add authoritative Promo pricing before the Playground
+
+The approved minimal Voucherify-parity correction is deliberately smaller than
+building a broad campaign-management clone:
+
+- return the original merchandise subtotal, exact discount contributed by
+  each selected Promo/reward rule, total discount, discounted subtotal, and
+  line identity for line-item allocations;
+- extract one pure pricing calculator and use its exact result for evaluation
+  output, budget/cap checks, the signed decision snapshot, redemption, and
+  audit/reversal evidence;
+- use integer minor units and document deterministic ordering, capping, and
+  rounding;
+- add an optional exact-currency maximum monetary discount to percentage order
+  and line-item rewards; and
+- keep the response explicitly scoped to merchandise pricing rather than
+  claiming a final tax/shipping/payment total.
+
+Free shipping must not report a fictional monetary saving. Its price breakdown
+is added only when the authoritative shipping quote and reservation flow below
+exists.
+
+Bulk unique-code pools, new-price discounts, free products, BOGO/bundles,
+dynamic formulas, reusable catalog collections, recurring schedules, and
+richer stacking policies are recorded as deliberately deferred in `GAP-032`.
+They remain extension points and become implementation work only when a client
+case justifies them.
+
+Create a focused design and implementation plan for `GAP-030` and `GAP-031`
+after Gate C. Implement and verify that plan before resuming the Evaluation
+Playground.
+
+### 3. Turn the approved free-shipping financial design into an implementation plan
 
 Create a separate plan under the Notion Plans page for the approved
 free-shipping financial authority. The implementation must preserve:
@@ -208,10 +278,9 @@ future event-triggered incentives remain planned work.
 This plan is created after Gate C so the current verification result remains
 clear. Its execution does not silently expand Gate C.
 
-### 3. Continue the active Production Operator Platform plan
+### 4. Continue the active Production Operator Platform plan
 
-Unless the financial-authority plan exposes a prerequisite that blocks the
-existing plan, continue in this order:
+After the approved Promo financial corrections above, continue in this order:
 
 1. Task 10 — Evaluation Playground.
 2. Task 11 — public-contract CLI simulator.
@@ -220,7 +289,7 @@ existing plan, continue in this order:
    documentation.
 5. Final acceptance and repository/Notion status synchronization.
 
-### 4. Choose the first commerce integration
+### 5. Choose the first commerce integration
 
 Only after the shared platform reaches its acceptance gate—or a real client
 creates a justified earlier constraint—choose Shopify or a manual/custom
@@ -251,7 +320,12 @@ must be updated whenever a finding changes state. It currently preserves:
 - custom role composition;
 - integration-specific incurred-cost mapping; and
 - staging verification that the now-implemented sanitized structured public-API
-  error event is locatable by the correlation ID returned to a client.
+  error event is locatable by the correlation ID returned to a client;
+- authoritative client-facing Promo price calculation and per-Promo/line
+  allocation;
+- optional maximum monetary caps for percentage rewards; and
+- deliberately deferred Voucherify breadth rather than speculative expansion
+  before a first-client requirement exists.
 
 Nothing in those categories should be considered forgotten merely because it
 does not block the current Gate C test.
