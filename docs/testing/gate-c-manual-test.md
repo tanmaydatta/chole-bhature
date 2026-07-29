@@ -1,6 +1,8 @@
 # Gate C manual end-to-end test
 
-**Status:** Ready to run after the owner-controlled local or staging deployment
+**Status:** Done — the owner-controlled staging run passed all mandatory
+clean-break Promo selection, atomic-redemption, tenant-isolation, and
+observability cases
 
 **Scope:** Chromium against the real local Operator Web, Identity, and Core Workers with fresh local Auth and Product D1 databases, followed by the same public Core selection/redemption calls against owner-approved staging.
 
@@ -105,15 +107,18 @@ or staging URL and a newly created disposable secret credential with
 `evaluations:write` and `redemptions:write`. Load them without printing them:
 
 ```sh
-read -r -p 'Approved Core URL: ' GATE_C_API_URL
-read -r -s -p 'Disposable scoped API token: ' GATE_C_API_TOKEN
+printf 'Approved Core URL: '
+IFS= read -r GATE_C_API_URL
+printf 'Disposable scoped API token: '
+IFS= read -r -s GATE_C_API_TOKEN
 printf '\n'
 export GATE_C_API_URL GATE_C_API_TOKEN
 ```
 
-Never paste the token into this guide or a report. Every `curl --include`
-command below prints the safe response headers and body; record
-`x-correlation-id`, then redact the terminal before moving to the next case.
+Never paste the token into this guide or a report. Every standalone JSON
+`curl` below sends safe response headers to stderr with
+`--dump-header /dev/stderr` and pipes only the response body through `jq`.
+Record `x-correlation-id`, then redact the terminal before moving to the next case.
 Use the complete derived set above without substitutions. The only values
 copied later are fresh evaluation/redemption IDs returned by this run. Do not
 reuse any example value or suffix from another run.
@@ -491,11 +496,12 @@ the publication review says Automatic and does not show Code or Stackable.
 **Exact action:**
 
 ```sh
-curl --silent --show-error --include --request POST \
+curl --silent --show-error --dump-header /dev/stderr --request POST \
   "$GATE_C_API_URL/v1/evaluate" \
   --header "Authorization: Bearer $GATE_C_API_TOKEN" \
   --header 'Content-Type: application/json' \
-  --data "{\"customerRef\":\"$GATE_C_CUSTOMER_REF\",\"cart\":{\"currency\":\"GBP\",\"subtotal\":12500,\"items\":[]},\"context\":{\"channel\":\"web\"}}"
+  --data "{\"customerRef\":\"$GATE_C_CUSTOMER_REF\",\"cart\":{\"currency\":\"GBP\",\"subtotal\":12500,\"items\":[]},\"context\":{\"channel\":\"web\"}}" |
+  jq .
 ```
 
 **Expected HTTP/body:** `200`; `decisions` contains exactly one qualified
@@ -546,11 +552,12 @@ automatic Promos present to prove coded mode suppresses them.
 **Exact action:**
 
 ```sh
-curl --silent --show-error --include --request POST \
+curl --silent --show-error --dump-header /dev/stderr --request POST \
   "$GATE_C_API_URL/v1/evaluate" \
   --header "Authorization: Bearer $GATE_C_API_TOKEN" \
   --header 'Content-Type: application/json' \
-  --data "{\"codes\":[\" $GATE_C_CODE_15_LOWER \",\"$GATE_C_WRONG_CODE\",\"$GATE_C_CODE_15\",\"$GATE_C_VIP_20_CODE_LOWER\"],\"customerRef\":\"$GATE_C_CUSTOMER_REF\",\"cart\":{\"currency\":\"GBP\",\"subtotal\":12500,\"items\":[]},\"context\":{\"channel\":\"web\"}}"
+  --data "{\"codes\":[\" $GATE_C_CODE_15_LOWER \",\"$GATE_C_WRONG_CODE\",\"$GATE_C_CODE_15\",\"$GATE_C_VIP_20_CODE_LOWER\"],\"customerRef\":\"$GATE_C_CUSTOMER_REF\",\"cart\":{\"currency\":\"GBP\",\"subtotal\":12500,\"items\":[]},\"context\":{\"channel\":\"web\"}}" |
+  jq .
 ```
 
 **Expected HTTP/body:** `200`; three `codeResults` in first-distinct order. The
@@ -575,11 +582,12 @@ stackable.
 **Exact action:**
 
 ```sh
-curl --silent --show-error --include --request POST \
+curl --silent --show-error --dump-header /dev/stderr --request POST \
   "$GATE_C_API_URL/v1/evaluate" \
   --header "Authorization: Bearer $GATE_C_API_TOKEN" \
   --header 'Content-Type: application/json' \
-  --data "{\"codes\":[\"$GATE_C_CODE_15\",\"$GATE_C_MISSING_CODE\",\"$GATE_C_VIP_20_CODE\"],\"customerRef\":\"$GATE_C_CUSTOMER_REF\",\"cart\":{\"currency\":\"GBP\",\"subtotal\":12500,\"items\":[]},\"context\":{\"channel\":\"web\"}}"
+  --data "{\"codes\":[\"$GATE_C_CODE_15\",\"$GATE_C_MISSING_CODE\",\"$GATE_C_VIP_20_CODE\"],\"customerRef\":\"$GATE_C_CUSTOMER_REF\",\"cart\":{\"currency\":\"GBP\",\"subtotal\":12500,\"items\":[]},\"context\":{\"channel\":\"web\"}}" |
+  jq .
 ```
 
 **Expected HTTP/body:** `200`; `decisions` contains both valid Promos in
@@ -600,11 +608,12 @@ fixed request.
 **Exact action:**
 
 ```sh
-curl --silent --show-error --include --request POST \
+curl --silent --show-error --dump-header /dev/stderr --request POST \
   "$GATE_C_API_URL/v1/evaluate" \
   --header "Authorization: Bearer $GATE_C_API_TOKEN" \
   --header 'Content-Type: application/json' \
-  --data "{\"codes\":[\"$GATE_C_EXCLUSIVE_CODE\"],\"customerRef\":\"$GATE_C_CUSTOMER_REF\",\"cart\":{\"currency\":\"GBP\",\"subtotal\":12500,\"items\":[]},\"context\":{\"channel\":\"web\"}}"
+  --data "{\"codes\":[\"$GATE_C_EXCLUSIVE_CODE\"],\"customerRef\":\"$GATE_C_CUSTOMER_REF\",\"cart\":{\"currency\":\"GBP\",\"subtotal\":12500,\"items\":[]},\"context\":{\"channel\":\"web\"}}" |
+  jq .
 ```
 
 **Expected HTTP/body:** `200`; one qualified decision whose `programRef` equals
@@ -622,11 +631,12 @@ non-stackable.
 **Exact action:**
 
 ```sh
-curl --silent --show-error --include --request POST \
+curl --silent --show-error --dump-header /dev/stderr --request POST \
   "$GATE_C_API_URL/v1/evaluate" \
   --header "Authorization: Bearer $GATE_C_API_TOKEN" \
   --header 'Content-Type: application/json' \
-  --data "{\"codes\":[\"$GATE_C_CODE_15\",\"$GATE_C_MISSING_CODE\",\"$GATE_C_EXCLUSIVE_CODE\"],\"customerRef\":\"$GATE_C_CUSTOMER_REF\",\"cart\":{\"currency\":\"GBP\",\"subtotal\":12500,\"items\":[]},\"context\":{\"channel\":\"web\"}}"
+  --data "{\"codes\":[\"$GATE_C_CODE_15\",\"$GATE_C_MISSING_CODE\",\"$GATE_C_EXCLUSIVE_CODE\"],\"customerRef\":\"$GATE_C_CUSTOMER_REF\",\"cart\":{\"currency\":\"GBP\",\"subtotal\":12500,\"items\":[]},\"context\":{\"channel\":\"web\"}}" |
+  jq .
 ```
 
 **Expected HTTP/body:** `200`; `decisions` is exactly `[]`. The
@@ -650,17 +660,19 @@ EVALUATION_ID='<evaluation-id-from-fresh-SELECT-CODE-02>'
 ORDER_REF="$GATE_C_BUNDLE_ORDER_REF"
 IDEMPOTENCY_KEY="$GATE_C_BUNDLE_KEY"
 
-curl --silent --show-error --include --request POST \
+curl --silent --show-error --dump-header /dev/stderr --request POST \
   "$GATE_C_API_URL/v1/redemptions" \
   --header "Authorization: Bearer $GATE_C_API_TOKEN" \
   --header 'Content-Type: application/json' \
-  --data "{\"evaluationId\":\"$EVALUATION_ID\",\"externalOrderRef\":\"$ORDER_REF\",\"idempotencyKey\":\"$IDEMPOTENCY_KEY\"}"
+  --data "{\"evaluationId\":\"$EVALUATION_ID\",\"externalOrderRef\":\"$ORDER_REF\",\"idempotencyKey\":\"$IDEMPOTENCY_KEY\"}" |
+  jq .
 
-curl --silent --show-error --include --request POST \
+curl --silent --show-error --dump-header /dev/stderr --request POST \
   "$GATE_C_API_URL/v1/redemptions" \
   --header "Authorization: Bearer $GATE_C_API_TOKEN" \
   --header 'Content-Type: application/json' \
-  --data "{\"evaluationId\":\"$EVALUATION_ID\",\"externalOrderRef\":\"$ORDER_REF\",\"idempotencyKey\":\"$IDEMPOTENCY_KEY\"}"
+  --data "{\"evaluationId\":\"$EVALUATION_ID\",\"externalOrderRef\":\"$ORDER_REF\",\"idempotencyKey\":\"$IDEMPOTENCY_KEY\"}" |
+  jq .
 ```
 
 **Expected HTTP/body:** both calls return `200` with structurally identical
@@ -679,11 +691,12 @@ shared `redemptionId`; correlation IDs may differ by request.
 **Exact action:**
 
 ```sh
-curl --silent --show-error --include --request POST \
+curl --silent --show-error --dump-header /dev/stderr --request POST \
   "$GATE_C_API_URL/v1/redemptions" \
   --header "Authorization: Bearer $GATE_C_API_TOKEN" \
   --header 'Content-Type: application/json' \
-  --data "{\"evaluationId\":\"$EVALUATION_ID\",\"externalOrderRef\":\"$GATE_C_BUNDLE_CHANGED_ORDER_REF\",\"idempotencyKey\":\"$IDEMPOTENCY_KEY\"}"
+  --data "{\"evaluationId\":\"$EVALUATION_ID\",\"externalOrderRef\":\"$GATE_C_BUNDLE_CHANGED_ORDER_REF\",\"idempotencyKey\":\"$IDEMPOTENCY_KEY\"}" |
+  jq .
 ```
 
 **Expected HTTP/body:** `409`; the body has
@@ -699,28 +712,39 @@ The original committed bundle remains unchanged.
 `GATE_C_CAP_A_REF` using `GATE_C_CAP_A_CODE`, Priority `200`, a GBP 5.00 fixed
 reward and GBP 5.00 budget; `GATE_C_BUDGET_B_REF` using
 `GATE_C_BUDGET_B_CODE`, Priority `100`, the same reward and budget. Leave usage
-and per-customer caps absent. Create both evaluations exactly:
+and per-customer caps absent. Run the two evaluations, the setup redemption,
+the bundle redemption, and the follow-up evaluation in one uninterrupted
+sequence before the bundle evaluation's `expiresAt`. If the bundle redemption
+returns `410 DECISION_EXPIRED`, the case is inconclusive: provision a fresh B
+Promo with a new reference/code/budget, regenerate all order and idempotency
+references, and repeat. A later A-only qualification does not prove rollback
+when the bundle transaction never started. Create both evaluations exactly:
 
 ```sh
-BUNDLE_EVALUATION="$(curl --silent --show-error --request POST \
+BUNDLE_EVALUATION="$(curl --silent --show-error --dump-header /dev/stderr --request POST \
   "$GATE_C_API_URL/v1/evaluate" \
   --header "Authorization: Bearer $GATE_C_API_TOKEN" \
   --header 'Content-Type: application/json' \
-  --data "{\"codes\":[\"$GATE_C_CAP_A_CODE\",\"$GATE_C_BUDGET_B_CODE\"],\"customerRef\":\"$GATE_C_CUSTOMER_REF\",\"cart\":{\"currency\":\"GBP\",\"subtotal\":12500,\"items\":[]},\"context\":{\"channel\":\"web\"}}")"
-BUNDLE_EVALUATION_ID="$(node -e 'process.stdout.write(JSON.parse(process.argv[1]).evaluationId)' "$BUNDLE_EVALUATION")"
+  --data "{\"codes\":[\"$GATE_C_CAP_A_CODE\",\"$GATE_C_BUDGET_B_CODE\"],\"customerRef\":\"$GATE_C_CUSTOMER_REF\",\"cart\":{\"currency\":\"GBP\",\"subtotal\":12500,\"items\":[]},\"context\":{\"channel\":\"web\"}}" |
+  jq -c .)"
+printf '%s\n' "$BUNDLE_EVALUATION" | jq .
+BUNDLE_EVALUATION_ID="$(printf '%s\n' "$BUNDLE_EVALUATION" | jq -r '.evaluationId')"
 
-BUDGET_B_EVALUATION="$(curl --silent --show-error --request POST \
+BUDGET_B_EVALUATION="$(curl --silent --show-error --dump-header /dev/stderr --request POST \
   "$GATE_C_API_URL/v1/evaluate" \
   --header "Authorization: Bearer $GATE_C_API_TOKEN" \
   --header 'Content-Type: application/json' \
-  --data "{\"codes\":[\"$GATE_C_BUDGET_B_CODE\"],\"customerRef\":\"$GATE_C_CUSTOMER_REF\",\"cart\":{\"currency\":\"GBP\",\"subtotal\":12500,\"items\":[]},\"context\":{\"channel\":\"web\"}}")"
-BUDGET_B_EVALUATION_ID="$(node -e 'process.stdout.write(JSON.parse(process.argv[1]).evaluationId)' "$BUDGET_B_EVALUATION")"
+  --data "{\"codes\":[\"$GATE_C_BUDGET_B_CODE\"],\"customerRef\":\"$GATE_C_CUSTOMER_REF\",\"cart\":{\"currency\":\"GBP\",\"subtotal\":12500,\"items\":[]},\"context\":{\"channel\":\"web\"}}" |
+  jq -c .)"
+printf '%s\n' "$BUDGET_B_EVALUATION" | jq .
+BUDGET_B_EVALUATION_ID="$(printf '%s\n' "$BUDGET_B_EVALUATION" | jq -r '.evaluationId')"
 
-curl --silent --show-error --include --request POST \
+curl --silent --show-error --dump-header /dev/stderr --request POST \
   "$GATE_C_API_URL/v1/redemptions" \
   --header "Authorization: Bearer $GATE_C_API_TOKEN" \
   --header 'Content-Type: application/json' \
-  --data "{\"evaluationId\":\"$BUDGET_B_EVALUATION_ID\",\"externalOrderRef\":\"$GATE_C_BUDGET_CONSUME_ORDER_REF\",\"idempotencyKey\":\"$GATE_C_BUDGET_CONSUME_KEY\"}"
+  --data "{\"evaluationId\":\"$BUDGET_B_EVALUATION_ID\",\"externalOrderRef\":\"$GATE_C_BUDGET_CONSUME_ORDER_REF\",\"idempotencyKey\":\"$GATE_C_BUDGET_CONSUME_KEY\"}" |
+  jq .
 ```
 
 The setup redemption must return `200`, consuming B's complete budget.
@@ -728,11 +752,12 @@ The setup redemption must return `200`, consuming B's complete budget.
 **Exact action:** redeem the earlier two-code evaluation:
 
 ```sh
-curl --silent --show-error --include --request POST \
+curl --silent --show-error --dump-header /dev/stderr --request POST \
   "$GATE_C_API_URL/v1/redemptions" \
   --header "Authorization: Bearer $GATE_C_API_TOKEN" \
   --header 'Content-Type: application/json' \
-  --data "{\"evaluationId\":\"$BUNDLE_EVALUATION_ID\",\"externalOrderRef\":\"$GATE_C_ROLLBACK_ORDER_REF\",\"idempotencyKey\":\"$GATE_C_ROLLBACK_KEY\"}"
+  --data "{\"evaluationId\":\"$BUNDLE_EVALUATION_ID\",\"externalOrderRef\":\"$GATE_C_ROLLBACK_ORDER_REF\",\"idempotencyKey\":\"$GATE_C_ROLLBACK_KEY\"}" |
+  jq .
 ```
 
 Then evaluate only `GATE_C_CAP_A_CODE` once more using the `SELECT-CODE-03`
@@ -761,17 +786,47 @@ Load the tokens without printing them as `GATE_C_ALPHA_TOKEN` and
 **Exact actions:**
 
 ```sh
-curl --silent --show-error --include --request POST \
+curl --silent --show-error --dump-header /dev/stderr --request POST \
   "$GATE_C_API_URL/v1/evaluate" \
   --header "Authorization: Bearer $GATE_C_BETA_TOKEN" \
   --header 'Content-Type: application/json' \
-  --data "{\"codes\":[\"$GATE_C_ALPHA_ONLY_CODE\"],\"cart\":{\"currency\":\"GBP\",\"subtotal\":12500,\"items\":[]},\"context\":{\"channel\":\"web\"}}"
+  --data "$(
+    jq -cn \
+      --arg code "$GATE_C_ALPHA_ONLY_CODE" \
+      '{
+        codes: [$code],
+        cart: {
+          currency: "GBP",
+          subtotal: 12500,
+          items: []
+        },
+        context: {
+          channel: "web"
+        }
+      }'
+  )" |
+  jq .
 
-curl --silent --show-error --include --request POST \
+curl --silent --show-error --dump-header /dev/stderr --request POST \
   "$GATE_C_API_URL/v1/evaluate" \
   --header "Authorization: Bearer $GATE_C_ALPHA_TOKEN" \
   --header 'Content-Type: application/json' \
-  --data "{\"codes\":[\"$GATE_C_ALPHA_ONLY_CODE\"],\"cart\":{\"currency\":\"GBP\",\"subtotal\":12500,\"items\":[]},\"context\":{\"channel\":\"web\"}}"
+  --data "$(
+    jq -cn \
+      --arg code "$GATE_C_ALPHA_ONLY_CODE" \
+      '{
+        codes: [$code],
+        cart: {
+          currency: "GBP",
+          subtotal: 12500,
+          items: []
+        },
+        context: {
+          channel: "web"
+        }
+      }'
+  )" |
+  jq .
 ```
 
 **Expected HTTP/body:** both return `200`. Beta receives `decisions: []` and
@@ -781,6 +836,14 @@ diagnostic and its own qualified decision.
 
 **Correlation to record:** both `x-correlation-id` values with safe labels
 Beta-miss and Alpha-hit; never record either token.
+
+**Staging evidence (2026-07-29): Pass.** Beta-miss correlation
+`a3886878-a6ce-466c-b515-cc95b953cc20` returned HTTP `200`,
+`decisions: []`, and one `INVALID_PROMO_CODE` diagnostic without a
+`programRef`. Alpha-hit correlation
+`01d15617-7249-4b55-b260-53bc1968bc4c` returned HTTP `200`, one selected
+diagnostic, and one qualified decision for the Alpha-only Promo. No token was
+recorded.
 
 ### OBS-API-01 — Cloudflare log lookup by correlation ID
 
@@ -805,6 +868,16 @@ value, SQL, or dependency stack.
 
 **Correlation to record:** the one ID shared by response header, response body,
 and sanitized log event.
+
+**Staging evidence (2026-07-29): Pass.** The repeated changed-request
+redemption returned HTTP `409` with `VERSION_CONFLICT`, `retryable: false`, and
+correlation `2f6dffe6-d497-43f1-a088-f29df0a3f015` in both the response header
+and body. Exactly one matching sanitized `api_request_failed` Cloudflare event
+was located with route `/v1/redemptions`, method `POST`, code
+`VERSION_CONFLICT`, status `409`, and safe tenant/credential identifiers. The
+event contained no Authorization value, token, submitted code, request body,
+customer data, evaluation/order/idempotency reference, SQL, or dependency
+stack.
 
 ### DEMO-01 — Retained module markers and zero live mutations
 

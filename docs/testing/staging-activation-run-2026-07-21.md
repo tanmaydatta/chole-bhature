@@ -1,10 +1,10 @@
 # Staging activation run — 2026-07-21
 
-**Status:** In progress — Tasks 1–9 of the Promo-selection correction and Task
-10 review remediation are implemented and verified locally; the protected
-cutover/recovery procedure is prepared, but reviewed merge, the
-owner-controlled staging migration/deployment, and every new manual case remain
-unrun
+**Status:** Done — the Promo-selection correction is merged, migration `0006`
+and the API/Operator Web builds are deployed to staging, and the fresh Gate C
+manual run passed automatic selection, `SELECT-CODE-01` through
+`SELECT-CODE-04`, `REDEEM-BUNDLE-01` through `REDEEM-BUNDLE-03`,
+cross-tenant `TENANT-API-01`, and observability case `OBS-API-01`.
 
 **Notion:** https://app.notion.com/p/3a5e5c7c2b8e81739dfed75f998e6489
 
@@ -68,11 +68,109 @@ unrun
 - Product-selection acceptance: Fail for the desired client contract (each response also exposed unrelated automatic/coded Promo outcomes, and the current redemption request commits one caller-selected program rather than a signed selected bundle)
 
 The product-selection failure above is historical evidence from the deployed
-2026-07-21 build, not the current local contract. Tasks 1–9 now implement the
+2026-07-21 build, not the current staging contract. Tasks 1–9 implement the
 clean-break `codes[]` request, private automatic/coded selection, ordered atomic
 bundle redemption, structured failure logs, and explicit operator trigger
-review locally. No staging pass is claimed until Task 10 is deployed and run by
-the account owner.
+review. The correction is migrated, deployed, and fully verified by the
+mandatory clean-break Task 10 staging cases.
+
+## Clean-break Task 10 rollout and current retest
+
+- Protected Product-D1 target confirmation and count-only legacy prechecks:
+  Pass.
+- Pre-migration Product-D1 Time Travel bookmark: captured by the account owner;
+  the bookmark value is not reproduced in this public record.
+- Migration `0006_promo_selection_redemption_bundles.sql`: Pass. The migration
+  marker exists once and all four target tables were verified.
+- Pre/post-deployment API health: Pass.
+- API staging deployment: Pass; version
+  `69dc49ff-3739-4e35-ab3e-b32bbe437003` received 100% traffic.
+- Operator Web staging deployment: Pass; version
+  `68f24904-df19-4a3e-8360-976fd05dfcf0` received 100% traffic.
+- Clean-break OpenAPI: Pass (`codes` is present, singular `code` is absent,
+  redemption requires `evaluationId`, and redemption `programRef` is absent).
+- Fresh Gate C Beta automatic priority selection: Pass. Priority `300` won over
+  priority `200`; after pausing the higher-priority Promo, the lower-priority
+  Promo won; after pausing both, the response contained no decisions.
+- `SELECT-CODE-01`: Pass with HTTP 200, evaluation
+  `a501cd7e-ea0d-4d24-a06a-b0b1f0316a63`, and correlation
+  `9678bdc2-565a-4808-bd91-47fec56d709b`. The response returned three
+  input-aligned code results, rejected the missing code, normalized
+  trim/case, collapsed the duplicate, ordered the two selected decisions by
+  priority, and suppressed automatic Promos.
+- `SELECT-CODE-02`: Pass with HTTP 200, evaluation
+  `26010759-34c6-40aa-982f-8050b0f7365a`, and correlation
+  `77a3aee8-5f7f-4950-b072-0630e9b8e2d2`. Both valid stackable Promos
+  remained selected in priority order; the missing code retained its
+  input-aligned `INVALID_PROMO_CODE` result with no `programRef`.
+- `SELECT-CODE-03`: Pass with HTTP 200, evaluation
+  `187f17f6-b494-4b53-800c-aa3a8f94033b`, and correlation
+  `9a674ae8-b669-4215-92ce-0c8300cc8109`. The single non-stackable code
+  returned exactly one qualified 5% decision and one matching selected
+  diagnostic.
+- `SELECT-CODE-04`: Pass with HTTP 200, evaluation
+  `bb533642-5d7e-4dda-b957-16225d321e9e`, and correlation
+  `82a4218c-a716-48bc-8e31-b77c3ee3ac17`. The incompatible stackable and
+  non-stackable codes were both rejected with
+  `CODE_COMBINATION_NOT_ALLOWED`, the missing code retained
+  `INVALID_PROMO_CODE`, and no decisions were returned.
+- `REDEEM-BUNDLE-01`: Pass with evaluation
+  `aa8c12a6-4502-4eec-b5b8-f4d51d04952f`, committed redemption
+  `4bc2bd88-34f1-437f-9e32-0e37acd95456`, first correlation
+  `94d4c74e-6be3-4519-b945-2e0f60e98ee4`, and retry correlation
+  `d73364f9-a21a-4d27-abe7-02ddc6c3edc4`. The atomic bundle retained
+  VIP20 → GATEC15 entry order, and an identical retry returned the same
+  canonical body and redemption without a second commit.
+- `REDEEM-BUNDLE-02`: Pass with HTTP 409 and correlation
+  `85e581ac-2c6e-4d3b-b246-675e4f2f6ae4`. Reusing the committed bundle's
+  idempotency key with a changed external order returned non-retryable
+  `VERSION_CONFLICT`, and the response header/body correlation IDs matched.
+- `REDEEM-BUNDLE-03`: First attempt inconclusive. The two-code evaluation
+  `4db2d057-b64d-43f5-a603-f1f129d7e480` expired at
+  `2026-07-28T09:23:46.989Z`; bundle redemption arrived about 20 seconds later
+  and correctly returned HTTP 410 `DECISION_EXPIRED` with correlation
+  `229efed7-75f9-4d25-a8bf-243a752aa295`. The subsequent A-only evaluation
+  qualified with correlation `58de9cff-e411-4918-b30e-4f025b226615`, but this
+  cannot prove transactional rollback because the expired bundle transaction
+  never started. Repeat with a fresh B budget and complete the sequence before
+  `expiresAt`.
+- `REDEEM-BUNDLE-03`: Pass on the fresh retry. The combined evaluation
+  `fa861d3c-31c4-4439-ac6d-17bbeb3054af` qualified both GBP 5.00 Promos with
+  correlation `0c51a863-a74d-4cea-a293-a9d6e17aee90`. The B-only evaluation
+  `e4619b38-6aab-43b0-b454-090db7cb5d25` used correlation
+  `7545e6f1-9722-4266-bc2b-88e7ee5a3c8e`; redemption
+  `4c2082d8-5388-4ec3-bcaf-5d6aad0a2570` then committed B's complete budget
+  with correlation `50d1aed3-2cf8-4837-a7e6-e4c2e993d22a`. Redeeming the
+  earlier bundle returned HTTP 409 `BUDGET_EXHAUSTED`, non-retryable, with
+  correlation `93670787-bd3b-4969-909d-48bed3bf47fa` and no partial entries.
+  The A-only follow-up evaluation `068bb0f2-dc61-412b-9a51-5bddc15475b5`
+  still qualified A's GBP 5.00 reward with correlation
+  `a1118534-9d64-4100-bb21-874b1d265264`, proving the failed bundle rolled
+  back A atomically.
+- Automated concurrency coverage remains green for exact-request convergence,
+  changed-request usage/budget and per-customer cap enforcement, plus
+  compare-and-swap publication. The staging atomic-rollback case above adds
+  deployed transactional evidence; no separate manual concurrency case is
+  required for this Gate.
+- `TENANT-API-01`: Pass. Beta-miss correlation
+  `a3886878-a6ce-466c-b515-cc95b953cc20` returned HTTP 200, no decisions, and
+  an input-aligned `INVALID_PROMO_CODE` diagnostic without a `programRef` for
+  the Alpha-only code. Alpha-hit correlation
+  `01d15617-7249-4b55-b260-53bc1968bc4c` returned HTTP 200, one selected
+  diagnostic, and one qualified decision for
+  `gate-c-alpha-only-20260724224228-bc7269`. This proves the Beta credential
+  could neither select nor learn the Alpha Promo reference.
+- `OBS-API-01`: Pass. A repeated changed-request redemption returned HTTP 409
+  `VERSION_CONFLICT`, non-retryable, with matching header/body correlation
+  `2f6dffe6-d497-43f1-a088-f29df0a3f015`. Exactly one matching sanitized
+  `api_request_failed` Cloudflare event was located with route
+  `/v1/redemptions`, method `POST`, code `VERSION_CONFLICT`, status `409`, and
+  safe tenant/credential identifiers. It contained no Authorization value,
+  token, submitted code, request body, customer data,
+  evaluation/order/idempotency reference, SQL, or dependency stack.
+- Current checkpoint: Gate C is complete. The next focused work is the
+  `GAP-030`/`GAP-031` design and implementation plan before the Evaluation
+  Playground.
 
 ## Schema deprecation discrepancy
 
@@ -120,13 +218,14 @@ the account owner.
   exceptions into safe canonical responses but did not explicitly emit a
   sanitized structured error log. The returned correlation ID therefore does
   not reliably locate the underlying exception in persisted Worker logs.
-- Local code resolution: Task 7 added the centralized sanitized
+- Resolution: Task 7 added the centralized sanitized
   `api_request_failed` event and tests proving that the response header, error
   body, signed evaluation snapshot, and log event share the correlation ID.
   Tests also reject Authorization values, credentials, submitted codes, request
   bodies, customer attributes, decision/order/key identifiers, SQL details,
-  and dependency stacks from production logs. `GAP-022` is fixed in code but
-  awaits the Task 10 staging lookup in `OBS-API-01`.
+  and dependency stacks from production logs. Staging `OBS-API-01` then located
+  the sanitized event by the exact response correlation
+  `2f6dffe6-d497-43f1-a088-f29df0a3f015`, completing `GAP-022`.
 - Runtime resolution: a fresh `DECISION_SIGNING_SECRET` was generated locally,
   uploaded to the staging API Worker as a secret, and the same
   credential-authenticated evaluation then succeeded.
@@ -147,21 +246,24 @@ the account owner.
   automatic candidates and resolves only submitted distinct normalized codes;
   compatible coded Promos may stack; and redemption commits the complete signed
   selected bundle atomically.
-- Local implementation status: Tasks 1–9 of `GAP-026` are implemented and
+- Implementation status: Tasks 1–9 of `GAP-026` are implemented and
   focused verification passes. Task 10 review remediation adds protected
   Product-D1 confirmation/queries/status plus a read-only Time Travel
   bookmark, the migration-equivalent legacy-redemption guard, the
   compatibility proof for old column-list inserts, and a coordinated
-  cutover/recovery procedure. The plan remains
-  **In progress** because final verification, reviewed merge,
-  owner-controlled staging deployment, and manual evidence do not yet exist.
+  cutover/recovery procedure. The reviewed correction is merged, migration
+  `0006` and the API/Operator Web builds are deployed, and selection plus
+  atomic-bundle, tenant-isolation, and correlation-log observability cases
+  pass. The design is implemented and staging verified; its implementation
+  plan is **Done**.
   See the
   [design](../superpowers/specs/2026-07-23-promo-selection-code-stacking-design.md)
   and [plan](../superpowers/plans/2026-07-24-promo-selection-code-stacking.md).
-- Retest requirement: after a reviewed merge and user-controlled staging
-  migration/deployment, repeat automatic zero-or-one selection, missing/wrong/
-  correct code isolation, mixed stackability, bundle idempotency, cap/budget
-  concurrency, and tenant-isolation cases with fresh identifiers.
+- Retest status: the reviewed merge, owner-controlled staging
+  migration/deployment, automatic zero-or-one selection, code isolation,
+  mixed stackability, bundle idempotency, and atomic cap/budget rollback are
+  complete. Automated concurrency coverage is green. Tenant isolation and
+  correlation-log discoverability remain.
 
 ## UX follow-ups
 
@@ -204,9 +306,9 @@ deferrals are in the linked Product follow-up register.
 
 ## Task 10 local automated evidence
 
-This evidence is local only. It was freshly established from the current Task
-10 review-remediation candidate on 2026-07-24 and does not claim that migration
-`0006`, either Worker deployment, or the fresh manual staging run has happened.
+This table records the local automated evidence established from the Task 10
+review-remediation candidate on 2026-07-24. The later owner-controlled remote
+rollout and current manual evidence are recorded separately above.
 
 | Gate | Current review-remediation result |
 | --- | --- |
@@ -217,9 +319,9 @@ This evidence is local only. It was freshly established from the current Task
 | `pnpm lint` | Pass; only the two existing dashboard Fast Refresh warnings remain (`ThemeProvider.tsx:9:14` and `Toast.tsx:15:17`) |
 | `pnpm verify:clean-tests` | Pass against the committed review-remediation candidate, including the protected-runner and migration-compatibility tests |
 | `apps/api/test/production-migration.test.ts` | Pass: 21/21 tests, including the production baseline, fail-loud legacy guards, readable legacy redemption backfill, and additive compatibility proof |
-| Task 10 review | Rollout-safety findings remediated; final parent review and merge remain pending |
+| Task 10 review | Rollout-safety findings remediated, independently reviewed, and merged through PR #10 |
 
-## Owner-controlled Task 10 staging rollout — prepared, not executed
+## Historical superseded rollout draft — not executed
 
 > **Superseded rollout draft — do not execute the inline commands in this
 > section.** The reviewed procedure is the
@@ -234,11 +336,10 @@ This evidence is local only. It was freshly established from the current Task
 > deliberately unavailable in the runner. This historical draft remains only
 > to preserve the activation record.
 
-**Status:** Not run. No Cloudflare query, export, migration, deployment,
-secret operation, or manual staging case below was executed by the
-implementation agent. The Cloudflare account owner runs one command at a time,
-checks the stated output, records only safe evidence, and stops on any
-deviation before continuing.
+**Historical status:** This inline draft was not run. The Cloudflare account
+owner instead followed the protected guide linked above. No Cloudflare query,
+export, migration, deployment, secret operation, or manual staging case was
+executed by the implementation agent.
 
 All commands start at the repository root. The rollout source must contain
 `0f49908`, have no uncommitted tracked changes, and use the existing ignored
@@ -678,17 +779,15 @@ the backup contents, recipient addresses, credentials, raw submitted codes,
 customer attributes, request bodies, cookies, invitation/magic-link URLs,
 activation grants, or recovery-code text.
 
-## Remaining manual continuation
+## Next work after Gate C
 
-1. Finish Task 10 verification and review for the locally implemented
-   `GAP-026` correction, then merge it through a PR into `dev`.
-2. Have the account owner apply the reviewed staging migration/deployments one command
-   at a time.
-3. Repeat the automatic, coded, stacking, atomic-bundle, idempotency, and
-   concurrency cases with fresh identifiers.
-4. Complete the remaining tenant-isolation and security closeout checks.
-5. Reconcile the canonical manual procedure, current-state roadmap, follow-up
-   register, active plans, and their Notion mirrors with the final result.
+1. Keep the final Gate C evidence synchronized across the canonical manual
+   procedure, current-state roadmap, follow-up register, active plans, and
+   their Notion mirrors.
+2. Create the focused design and implementation plan for `GAP-030` and
+   `GAP-031`.
+3. Implement and verify that Promo pricing/cap correction before resuming the
+   Evaluation Playground.
 
 External scope remains local/staging until separately approved. No production
 deployment is authorized, and Shopify/manual commerce integration remains
