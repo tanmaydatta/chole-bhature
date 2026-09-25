@@ -22,6 +22,9 @@ export function createMerchantService(repositories: Repositories) {
           'Operator merchant selection does not match the provisioned merchant',
         );
       }
+      if (input.e2eRun && operator.actorKind !== 'root') {
+        throw new MerchantIdentityConflictError('E2E provenance requires root authority');
+      }
       return repositories.merchants.provision(input);
     },
 

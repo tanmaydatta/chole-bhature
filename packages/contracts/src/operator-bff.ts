@@ -2,6 +2,7 @@ import { ApiCredentialCreateInputSchema } from './credentials.js';
 import { CustomerPatchRequestSchema } from './runtime-api.js';
 import {
   ClientProvisioningViewSchema,
+  E2eRunProofSchema,
   FixedOperatorRoleSchema,
   InvitationViewSchema,
   OperatorMemberViewSchema,
@@ -24,6 +25,19 @@ export const OperatorMerchantSelectionRequestSchema = z.object({
 export const OperatorClientProvisionRequestSchema = z.object({
   name: z.string().min(1).max(200),
   idempotencyKey: z.string().min(1).max(128).regex(/^[A-Za-z0-9._:-]+$/u),
+  e2eRun: E2eRunProofSchema.optional(),
+}).strict();
+export const OperatorE2eRunActionRequestSchema = E2eRunProofSchema.pick({ proof: true });
+export const OperatorE2eFixtureAccountRequestSchema = z.object({
+  proof: E2eRunProofSchema.shape.proof,
+  slug: z.string().regex(/^[a-z][a-z0-9_]{0,39}$/u),
+  role: z.enum(['admin', 'operator', 'viewer']),
+}).strict();
+export const OperatorE2eRunInspectionRequestSchema = z.object({
+  proof: E2eRunProofSchema.shape.proof,
+  evaluationId: z.string().min(1).max(200),
+  idempotencyKey: z.string().min(1).max(200),
+  programRefs: z.array(z.string().min(1).max(200)).min(1).max(4),
 }).strict();
 
 export const OperatorInvitationCreateRequestSchema = z.object({

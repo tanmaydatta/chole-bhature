@@ -132,6 +132,9 @@ routes = [{ pattern = ${tomlString(new URL(configuration.apiOrigin).hostname)}, 
 
 ${STAGING_OBSERVABILITY_TOML}
 
+[vars]
+APP_ENV = "staging"
+
 [[d1_databases]]
 binding = "DB"
 database_name = "incentives-staging"

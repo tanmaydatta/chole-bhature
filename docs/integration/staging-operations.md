@@ -35,6 +35,73 @@ Staging contains:
 Operator Web reaches Identity and Core through service bindings. Identity reaches Core through a
 service binding. Only the API and Operator Web Workers receive custom-domain routes.
 
+### E2E platform deployment order
+
+The [GAP-030/031 automated scenario](../testing/gap-030-031-e2e.md) adds protected,
+run-scoped fixture, inspection, and full-disposal behavior across **both** D1
+databases. The earlier GAP guidance that Identity need not deploy is obsolete
+for this release. These commands are an owner-reviewed **future deployment
+plan**, not authorization to deploy as part of a local test run. Commit and
+push the reviewed matching source revision only after explicit release
+approval; do not start a staging E2E run while a migration/deployment is in
+progress or any Worker is on an older revision.
+
+After the read-only preflight and repository gates below pass, the owner runs
+one command at a time and checks the protected, sanitized result before the
+next:
+
+```sh
+pnpm --filter @incentives/api db:migrate:staging
+pnpm --filter @incentives/identity db:migrate:staging
+pnpm --filter @incentives/api deploy:staging
+pnpm --filter @incentives/identity deploy:staging
+pnpm --filter @incentives/operator-web deploy:staging
+```
+
+Product migration `0007_merchandise_price_breakdowns.sql` may still be pending
+in staging. The Product migration command must therefore apply `0007` and then
+`0008_e2e_tenant_lifecycle.sql`, in that order, before the Core deploy. Auth migrations `0005_e2e_tenant_lifecycle.sql` and
+`0006_e2e_fixture_session.sql` must be present before the Identity deploy.
+Operator deploys last because its root-only capability, fixture, inventory,
+and inspection BFF routes depend on both private services. The generated
+staging Wrangler configs preserve the private Identity/Core bindings and
+exact `APP_ENV=staging` guard; do not expose Identity publicly. Existing
+staging secrets remain required. No raw remote D1 write or arbitrary-merchant
+deletion is part of the E2E client.
+
+After all five actions, use the ordinary owner passkey to create a private
+short-lived Playwright state, then run the **read-only handshake before any
+fixture write** as part of the E2E command:
+
+```sh
+mkdir -p tests/e2e/.runs
+chmod 700 tests/e2e/.runs
+pnpm e2e:staging:login --output "$PWD/tests/e2e/.runs/staging-root.json"
+E2E_OPERATOR_STORAGE_STATE="$PWD/tests/e2e/.runs/staging-root.json" pnpm e2e:staging
+```
+
+For a visible browser-only pass, replace the last command with
+`E2E_OPERATOR_STORAGE_STATE="$PWD/tests/e2e/.runs/staging-root.json" pnpm e2e:staging:headed`.
+The login helper does not create an account: it opens Chrome for the real
+passkey flow, verifies root authority, and writes a new 0600 state file in an
+owner-only directory. Re-run with a new filename after expiry. The E2E global
+setup checks the exact versioned Operator→Identity→Core capability protocol,
+Product 0008/Auth 0005+0006 migration markers and required tables, and a live
+root session. An old/mixed release fails **before** `add-merchant` or any
+other recipe writes. No staging E2E execution is claimed until these commands
+have been separately approved and actually run.
+
+Both migrations are forward-only. Do not attempt to undo a migration or roll
+back only one Worker while E2E tenants exist: fixture sessions, provenance,
+inspection, and two-DB disposal would be version-incompatible. Stop new runs,
+retain each private run manifest/proof, preview and resume scoped disposal
+through the current compatible Workers, and use a reviewed forward fix for a
+partial deployment. Product disposal commits before Auth; interruption is
+resumable with the same run proof. A successful disposal leaves only sanitized
+audit tombstones. Any exceptional database restore requires the separate
+quiet-window/owner-approved recovery procedure below, not a direct E2E
+client SQL command.
+
 ### Prepare the ignored environment file
 
 Copy `.env.staging.example` to `.env.staging` with owner-only permissions. Replace the two D1
@@ -97,7 +164,8 @@ demo build before allowing it to deploy.
 The assistant must not run these Cloudflare-changing commands. The user runs exactly one command,
 checks its result, and only then moves to the next command.
 
-First apply the forward-only Product migrations:
+First apply the forward-only Product migrations. It applies pending Product
+`0007` before `0008`; do not deploy Core between those migrations:
 
 ```sh
 pnpm --filter @incentives/api db:migrate:staging

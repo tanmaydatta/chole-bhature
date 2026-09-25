@@ -1,10 +1,20 @@
 import {
   ApiErrorSchema,
   ClientProvisioningViewSchema,
+  E2eCapabilitiesSchema,
+  IdentityE2eCapabilitiesSchema,
+  E2eFixtureAccountSchema,
   IdentityClientsResponseSchema,
   IdentityAcceptInvitationRequestSchema,
+  E2eRunIdSchema,
+  E2eRunInventorySchema,
+  E2eRunInspectionSchema,
+  E2eRunProofSchema,
   MembershipViewSchema,
   OperatorClientProvisionRequestSchema,
+  OperatorE2eRunActionRequestSchema,
+  OperatorE2eFixtureAccountRequestSchema,
+  OperatorE2eRunInspectionRequestSchema,
   OperatorInvitationAcceptRequestSchema,
   OperatorMerchantSelectionRequestSchema,
   OperatorSessionViewSchema,
@@ -260,6 +270,8 @@ async function handleProvisionClient(
   } catch {
     return invalidRequest(id);
   }
+  if (body.e2eRun && env.APP_ENV !== 'staging'
+    && !(env.APP_ENV === 'local' && env.E2E_LOCAL_TEST_MODE === '1')) return notFound(id);
   try {
     const { provisioningId, merchantId } = await deriveProvisioningIds(
       env, principal.userId, body.idempotencyKey,
@@ -267,7 +279,8 @@ async function handleProvisionClient(
     const raw = await env.IDENTITY.provisionClient({
       sessionId: principal.sessionId,
       selectedMerchantId: merchantId,
-      input: { provisioningId, merchantId, name: body.name, correlationId: id },
+      input: { provisioningId, merchantId, name: body.name, correlationId: id,
+        ...(body.e2eRun ? { e2eRun: body.e2eRun } : {}) },
     });
     const failure = ApiErrorSchema.safeParse(raw);
     if (failure.success) {
@@ -334,12 +347,18 @@ async function handleProvisioningRetry(
   provisioningId: string,
 ): Promise<Response> {
   if ([...new URL(request.url).searchParams].length > 0) return invalidRequest(id);
+  let e2eRun;
   try {
     const body = await requestBody(request);
-    if (
-      body !== undefined
-      && (typeof body !== 'object' || body === null || Object.keys(body).length > 0)
-    ) return invalidRequest(id);
+    if (body !== undefined) {
+      if (typeof body !== 'object' || body === null) return invalidRequest(id);
+      const entries = Object.entries(body);
+      if (entries.length === 1 && entries[0]?.[0] === 'e2eRun') {
+        if (env.APP_ENV !== 'staging'
+          && !(env.APP_ENV === 'local' && env.E2E_LOCAL_TEST_MODE === '1')) return notFound(id);
+        e2eRun = E2eRunProofSchema.parse(entries[0][1]);
+      } else if (entries.length !== 0) return invalidRequest(id);
+    }
   } catch {
     return invalidRequest(id);
   }
@@ -364,6 +383,9 @@ async function handleProvisioningRetry(
     if (current.provisioningId !== provisioningId) {
       throw new Error('Identity provisioning response did not match the request');
     }
+    if (e2eRun && !current.name.startsWith(`${e2eRun.runId}_merchant`)) {
+      return errorResponse(apiError(id, 'FORBIDDEN', 'Operation is not permitted'));
+    }
     if (current.status !== 'failed' || !current.retryable) {
       return errorResponse(apiError(
         id, 'OPERATION_FAILED', 'Provisioning cannot be retried',
@@ -377,6 +399,7 @@ async function handleProvisioningRetry(
         merchantId: current.merchantId,
         name: current.name,
         correlationId: id,
+        ...(e2eRun ? { e2eRun } : {}),
       },
     });
     const retryFailure = ApiErrorSchema.safeParse(rawRetried);
@@ -395,6 +418,112 @@ async function handleProvisioningRetry(
     return new Response(JSON.stringify(retried), {
       status: 200, headers: responseHeaders(id),
     });
+  } catch (error) {
+    return errorResponse(downstreamError(id, 'identity', error));
+  }
+}
+
+async function handleE2eLifecycle(
+  request: Request,
+  env: OperatorWebEnv,
+  id: string,
+  runId: string,
+  action: 'preview' | 'dispose' | 'inspect',
+): Promise<Response> {
+  // Normal local and every non-staging deployment remain closed.
+  if (env.APP_ENV !== 'staging'
+    && !(env.APP_ENV === 'local' && env.E2E_LOCAL_TEST_MODE === '1')) return notFound(id);
+  if ([...new URL(request.url).searchParams].length > 0) return invalidRequest(id);
+  if (!E2eRunIdSchema.safeParse(runId).success) return invalidRequest(id);
+  let body;
+  try {
+    body = action === 'inspect'
+      ? OperatorE2eRunInspectionRequestSchema.parse(await requestBody(request))
+      : OperatorE2eRunActionRequestSchema.parse(await requestBody(request));
+  } catch {
+    return invalidRequest(id);
+  }
+  const principal = await resolveBrowserPrincipal(env, request.headers.get('cookie') ?? '', id);
+  if ('error' in principal) return errorResponse(principal);
+  if (principal.platformRole !== 'root') {
+    return errorResponse(apiError(id, 'FORBIDDEN', 'Operation is not permitted'));
+  }
+  try {
+    const input = { sessionId: principal.sessionId, runId, proof: body.proof, correlationId: id };
+    const raw = action === 'preview'
+      ? await env.IDENTITY.previewE2eRun(input)
+      : action === 'dispose'
+        ? await env.IDENTITY.disposeE2eRun(input)
+        : await env.IDENTITY.inspectE2eRun({ ...input,
+          ...OperatorE2eRunInspectionRequestSchema.parse(body) });
+    const failure = ApiErrorSchema.safeParse(raw);
+    if (failure.success) return errorResponse(failure.data);
+    const output = action === 'inspect'
+      ? E2eRunInspectionSchema.parse(raw) : E2eRunInventorySchema.parse(raw);
+    if (output.runId !== runId) throw new Error('E2E lifecycle response crossed run boundary');
+    return new Response(JSON.stringify(output), { status: 200, headers: responseHeaders(id) });
+  } catch (error) {
+    return errorResponse(downstreamError(id, 'identity', error));
+  }
+}
+
+async function handleE2eCapabilities(
+  request: Request, env: OperatorWebEnv, id: string,
+): Promise<Response> {
+  if (env.APP_ENV !== 'staging'
+    && !(env.APP_ENV === 'local' && env.E2E_LOCAL_TEST_MODE === '1')) return notFound(id);
+  if ([...new URL(request.url).searchParams].length > 0) return invalidRequest(id);
+  const principal = await resolveBrowserPrincipal(env, request.headers.get('cookie') ?? '', id);
+  if ('error' in principal) return errorResponse(principal);
+  if (principal.platformRole !== 'root') {
+    return errorResponse(apiError(id, 'FORBIDDEN', 'Operation is not permitted'));
+  }
+  try {
+    const raw = await env.IDENTITY.getE2eCapabilities({
+      sessionId: principal.sessionId, correlationId: id,
+    });
+    const failure = ApiErrorSchema.safeParse(raw);
+    if (failure.success) return errorResponse(failure.data);
+    const parsed = IdentityE2eCapabilitiesSchema.safeParse(raw);
+    if (!parsed.success) throw new Error('E2E identity capability mismatch');
+    const identity = parsed.data;
+    const { product, ...auth } = identity;
+    const result = E2eCapabilitiesSchema.parse({ protocol: 'incentives-e2e',
+      version: 1, operator: { version: 1 }, identity: auth, product });
+    return new Response(JSON.stringify(result), { status: 200, headers: responseHeaders(id) });
+  } catch (error) {
+    return errorResponse(downstreamError(id, 'identity', error));
+  }
+}
+
+async function handleE2eFixtureAccount(
+  request: Request, env: OperatorWebEnv, id: string, runId: string,
+): Promise<Response> {
+  if (env.APP_ENV !== 'staging') return notFound(id);
+  if ([...new URL(request.url).searchParams].length > 0) return invalidRequest(id);
+  let body;
+  try {
+    body = OperatorE2eFixtureAccountRequestSchema.parse(await requestBody(request));
+  } catch {
+    return invalidRequest(id);
+  }
+  const principal = await resolveBrowserPrincipal(env, request.headers.get('cookie') ?? '', id);
+  if ('error' in principal) return errorResponse(principal);
+  if (principal.platformRole !== 'root') {
+    return errorResponse(apiError(id, 'FORBIDDEN', 'Operation is not permitted'));
+  }
+  try {
+    const raw = await env.IDENTITY.createE2eAccount({
+      ...body, runId, sessionId: principal.sessionId, correlationId: id,
+    });
+    const failure = ApiErrorSchema.safeParse(raw);
+    if (failure.success) return errorResponse(failure.data);
+    const output = E2eFixtureAccountSchema.parse(raw);
+    if (output.runId !== runId || output.role !== body.role
+      || output.email !== `e2e+${runId}_${body.slug}@e2e.invalid`) {
+      throw new Error('E2E fixture response crossed run boundary');
+    }
+    return new Response(JSON.stringify(output), { status: 200, headers: responseHeaders(id) });
   } catch (error) {
     return errorResponse(downstreamError(id, 'identity', error));
   }
@@ -493,6 +622,8 @@ export function createOperatorWebWorker(): ExportedHandler<OperatorWebEnv> {
         if (url.pathname === '/operator/v1/session' && request.method === 'GET') {
           return handleSession(request, env, id);
         }
+        if (url.pathname === '/operator/v1/platform/e2e-capabilities'
+          && request.method === 'GET') return handleE2eCapabilities(request, env, id);
         if (
           url.pathname === '/operator/v1/platform/merchant-selection'
           && request.method === 'POST'
@@ -502,6 +633,22 @@ export function createOperatorWebWorker(): ExportedHandler<OperatorWebEnv> {
         }
         if (url.pathname === '/operator/v1/platform/clients' && request.method === 'GET') {
           return handleRootPlatformRead(request, env, id);
+        }
+        const e2eLifecycleMatch =
+          /^\/operator\/v1\/platform\/e2e-runs\/(e2e_[a-f0-9]{24})\/(preview|dispose|inspect)$/u
+            .exec(url.pathname);
+        if (e2eLifecycleMatch && request.method === 'POST') {
+          const runId = e2eLifecycleMatch[1];
+          const action = e2eLifecycleMatch[2];
+          if (runId && (action === 'preview' || action === 'dispose' || action === 'inspect')) {
+            return handleE2eLifecycle(request, env, id, runId, action);
+          }
+        }
+        const e2eFixtureMatch =
+          /^\/operator\/v1\/platform\/e2e-runs\/(e2e_[a-f0-9]{24})\/accounts$/u
+            .exec(url.pathname);
+        if (e2eFixtureMatch && request.method === 'POST' && e2eFixtureMatch[1]) {
+          return handleE2eFixtureAccount(request, env, id, e2eFixtureMatch[1]);
         }
         const provisioningMatch = /^\/operator\/v1\/platform\/provisionings\/([^/]+)$/u
           .exec(url.pathname);

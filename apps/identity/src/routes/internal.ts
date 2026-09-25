@@ -42,6 +42,8 @@ export interface IdentityOperatorServiceOptions {
   core: CoreMerchantProvisioningClient;
   email: InvitationEmailAdapter;
   publicOrigin: string;
+  appEnv?: string;
+  localTestMode?: string | undefined;
 }
 
 type RpcFailureCode =
@@ -104,6 +106,8 @@ export function createIdentityOperatorService(options: IdentityOperatorServiceOp
   const organizations = createOrganizationService({
     database: options.database,
     core: options.core,
+    appEnv: options.appEnv,
+    localTestMode: options.localTestMode,
   });
   const invitations = createInvitationService({
     database: options.database,

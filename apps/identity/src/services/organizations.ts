@@ -1,6 +1,7 @@
 import {
   CoreMerchantActivationResultSchema,
   CoreMerchantProvisionResultSchema,
+  E2eRunProofSchema,
   type MerchantActivationRequest,
   type CoreMerchantActivationResult,
   type CoreMerchantProvisionResult,
@@ -27,6 +28,8 @@ export interface CoreMerchantProvisioningClient {
 export interface OrganizationServiceOptions {
   database: D1Database;
   core?: CoreMerchantProvisioningClient;
+  appEnv?: string | undefined;
+  localTestMode?: string | undefined;
 }
 
 export interface ProvisionClientInput {
@@ -34,6 +37,7 @@ export interface ProvisionClientInput {
   merchantId: string;
   name: string;
   correlationId: string;
+  e2eRun?: { runId: string; proof: string } | undefined;
 }
 
 export type ProvisioningStep =
@@ -91,6 +95,11 @@ function requiredText(value: string, name: string): string {
   const normalized = value.trim();
   if (normalized.length === 0) throw new OrganizationOperationError(`${name} is required`);
   return normalized;
+}
+
+async function hashProof(proof: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(proof));
+  return [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, '0')).join('');
 }
 
 function provisioningView(row: ProvisioningRow): ClientProvisioningView {
@@ -229,7 +238,10 @@ export function createOrganizationService(options: OrganizationServiceOptions) {
           session.authenticationMethod, session.authenticatedAt
         FROM session
         INNER JOIN auth_profile ON auth_profile.user_id = session.userId
-        WHERE session.id = ?1 AND session.expiresAt > ?2
+        WHERE session.id = ?1 AND
+          (CASE WHEN typeof(session.expiresAt) = 'text'
+            THEN CAST(strftime('%s', session.expiresAt) AS INTEGER) * 1000
+            ELSE session.expiresAt END) > ?2
           AND session.authenticationMethod = 'passkey' AND session.recoveryOnly = 0
           AND session.authenticatedAt IS NOT NULL
           AND auth_profile.subject_kind = 'root' AND auth_profile.status = 'active'
@@ -267,15 +279,41 @@ export function createOrganizationService(options: OrganizationServiceOptions) {
           memberships.role, organizations.merchant_id AS merchantId
         FROM session
         INNER JOIN auth_profile ON auth_profile.user_id = session.userId
+        INNER JOIN user ON user.id = session.userId
         INNER JOIN memberships ON memberships.user_id = session.userId
         INNER JOIN organizations ON organizations.id = memberships.organization_id
-        WHERE session.id = ?1 AND session.expiresAt > ?2
-          AND session.authenticationMethod = 'magic-link' AND session.recoveryOnly = 0
+        WHERE session.id = ?1 AND
+          (CASE WHEN typeof(session.expiresAt) = 'text'
+            THEN CAST(strftime('%s', session.expiresAt) AS INTEGER) * 1000
+            ELSE session.expiresAt END) > ?2
+          AND session.authenticationMethod IN ('magic-link', 'e2e-fixture')
+          AND session.recoveryOnly = 0
           AND session.authenticatedAt IS NOT NULL
           AND auth_profile.subject_kind = 'employee' AND auth_profile.status = 'active'
-          AND auth_profile.email_login_enabled = 1
+          AND (
+            (session.authenticationMethod = 'magic-link'
+              AND auth_profile.email_login_enabled = 1)
+            OR (session.authenticationMethod = 'e2e-fixture'
+              AND ?3 = 'staging' AND auth_profile.email_login_enabled = 0
+              AND EXISTS (
+                SELECT 1 FROM e2e_run_claims
+                JOIN e2e_fixture_sessions
+                  ON e2e_fixture_sessions.run_id = e2e_run_claims.run_id
+                WHERE e2e_run_claims.merchant_id = organizations.merchant_id
+                  AND e2e_run_claims.status = 'active'
+                  AND e2e_fixture_sessions.session_id = session.id
+                  AND e2e_fixture_sessions.user_id = session.userId
+                  AND e2e_fixture_sessions.merchant_id = organizations.merchant_id
+                  AND e2e_fixture_sessions.hard_expires_at > ?2
+                  AND e2e_fixture_sessions.hard_expires_at
+                    = e2e_fixture_sessions.issued_at + 900000
+                  AND substr(user.email, 1, length('e2e+' || e2e_run_claims.run_id || '_'))
+                    = 'e2e+' || e2e_run_claims.run_id || '_'
+                  AND substr(user.email, -12) = '@e2e.invalid'
+              ))
+          )
           AND memberships.status = 'active' AND organizations.status = 'active'
-      `).bind(sessionId, now).first<{
+      `).bind(sessionId, now, options.appEnv ?? '').first<{
         sessionId: string;
         userId: string;
         authenticationMethod: string;
@@ -310,7 +348,15 @@ export function createOrganizationService(options: OrganizationServiceOptions) {
         merchantId: requiredText(rawInput.merchantId, 'merchantId'),
         name: requiredText(rawInput.name, 'name'),
         correlationId: requiredText(rawInput.correlationId, 'correlationId'),
+        ...(rawInput.e2eRun ? { e2eRun: E2eRunProofSchema.parse(rawInput.e2eRun) } : {}),
       };
+      if (input.e2eRun && options.appEnv !== 'staging'
+        && !(options.appEnv === 'local' && options.localTestMode === '1')) {
+        throw new OrganizationOperationError('E2E provisioning requires staging');
+      }
+      if (input.e2eRun && !input.name.startsWith(`${input.e2eRun.runId}_merchant`)) {
+        throw new OrganizationOperationError('E2E merchant name lacks run provenance');
+      }
       if (!authorize(principal, 'credentials:manage', input.merchantId)) {
         throw new OrganizationOperationError(
           'Provisioning is forbidden without explicit root merchant selection',
@@ -319,15 +365,69 @@ export function createOrganizationService(options: OrganizationServiceOptions) {
       if (!options.core) throw new Error('Core provisioning service is unavailable');
 
       const now = Date.now();
-      await database.prepare(`
+      const proofHash = input.e2eRun ? await hashProof(input.e2eRun.proof) : undefined;
+      const claimed = await database.prepare(`
+        SELECT run_id AS runId, merchant_id AS merchantId,
+          provisioning_id AS provisioningId, proof_hash AS proofHash, status
+        FROM e2e_run_claims WHERE merchant_id = ?1 OR provisioning_id = ?2
+      `).bind(input.merchantId, input.provisioningId).all<{
+        runId: string; merchantId: string; provisioningId: string;
+        proofHash: string; status: string;
+      }>();
+      if (claimed.results.length > 1 || (claimed.results[0] && (
+        !input.e2eRun || claimed.results[0].runId !== input.e2eRun.runId
+        || claimed.results[0].merchantId !== input.merchantId
+        || claimed.results[0].provisioningId !== input.provisioningId
+        || claimed.results[0].proofHash !== proofHash
+        || claimed.results[0].status !== 'active'
+      ))) throw new OrganizationOperationError('E2E provisioning retry requires matching run proof');
+      const insertProvisioning = database.prepare(`
         INSERT INTO client_provisionings (
           provisioning_id, merchant_id, name, status, current_step, failed_step,
           retryable, attempt_count, created_at, updated_at, correlation_id
-        ) VALUES (?1, ?2, ?3, 'provisioning', 'core_provision', NULL, 0, 0, ?4, ?4, ?5)
+        ) SELECT ?1, ?2, ?3, 'provisioning', 'core_provision', NULL, 0, 0, ?4, ?4, ?5
+        WHERE ?6 = 0 OR EXISTS (
+          SELECT 1 FROM e2e_run_claims
+          WHERE run_id = ?7 AND merchant_id = ?2 AND provisioning_id = ?1
+            AND proof_hash = ?8 AND status = 'active'
+        )
         ON CONFLICT DO NOTHING
       `).bind(
         input.provisioningId, input.merchantId, input.name, now, input.correlationId,
-      ).run();
+        input.e2eRun ? 1 : 0, input.e2eRun?.runId ?? '', proofHash ?? '',
+      );
+      if (input.e2eRun && proofHash) {
+        await database.batch([
+          database.prepare(`
+            INSERT INTO e2e_run_claims (
+              run_id, merchant_id, provisioning_id, proof_hash, status, created_at
+            ) SELECT ?1, ?2, ?3, ?4, 'active', ?5
+            WHERE NOT EXISTS (
+              SELECT 1 FROM client_provisionings
+              WHERE provisioning_id = ?3 OR merchant_id = ?2
+            ) ON CONFLICT DO NOTHING
+          `).bind(input.e2eRun.runId, input.merchantId,
+            input.provisioningId, proofHash, now),
+          insertProvisioning,
+        ]);
+        const claim = await database.prepare(`
+          SELECT run_id AS runId, merchant_id AS merchantId,
+            provisioning_id AS provisioningId, proof_hash AS proofHash, status
+          FROM e2e_run_claims WHERE run_id = ?1 OR merchant_id = ?2
+        `).bind(input.e2eRun.runId, input.merchantId).all<{
+          runId: string; merchantId: string; provisioningId: string;
+          proofHash: string; status: string;
+        }>();
+        if (claim.results.length !== 1 || claim.results[0]?.runId !== input.e2eRun.runId
+          || claim.results[0].merchantId !== input.merchantId
+          || claim.results[0].provisioningId !== input.provisioningId
+          || claim.results[0].proofHash !== proofHash
+          || claim.results[0].status !== 'active') {
+          throw new OrganizationOperationError('E2E tenant provenance conflict');
+        }
+      } else {
+        await insertProvisioning.run();
+      }
       const conflicts = await database.prepare(`
         SELECT provisioning_id AS provisioningId, merchant_id AS merchantId,
           organization_id AS organizationId, name, status,
@@ -369,6 +469,9 @@ export function createOrganizationService(options: OrganizationServiceOptions) {
           id: input.merchantId,
           name: input.name,
           provisioningId: input.provisioningId,
+          ...(input.e2eRun && proofHash
+            ? { e2eRun: { runId: input.e2eRun.runId, proofHash } }
+            : {}),
           }),
         );
         if (!provisioned.ok) {

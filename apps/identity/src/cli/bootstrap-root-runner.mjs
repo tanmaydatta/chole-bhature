@@ -27,8 +27,13 @@ function parseArguments(arguments_) {
 }
 
 function wranglerArguments(environment, tail) {
+  const localConfig = process.env.E2E_LOCAL_WRANGLER_CONFIG;
+  const localPersistTo = process.env.E2E_LOCAL_PERSIST_TO;
+  if (Boolean(localConfig) !== Boolean(localPersistTo)) throw new Error('local override');
+  if ((localConfig || localPersistTo) && environment !== 'local') throw new Error('local only');
   const target = environment === 'local'
-    ? ['incentives-auth-local', '--local']
+    ? ['incentives-auth-local', '--local', ...(localConfig
+      ? ['--config', localConfig, '--persist-to', localPersistTo] : [])]
     : ['incentives-auth-staging', '--env', 'staging', '--remote'];
   return ['exec', 'wrangler', 'd1', 'execute', ...target, ...tail, '--json'];
 }
@@ -76,7 +81,9 @@ async function executeFile(environment, sql) {
   const sqlFile = join(directory, 'bootstrap.sql');
   try {
     await writeFile(sqlFile, sql, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
-    const command = buildBootstrapRootWranglerCommand({ environment, sqlFile });
+    const command = buildBootstrapRootWranglerCommand({ environment, sqlFile,
+      localConfig: process.env.E2E_LOCAL_WRANGLER_CONFIG,
+      localPersistTo: process.env.E2E_LOCAL_PERSIST_TO });
     await run(command.command, command.arguments);
   } finally {
     await rm(directory, { recursive: true, force: true });

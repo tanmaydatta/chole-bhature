@@ -55,6 +55,11 @@ interface TestEnv {
     acceptInvitation: RpcMock;
     removeMember: RpcMock;
     changeMemberRole: RpcMock;
+    previewE2eRun: RpcMock;
+    disposeE2eRun: RpcMock;
+    inspectE2eRun: RpcMock;
+    getE2eCapabilities: RpcMock;
+    createE2eAccount: RpcMock;
   };
   CORE: Record<string, RpcMock>;
   ASSETS: { fetch: RpcMock };
@@ -173,6 +178,42 @@ function createEnv(principal: Principal | ReturnType<typeof apiError> = admin): 
         id: 'membership-viewer', organizationId: 'org-a', userId: 'user-viewer',
         role: 'operator', status: 'active',
       }),
+      previewE2eRun: rpc({
+        runId: 'e2e_0123456789abcdef01234567', merchantId: 'merchant-e2e',
+        status: 'active', productStatus: 'active', auth: { organizations: 1 },
+        product: { merchants: 1 },
+      }),
+      disposeE2eRun: rpc({
+        runId: 'e2e_0123456789abcdef01234567', merchantId: 'merchant-e2e',
+        status: 'disposed', productStatus: 'disposed', auth: { organizations: 0 },
+        product: { merchants: 0 },
+      }),
+      inspectE2eRun: rpc({
+        runId: 'e2e_0123456789abcdef01234567', merchantId: 'merchant-e2e',
+        evaluation: { evaluationId: 'evaluation-1', integrityVerified: true,
+          priceBreakdown: { currency: 'GBP', originalMerchandiseSubtotal: 0,
+            discountAllocations: [], totalDiscount: 0,
+            discountedMerchandiseSubtotal: 0 } },
+        redemption: { redemptionId: 'redemption-1', receiptIntegrityVerified: true,
+          result: { redemptionId: 'redemption-1', evaluationId: 'evaluation-1',
+            externalOrderRef: 'e2e_0123456789abcdef01234567_order',
+            idempotencyKey: 'e2e_0123456789abcdef01234567_attempt',
+            status: 'committed', entries: [],
+            priceBreakdown: { currency: 'GBP', originalMerchandiseSubtotal: 0,
+              discountAllocations: [], totalDiscount: 0,
+              discountedMerchandiseSubtotal: 0 } }, entries: [] },
+        counters: [],
+      }),
+      getE2eCapabilities: rpc({ version: 1,
+        migrations: ['0005_e2e_tenant_lifecycle.sql', '0006_e2e_fixture_session.sql'],
+        product: { version: 1, migrations: ['0008_e2e_tenant_lifecycle.sql'],
+          inspection: true, disposal: true } }),
+      createE2eAccount: rpc({ runId: 'e2e_0123456789abcdef01234567',
+        merchantId: 'merchant-e2e', organizationId: 'org-e2e',
+        userId: 'user-e2e', membershipId: 'member-e2e',
+        email: 'e2e+e2e_0123456789abcdef01234567_viewer@e2e.invalid',
+        role: 'viewer', sessionId: 'session-e2e',
+        cookieHeader: 'incentives-staging.session_token=signed-fixture' }),
     },
     CORE: {
       createCredential: rpc({
@@ -298,6 +339,110 @@ async function selectMerchant(handler: Awaited<ReturnType<typeof worker>>, env: 
 }
 
 beforeEach(() => vi.restoreAllMocks());
+
+describe('protected staging E2E lifecycle', () => {
+  const runId = 'e2e_0123456789abcdef01234567';
+  const proof = 'A'.repeat(43);
+  const path = `/operator/v1/platform/e2e-runs/${runId}/preview`;
+
+  test('read-only capability route is root-only, migration-checked, and closed in normal local', async () => {
+    const handler = await worker();
+    const env = createEnv(root);
+    const url = '/operator/v1/platform/e2e-capabilities';
+    expect((await handler?.fetch(request(url), env))?.status).toBe(404);
+    expect(env.IDENTITY.getE2eCapabilities).not.toHaveBeenCalled();
+    env.APP_ENV = 'staging';
+    env.IDENTITY.resolveBrowserPrincipal.mockResolvedValue(admin);
+    expect((await handler?.fetch(request(url), env))?.status).toBe(403);
+    env.IDENTITY.resolveBrowserPrincipal.mockResolvedValue(root);
+    const ready = await handler?.fetch(request(url), env);
+    expect(ready?.status).toBe(200);
+    expect(await json(ready)).toMatchObject({ protocol: 'incentives-e2e', version: 1,
+      operator: { version: 1 }, identity: { version: 1 }, product: { version: 1 } });
+    env.IDENTITY.getE2eCapabilities.mockResolvedValue({ version: 0 });
+    expect((await handler?.fetch(request(url), env))?.status).toBe(503);
+  });
+
+  test('is unavailable in local mode even to root', async () => {
+    const handler = await worker();
+    const env = createEnv(root);
+    const response = await handler?.fetch(request(path, {
+      method: 'POST', body: JSON.stringify({ proof }),
+    }), env);
+    expect(response?.status).toBe(404);
+    expect(env.IDENTITY.previewE2eRun).not.toHaveBeenCalled();
+  });
+
+  test('requires root and passes only the run proof through private Identity RPC', async () => {
+    const handler = await worker();
+    const env = createEnv(admin);
+    env.APP_ENV = 'staging';
+    const rejected = await handler?.fetch(request(path, {
+      method: 'POST', body: JSON.stringify({ proof }),
+    }), env);
+    expect(rejected?.status).toBe(403);
+    expect(env.IDENTITY.previewE2eRun).not.toHaveBeenCalled();
+    env.IDENTITY.resolveBrowserPrincipal.mockResolvedValue(root);
+    const accepted = await handler?.fetch(request(path, {
+      method: 'POST', body: JSON.stringify({ proof }),
+    }), env);
+    expect(accepted?.status).toBe(200);
+    expect(await json(accepted)).toMatchObject({ runId, status: 'active' });
+    expect(env.IDENTITY.previewE2eRun).toHaveBeenCalledWith({
+      sessionId: 'session-root', runId, proof, correlationId,
+    });
+  });
+
+  test('inspection is staging-root-only and forwards only scoped lookup keys', async () => {
+    const handler = await worker();
+    const env = createEnv(admin);
+    env.APP_ENV = 'staging';
+    const path = `/operator/v1/platform/e2e-runs/${runId}/inspect`;
+    const body = { proof, evaluationId: 'evaluation-1',
+      idempotencyKey: `${runId}_attempt`, programRefs: [`${runId}_promo`] };
+    const rejected = await handler?.fetch(request(path, {
+      method: 'POST', body: JSON.stringify(body),
+    }), env);
+    expect(rejected?.status).toBe(403);
+    expect(env.IDENTITY.inspectE2eRun).not.toHaveBeenCalled();
+    env.IDENTITY.resolveBrowserPrincipal.mockResolvedValue(root);
+    const accepted = await handler?.fetch(request(path, {
+      method: 'POST', body: JSON.stringify(body),
+    }), env);
+    expect(accepted?.status).toBe(200);
+    expect(env.IDENTITY.inspectE2eRun).toHaveBeenCalledWith({
+      ...body, runId, sessionId: root.sessionId, correlationId,
+    });
+  });
+
+  test('fixture account creation is staging-root-only and accepts no caller email or user ID', async () => {
+    const handler = await worker();
+    const env = createEnv(root);
+    const path = `/operator/v1/platform/e2e-runs/${runId}/accounts`;
+    const body = { proof, slug: 'viewer', role: 'viewer' };
+    const local = await handler?.fetch(request(path, { method: 'POST',
+      body: JSON.stringify(body) }), env);
+    expect(local?.status).toBe(404);
+    env.APP_ENV = 'staging';
+    env.IDENTITY.resolveBrowserPrincipal.mockResolvedValue(admin);
+    const nonRoot = await handler?.fetch(request(path, { method: 'POST',
+      body: JSON.stringify(body) }), env);
+    expect(nonRoot?.status).toBe(403);
+    env.IDENTITY.resolveBrowserPrincipal.mockResolvedValue(root);
+    const arbitrary = await handler?.fetch(request(path, { method: 'POST',
+      body: JSON.stringify({ ...body, email: 'foreign@example.test' }) }), env);
+    expect(arbitrary?.status).toBe(400);
+    expect(env.IDENTITY.createE2eAccount).not.toHaveBeenCalled();
+    const accepted = await handler?.fetch(request(path, { method: 'POST',
+      body: JSON.stringify(body) }), env);
+    expect(accepted?.status).toBe(200);
+    expect(await json(accepted)).toMatchObject({ userId: 'user-e2e',
+      role: 'viewer', sessionId: 'session-e2e' });
+    expect(env.IDENTITY.createE2eAccount).toHaveBeenCalledWith({
+      ...body, runId, sessionId: root.sessionId, correlationId,
+    });
+  });
+});
 
 describe('canonical Operator Web contracts', () => {
   test.each([
@@ -728,6 +873,28 @@ describe('live session and tenant boundary', () => {
         correlationId,
       },
     });
+  });
+
+  test('forwards a staging E2E proof when retrying the same failed provisioning', async () => {
+    const handler = await worker();
+    const env = createEnv(root);
+    env.APP_ENV = 'staging';
+    const runId = 'e2e_0123456789abcdef01234567';
+    const proof = 'A'.repeat(43);
+    const failed = { provisioningId: 'provisioning-e2e', merchantId: 'merchant-e2e',
+      organizationId: null, name: `${runId}_merchant Test`, status: 'failed',
+      failedStep: 'core_provision', retryable: true };
+    env.IDENTITY.getProvisioningForRoot.mockResolvedValue(failed);
+    env.IDENTITY.provisionClient.mockResolvedValue({ ...failed, status: 'active',
+      organizationId: 'org-e2e', failedStep: null, retryable: false });
+    const response = await handler?.fetch(request(
+      '/operator/v1/platform/provisionings/provisioning-e2e/retry',
+      { method: 'POST', body: JSON.stringify({ e2eRun: { runId, proof } }) },
+    ), env);
+    expect(response?.status).toBe(200);
+    expect(env.IDENTITY.provisionClient).toHaveBeenCalledWith(expect.objectContaining({
+      input: expect.objectContaining({ e2eRun: { runId, proof } }),
+    }));
   });
 
   test.each([
