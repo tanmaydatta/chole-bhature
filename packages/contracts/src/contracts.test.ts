@@ -184,6 +184,7 @@ describe('canonical contracts', () => {
       currency: 'GBP',
       subtotal: 6_500,
       items: [{
+        lineRef: 'line-1',
         productRef: ' Product::001 ',
         variantRef: ' Variant::001 ',
         quantity: 1,
@@ -219,6 +220,31 @@ describe('canonical contracts', () => {
       total: -1,
       items: [],
       platform: 'fake',
+    }).success).toBe(false);
+  });
+
+  test('requires a stable unique identity for every cart line', () => {
+    const duplicateProductLines = {
+      currency: 'GBP',
+      subtotal: 2_000,
+      items: [
+        { lineRef: 'line-1', productRef: 'product-1', quantity: 1, unitPrice: 1_000 },
+        { lineRef: 'line-2', productRef: 'product-1', quantity: 1, unitPrice: 1_000 },
+      ],
+    };
+
+    expect(EvaluationRequestSchema.safeParse({ cart: duplicateProductLines }).success).toBe(true);
+    expect(EvaluationRequestSchema.safeParse({
+      cart: {
+        ...duplicateProductLines,
+        items: duplicateProductLines.items.map(item => ({ ...item, lineRef: 'same-line' })),
+      },
+    }).success).toBe(false);
+    expect(EvaluationRequestSchema.safeParse({
+      cart: {
+        ...duplicateProductLines,
+        items: [{ productRef: 'product-1', quantity: 1, unitPrice: 2_000 }],
+      },
     }).success).toBe(false);
   });
 
@@ -382,7 +408,85 @@ describe('canonical contracts', () => {
         commitRequired: true,
         eligible: true,
       }],
+      priceBreakdown: {
+        currency: 'GBP',
+        originalMerchandiseSubtotal: 1_000,
+        discountAllocations: [{
+          programRef: 'welcome-10',
+          programRevision: 1,
+          rewardRuleRef: 'default-reward',
+          discountMinorUnits: 1_000,
+        }],
+        totalDiscount: 1_000,
+        discountedMerchandiseSubtotal: 0,
+      },
     }).success).toBe(true);
+  });
+
+  test('requires an authoritative merchandise price breakdown in evaluation responses', () => {
+    const response = {
+      evaluationId: 'evaluation-1',
+      schemaVersion: 3,
+      expiresAt: '2026-07-18T15:05:00Z',
+      decisions: [],
+      priceBreakdown: {
+        currency: 'GBP',
+        originalMerchandiseSubtotal: 10_001,
+        discountAllocations: [{
+          programRef: 'promo-1',
+          programRevision: 2,
+          rewardRuleRef: 'rule-1',
+          discountMinorUnits: 1_500,
+          lineAllocations: [
+            { lineRef: 'line-1', discountMinorUnits: 1_000 },
+            { lineRef: 'line-2', discountMinorUnits: 500 },
+          ],
+        }],
+        totalDiscount: 1_500,
+        discountedMerchandiseSubtotal: 8_501,
+      },
+    };
+
+    expect(EvaluationResponseSchema.safeParse(response).success).toBe(true);
+    const { priceBreakdown: _missing, ...withoutBreakdown } = response;
+    expect(EvaluationResponseSchema.safeParse(withoutBreakdown).success).toBe(false);
+    expect(EvaluationResponseSchema.safeParse({
+      ...response,
+      priceBreakdown: {
+        ...response.priceBreakdown,
+        discountAllocations: [{
+          ...response.priceBreakdown.discountAllocations[0],
+          discountMinorUnits: -1,
+        }],
+      },
+    }).success).toBe(false);
+    expect(EvaluationResponseSchema.safeParse({
+      ...response,
+      priceBreakdown: {
+        ...response.priceBreakdown,
+        totalDiscount: 1_499,
+      },
+    }).success).toBe(false);
+    expect(EvaluationResponseSchema.safeParse({
+      ...response,
+      priceBreakdown: {
+        ...response.priceBreakdown,
+        discountedMerchandiseSubtotal: 8_500,
+      },
+    }).success).toBe(false);
+    expect(EvaluationResponseSchema.safeParse({
+      ...response,
+      priceBreakdown: {
+        ...response.priceBreakdown,
+        discountAllocations: [{
+          ...response.priceBreakdown.discountAllocations[0],
+          lineAllocations: [
+            { lineRef: 'line-1', discountMinorUnits: 1_000 },
+            { lineRef: 'line-1', discountMinorUnits: 500 },
+          ],
+        }],
+      },
+    }).success).toBe(false);
   });
 
   test('rejects an empty selected reward rule reference', () => {
@@ -419,6 +523,13 @@ describe('canonical contracts', () => {
         commitRequired: false,
         eligible: false,
       }],
+      priceBreakdown: {
+        currency: 'GBP',
+        originalMerchandiseSubtotal: 0,
+        discountAllocations: [],
+        totalDiscount: 0,
+        discountedMerchandiseSubtotal: 0,
+      },
     }).success).toBe(true);
   });
 
@@ -454,6 +565,28 @@ describe('canonical contracts', () => {
     expect(EffectSchema.safeParse({
       type: 'order_discount',
       calculation: 'percent',
+    }).success).toBe(false);
+  });
+
+  test('accepts a positive exact-currency maximum only for percentage discounts', () => {
+    expect(EffectSchema.safeParse({
+      type: 'order_discount',
+      calculation: 'percent',
+      basisPoints: 2_000,
+      maximumDiscountAmount: { currency: 'GBP', minorUnits: 1_500 },
+    }).success).toBe(true);
+    expect(EffectSchema.safeParse({
+      type: 'line_item_discount',
+      productRef: 'product-1',
+      calculation: 'percent',
+      basisPoints: 2_000,
+      maximumDiscountAmount: { currency: 'GBP', minorUnits: 0 },
+    }).success).toBe(false);
+    expect(EffectSchema.safeParse({
+      type: 'order_discount',
+      calculation: 'fixed',
+      amount: { currency: 'GBP', minorUnits: 1_000 },
+      maximumDiscountAmount: { currency: 'GBP', minorUnits: 500 },
     }).success).toBe(false);
   });
 
@@ -518,6 +651,13 @@ describe('canonical contracts', () => {
       schemaVersion: 1,
       expiresAt: '2026-07-24T10:00:00.000Z',
       decisions: [],
+      priceBreakdown: {
+        currency: 'GBP',
+        originalMerchandiseSubtotal: 0,
+        discountAllocations: [],
+        totalDiscount: 0,
+        discountedMerchandiseSubtotal: 0,
+      },
     };
     expect(EvaluationResponseSchema.parse(response)).toEqual(response);
     expect(EvaluationResponseSchema.parse({
@@ -550,11 +690,20 @@ describe('canonical contracts', () => {
           effects: [{ type: 'free_shipping' }],
         },
       ],
+      priceBreakdown: {
+        currency: 'GBP',
+        originalMerchandiseSubtotal: 1_000,
+        discountAllocations: [],
+        totalDiscount: 0,
+        discountedMerchandiseSubtotal: 1_000,
+      },
       idempotencyKey: 'checkout-1',
     } as const;
 
     expect(RedemptionEntrySchema.parse(response.entries[0])).toEqual(response.entries[0]);
     expect(RedemptionResponseSchema.parse(response)).toEqual(response);
+    const { priceBreakdown: _missing, ...withoutBreakdown } = response;
+    expect(RedemptionResponseSchema.safeParse(withoutBreakdown).success).toBe(false);
     expect(() => RedemptionResponseSchema.parse({
       ...response,
       programRef: 'promo-a',
@@ -769,6 +918,7 @@ describe('canonical contracts', () => {
     ]);
     expect(schema).toHaveProperty('properties.cart.properties.attributes.additionalProperties', false);
     expect(schema).toHaveProperty('properties.cart.properties.items.items.required', [
+      'lineRef',
       'productRef',
       'quantity',
       'unitPrice',
@@ -902,6 +1052,7 @@ describe('canonical contracts', () => {
         externalOrderRef: {},
         status: {},
         entries: {},
+        priceBreakdown: {},
         idempotencyKey: {},
       },
       required: [
@@ -910,6 +1061,7 @@ describe('canonical contracts', () => {
         'externalOrderRef',
         'status',
         'entries',
+        'priceBreakdown',
         'idempotencyKey',
       ],
       additionalProperties: false,

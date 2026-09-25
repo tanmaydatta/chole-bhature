@@ -9,6 +9,7 @@ import type {
   Effect,
   EvaluationRequest,
   IncentiveDecision,
+  MerchandisePriceBreakdown,
   MerchantActivationRequest,
   MerchantActivationResult,
   MerchantProvisionRequest,
@@ -310,6 +311,7 @@ export interface EvaluationDecisionRecord {
   request: EvaluationRequest;
   facts: EvaluationFactsSnapshot;
   decisions: IncentiveDecision[];
+  priceBreakdown?: MerchandisePriceBreakdown;
   integrityHash: string;
   expiresAt: string;
   createdAt: string;
@@ -349,7 +351,7 @@ export interface RedemptionBundleCreate {
   externalOrderRef: string;
   idempotencyKey: string;
   requestDigest: string;
-  result: RedemptionResponse;
+  result: RedemptionResponse | Omit<RedemptionResponse, 'priceBreakdown'>;
   entries: RedemptionEntryRecord[];
   createdAt: string;
   receiptIntegrityHash: string;

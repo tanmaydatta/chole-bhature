@@ -74,6 +74,7 @@ export interface ConnectorFixture<TCustomer, TCart, TOrder, TDecision> {
 }
 
 export interface ConnectorLineReference {
+  readonly lineRef: string;
   readonly productRef: string;
   readonly variantRef?: string | undefined;
 }
@@ -134,6 +135,7 @@ function lineReferencesMatch(
   return items.length === expected.length && items.every((item, index) => {
     const reference = expected[index];
     return reference !== undefined
+      && item.lineRef === reference.lineRef
       && item.productRef === reference.productRef
       && item.variantRef === reference.variantRef;
   });

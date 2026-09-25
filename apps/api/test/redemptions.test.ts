@@ -888,6 +888,7 @@ describe('POST /v1/redemptions', () => {
           ? []
           : [automaticPromo('welcome').rewardRules[0]!.reward],
       }],
+      priceBreakdown: evaluation.priceBreakdown,
     });
     expect(await env.DB.prepare(`
       SELECT COUNT(*) AS count FROM redemption_entries WHERE redemption_id = ?1
@@ -1208,6 +1209,23 @@ describe('POST /v1/redemptions', () => {
       evaluationId: tampered.evaluationId,
       externalOrderRef: 'tampered-order',
       idempotencyKey: 'tampered-key',
+    }), 409, 'VERSION_CONFLICT');
+
+    const tamperedPricing = await evaluate();
+    await env.DB.prepare(`
+      UPDATE evaluation_decisions
+      SET price_breakdown_json = json_set(
+        price_breakdown_json,
+        '$.discountAllocations[0].discountMinorUnits', 999,
+        '$.totalDiscount', 999,
+        '$.discountedMerchandiseSubtotal', 5501
+      )
+      WHERE merchant_id = ?1 AND id = ?2
+    `).bind(SEEDED_MERCHANT_ID, tamperedPricing.evaluationId).run();
+    await expectError(await redeemRaw({
+      evaluationId: tamperedPricing.evaluationId,
+      externalOrderRef: 'tampered-pricing-order',
+      idempotencyKey: 'tampered-pricing-key',
     }), 409, 'VERSION_CONFLICT');
     expect(await env.DB.prepare('SELECT COUNT(*) AS count FROM redemptions').first())
       .toEqual({ count: 0 });

@@ -97,7 +97,10 @@ export const canonicalEvaluationRequest = {
   cart: {
     currency: 'GBP',
     subtotal: 12_500,
-    items: [],
+    items: [
+      { lineRef: 'line-1', productRef: 'product-1', quantity: 1, unitPrice: 5_000 },
+      { lineRef: 'line-2', productRef: 'product-1', quantity: 1, unitPrice: 7_500 },
+    ],
   },
   context: { channel: 'web' },
 } as const satisfies EvaluationRequest;
@@ -167,6 +170,7 @@ export const canonicalTwoTierPromo = {
         type: 'order_discount',
         calculation: 'percent',
         basisPoints: 2_000,
+        maximumDiscountAmount: { currency: 'GBP', minorUnits: 1_500 },
       },
     },
     {
@@ -241,7 +245,10 @@ export const canonicalTwoTierEvaluationRequest = {
   cart: {
     currency: 'GBP',
     subtotal: 12_500,
-    items: [],
+    items: [
+      { lineRef: 'line-1', productRef: 'product-1', quantity: 1, unitPrice: 5_000 },
+      { lineRef: 'line-2', productRef: 'product-1', quantity: 1, unitPrice: 7_500 },
+    ],
   },
   context: { channel: 'web' },
 } as const satisfies EvaluationRequest;
@@ -252,6 +259,14 @@ const canonicalEvaluationResponseBase = {
   customerVersion: 1,
   schemaVersion: 1,
   expiresAt: '2026-07-19T10:05:00.000Z',
+} as const;
+
+const canonicalUndiscountedPriceBreakdown = {
+  currency: 'GBP',
+  originalMerchandiseSubtotal: 12_500,
+  discountAllocations: [],
+  totalDiscount: 0,
+  discountedMerchandiseSubtotal: 12_500,
 } as const;
 
 export const canonicalFirstMatchResponse = {
@@ -266,12 +281,25 @@ export const canonicalFirstMatchResponse = {
       type: 'order_discount',
       calculation: 'percent',
       basisPoints: 2_000,
+      maximumDiscountAmount: { currency: 'GBP', minorUnits: 1_500 },
     }],
     reasonCodes: [],
     message: 'You received 20% off.',
     commitRequired: true,
     eligible: true,
   }],
+  priceBreakdown: {
+    currency: 'GBP',
+    originalMerchandiseSubtotal: 12_500,
+    discountAllocations: [{
+      programRef: 'gold-web-rewards',
+      programRevision: 1,
+      rewardRuleRef: 'large-cart-20-percent',
+      discountMinorUnits: 1_500,
+    }],
+    totalDiscount: 1_500,
+    discountedMerchandiseSubtotal: 11_000,
+  },
 } as const satisfies EvaluationResponse;
 
 export const canonicalFallbackResponse = {
@@ -292,11 +320,24 @@ export const canonicalFallbackResponse = {
     commitRequired: true,
     eligible: true,
   }],
+  priceBreakdown: {
+    currency: 'GBP',
+    originalMerchandiseSubtotal: 12_500,
+    discountAllocations: [{
+      programRef: 'gold-web-rewards',
+      programRevision: 1,
+      rewardRuleRef: 'fallback-5-off',
+      discountMinorUnits: 500,
+    }],
+    totalDiscount: 500,
+    discountedMerchandiseSubtotal: 12_000,
+  },
 } as const satisfies EvaluationResponse;
 
 export const canonicalNoMatchResponse = {
   ...canonicalEvaluationResponseBase,
   decisions: [],
+  priceBreakdown: canonicalUndiscountedPriceBreakdown,
 } as const satisfies EvaluationResponse;
 
 export const canonicalCodedEvaluationResponse = {
@@ -349,6 +390,18 @@ export const canonicalCodedEvaluationResponse = {
       reasonCodes: [],
     },
   ],
+  priceBreakdown: {
+    currency: 'GBP',
+    originalMerchandiseSubtotal: 12_500,
+    discountAllocations: [{
+      programRef: 'gate-c-15',
+      programRevision: 1,
+      rewardRuleRef: 'fifteen-percent',
+      discountMinorUnits: 1_875,
+    }],
+    totalDiscount: 1_875,
+    discountedMerchandiseSubtotal: 10_625,
+  },
 } as const satisfies EvaluationResponse;
 
 export const canonicalRedemptionRequest = {
@@ -380,6 +433,18 @@ export const canonicalCommittedRedemption = {
       }],
     },
   ],
+  priceBreakdown: {
+    currency: 'GBP',
+    originalMerchandiseSubtotal: 12_500,
+    discountAllocations: [{
+      programRef: 'gate-c-15',
+      programRevision: 1,
+      rewardRuleRef: 'fifteen-percent',
+      discountMinorUnits: 1_875,
+    }],
+    totalDiscount: 1_875,
+    discountedMerchandiseSubtotal: 10_625,
+  },
   idempotencyKey: 'checkout-789',
 } as const satisfies RedemptionResponse;
 

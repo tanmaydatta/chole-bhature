@@ -13,6 +13,7 @@ import {
 } from '@incentives/contracts';
 import {
   assembleFacts,
+  calculateMerchandisePriceBreakdown,
   compareProgramRank,
   selectCodedDecisionCombination,
 } from '@incentives/engine';
@@ -176,6 +177,7 @@ export function decisionSnapshot(record: Pick<
   | 'request'
   | 'facts'
   | 'decisions'
+  | 'priceBreakdown'
 >) {
   return {
     mode: record.mode,
@@ -189,6 +191,9 @@ export function decisionSnapshot(record: Pick<
     request: record.request,
     facts: record.facts,
     decisions: record.decisions,
+    ...(record.priceBreakdown === undefined
+      ? {}
+      : { priceBreakdown: record.priceBreakdown }),
   };
 }
 
@@ -226,6 +231,7 @@ function integrityPayload(record: Pick<
   | 'request'
   | 'facts'
   | 'decisions'
+  | 'priceBreakdown'
   | 'expiresAt'
 >) {
   return {
@@ -370,50 +376,20 @@ function stableDecision(decision: PromoDecision): IncentiveDecision {
   throw new TypeError(`Unsupported decision outcome: ${String(canonical.outcome)}`);
 }
 
-function safeMinorUnits(value: bigint): number {
-  if (value < 0n || value > BigInt(Number.MAX_SAFE_INTEGER)) {
-    throw new RangeError('Projected discount exceeds the supported minor-unit range');
-  }
-  return Number(value);
-}
-
-function percentOf(value: bigint, basisPoints: number): bigint {
-  return (value * BigInt(basisPoints)) / 10_000n;
-}
-
-function minimum(left: bigint, right: bigint): bigint {
-  return left < right ? left : right;
-}
-
 export function projectedDiscountMinorUnits(
   effects: readonly Effect[],
   cart: Cart,
 ): number {
-  let projected = 0n;
-  const subtotal = BigInt(cart.subtotal);
-  for (const effect of effects) {
-    if (effect.type === 'free_shipping') continue;
-    if (effect.type === 'order_discount') {
-      projected += effect.calculation === 'fixed'
-        ? minimum(BigInt(effect.amount.minorUnits), subtotal)
-        : percentOf(subtotal, effect.basisPoints);
-      continue;
-    }
-    if (effect.type === 'line_item_discount') {
-      for (const item of cart.items) {
-        if (item.productRef !== effect.productRef) continue;
-        const quantity = BigInt(item.quantity);
-        const extendedLineValue = BigInt(item.unitPrice) * quantity;
-        const lineDiscount = effect.calculation === 'fixed'
-          ? BigInt(effect.amount.minorUnits) * quantity
-          : percentOf(extendedLineValue, effect.basisPoints);
-        projected += minimum(lineDiscount, extendedLineValue);
-      }
-      continue;
-    }
-    throw new TypeError(`Unsupported projected discount effect: ${effect.type}`);
-  }
-  return safeMinorUnits(minimum(projected, subtotal));
+  return calculateMerchandisePriceBreakdown(cart, [{
+    programRef: 'projected-discount',
+    programRevision: 1,
+    programType: 'promo',
+    outcome: 'qualified',
+    rewardRuleRef: 'projected-discount',
+    effects: [...effects],
+    reasonCodes: [],
+    commitRequired: true,
+  }]).totalDiscount;
 }
 
 type PromoDecision = Awaited<ReturnType<typeof PromoModule.evaluate>>[number] & {
@@ -486,6 +462,11 @@ function selectedCurrencyMismatch(
     effect !== undefined
     && 'amount' in effect
     && effect.amount.currency !== cartCurrency
+  ) || (
+    effect !== undefined
+    && 'maximumDiscountAmount' in effect
+    && effect.maximumDiscountAmount !== undefined
+    && effect.maximumDiscountAmount.currency !== cartCurrency
   );
 }
 
@@ -616,6 +597,7 @@ interface EvaluatedProgram {
 async function evaluateSingleProgram(
   record: ProgramRecord,
   context: SingleProgramEvaluationContext,
+  deferFinancialFinalization = false,
 ): Promise<EvaluatedProgram> {
   const {
     repositories,
@@ -707,6 +689,7 @@ async function evaluateSingleProgram(
       ? ['PER_CUSTOMER_CAP_EXHAUSTED']
       : []),
     ...(record.budgetRemaining !== undefined
+      && !deferFinancialFinalization
       && record.budgetRemaining < projectedCost
       ? ['BUDGET_EXHAUSTED']
       : []),
@@ -714,17 +697,19 @@ async function evaluateSingleProgram(
   if (exhaustionReasons.length !== 0) {
     return { decision: exhaustedDecision(decision, exhaustionReasons) };
   }
-  const reservation = await reservations.prepare({
-    merchantId,
-    evaluationId,
-    correlationId,
-    decision: stableDecision(decision),
-  });
-  if (reservation !== undefined) {
-    preparedReservations.push({
-      handle: reservation,
-      programRef: decision.programRef,
+  if (!deferFinancialFinalization) {
+    const reservation = await reservations.prepare({
+      merchantId,
+      evaluationId,
+      correlationId,
+      decision: stableDecision(decision),
     });
+    if (reservation !== undefined) {
+      preparedReservations.push({
+        handle: reservation,
+        programRef: decision.programRef,
+      });
+    }
   }
   return { decision };
 }
@@ -889,6 +874,7 @@ export function createEvaluationService(
           const codedEvaluations: Array<{
             code: ReturnType<typeof normalizeDistinctPromoCodes>[number];
             decision?: PromoDecision;
+            record?: ProgramRecord;
           }> = [];
           for (const code of normalizedCodes) {
             const record = await repositories.programs.getPublishedByNormalizedCode(
@@ -897,17 +883,61 @@ export function createEvaluationService(
             );
             const evaluated = record === null
               ? undefined
-              : await evaluateSingleProgram(record, singleProgramContext);
+              : await evaluateSingleProgram(record, singleProgramContext, true);
             codedEvaluations.push({
               code,
+              ...(record === null ? {} : { record }),
               ...(evaluated === undefined
                 ? {}
                 : evaluated),
             });
           }
+          while (true) {
+            const qualified = codedEvaluations.flatMap(entry => (
+              entry.decision?.outcome === 'qualified' ? [entry.decision] : []
+            )).sort(compareProgramRank);
+            const breakdown = calculateMerchandisePriceBreakdown(
+              request.cart,
+              qualified.map(stableDecision),
+            );
+            const exhaustedProgramRefs = new Set<string>();
+            for (const allocation of breakdown.discountAllocations) {
+              const entry = codedEvaluations.find(candidate => (
+                candidate.decision?.programRef === allocation.programRef
+              ));
+              if (
+                entry?.record?.budgetRemaining !== undefined
+                && entry.record.budgetRemaining < allocation.discountMinorUnits
+              ) exhaustedProgramRefs.add(allocation.programRef);
+            }
+            if (exhaustedProgramRefs.size === 0) break;
+            for (const entry of codedEvaluations) {
+              if (
+                entry.decision !== undefined
+                && exhaustedProgramRefs.has(entry.decision.programRef)
+              ) {
+                entry.decision = exhaustedDecision(entry.decision, ['BUDGET_EXHAUSTED']);
+              }
+            }
+          }
           const resolvedDecisions = codedEvaluations.flatMap(entry => (
             entry.decision === undefined ? [] : [entry.decision]
           ));
+          for (const decision of resolvedDecisions) {
+            if (decision.outcome !== 'qualified') continue;
+            const reservation = await reservations.prepare({
+              merchantId,
+              evaluationId,
+              correlationId,
+              decision: stableDecision(decision),
+            });
+            if (reservation !== undefined) {
+              preparedReservations.push({
+                handle: reservation,
+                programRef: decision.programRef,
+              });
+            }
+          }
           const selected = selectCodedDecisionCombination(resolvedDecisions);
           const rejectedProgramRefs = new Set(selected.rejectedProgramRefs);
           if (rejectedProgramRefs.size !== 0) {
@@ -931,6 +961,7 @@ export function createEvaluationService(
         }
         const createdAt = now.toISOString();
         const expiresAt = new Date(now.getTime() + ttlSeconds(env) * 1_000).toISOString();
+        const priceBreakdown = calculateMerchandisePriceBreakdown(request.cart, decisions);
         const unsigned = {
           evaluationId,
           merchantId,
@@ -945,6 +976,7 @@ export function createEvaluationService(
           request,
           facts,
           decisions,
+          priceBreakdown,
           expiresAt,
         };
         const record: EvaluationDecisionRecord = {
@@ -963,6 +995,7 @@ export function createEvaluationService(
           schemaVersion: record.schemaVersion,
           expiresAt,
           decisions,
+          priceBreakdown,
           ...(mode === 'coded' ? { codeResults } : {}),
         });
         await repositories.decisions.create(record);

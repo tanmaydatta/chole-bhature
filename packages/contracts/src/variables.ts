@@ -122,7 +122,7 @@ export function buildPublishedEvaluationJsonSchema(
       ? lineItemExtensions.schema
       : lineItemExtensions.schema.optional(),
   });
-  const cartSchema = CartSchema.extend({
+  const cartSchema = CartSchema.safeExtend({
     items: z.array(lineItemSchema),
     attributes: cartExtensions.required
       ? cartExtensions.schema

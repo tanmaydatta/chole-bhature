@@ -2,7 +2,7 @@
 
 **Notion mirror:** https://app.notion.com/p/Integration-Ready-Core-Contracts-3a1e5c7c2b8e81e4afe0ef82709f8d13
 
-**Mirror state:** Repository and Notion copies synchronized and read back successfully on 2026-07-24.
+**Mirror state:** Repository updated for GAP-030/031 on 2026-09-25; Notion synchronization pending.
 
 The foundation exposes platform-neutral TypeScript and Zod contracts for typed data, evaluation, decisions, modules, and connectors. It is deliberately independent of Shopify, a custom checkout, HTTP framework, database, and UI.
 
@@ -57,7 +57,7 @@ export const canonicalVariableDefinitions = [
 
 ## Strict canonical envelope and money
 
-Canonical customer, evaluation, cart, line-item, order, response, and redemption objects are strict: undeclared envelope properties fail parsing. External references are non-empty opaque strings and must not be normalized or trimmed by connectors.
+Canonical customer, evaluation, cart, line-item, order, response, and redemption objects are strict: undeclared envelope properties fail parsing. External references are non-empty opaque strings and must not be normalized or trimmed by connectors. Every cart/order item requires a stable `lineRef`; it must be unique within a cart even when several distinct lines share the same `productRef`.
 
 All money uses an uppercase three-letter currency and integer minor units. Cart/order schemas additionally require non-negative `subtotal`, `unitPrice`, and `total`; monetary effects use `{ currency, minorUnits }`. Floating-point major-unit values such as `10.50` are not canonical.
 
@@ -78,7 +78,10 @@ export const canonicalEvaluationRequest = {
   cart: {
     currency: 'GBP',
     subtotal: 12_500,
-    items: [],
+    items: [
+      { lineRef: 'line-1', productRef: 'product-1', quantity: 1, unitPrice: 5_000 },
+      { lineRef: 'line-2', productRef: 'product-1', quantity: 1, unitPrice: 7_500 },
+    ],
   },
   context: { channel: 'web' },
 } as const satisfies EvaluationRequest;
@@ -92,8 +95,8 @@ Every decision carries a program reference/type, effects, stable reason codes, a
 
 | Effect | Required payload |
 |---|---|
-| `order_discount` | `fixed` + `amount`, or `percent` + integer `basisPoints` from 1–10,000 |
-| `line_item_discount` | `productRef` plus the same fixed/percent calculation variants |
+| `order_discount` | `fixed` + `amount`, or `percent` + integer `basisPoints` from 1–10,000 and optional exact-currency `maximumDiscountAmount` |
+| `line_item_discount` | `productRef` plus the same fixed/percent calculation variants and optional percentage maximum |
 | `free_shipping` | no additional payload |
 | `wallet_debit` / `wallet_credit` | canonical `amount` |
 | `points_credit` | positive integer `points` |
@@ -124,7 +127,13 @@ export const canonicalDecision = {
 
 A Promo has one global `eligibility` condition group and an ordered `rewardRules` array. Global eligibility answers whether the customer and transaction may enter the program at all. Only after it passes does the Promo module evaluate each reward rule's own `conditions` in array order. The first matching rule wins; later matching rules are not combined or considered. If no rule matches, `fallbackReward` is selected when present. Without a fallback, the decision is `not_qualified`, has no effects or `rewardRuleRef`, and carries `NO_REWARD_RULE_MATCHED`.
 
-Each selected rule or fallback has a stable `id`. Qualified evaluation and committed redemption responses expose that identifier as `rewardRuleRef`, binding the returned effects to the selected configured reward. At evaluation and again during redemption, caps and remaining monetary budget are checked against the selected reward. The projected charge is the selected fixed or percent discount applied to the evaluated cart, capped by the applicable order or line value; a successful commit consumes one use and that projected amount atomically. Retries return the original redemption without consuming either again.
+Each selected rule or fallback has a stable `id`. Qualified evaluation and committed redemption responses expose that identifier as `rewardRuleRef`, binding the returned effects to the selected configured reward. At evaluation and again during redemption, caps and remaining monetary budget are checked against the selected reward's authoritative allocation. A successful commit consumes one use and that exact amount atomically. Retries return the original redemption and price breakdown without consuming either again.
+
+## Authoritative merchandise pricing
+
+`EvaluationResponse.priceBreakdown` and `RedemptionResponse.priceBreakdown` carry the same signed result: currency, original merchandise subtotal, ordered per-Promo/reward allocation, optional stable line allocations, total discount, and discounted merchandise subtotal. This is merchandise pricing only; it does not claim a final tax, shipping, or payment total. Free shipping contributes no monetary amount until an authoritative shipping-cost flow exists.
+
+One pure calculator defines the arithmetic for evaluation, budget checks, signed evidence, redemption, and persisted ledger amounts. It processes decisions in authoritative response order and effects in configured order. Percentage integer division floors to minor units before an optional exact-currency maximum is applied. Fixed order amounts are capped by the original subtotal. Fixed line amounts multiply by quantity and cap at the line's extended value. Duplicate-product lines allocate in request order using `lineRef`. Each stacked line allocation is bounded by that line's remaining value, and every allocation is bounded by remaining merchandise, so line discounts cannot consume unrelated merchandise and the subtotal never falls below zero.
 
 The schema-validated `canonicalTwoTierPromo` fixture demonstrates two ordered rules plus a fallback. The runtime guide reproduces that fixture and validated first-match, fallback, no-match, and committed-redemption examples.
 
@@ -148,7 +157,7 @@ export const canonicalRedemptionRequest = {
 } as const satisfies RedemptionRequest;
 ```
 
-Redemption commits every selected committable decision in its signed order or commits none. `RedemptionResponse.entries` preserves that authoritative bundle order and records each `programRef`, `programRevision`, optional `rewardRuleRef`, and effects. The initial D1 coordinator makes the header, ordered entries, counters, and budget changes one atomic database operation.
+Redemption commits every selected committable decision in its signed order or commits none. `RedemptionResponse.entries` preserves that authoritative bundle order and records each `programRef`, `programRevision`, optional `rewardRuleRef`, and effects; `priceBreakdown` repeats the signed merchandise result. The initial D1 coordinator makes the header, ordered entries, per-Promo discount amounts, counters, budget changes, and version-3 result envelope one atomic database operation. Historical version-2 envelopes remain readable and are hydrated from their signed evaluation evidence on exact retry.
 
 An exact retry returns the original committed bundle without consuming caps or budget again. Reusing an idempotency key or external order reference for a different evaluation, order, key, or bundle digest returns `409 VERSION_CONFLICT`. A stable non-retryable rejection such as `BUDGET_EXHAUSTED` is also replayed for an exact retry. A retryable `503 REDEMPTION_UNAVAILABLE` means the coordinator could not safely determine or finish the result: retry the identical request and never mint new identifiers merely because a response was lost.
 

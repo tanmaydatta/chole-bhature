@@ -101,10 +101,37 @@ function rewardKind(reward: CommerceReward): string {
 
 function RewardFields({ reward, change }: { reward: CommerceReward; change: (next: CommerceReward) => void }) {
   if (reward.type === 'free_shipping') return <p>Free shipping has no amount fields.</p>;
-  return <div className="flex gap-2">
+  return <div className="flex gap-2 flex-wrap">
     {reward.type === 'line_item_discount' && <label>Product reference<input value={reward.productRef} onChange={event => change({ ...reward, productRef: event.target.value })}/></label>}
     {reward.calculation === 'percent'
-      ? <label>Basis points<input type="number" min={1} max={10_000} value={reward.basisPoints} onChange={event => change({ ...reward, basisPoints: Number(event.target.value) })}/></label>
+      ? <>
+        <label>Basis points<input type="number" min={1} max={10_000} value={reward.basisPoints} onChange={event => change({ ...reward, basisPoints: Number(event.target.value) })}/></label>
+        {reward.maximumDiscountAmount === undefined
+          ? <button type="button" onClick={() => change({
+            ...reward,
+            maximumDiscountAmount: { currency: 'GBP', minorUnits: 1 },
+          })}>Add maximum discount</button>
+          : <>
+            <label>Maximum discount currency<input value={reward.maximumDiscountAmount.currency} onChange={event => change({
+              ...reward,
+              maximumDiscountAmount: {
+                ...reward.maximumDiscountAmount!,
+                currency: event.target.value,
+              },
+            })}/></label>
+            <label>Maximum discount minor units<input type="number" min={1} value={reward.maximumDiscountAmount.minorUnits} onChange={event => change({
+              ...reward,
+              maximumDiscountAmount: {
+                ...reward.maximumDiscountAmount!,
+                minorUnits: Number(event.target.value),
+              },
+            })}/></label>
+            <button type="button" onClick={() => {
+              const { maximumDiscountAmount: _maximum, ...uncapped } = reward;
+              change(uncapped);
+            }}>Remove maximum discount</button>
+          </>}
+      </>
       : <><label>Currency<input value={reward.amount.currency} onChange={event => change({ ...reward, amount: { ...reward.amount, currency: event.target.value } })}/></label><label>Minor units<input type="number" min={1} value={reward.amount.minorUnits} onChange={event => change({ ...reward, amount: { ...reward.amount, minorUnits: Number(event.target.value) } })}/></label></>}
   </div>;
 }

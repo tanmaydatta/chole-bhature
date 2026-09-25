@@ -273,6 +273,7 @@ export const evaluationDecisions = sqliteTable('evaluation_decisions', {
   requestJson: text('request_json').notNull(),
   factsJson: text('facts_json').notNull(),
   decisionsJson: text('decisions_json').notNull(),
+  priceBreakdownJson: text('price_breakdown_json'),
   mode: text('mode').notNull().default('automatic'),
   submittedCodesJson: text('submitted_codes_json').notNull().default('[]'),
   codeResultsJson: text('code_results_json').notNull().default('[]'),

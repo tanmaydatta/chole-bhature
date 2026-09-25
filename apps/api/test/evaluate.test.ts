@@ -237,6 +237,7 @@ type DecisionRow = {
   request_json: string;
   facts_json: string;
   decisions_json: string;
+  price_breakdown_json: string;
   integrity_hash: string;
   expires_at: string;
   created_at: string;
@@ -246,7 +247,8 @@ async function storedDecision(evaluationId: string): Promise<DecisionRow> {
   const row = await env.DB.prepare(`
     SELECT id, merchant_id, mode, submitted_codes_json, code_results_json,
       request_digest, correlation_id, customer_ref, customer_version, schema_version,
-      request_json, facts_json, decisions_json, integrity_hash, expires_at, created_at
+      request_json, facts_json, decisions_json, price_breakdown_json,
+      integrity_hash, expires_at, created_at
     FROM evaluation_decisions WHERE merchant_id = ?1 AND id = ?2
   `).bind(SEEDED_MERCHANT_ID, evaluationId).first<DecisionRow>();
   expect(row).not.toBeNull();
@@ -289,6 +291,18 @@ async function commitDecision(
         currency: _currency,
         ...entry
       }) => entry),
+      priceBreakdown: {
+        currency: 'GBP',
+        originalMerchandiseSubtotal: 5_000,
+        discountAllocations: [{
+          programRef,
+          programRevision: 1,
+          rewardRuleRef: 'default-reward',
+          discountMinorUnits: 1_000,
+        }],
+        totalDiscount: 1_000,
+        discountedMerchandiseSubtotal: 4_000,
+      },
       idempotencyKey,
     },
     entries,
@@ -370,6 +384,7 @@ describe('POST /v1/evaluate', () => {
       currency: 'GBP',
       subtotal: maximum,
       items: [{
+        lineRef: 'maximum-line',
         productRef: 'maximum-product',
         quantity: maximum,
         unitPrice: maximum,
@@ -635,6 +650,56 @@ describe('POST /v1/evaluate', () => {
       .toMatchObject({ rewardRuleRef: 'under-100', effects: [lowerReward] });
     expect(JSON.parse((await storedDecision(lower.evaluationId)).decisions_json))
       .not.toContainEqual(expect.objectContaining({ effects: [higherReward] }));
+  });
+
+  test('returns capped duplicate-product line allocations with stable line identities', async () => {
+    await seedCustomer();
+    await seedProgram(promo('capped-lines', {
+      reward: {
+        type: 'line_item_discount',
+        productRef: 'product-a',
+        calculation: 'percent',
+        basisPoints: 2_500,
+        maximumDiscountAmount: { currency: 'GBP', minorUnits: 1_500 },
+      },
+    }));
+
+    const result = await evaluate({
+      ...baseRequest,
+      cart: {
+        currency: 'GBP',
+        subtotal: 7_001,
+        items: [
+          { lineRef: 'line-a-1', productRef: 'product-a', quantity: 1, unitPrice: 4_001 },
+          { lineRef: 'line-a-2', productRef: 'product-a', quantity: 2, unitPrice: 1_500 },
+        ],
+      },
+    });
+
+    expect(result.priceBreakdown).toEqual({
+      currency: 'GBP',
+      originalMerchandiseSubtotal: 7_001,
+      discountAllocations: [{
+        programRef: 'capped-lines',
+        programRevision: 1,
+        rewardRuleRef: 'default-reward',
+        discountMinorUnits: 1_500,
+        lineAllocations: [
+          { lineRef: 'line-a-1', discountMinorUnits: 1_000 },
+          { lineRef: 'line-a-2', discountMinorUnits: 500 },
+        ],
+      }],
+      totalDiscount: 1_500,
+      discountedMerchandiseSubtotal: 5_501,
+    });
+    const row = await storedDecision(result.evaluationId);
+    expect(JSON.parse(row.price_breakdown_json)).toEqual(result.priceBreakdown);
+    const persisted = await createRepositories({ DB: env.DB }).decisions.get(
+      SEEDED_MERCHANT_ID,
+      result.evaluationId,
+    );
+    expect(persisted?.priceBreakdown).toEqual(result.priceBreakdown);
+    expect(await verifyDecisionIntegrity(persisted!, signingSecret)).toBe(true);
   });
 
   test('returns the selected automatic fallback without leaking a lower no-match candidate', async () => {
@@ -946,6 +1011,46 @@ describe('POST /v1/evaluate', () => {
         outcome: 'selected',
         programRef: 'selected-code',
       }),
+    ]);
+  });
+
+  test('uses the ordered aggregate allocation for each stacked Promo budget check', async () => {
+    await seedCustomer();
+    await seedProgram(codedPromo('first-cap', 'FIRST', {
+      priority: 20,
+      reward: {
+        type: 'order_discount',
+        calculation: 'fixed',
+        amount: { currency: 'GBP', minorUnits: 900 },
+      },
+      budget: { currency: 'GBP', minorUnits: 900 },
+    }));
+    await seedProgram(codedPromo('second-cap', 'SECOND', {
+      priority: 10,
+      reward: {
+        type: 'order_discount',
+        calculation: 'fixed',
+        amount: { currency: 'GBP', minorUnits: 900 },
+      },
+      budget: { currency: 'GBP', minorUnits: 100 },
+    }));
+
+    const result = await evaluate({
+      ...baseRequest,
+      codes: ['FIRST', 'SECOND'],
+      cart: { currency: 'GBP', subtotal: 1_000, items: [] },
+    });
+
+    expect(result.decisions.map(decision => decision.programRef)).toEqual([
+      'first-cap',
+      'second-cap',
+    ]);
+    expect(result.priceBreakdown.discountAllocations.map(allocation => ({
+      programRef: allocation.programRef,
+      discountMinorUnits: allocation.discountMinorUnits,
+    }))).toEqual([
+      { programRef: 'first-cap', discountMinorUnits: 900 },
+      { programRef: 'second-cap', discountMinorUnits: 100 },
     ]);
   });
 
@@ -1502,8 +1607,8 @@ describe('POST /v1/evaluate', () => {
         currency: 'GBP',
         subtotal: 6_500,
         items: [
-          { productRef: 'product-a', quantity: 3, unitPrice: 333 },
-          { productRef: 'product-b', quantity: 1, unitPrice: 1_000 },
+          { lineRef: 'line-a', productRef: 'product-a', quantity: 3, unitPrice: 333 },
+          { lineRef: 'line-b', productRef: 'product-b', quantity: 1, unitPrice: 1_000 },
         ],
       },
     } satisfies EvaluationRequest;
@@ -1544,6 +1649,7 @@ describe('POST /v1/evaluate', () => {
         currency: 'GBP',
         subtotal: maximum,
         items: [{
+          lineRef: 'maximum-line',
           productRef: 'maximum-product',
           quantity: maximum,
           unitPrice: maximum,
@@ -1710,7 +1816,7 @@ describe('POST /v1/evaluate', () => {
         currency: 'GBP',
         subtotal: 100,
         attributes: { delivery_country: 'GB' },
-        items: [{ productRef: 'p-1', quantity: 1, unitPrice: 100 }],
+        items: [{ lineRef: 'line-1', productRef: 'p-1', quantity: 1, unitPrice: 100 }],
       },
       'line_item[0].category',
     ],
@@ -1721,6 +1827,7 @@ describe('POST /v1/evaluate', () => {
         subtotal: 100,
         attributes: { delivery_country: 'GB' },
         items: [{
+          lineRef: 'line-1',
           productRef: 'p-1',
           quantity: 1,
           unitPrice: 100,
@@ -1736,6 +1843,7 @@ describe('POST /v1/evaluate', () => {
         subtotal: 100,
         attributes: { delivery_country: 'GB' },
         items: [{
+          lineRef: 'line-1',
           productRef: 'p-1',
           quantity: 1,
           unitPrice: 100,
@@ -1888,6 +1996,7 @@ describe('POST /v1/evaluate', () => {
       request: JSON.parse(row.request_json),
       facts: JSON.parse(row.facts_json),
       decisions: JSON.parse(row.decisions_json),
+      priceBreakdown: JSON.parse(row.price_breakdown_json!),
     };
     const signedPayload = {
       merchantId: row.merchant_id,

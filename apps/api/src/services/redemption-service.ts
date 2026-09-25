@@ -1,7 +1,9 @@
 import {
   RedemptionRequestSchema,
+  RedemptionResponseSchema,
   type RedemptionResponse,
 } from '@incentives/contracts';
+import { calculateMerchandisePriceBreakdown } from '@incentives/engine';
 import { z } from 'zod';
 
 import type { Env } from '../env.js';
@@ -93,7 +95,18 @@ export function createRedemptionService(
         switch (result.kind) {
           case 'committed':
           case 'exact_retry':
-            return result.bundle.result;
+            return RedemptionResponseSchema.parse(
+              'priceBreakdown' in result.bundle.result
+                ? result.bundle.result
+                : {
+                  ...result.bundle.result,
+                  priceBreakdown: evaluation.priceBreakdown
+                    ?? calculateMerchandisePriceBreakdown(
+                      evaluation.request.cart,
+                      evaluation.decisions,
+                    ),
+                },
+            );
           case 'conflict':
             throw new VersionConflictError();
           case 'exhausted':

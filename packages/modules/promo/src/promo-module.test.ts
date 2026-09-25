@@ -310,6 +310,32 @@ describe('PromoModule', () => {
     }]);
   });
 
+  test('preserves and defensively copies an exact-currency percentage maximum', async () => {
+    const reward = {
+      type: 'order_discount' as const,
+      calculation: 'percent' as const,
+      basisPoints: 1_250,
+      maximumDiscountAmount: { currency: 'GBP', minorUnits: 750 },
+    };
+    const [decision] = await PromoModule.evaluate(context, {
+      ...welcome10,
+      rewardRules: [{ ...welcome10.rewardRules[0]!, reward }],
+    });
+
+    expect(decision?.effects).toEqual([reward]);
+    expect(decision?.effects[0]).not.toBe(reward);
+    expect(decision?.effects[0]).toMatchObject({
+      maximumDiscountAmount: reward.maximumDiscountAmount,
+    });
+    const effect = decision?.effects[0];
+    if (
+      effect?.type !== 'order_discount'
+      || effect.calculation !== 'percent'
+      || effect.maximumDiscountAmount === undefined
+    ) throw new Error('Expected a capped percentage order discount');
+    expect(effect.maximumDiscountAmount).not.toBe(reward.maximumDiscountAmount);
+  });
+
   test.each([
     {
       type: 'line_item_discount' as const,
