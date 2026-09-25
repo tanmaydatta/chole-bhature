@@ -26,14 +26,14 @@ deferred issue remains in the
 | Question | Current answer |
 |---|---|
 | Overall phase | Post-Gate-C client-readiness corrections |
-| Current activity | Complete local verification and review for `GAP-030` and `GAP-031`; do not deploy without separate approval |
+| Current activity | GAP-030/031 committed and pushed on `gap-030-031-authoritative-pricing`; approved staging release blocked at local preflight |
 | Current repository baseline | PR #11 merge commit `6de1d80` on `dev`; it follows the PR #10 product-code baseline with documentation-only status reconciliation |
 | Current product-code baseline | PR #10 merge commit `1ebc5fe` |
 | Local feature state | Promo-selection clean break remains staging-verified; authoritative merchandise pricing and percentage maximums are implemented on the local branch with focused and real Worker/D1 coverage |
 | Current deployment gap | GAP-030/031 migration `0007`, API, and Operator Web changes are not merged, deployed, or staging-verified |
-| Current blocker | None |
+| Current blocker | Staging target configuration is unavailable: ignored `.env.staging` is absent and preflight reports `STAGING_ENVIRONMENT is required`; see the [2026-09-25 release attempt](../testing/gap-030-031-staging-run-2026-09-25.md) |
 | Gate C finish line | Complete — all mandatory clean-break selection, redemption, tenant-isolation, concurrency, and observability cases passed |
-| Next plan work | Review/merge and separately approve GAP-030/031 rollout plus staging E2E; then complete the approved free-shipping financial-authority plan/work and resume the Evaluation Playground |
+| Next plan work | Restore approved staging configuration, complete the authorized GAP-030/031 rollout and remote E2E, and review/merge separately; then complete the approved free-shipping financial-authority plan/work and resume the Evaluation Playground |
 
 ## Source-of-truth map
 
@@ -259,9 +259,12 @@ They remain extension points and become implementation work only when a client
 case justifies them.
 
 The focused `GAP-030`/`GAP-031` implementation is now locally complete and uses
-the [executable end-to-end plan](../testing/gap-030-031-e2e.md). Review and merge
-it, then separately approve migration `0007`, deployment, and staging evidence
-before marking either gap Done or resuming the Evaluation Playground.
+the [executable end-to-end plan](../testing/gap-030-031-e2e.md). The owner approved
+the feature-branch staging release on 2026-09-25. The implementation is committed
+and pushed; [staging preflight is blocked](../testing/gap-030-031-staging-run-2026-09-25.md)
+by missing local target configuration. Complete migration `0007`, deployment,
+and staging evidence before marking either gap Done or resuming the Evaluation
+Playground. Review and merge remain a separate step.
 
 ### 3. Turn the approved free-shipping financial design into an implementation plan
 
