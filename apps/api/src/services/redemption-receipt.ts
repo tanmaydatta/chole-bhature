@@ -34,8 +34,9 @@ async function signingKey(secret: string): Promise<CryptoKey> {
 }
 
 function receiptPayload(receipt: UnsignedRedemptionReceipt | RedemptionCreate) {
+  const current = 'priceBreakdown' in receipt.result;
   return {
-    kind: 'redemption_bundle_v2',
+    kind: current ? 'redemption_bundle_v3' : 'redemption_bundle_v2',
     merchantId: receipt.merchantId,
     redemptionId: receipt.redemptionId,
     evaluationId: receipt.evaluationId,
@@ -43,6 +44,9 @@ function receiptPayload(receipt: UnsignedRedemptionReceipt | RedemptionCreate) {
     idempotencyKey: receipt.idempotencyKey,
     requestDigest: receipt.requestDigest,
     status: receipt.result.status,
+    ...('priceBreakdown' in receipt.result
+      ? { priceBreakdown: receipt.result.priceBreakdown }
+      : {}),
     entries: receipt.entries.map(entry => ({
       position: entry.position,
       programRef: entry.programRef,

@@ -401,6 +401,12 @@ describe('Promo program API', () => {
     ['excess percent reward', { rewardRules: [rewardRule({ type: 'order_discount', calculation: 'percent', basisPoints: 10_001 })] }],
     ['lowercase currency', { rewardRules: [rewardRule({ type: 'order_discount', calculation: 'fixed', amount: { currency: 'gbp', minorUnits: 100 } })] }],
     ['reward and budget currency mismatch', { budget: { currency: 'USD', minorUnits: 10_000 } }],
+    ['percentage maximum and budget currency mismatch', { rewardRules: [rewardRule({
+      type: 'order_discount',
+      calculation: 'percent',
+      basisPoints: 1_000,
+      maximumDiscountAmount: { currency: 'USD', minorUnits: 500 },
+    })] }],
     ['free shipping with monetary budget', { rewardRules: [rewardRule({ type: 'free_shipping' })] }],
     ['zero usage cap', { usageCap: 0 }],
     ['negative customer cap', { perCustomerCap: -1 }],

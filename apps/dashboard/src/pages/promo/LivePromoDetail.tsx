@@ -20,7 +20,11 @@ function rewardSummary(reward: CommerceReward): string {
   if (reward.type === 'free_shipping') return 'Free shipping';
   const target = reward.type === 'order_discount' ? 'order' : `line item ${reward.productRef}`;
   return reward.calculation === 'percent'
-    ? `${reward.basisPoints / 100}% off ${target}`
+    ? `${reward.basisPoints / 100}% off ${target}${
+      reward.maximumDiscountAmount === undefined
+        ? ''
+        : ` (maximum ${reward.maximumDiscountAmount.currency} ${(reward.maximumDiscountAmount.minorUnits / 100).toFixed(2)})`
+    }`
     : `${reward.amount.currency} ${(reward.amount.minorUnits / 100).toFixed(2)} off ${target}`;
 }
 

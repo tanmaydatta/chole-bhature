@@ -4,6 +4,7 @@ import {
   type IncentiveDecision,
   type PromoProgram,
 } from '@incentives/contracts';
+import { calculateMerchandisePriceBreakdown } from '@incentives/engine';
 import { z } from 'zod';
 
 import type { Env } from '../env.js';
@@ -18,10 +19,7 @@ import type {
   ProgramRecord,
   RedemptionBundleCreate,
 } from '../repositories/types.js';
-import {
-  projectedDiscountMinorUnits,
-  verifyDecisionIntegrity,
-} from '../services/evaluation-service.js';
+import { verifyDecisionIntegrity } from '../services/evaluation-service.js';
 import {
   signRedemptionReceipt,
   verifyRedemptionReceipt,
@@ -383,6 +381,15 @@ export function createD1AtomicRedemptionCoordinator(
     }
     const decisions = selectedDecisions(input);
     if (decisions === null) return { kind: 'terminal', code: 'INVALID_DECISION' };
+    const calculatedPriceBreakdown = calculateMerchandisePriceBreakdown(
+      input.evaluation.request.cart,
+      input.evaluation.decisions,
+    );
+    if (
+      input.evaluation.priceBreakdown !== undefined
+      && canonicalJson(input.evaluation.priceBreakdown) !== canonicalJson(calculatedPriceBreakdown)
+    ) return { kind: 'terminal', code: 'INVALID_DECISION' };
+    const priceBreakdown = input.evaluation.priceBreakdown ?? calculatedPriceBreakdown;
 
     const children: PreparedChild[] = [];
     for (const [position, decision] of decisions.entries()) {
@@ -437,10 +444,15 @@ export function createD1AtomicRedemptionCoordinator(
         return { kind: 'unavailable' };
       }
 
-      const discountMinorUnits = projectedDiscountMinorUnits(
-        decision.effects,
-        input.evaluation.request.cart,
-      );
+      const matchingAllocations = priceBreakdown.discountAllocations.filter(allocation => (
+        allocation.programRef === decision.programRef
+        && allocation.programRevision === decision.programRevision
+        && allocation.rewardRuleRef === decision.rewardRuleRef
+      ));
+      if (matchingAllocations.length > 1) {
+        return { kind: 'terminal', code: 'INVALID_DECISION' };
+      }
+      const discountMinorUnits = matchingAllocations[0]?.discountMinorUnits ?? 0;
       if (
         program.program.usageCap !== undefined
         && counters.usageCount >= program.program.usageCap
@@ -521,6 +533,11 @@ export function createD1AtomicRedemptionCoordinator(
     signingSecret: string,
   ): Promise<CommitRedemptionBundleResult> {
     const redemptionId = crypto.randomUUID();
+    const priceBreakdown = input.evaluation.priceBreakdown
+      ?? calculateMerchandisePriceBreakdown(
+        input.evaluation.request.cart,
+        input.evaluation.decisions,
+      );
     const result = RedemptionResponseSchema.parse({
       redemptionId,
       evaluationId: input.evaluation.evaluationId,
@@ -533,6 +550,7 @@ export function createD1AtomicRedemptionCoordinator(
         rewardRuleRef: child.decision.rewardRuleRef,
         effects: child.decision.effects,
       })),
+      priceBreakdown,
     });
     const unsigned: Omit<RedemptionBundleCreate, 'receiptIntegrityHash'> = {
       redemptionId,

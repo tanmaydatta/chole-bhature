@@ -1,11 +1,13 @@
 # Product Current State and Roadmap
 
-**Updated:** 2026-07-29
+**Updated:** 2026-09-25
 
-**Status:** Active — Gate C complete; preparing the approved Promo price
-breakdown and optional percentage-cap correction
+**Status:** Active — Gate C complete; GAP-030/031 implemented and locally
+verified, with merge/deployment/staging verification pending
 
 **Notion mirror:** https://app.notion.com/p/Product-Current-State-and-Roadmap-3a6e5c7c2b8e81f6b412c45a2bc7b344
+
+**Mirror state:** Repository updated for GAP-030/031 on 2026-09-25; Notion synchronization pending.
 
 This is the canonical operational answer to:
 
@@ -24,14 +26,14 @@ deferred issue remains in the
 | Question | Current answer |
 |---|---|
 | Overall phase | Post-Gate-C client-readiness corrections |
-| Current activity | Design and plan `GAP-030` and `GAP-031` |
+| Current activity | GAP-030/031 committed and pushed on `gap-030-031-authoritative-pricing`; approved staging release blocked at local preflight |
 | Current repository baseline | PR #11 merge commit `6de1d80` on `dev`; it follows the PR #10 product-code baseline with documentation-only status reconciliation |
 | Current product-code baseline | PR #10 merge commit `1ebc5fe` |
-| Local feature state | Promo-selection clean break is implemented, verified, independently reviewed, merged, migrated, deployed, and fully staging-verified |
-| Current deployment gap | None for the Task 10 correction; migration `0006`, API, and Operator Web staging rollout completed and health checks passed |
-| Current blocker | None |
+| Local feature state | Promo-selection clean break remains staging-verified; authoritative merchandise pricing and percentage maximums are implemented on the local branch with focused and real Worker/D1 coverage |
+| Current deployment gap | GAP-030/031 migration `0007`, API, and Operator Web changes are not merged, deployed, or staging-verified |
+| Current blocker | Staging target configuration is unavailable: ignored `.env.staging` is absent and preflight reports `STAGING_ENVIRONMENT is required`; see the [2026-09-25 release attempt](../testing/gap-030-031-staging-run-2026-09-25.md) |
 | Gate C finish line | Complete — all mandatory clean-break selection, redemption, tenant-isolation, concurrency, and observability cases passed |
-| Next plan work | Implement the approved Promo price breakdown and optional percentage cap; complete the approved free-shipping financial-authority plan/work; then resume the Evaluation Playground |
+| Next plan work | Restore approved staging configuration, complete the authorized GAP-030/031 rollout and remote E2E, and review/merge separately; then complete the approved free-shipping financial-authority plan/work and resume the Evaluation Playground |
 
 ## Source-of-truth map
 
@@ -44,6 +46,7 @@ Use this page for current sequencing and status. Follow its links for detail:
 | Current staging evidence | [Repository](../testing/staging-activation-run-2026-07-21.md) · [Notion](https://app.notion.com/p/3a5e5c7c2b8e81739dfed75f998e6489) |
 | Protected Task 10 cutover and recovery | [Repository](../testing/task10-staging-cutover.md) · [Notion](https://app.notion.com/p/Task-10-protected-staging-cutover-and-recovery-3a7e5c7c2b8e817f9c0cf0acab3e8c2e) |
 | Repeatable manual procedure | [Repository](../testing/gate-c-manual-test.md) · [Notion](https://app.notion.com/p/3a3e5c7c2b8e8155aa10c869b97b7e5a) |
+| GAP-030/031 local and staging E2E procedure | [Repository](../testing/gap-030-031-e2e.md) |
 | Active delivery plan | [Repository](../superpowers/plans/2026-07-19-production-operator-platform.md) · [Notion](https://app.notion.com/p/Production-Operator-Platform-and-Integration-Harness-Implementation-Plan-3a2e5c7c2b8e8191ba1ff65dd30752b3) |
 | Approved Promo selection and atomic-redemption design | [Repository](../superpowers/specs/2026-07-23-promo-selection-code-stacking-design.md) · [Notion](https://app.notion.com/p/Promo-Selection-Code-Stacking-and-Atomic-Redemption-Design-Spec-3a6e5c7c2b8e81549b6adc7f3d096455) |
 | Current correction implementation plan | [Repository](../superpowers/plans/2026-07-24-promo-selection-code-stacking.md) · [Notion](https://app.notion.com/p/Promo-Selection-Code-Stacking-and-Atomic-Redemption-Implementation-Plan-3a7e5c7c2b8e811791dee0d21803c8e2) |
@@ -185,7 +188,7 @@ pre-migration Time Travel bookmark, applied migration `0006`, deployed API and
 Operator Web, and passed pre/post-deployment health checks. Identity was not
 part of this cutover. The complete mandatory manual evidence set passed.
 
-The immediate sequence is:
+The Gate C sequence completed as follows:
 
 1. Completed: PR #10 merged the locally verified Task 10 rollout candidate
    into `dev` as product commit `1ebc5fe`; no direct push to `dev` was used.
@@ -202,6 +205,15 @@ The immediate sequence is:
    `VERSION_CONFLICT` event by the exact client-visible correlation ID.
 7. Completed: the final Gate C result was reconciled across the staging report,
    follow-up register, active plans, this page, and their Notion mirrors.
+
+The current local correction adds a single authoritative merchandise
+calculator; required stable line identities; ordered per-Promo and per-line
+allocations; optional exact-currency percentage maximums; signed evaluation and
+redemption evidence; atomic per-Promo ledger/budget amounts; historical
+version-2 redemption compatibility; and operator cap authoring/detail display.
+Focused contract, calculator, module, connector, dashboard, API, repository,
+and real Worker/D1 full-flow tests are the acceptance boundary. Nothing in this
+status claims a merge, migration, deployment, or staging pass.
 
 No assistant-run Cloudflare mutation is permitted. The assistant supplies one
 command at a time; the account owner runs every deployment, migration, secret,
@@ -246,9 +258,13 @@ richer stacking policies are recorded as deliberately deferred in `GAP-032`.
 They remain extension points and become implementation work only when a client
 case justifies them.
 
-Create a focused design and implementation plan for `GAP-030` and `GAP-031`
-after Gate C. Implement and verify that plan before resuming the Evaluation
-Playground.
+The focused `GAP-030`/`GAP-031` implementation is now locally complete and uses
+the [executable end-to-end plan](../testing/gap-030-031-e2e.md). The owner approved
+the feature-branch staging release on 2026-09-25. The implementation is committed
+and pushed; [staging preflight is blocked](../testing/gap-030-031-staging-run-2026-09-25.md)
+by missing local target configuration. Complete migration `0007`, deployment,
+and staging evidence before marking either gap Done or resuming the Evaluation
+Playground. Review and merge remain a separate step.
 
 ### 3. Turn the approved free-shipping financial design into an implementation plan
 
@@ -321,9 +337,10 @@ must be updated whenever a finding changes state. It currently preserves:
 - integration-specific incurred-cost mapping; and
 - staging verification that the now-implemented sanitized structured public-API
   error event is locatable by the correlation ID returned to a client;
-- authoritative client-facing Promo price calculation and per-Promo/line
-  allocation;
-- optional maximum monetary caps for percentage rewards; and
+- authoritative Promo price calculation and per-Promo/line allocation, locally
+  implemented but not yet deployed/staging-verified;
+- optional maximum monetary caps for percentage rewards, locally implemented
+  but not yet deployed/staging-verified; and
 - deliberately deferred Voucherify breadth rather than speculative expansion
   before a first-client requirement exists.
 

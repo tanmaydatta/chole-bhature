@@ -84,6 +84,12 @@ function copyReward(reward: CommerceReward): Effect {
   if ('amount' in reward) {
     return { ...reward, amount: { ...reward.amount } };
   }
+  if ('maximumDiscountAmount' in reward && reward.maximumDiscountAmount !== undefined) {
+    return {
+      ...reward,
+      maximumDiscountAmount: { ...reward.maximumDiscountAmount },
+    };
+  }
   return { ...reward };
 }
 

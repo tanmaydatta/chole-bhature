@@ -764,6 +764,188 @@ describe('integration-ready runtime', () => {
     expect(ApiErrorSchema.parse(await redemption.json()).error.code).toBe('VERSION_CONFLICT');
   });
 
+  test('carries exact capped and line allocations from authoring through idempotent redemption', async () => {
+    const service = lifecycleOperatorService();
+    await service.createSchemaDefinition(
+      operatorContext('schemas:manage'),
+      contextChannelDefinition,
+    );
+    await service.publishSchema(operatorContext('schemas:publish'));
+    expect((await jsonRequest('PATCH', '/v1/customers/pricing-customer', {
+      attributes: {},
+    })).status).toBe(200);
+
+    const capped = lifecyclePromo('capped-percentage', {
+      name: 'Twenty five percent up to fifteen pounds',
+      autoApply: false,
+      code: 'CAPPED25',
+      rewardRules: [{
+        id: 'capped-quarter',
+        name: 'Capped quarter off',
+        conditions: {
+          match: 'ALL',
+          conditions: [{
+            id: 'capped-positive-cart',
+            variable: 'cart.subtotal',
+            operator: 'gte',
+            value: 0,
+          }],
+        },
+        reward: {
+          type: 'order_discount',
+          calculation: 'percent',
+          basisPoints: 2_500,
+          maximumDiscountAmount: { currency: 'GBP', minorUnits: 1_500 },
+        },
+      }],
+      budget: { currency: 'GBP', minorUnits: 5_000 },
+      stackable: true,
+      priority: 20,
+    });
+    const lineFixed = lifecyclePromo('duplicate-product-lines', {
+      name: 'Five pounds off each matching unit',
+      autoApply: false,
+      code: 'DUPLICATE5',
+      rewardRules: [{
+        id: 'five-per-unit',
+        name: 'Five pounds per matching unit',
+        conditions: {
+          match: 'ALL',
+          conditions: [{
+            id: 'line-positive-cart',
+            variable: 'cart.subtotal',
+            operator: 'gte',
+            value: 0,
+          }],
+        },
+        reward: {
+          type: 'line_item_discount',
+          productRef: 'duplicate-product',
+          calculation: 'fixed',
+          amount: { currency: 'GBP', minorUnits: 500 },
+        },
+      }],
+      budget: { currency: 'GBP', minorUnits: 5_000 },
+      stackable: true,
+      priority: 10,
+    });
+    for (const program of [capped, lineFixed]) {
+      await service.createProgramDraft(operatorContext('programs:manage'), program);
+      await service.publishProgram(operatorContext('programs:publish'), program.id);
+    }
+
+    const evaluationResponse = await jsonRequest('POST', '/v1/evaluate', {
+      customerRef: 'pricing-customer',
+      codes: ['CAPPED25', 'DUPLICATE5'],
+      cart: {
+        currency: 'GBP',
+        subtotal: 10_001,
+        items: [
+          {
+            lineRef: 'duplicate-line-1',
+            productRef: 'duplicate-product',
+            quantity: 1,
+            unitPrice: 4_001,
+          },
+          {
+            lineRef: 'duplicate-line-2',
+            productRef: 'duplicate-product',
+            quantity: 2,
+            unitPrice: 1_500,
+          },
+          {
+            lineRef: 'other-line',
+            productRef: 'other-product',
+            quantity: 1,
+            unitPrice: 3_000,
+          },
+        ],
+      },
+      context: { channel: 'web' },
+    }, 'pk_test_publishable_credential_material_00000001');
+    expect(evaluationResponse.status).toBe(200);
+    const evaluation = EvaluationResponseSchema.parse(await evaluationResponse.json());
+    expect(evaluation.decisions.map(decision => decision.programRef)).toEqual([
+      capped.id,
+      lineFixed.id,
+    ]);
+    expect(evaluation.priceBreakdown).toEqual({
+      currency: 'GBP',
+      originalMerchandiseSubtotal: 10_001,
+      discountAllocations: [{
+        programRef: capped.id,
+        programRevision: 1,
+        rewardRuleRef: 'capped-quarter',
+        discountMinorUnits: 1_500,
+      }, {
+        programRef: lineFixed.id,
+        programRevision: 1,
+        rewardRuleRef: 'five-per-unit',
+        discountMinorUnits: 1_500,
+        lineAllocations: [
+          { lineRef: 'duplicate-line-1', discountMinorUnits: 500 },
+          { lineRef: 'duplicate-line-2', discountMinorUnits: 1_000 },
+        ],
+      }],
+      totalDiscount: 3_000,
+      discountedMerchandiseSubtotal: 7_001,
+    });
+    const decisionRow = await env.DB.prepare(`
+      SELECT price_breakdown_json AS priceBreakdownJson
+      FROM evaluation_decisions WHERE id = ?1
+    `).bind(evaluation.evaluationId).first<{ priceBreakdownJson: string }>();
+    expect(JSON.parse(decisionRow!.priceBreakdownJson)).toEqual(evaluation.priceBreakdown);
+
+    const request = {
+      evaluationId: evaluation.evaluationId,
+      externalOrderRef: 'pricing-order',
+      idempotencyKey: 'pricing-attempt',
+    };
+    const redemptionResponse = await jsonRequest('POST', '/v1/redemptions', request);
+    expect(redemptionResponse.status).toBe(200);
+    const redemption = RedemptionResponseSchema.parse(await redemptionResponse.json());
+    expect(redemption.priceBreakdown).toEqual(evaluation.priceBreakdown);
+    const retryResponse = await jsonRequest('POST', '/v1/redemptions', request);
+    expect(retryResponse.status).toBe(200);
+    expect(RedemptionResponseSchema.parse(await retryResponse.json())).toEqual(redemption);
+
+    const changedReuse = await jsonRequest('POST', '/v1/redemptions', {
+      ...request,
+      externalOrderRef: 'different-pricing-order',
+    });
+    expect(changedReuse.status).toBe(409);
+    expect(ApiErrorSchema.parse(await changedReuse.json()).error.code).toBe('VERSION_CONFLICT');
+
+    expect((await env.DB.prepare(`
+      SELECT program_ref AS programRef, discount_minor_units AS discountMinorUnits
+      FROM redemption_entries WHERE redemption_id = ?1 ORDER BY position
+    `).bind(redemption.redemptionId).all()).results).toEqual([
+      { programRef: capped.id, discountMinorUnits: 1_500 },
+      { programRef: lineFixed.id, discountMinorUnits: 1_500 },
+    ]);
+    expect((await env.DB.prepare(`
+      SELECT logical.external_ref AS programRef,
+        counter.usage_count AS usageCount,
+        counter.budget_remaining AS budgetRemaining
+      FROM program_counters AS counter
+      INNER JOIN programs AS logical
+        ON logical.merchant_id = counter.merchant_id
+        AND logical.id = counter.program_id
+      WHERE logical.external_ref IN (?1, ?2)
+      ORDER BY logical.external_ref
+    `).bind(capped.id, lineFixed.id).all()).results).toEqual([
+      { programRef: capped.id, usageCount: 1, budgetRemaining: 3_500 },
+      { programRef: lineFixed.id, usageCount: 1, budgetRemaining: 3_500 },
+    ]);
+    const persistedRedemption = await env.DB.prepare(`
+      SELECT result_json AS resultJson FROM redemptions WHERE id = ?1
+    `).bind(redemption.redemptionId).first<{ resultJson: string }>();
+    expect(JSON.parse(persistedRedemption!.resultJson)).toMatchObject({
+      version: 3,
+      result: { priceBreakdown: evaluation.priceBreakdown },
+    });
+  });
+
   test('proves tiered rewards, selected-rule integrity, and program-wide exhaustion', async () => {
     for (const definition of [customerTierDefinition, contextChannelDefinition]) {
       const response = await jsonRequest('POST', '/v1/schema/definitions', definition);

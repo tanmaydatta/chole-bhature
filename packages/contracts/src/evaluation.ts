@@ -9,6 +9,7 @@ import { z } from './zod.js';
 const AttributesSchema = z.record(z.string(), z.unknown());
 
 export const CartLineItemSchema = z.object({
+  lineRef: z.string().min(1),
   productRef: z.string().min(1),
   variantRef: z.string().min(1).optional(),
   quantity: z.number().int().positive(),
@@ -21,7 +22,23 @@ export const CartSchema = z.object({
   subtotal: z.number().int().nonnegative(),
   items: z.array(CartLineItemSchema),
   attributes: AttributesSchema.optional(),
-}).strict();
+}).strict().superRefine((cart, context) => {
+  const seen = new Set<string>();
+  cart.items.forEach((item, index) => {
+    if (seen.has(item.lineRef)) {
+      context.addIssue({
+        code: 'custom',
+        path: ['items', index, 'lineRef'],
+        message: `duplicate cart line identity: ${item.lineRef}`,
+      });
+    }
+    seen.add(item.lineRef);
+  });
+});
+
+const MaximumDiscountAmountSchema = MoneySchema.extend({
+  minorUnits: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+});
 
 const validateDistinctCodeLimit = (
   request: { codes?: string[] | undefined },
@@ -68,6 +85,7 @@ export const PercentOrderDiscountEffectSchema = z.object({
   type: z.literal('order_discount'),
   calculation: z.literal('percent'),
   basisPoints: z.number().int().min(1).max(10_000),
+  maximumDiscountAmount: MaximumDiscountAmountSchema.optional(),
 }).strict();
 
 export const OrderDiscountEffectSchema = z.discriminatedUnion('calculation', [
@@ -87,6 +105,7 @@ export const PercentLineItemDiscountEffectSchema = z.object({
   productRef: z.string().min(1),
   calculation: z.literal('percent'),
   basisPoints: z.number().int().min(1).max(10_000),
+  maximumDiscountAmount: MaximumDiscountAmountSchema.optional(),
 }).strict();
 
 export const LineItemDiscountEffectSchema = z.discriminatedUnion('calculation', [
@@ -176,6 +195,90 @@ export const CodeEvaluationResultSchema = z.object({
   reasonCodes: z.array(ReasonCodeSchema),
 }).strict();
 
+const NonnegativeSafeIntegerSchema = z.number().int().nonnegative()
+  .max(Number.MAX_SAFE_INTEGER);
+
+export const MerchandiseLineDiscountAllocationSchema = z.object({
+  lineRef: z.string().min(1),
+  discountMinorUnits: NonnegativeSafeIntegerSchema,
+}).strict();
+
+export const MerchandiseDiscountAllocationSchema = z.object({
+  programRef: z.string().min(1),
+  programRevision: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+  rewardRuleRef: z.string().min(1),
+  discountMinorUnits: NonnegativeSafeIntegerSchema,
+  lineAllocations: z.array(MerchandiseLineDiscountAllocationSchema).optional(),
+}).strict();
+
+export const MerchandisePriceBreakdownSchema = z.object({
+  currency: z.string().regex(/^[A-Z]{3}$/),
+  originalMerchandiseSubtotal: NonnegativeSafeIntegerSchema,
+  discountAllocations: z.array(MerchandiseDiscountAllocationSchema),
+  totalDiscount: NonnegativeSafeIntegerSchema,
+  discountedMerchandiseSubtotal: NonnegativeSafeIntegerSchema,
+}).strict().superRefine((breakdown, context) => {
+  const allocationTotal = breakdown.discountAllocations.reduce(
+    (sum, allocation) => sum + BigInt(allocation.discountMinorUnits),
+    0n,
+  );
+  if (allocationTotal !== BigInt(breakdown.totalDiscount)) {
+    context.addIssue({
+      code: 'custom',
+      path: ['totalDiscount'],
+      message: 'totalDiscount must equal the sum of discount allocations',
+    });
+  }
+  if (
+    BigInt(breakdown.originalMerchandiseSubtotal) - BigInt(breakdown.totalDiscount)
+    !== BigInt(breakdown.discountedMerchandiseSubtotal)
+  ) {
+    context.addIssue({
+      code: 'custom',
+      path: ['discountedMerchandiseSubtotal'],
+      message: 'discounted subtotal must equal original subtotal minus total discount',
+    });
+  }
+
+  const allocationKeys = new Set<string>();
+  breakdown.discountAllocations.forEach((allocation, allocationIndex) => {
+    const allocationKey = JSON.stringify([
+      allocation.programRef,
+      allocation.programRevision,
+      allocation.rewardRuleRef,
+    ]);
+    if (allocationKeys.has(allocationKey)) {
+      context.addIssue({
+        code: 'custom',
+        path: ['discountAllocations', allocationIndex],
+        message: 'discount allocation identity must be unique',
+      });
+    }
+    allocationKeys.add(allocationKey);
+
+    const lineRefs = new Set<string>();
+    let lineTotal = 0n;
+    allocation.lineAllocations?.forEach((line, lineIndex) => {
+      if (lineRefs.has(line.lineRef)) {
+        context.addIssue({
+          code: 'custom',
+          path: ['discountAllocations', allocationIndex, 'lineAllocations', lineIndex, 'lineRef'],
+          message: 'line allocation identity must be unique within a discount allocation',
+        });
+      }
+      lineRefs.add(line.lineRef);
+      lineTotal += BigInt(line.discountMinorUnits);
+    });
+    if (lineTotal > BigInt(allocation.discountMinorUnits)) {
+      context.addIssue({
+        code: 'custom',
+        path: ['discountAllocations', allocationIndex, 'lineAllocations'],
+        message: 'line allocations must not exceed their discount allocation',
+      });
+    }
+  });
+});
+
 export const EvaluationResponseSchema = z.object({
   evaluationId: z.string().min(1),
   customerRef: z.string().min(1).optional(),
@@ -183,6 +286,7 @@ export const EvaluationResponseSchema = z.object({
   schemaVersion: z.number().int().positive(),
   expiresAt: z.iso.datetime({ offset: true }),
   decisions: z.array(IncentiveDecisionSchema),
+  priceBreakdown: MerchandisePriceBreakdownSchema,
   codeResults: z.array(CodeEvaluationResultSchema).optional(),
 }).strict();
 
@@ -205,6 +309,7 @@ export const RedemptionResponseSchema = z.object({
   externalOrderRef: z.string().min(1),
   status: z.literal('committed'),
   entries: z.array(RedemptionEntrySchema),
+  priceBreakdown: MerchandisePriceBreakdownSchema,
   idempotencyKey: z.string().min(1),
 }).strict();
 
@@ -217,6 +322,13 @@ export type ProgramType = z.infer<typeof ProgramTypeSchema>;
 export type ReasonCode = z.infer<typeof ReasonCodeSchema>;
 export type IncentiveDecision = z.infer<typeof IncentiveDecisionSchema>;
 export type CodeEvaluationResult = z.infer<typeof CodeEvaluationResultSchema>;
+export type MerchandiseLineDiscountAllocation = z.infer<
+  typeof MerchandiseLineDiscountAllocationSchema
+>;
+export type MerchandiseDiscountAllocation = z.infer<
+  typeof MerchandiseDiscountAllocationSchema
+>;
+export type MerchandisePriceBreakdown = z.infer<typeof MerchandisePriceBreakdownSchema>;
 export type EvaluationResponse = z.infer<typeof EvaluationResponseSchema>;
 export type RedemptionRequest = z.infer<typeof RedemptionRequestSchema>;
 export type RedemptionEntry = z.infer<typeof RedemptionEntrySchema>;

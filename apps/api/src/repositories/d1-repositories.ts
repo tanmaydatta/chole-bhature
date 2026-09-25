@@ -7,6 +7,7 @@ import {
   EffectSchema,
   EvaluationRequestSchema,
   IncentiveDecisionSchema,
+  MerchandisePriceBreakdownSchema,
   MerchantActivationRequestSchema,
   MerchantActivationResultSchema,
   MerchantProvisionRequestSchema,
@@ -108,9 +109,17 @@ const AllowedOriginsSchema = z.array(ExactOriginSchema).max(100).refine(
 const ReceiptIntegrityHashSchema = z.string().regex(/^[0-9a-f]{64}$/u);
 const RequestDigestSchema = z.string().regex(/^[0-9a-f]{64}$/u);
 const EvaluationModeSchema = z.enum(['automatic', 'coded']);
+const PrePricingRedemptionResponseSchema = RedemptionResponseSchema.omit({
+  priceBreakdown: true,
+});
 const StoredRedemptionEnvelopeSchema = z.object({
-  version: z.literal(2),
+  version: z.literal(3),
   result: RedemptionResponseSchema,
+  receiptIntegrityHash: ReceiptIntegrityHashSchema,
+}).strict();
+const PrePricingRedemptionEnvelopeSchema = z.object({
+  version: z.literal(2),
+  result: PrePricingRedemptionResponseSchema,
   receiptIntegrityHash: ReceiptIntegrityHashSchema,
 }).strict();
 const LegacyRedemptionResultSchema = z.object({
@@ -673,6 +682,7 @@ function parseDecision(
   canonicalJson(input.request);
   canonicalJson(input.facts);
   canonicalJson(input.decisions);
+  if (input.priceBreakdown !== undefined) canonicalJson(input.priceBreakdown);
   canonicalJson(input.submittedCodes);
   canonicalJson(input.codeResults);
 
@@ -693,6 +703,9 @@ function parseDecision(
   }
   const facts = FactsSchema.parse(input.facts);
   const decisions = DecisionsSchema.parse(input.decisions);
+  const priceBreakdown = input.priceBreakdown === undefined
+    ? undefined
+    : MerchandisePriceBreakdownSchema.parse(input.priceBreakdown);
   const mode = EvaluationModeSchema.parse(input.mode);
   const submittedCodes = z.array(z.string().min(1)).max(10).parse(input.submittedCodes);
   const codeResults = CodeResultsSchema.parse(input.codeResults);
@@ -735,6 +748,7 @@ function parseDecision(
     request,
     facts,
     decisions,
+    ...optional('priceBreakdown', priceBreakdown),
     integrityHash: z.string().min(1).parse(input.integrityHash),
     expiresAt: DateTimeSchema.parse(input.expiresAt),
     createdAt: DateTimeSchema.parse(input.createdAt),
@@ -745,6 +759,9 @@ function parseDecisionRow(row: typeof evaluationDecisions.$inferSelect): Evaluat
   const request = parseCanonicalJson(row.requestJson, EvaluationRequestSchema);
   const facts = parseCanonicalJson(row.factsJson, FactsSchema);
   const decisions = parseCanonicalJson(row.decisionsJson, DecisionsSchema);
+  const priceBreakdown = row.priceBreakdownJson === null
+    ? undefined
+    : parseCanonicalJson(row.priceBreakdownJson, MerchandisePriceBreakdownSchema);
   const submittedCodes = parseCanonicalJson(
     row.submittedCodesJson,
     z.array(z.string().min(1)).max(10),
@@ -764,6 +781,7 @@ function parseDecisionRow(row: typeof evaluationDecisions.$inferSelect): Evaluat
     request,
     facts,
     decisions,
+    ...optional('priceBreakdown', priceBreakdown),
     integrityHash: row.integrityHash,
     expiresAt: row.expiresAt,
     createdAt: row.createdAt,
@@ -806,7 +824,9 @@ export function parseRedemption(input: RedemptionCreate): RedemptionCreate {
   const evaluationId = z.string().min(1).parse(input.evaluationId);
   const externalOrderRef = z.string().min(1).parse(input.externalOrderRef);
   const idempotencyKey = z.string().min(1).parse(input.idempotencyKey);
-  const result = RedemptionResponseSchema.parse(input.result);
+  const result = 'priceBreakdown' in input.result
+    ? RedemptionResponseSchema.parse(input.result)
+    : PrePricingRedemptionResponseSchema.parse(input.result);
   const entries = z.array(z.unknown()).min(1).parse(input.entries)
     .map(entry => parseRedemptionEntry(entry as RedemptionEntryRecord));
   if (entries.some((entry, position) => entry.position !== position)) {
@@ -868,7 +888,10 @@ function parseRedemptionRow(
   if (row.externalOrderRef === null || row.idempotencyKey === null) {
     throw new Error('Current redemption bundles require both identifiers');
   }
-  const envelope = parseJson(row.resultJson, StoredRedemptionEnvelopeSchema);
+  const rawEnvelope = JSON.parse(row.resultJson) as { version?: unknown };
+  const envelope = rawEnvelope.version === 2
+    ? PrePricingRedemptionEnvelopeSchema.parse(rawEnvelope)
+    : StoredRedemptionEnvelopeSchema.parse(rawEnvelope);
   const redemption = parseRedemption({
     redemptionId: row.id,
     merchantId: row.merchantId,
@@ -975,7 +998,7 @@ function redemptionFromRows(
 
 export function redemptionEnvelope(redemption: RedemptionCreate): string {
   return JSON.stringify(StoredRedemptionEnvelopeSchema.parse({
-    version: 2,
+    version: 3,
     result: redemption.result,
     receiptIntegrityHash: redemption.receiptIntegrityHash,
   }));
@@ -3032,6 +3055,9 @@ export function createRepositories(env: Env): Repositories {
           requestJson: canonicalJson(parsed.request),
           factsJson: canonicalJson(parsed.facts),
           decisionsJson: canonicalJson(parsed.decisions),
+          priceBreakdownJson: parsed.priceBreakdown === undefined
+            ? null
+            : canonicalJson(parsed.priceBreakdown),
           mode: parsed.mode,
           submittedCodesJson: canonicalJson(parsed.submittedCodes),
           codeResultsJson: canonicalJson(parsed.codeResults),
@@ -3167,6 +3193,7 @@ export function createRepositories(env: Env): Repositories {
           requestJson: evaluationDecisions.requestJson,
           factsJson: evaluationDecisions.factsJson,
           decisionsJson: evaluationDecisions.decisionsJson,
+          priceBreakdownJson: evaluationDecisions.priceBreakdownJson,
           mode: evaluationDecisions.mode,
           submittedCodesJson: evaluationDecisions.submittedCodesJson,
           codeResultsJson: evaluationDecisions.codeResultsJson,
@@ -3214,6 +3241,7 @@ export function createRepositories(env: Env): Repositories {
             requestJson: candidate.requestJson,
             factsJson: candidate.factsJson,
             decisionsJson: candidate.decisionsJson,
+            priceBreakdownJson: candidate.priceBreakdownJson,
             mode: candidate.mode,
             submittedCodesJson: candidate.submittedCodesJson,
             codeResultsJson: candidate.codeResultsJson,

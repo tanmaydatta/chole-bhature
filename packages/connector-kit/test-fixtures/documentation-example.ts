@@ -18,6 +18,7 @@ interface ExampleCustomer {
 interface ExampleCart {
   currency: string;
   subtotal: number;
+  lineId: string;
   productId: string;
   variantId: string;
 }
@@ -91,6 +92,7 @@ export const exampleConformanceValues = {
   cartInput: {
     currency: 'GBP',
     subtotal: 6_500,
+    lineId: ' Line::001 ',
     productId: ' Product::001 ',
     variantId: ' Variant::001 ',
   },
@@ -101,6 +103,7 @@ export const exampleConformanceValues = {
     currency: 'GBP',
     subtotal: 6_500,
     total: 5_500,
+    lineId: ' Line::001 ',
     productId: ' Product::001 ',
     variantId: ' Variant::001 ',
   },
@@ -125,6 +128,7 @@ export function createDocumentationConnector(): CommerceConnector<
       currency: input.currency,
       subtotal: input.subtotal,
       items: [{
+        lineRef: input.lineId,
         productRef: input.productId,
         variantRef: input.variantId,
         quantity: 1,
@@ -138,6 +142,7 @@ export function createDocumentationConnector(): CommerceConnector<
       total: input.total,
       customerRef: input.customerId,
       items: [{
+        lineRef: input.lineId,
         productRef: input.productId,
         variantRef: input.variantId,
         quantity: 1,
@@ -174,10 +179,12 @@ export function createDocumentationConnectorHarness(): {
     expectedOrderCustomerRef: exampleConformanceValues.orderInput.customerId,
     expectedIdempotencyKey: exampleConformanceValues.idempotencyKey,
     expectedCartLineRefs: [{
+      lineRef: ' Line::001 ',
       productRef: ' Product::001 ',
       variantRef: ' Variant::001 ',
     }],
     expectedOrderLineRefs: [{
+      lineRef: ' Line::001 ',
       productRef: ' Product::001 ',
       variantRef: ' Variant::001 ',
     }],

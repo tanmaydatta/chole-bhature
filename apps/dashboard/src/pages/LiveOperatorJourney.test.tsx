@@ -59,7 +59,7 @@ function error(status: number, code: string, message: string, retryable = false)
   return response({ error: { code, message, retryable, correlationId: 'corr-live-error' } }, status);
 }
 
-function programConfiguration(revisionName = 'Gold launch') {
+function programConfiguration(revisionName = 'Gold launch', capped = false) {
   return {
     id: 'gold-launch', type: 'promo', name: revisionName, status: 'draft',
     eligibility: { match: 'ALL', conditions: [] },
@@ -68,7 +68,12 @@ function programConfiguration(revisionName = 'Gold launch') {
       conditions: { match: 'ALL', conditions: [{
         id: 'large-basket', variable: 'cart.subtotal', operator: 'gte', value: 10_000,
       }] },
-      reward: { type: 'order_discount', calculation: 'percent', basisPoints: 2_000 },
+      reward: {
+        type: 'order_discount', calculation: 'percent', basisPoints: 2_000,
+        ...(capped
+          ? { maximumDiscountAmount: { currency: 'GBP', minorUnits: 1_500 } }
+          : {}),
+      },
     }, {
       id: 'rule-two', name: 'Gold customer',
       conditions: { match: 'ANY', conditions: [], groups: [{ match: 'ALL', conditions: [{
@@ -91,7 +96,7 @@ function programConfiguration(revisionName = 'Gold launch') {
   } as const;
 }
 
-function installLiveBff() {
+function installLiveBff(initialProgram = programConfiguration()) {
   const calls: Array<{ path: string; method: string; body?: unknown }> = [];
   let definitions = workingDefinitions;
   let draftVersion = 1;
@@ -99,7 +104,7 @@ function installLiveBff() {
   let customer: null | { externalRef: string; attributes: Record<string, unknown>; version: number; updatedAt: string } = null;
   let conflictNext = false;
   let promoCodeConflictNext = false;
-  let program: Record<string, any> = programConfiguration();
+  let program: Record<string, any> = initialProgram;
   let activeProgram: Record<string, any> | null = null;
   let lifecycle = { programRef: program.id, status: 'draft', draftRevision: 1, updatedAt: now } as {
     programRef: string; status: string; activeRevision?: number; draftRevision?: number; updatedAt: string;
@@ -233,6 +238,47 @@ afterEach(() => {
 });
 
 describe('live operator authoring journey', () => {
+  test('shows the exact monetary maximum on capped percentage rewards', async () => {
+    installLiveBff(programConfiguration('Gold launch', true));
+    renderApp('/promo/gold-launch');
+
+    expect(await screen.findByText('20% off order (maximum GBP 15.00)'))
+      .toBeInTheDocument();
+  });
+
+  test('authors an optional exact-currency maximum for a percentage reward', async () => {
+    const server = installLiveBff();
+    renderApp('/promo/new');
+
+    await userEvent.type(await screen.findByLabelText('External reference'), 'gold-launch');
+    await userEvent.type(screen.getByLabelText('Promo name'), 'Gold launch');
+    await userEvent.click(screen.getByRole('button', { name: 'Use complete authoring example' }));
+    const firstRule = screen.getByText('Reward rule 1').closest('fieldset');
+    if (!firstRule) throw new Error('Expected first reward rule');
+    await userEvent.click(within(firstRule).getByRole('button', {
+      name: 'Add maximum discount',
+    }));
+    await userEvent.clear(within(firstRule).getByLabelText('Maximum discount currency'));
+    await userEvent.type(within(firstRule).getByLabelText('Maximum discount currency'), 'GBP');
+    await userEvent.clear(within(firstRule).getByLabelText('Maximum discount minor units'));
+    await userEvent.type(within(firstRule).getByLabelText('Maximum discount minor units'), '1500');
+    await userEvent.click(screen.getByRole('button', { name: 'Save draft' }));
+
+    const createCall = server.calls.find(call => (
+      call.path === '/operator/v1/programs' && call.method === 'POST'
+    ));
+    const authoredRules = (createCall?.body as { rewardRules?: unknown[] } | undefined)
+      ?.rewardRules;
+    expect(authoredRules?.[0]).toMatchObject({
+      reward: {
+        type: 'order_discount',
+        calculation: 'percent',
+        basisPoints: 2_000,
+        maximumDiscountAmount: { currency: 'GBP', minorUnits: 1_500 },
+      },
+    });
+  });
+
   test('starts a Promo as a minimal draft and makes trigger mode explicit', async () => {
     const server = installLiveBff();
     renderApp('/promo/new');

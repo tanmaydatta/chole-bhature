@@ -179,6 +179,18 @@ function redemptionResult(
       rewardRuleRef: 'default-reward',
       effects: incentiveDecision.effects,
     }],
+    priceBreakdown: {
+      currency: 'GBP',
+      originalMerchandiseSubtotal: 5_000,
+      discountAllocations: [{
+        programRef: 'welcome-10',
+        programRevision: 1,
+        rewardRuleRef: 'default-reward',
+        discountMinorUnits: 500,
+      }],
+      totalDiscount: 500,
+      discountedMerchandiseSubtotal: 4_500,
+    },
   };
 }
 
@@ -534,6 +546,7 @@ describe('D1 repositories', () => {
       'code_results_json',
       'request_digest',
       'correlation_id',
+      'price_breakdown_json',
     ]);
   });
 
@@ -701,6 +714,18 @@ describe('D1 repositories', () => {
         programRevision: 7,
         effects: [{ type: 'free_shipping' }],
       }],
+      priceBreakdown: {
+        currency: 'GBP',
+        originalMerchandiseSubtotal: 5_000,
+        discountAllocations: [{
+          programRef: 'welcome-10',
+          programRevision: 1,
+          rewardRuleRef: 'default-reward',
+          discountMinorUnits: 500,
+        }],
+        totalDiscount: 500,
+        discountedMerchandiseSubtotal: 4_500,
+      },
     };
     const unsigned: Omit<RedemptionBundleCreate, 'receiptIntegrityHash'> = {
       redemptionId,
@@ -777,6 +802,81 @@ describe('D1 repositories', () => {
       requestDigest: 'c'.repeat(64),
       redemptionId: 'bundle-redemption',
     });
+  });
+
+  test('reads and verifies a pre-pricing version-2 redemption envelope', async () => {
+    await seedMerchant('merchant-a');
+    const repositories = createRepositories({ DB: env.DB });
+    const evaluationId = await seedDecision('merchant-a', 'pre-pricing-evaluation');
+    const redemptionId = 'pre-pricing-redemption';
+    const result = {
+      redemptionId,
+      evaluationId,
+      externalOrderRef: 'pre-pricing-order',
+      idempotencyKey: 'pre-pricing-key',
+      status: 'committed' as const,
+      entries: [{
+        programRef: 'welcome-10',
+        programRevision: 1,
+        rewardRuleRef: 'default-reward',
+        effects: incentiveDecision.effects,
+      }],
+    };
+    const entry = {
+      position: 0,
+      programRef: 'welcome-10',
+      programRevision: 1,
+      rewardRuleRef: 'default-reward',
+      effects: incentiveDecision.effects,
+      discountMinorUnits: 500,
+      currency: 'GBP',
+    };
+    const receiptIntegrityHash = await signLegacyReceipt({
+      kind: 'redemption_bundle_v2',
+      merchantId: 'merchant-a',
+      redemptionId,
+      evaluationId,
+      externalOrderRef: result.externalOrderRef,
+      idempotencyKey: result.idempotencyKey,
+      requestDigest: 'f'.repeat(64),
+      status: 'committed',
+      entries: [entry],
+      createdAt,
+    });
+    await env.DB.batch([
+      env.DB.prepare(`
+        INSERT INTO redemptions (
+          id, merchant_id, external_order_ref, idempotency_key, evaluation_id,
+          result_json, discount_minor_units, currency, created_at, request_digest
+        ) VALUES (?1, 'merchant-a', ?2, ?3, ?4, ?5, 500, 'GBP', ?6, ?7)
+      `).bind(
+        redemptionId,
+        result.externalOrderRef,
+        result.idempotencyKey,
+        evaluationId,
+        JSON.stringify({ version: 2, result, receiptIntegrityHash }),
+        createdAt,
+        'f'.repeat(64),
+      ),
+      env.DB.prepare(`
+        INSERT INTO redemption_entries (
+          merchant_id, redemption_id, position, program_ref, program_revision,
+          reward_rule_ref, effects_json, discount_minor_units, currency
+        ) VALUES ('merchant-a', ?1, 0, ?2, 1, ?3, ?4, 500, 'GBP')
+      `).bind(
+        redemptionId,
+        entry.programRef,
+        entry.rewardRuleRef,
+        JSON.stringify(entry.effects),
+      ),
+    ]);
+
+    const stored = await repositories.redemptions.getByIdempotencyKey(
+      'merchant-a',
+      result.idempotencyKey,
+      receipt => verifyRedemptionReceipt(receipt, signingSecret),
+    );
+    expect(stored?.result).toEqual(result);
   });
 
   test('decision snapshots round-trip canonical program config and reject corrupt config', async () => {
@@ -939,7 +1039,7 @@ describe('D1 repositories', () => {
         UPDATE redemptions SET result_json = ?1
         WHERE merchant_id = 'merchant-a' AND evaluation_id = ?2
       `).bind(JSON.stringify({
-        version: 2,
+        version: 3,
         result: otherProgramResult,
         receiptIntegrityHash,
       }), evaluationId),

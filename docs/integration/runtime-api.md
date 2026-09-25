@@ -2,7 +2,7 @@
 
 **Notion mirror:** https://app.notion.com/p/Integration-Runtime-API-3a2e5c7c2b8e812f889eeddd2d56ef70
 
-**Mirror state:** Repository and Notion copies synchronized and read back successfully on 2026-07-24.
+**Mirror state:** Repository updated for GAP-030/031 on 2026-09-25; Notion synchronization pending.
 
 This is the platform-neutral HTTP boundary for the first client integration. A custom checkout, a manual backend integration, and a future Shopify adapter all follow the same sequence: define typed fields, store customer attributes, configure a Promo program, evaluate a cart, apply the complete selected effect set, and commit the complete selected bundle before payment capture.
 
@@ -15,7 +15,7 @@ The current first-client runtime uses persisted, show-once merchant API credenti
 - A `pk_…` **publishable credential** can read the published schema and call evaluation when it carries the required scope. It also has an exact-origin allowlist and per-minute rate limit.
 - An `sk_…` **secret credential** is required for customer reads/writes and redemption. Scoped public runtime routes require `schema:read`, `customers:write`, `evaluations:write`, or `redemptions:write` as applicable.
 - Schema definition authoring/publication and immutable Promo revision publication are operator workflows behind the session-authenticated BFF, not public credential endpoints.
-- `GET /v1/health` and `GET /v1/openapi.json` are public. The two `/v1/test-*` routes only verify which access gate a token can pass.
+- `GET /v1/health` and `GET /v1/openapi.json` are public.
 
 Send a token as `Authorization: Bearer <token>`. Only its digest is persisted after the show-once handoff. Each credential resolves to exactly one merchant; the API never accepts `merchantId` from the request. Every schema, customer, program, evaluation, and redemption query derives its merchant from the authenticated credential. A reference belonging to another merchant behaves as not found.
 
@@ -143,7 +143,8 @@ schema, and operators and values must match the field type.
       "reward": {
         "type": "order_discount",
         "calculation": "percent",
-        "basisPoints": 2000
+        "basisPoints": 2000,
+        "maximumDiscountAmount": { "currency": "GBP", "minorUnits": 1500 }
       }
     },
     {
@@ -187,7 +188,7 @@ schema, and operators and values must match the field type.
 
 `eligibility` is the global gate. If it passes, `rewardRules` are evaluated in the configured order and the first matching rule wins, even when a later rule also matches. If none match, `fallbackReward` is selected when configured. A Promo without a matching rule or fallback returns `not_qualified` with `NO_REWARD_RULE_MATCHED`.
 
-Money is always an ISO currency plus integer minor units. Fixed rewards and budgets must use the same currency; evaluation currency must also match. In the current runtime, a free-shipping reward has no monetary charge and cannot coexist with a budget because evaluation does not yet accept an authoritative shipping cost. The approved future authority will make free-shipping budgets and per-order caps optional, require a client-supplied actual shipping cost in the same currency with no conversion, apply a full waiver or none, and use a configurable reservation TTL that defaults to 15 minutes. Expiry and failure recovery are money movements, with event-driven reversals planned rather than implemented here. Lifecycle values are `draft`, `scheduled`, `active`, `paused`, and `ended`. Only a draft program can be edited, and its external `id` is immutable.
+Money is always an ISO currency plus integer minor units. Fixed rewards, budgets, and an optional percentage `maximumDiscountAmount` must use the same currency; evaluation currency must also match. The maximum must be a positive integer and is available for percentage order and line-item discounts. In the current runtime, a free-shipping reward has no monetary charge and cannot coexist with a budget because evaluation does not yet accept an authoritative shipping cost. The approved future authority will make free-shipping budgets and per-order caps optional, require a client-supplied actual shipping cost in the same currency with no conversion, apply a full waiver or none, and use a configurable reservation TTL that defaults to 15 minutes. Expiry and failure recovery are money movements, with event-driven reversals planned rather than implemented here. Lifecycle values are `draft`, `scheduled`, `active`, `paused`, and `ended`. Only a draft program can be edited, and its external `id` is immutable.
 
 The OpenAPI document also publishes `AffiliateProgram`, `ReferralProgram`, and `LoyaltyProgram` as future configuration contracts. The current Operator program workflow accepts only Promo configuration, and no runtime evaluates or persists those future program types. Loyalty `assetRef` values are opaque references; preserve them byte-for-byte. Defining and resolving them through a Wallet Asset Catalog is deferred.
 
@@ -205,7 +206,10 @@ Omit `codes` or send an empty array to select automatic mode:
   "cart": {
     "currency": "GBP",
     "subtotal": 12500,
-    "items": []
+    "items": [
+      { "lineRef": "line-1", "productRef": "product-1", "quantity": 1, "unitPrice": 5000 },
+      { "lineRef": "line-2", "productRef": "product-1", "quantity": 1, "unitPrice": 7500 }
+    ]
   },
   "context": {
     "channel": "web"
@@ -233,7 +237,8 @@ Core privately checks automatic Promos by descending priority and then immutable
         {
           "type": "order_discount",
           "calculation": "percent",
-          "basisPoints": 2000
+          "basisPoints": 2000,
+          "maximumDiscountAmount": { "currency": "GBP", "minorUnits": 1500 }
         }
       ],
       "reasonCodes": [],
@@ -241,7 +246,21 @@ Core privately checks automatic Promos by descending priority and then immutable
       "commitRequired": true,
       "eligible": true
     }
-  ]
+  ],
+  "priceBreakdown": {
+    "currency": "GBP",
+    "originalMerchandiseSubtotal": 12500,
+    "discountAllocations": [
+      {
+        "programRef": "gold-web-rewards",
+        "programRevision": 1,
+        "rewardRuleRef": "large-cart-20-percent",
+        "discountMinorUnits": 1500
+      }
+    ],
+    "totalDiscount": 1500,
+    "discountedMerchandiseSubtotal": 11000
+  }
 }
 ```
 
@@ -273,7 +292,21 @@ For a globally eligible cart below both thresholds, the configured fallback is s
       "commitRequired": true,
       "eligible": true
     }
-  ]
+  ],
+  "priceBreakdown": {
+    "currency": "GBP",
+    "originalMerchandiseSubtotal": 12500,
+    "discountAllocations": [
+      {
+        "programRef": "gold-web-rewards",
+        "programRevision": 1,
+        "rewardRuleRef": "fallback-5-off",
+        "discountMinorUnits": 500
+      }
+    ],
+    "totalDiscount": 500,
+    "discountedMerchandiseSubtotal": 12000
+  }
 }
 ```
 
@@ -286,7 +319,14 @@ If no automatic Promo qualifies, the successful response has an empty decision l
   "customerVersion": 1,
   "schemaVersion": 1,
   "expiresAt": "2026-07-19T10:05:00.000Z",
-  "decisions": []
+  "decisions": [],
+  "priceBreakdown": {
+    "currency": "GBP",
+    "originalMerchandiseSubtotal": 12500,
+    "discountAllocations": [],
+    "totalDiscount": 0,
+    "discountedMerchandiseSubtotal": 12500
+  }
 }
 ```
 
@@ -301,7 +341,10 @@ A non-empty `codes` array suppresses every automatic Promo and resolves only the
   "cart": {
     "currency": "GBP",
     "subtotal": 12500,
-    "items": []
+    "items": [
+      { "lineRef": "line-1", "productRef": "product-1", "quantity": 1, "unitPrice": 5000 },
+      { "lineRef": "line-2", "productRef": "product-1", "quantity": 1, "unitPrice": 7500 }
+    ]
   },
   "context": {
     "channel": "web"
@@ -363,7 +406,21 @@ Core trims and uppercases codes using locale-independent Unicode default case co
       "programRef": "vip-shipping",
       "reasonCodes": []
     }
-  ]
+  ],
+  "priceBreakdown": {
+    "currency": "GBP",
+    "originalMerchandiseSubtotal": 12500,
+    "discountAllocations": [
+      {
+        "programRef": "gate-c-15",
+        "programRevision": 1,
+        "rewardRuleRef": "fifteen-percent",
+        "discountMinorUnits": 1875
+      }
+    ],
+    "totalDiscount": 1875,
+    "discountedMerchandiseSubtotal": 10625
+  }
 }
 ```
 
@@ -371,7 +428,11 @@ Diagnostics use `selected`, `invalid_code`, `not_qualified`, `unavailable`, `exh
 
 `outcome` is authoritative. `eligible` is only a derived convenience boolean (`true` exactly when outcome is `qualified`). `rewardRuleRef` identifies the selected conditional rule or fallback. Never apply effects from a decision that is not qualified.
 
-Budget and cap checks use only each selected reward. Percent order discounts are capped by order value; fixed line-item discounts are multiplied by matching quantity and capped by line value. Evaluation marks a coded diagnostic exhausted or skips an exhausted automatic candidate. Redemption recomputes all selected charges from the signed cart and atomically rechecks every budget, total usage cap, and per-customer cap before committing.
+Every cart item requires a non-empty `lineRef`, and line references must be unique within the cart. `productRef` may repeat; `lineRef` is the stable identity used for exact line allocations and must be preserved byte-for-byte by connectors.
+
+`priceBreakdown` is the authoritative merchandise-only result. The calculator processes selected decisions in response order and effects in configured order. It computes percentage amounts from original merchandise or extended line value, floors integer division to minor units, applies an optional percentage maximum, then caps each later allocation by the remaining merchandise subtotal. Fixed order discounts are capped by original subtotal; fixed line-item amounts are multiplied by quantity and capped by extended line value. Stacked line discounts are also capped by each line's remaining value, so they cannot consume unrelated merchandise. Matching duplicate-product lines are allocated in request order. Free shipping contributes no fictional merchandise saving. Per-Promo budget checks and redemption ledger entries use the same `discountAllocations`, so their sum equals `totalDiscount` and `discountedMerchandiseSubtotal` equals original subtotal minus that total.
+
+Evaluation marks a coded diagnostic exhausted or skips an exhausted automatic candidate. Redemption verifies and reuses the signed calculation and atomically rechecks every budget, total usage cap, and per-customer cap before committing.
 
 The server stores the mode, request digest, submitted-code diagnostics, facts, request, selected decisions, schema/customer versions, correlation ID, and expiry in an HMAC-SHA-256-protected snapshot. The default time-to-live is 300 seconds and can be configured up to 86,400 seconds. Do not alter a decision or construct a redemption from client-calculated effects. If checkout cannot commit before `expiresAt`, evaluate again and use the new decision.
 
@@ -415,13 +476,27 @@ Both client-owned identifiers are required. A successful first commit and every 
       ]
     }
   ],
+  "priceBreakdown": {
+    "currency": "GBP",
+    "originalMerchandiseSubtotal": 12500,
+    "discountAllocations": [
+      {
+        "programRef": "gate-c-15",
+        "programRevision": 1,
+        "rewardRuleRef": "fifteen-percent",
+        "discountMinorUnits": 1875
+      }
+    ],
+    "totalDiscount": 1875,
+    "discountedMerchandiseSubtotal": 10625
+  },
   "idempotencyKey": "checkout-789"
 }
 ```
 
 The complete selected decision set is the unit of work. Redemption verifies the signed snapshot and TTL, revalidates every active revision and reward, then asks the provider-neutral atomic coordinator to commit all ordered entries or none. The initial D1 adapter atomically writes the bundle header and entries and updates all applicable usage, per-customer, and budget counters. It never partially commits a valid prefix. The future distributed free-shipping budget authority must implement this same port and stable outcomes; no Durable Object or distributed reservation adapter is implemented in the current delivery.
 
-An exact retry returns the same `redemptionId` and ordered `entries` without consuming a second use or decrementing any budget twice. The exact retry of a stable non-retryable rejection returns the same error. Reusing an idempotency key or external order reference with a changed evaluation, order, counterpart identifier, or bundle digest returns `409 VERSION_CONFLICT`. Do not create a new key because a response was lost.
+An exact retry returns the same `redemptionId`, ordered `entries`, and authoritative `priceBreakdown` without consuming a second use or decrementing any budget twice. The exact retry of a stable non-retryable rejection returns the same error. Reusing an idempotency key or external order reference with a changed evaluation, order, counterpart identifier, or bundle digest returns `409 VERSION_CONFLICT`. Do not create a new key because a response was lost.
 
 For a retryable `503 REDEMPTION_UNAVAILABLE`, retry the identical request with bounded exponential backoff. For `409 BUDGET_EXHAUSTED`, `USAGE_CAP_EXHAUSTED`, or `PER_CUSTOMER_CAP_EXHAUSTED`, remove or re-price the entire stale bundle before capture; no child was committed.
 
@@ -539,10 +614,14 @@ dependencies and then runs real Hono handlers against isolated workerd+D1 storag
 pnpm --filter @incentives/api test:full-flow
 ```
 
-That test creates definitions, publishes them, stores a customer once, creates ordered
-tiered and no-fallback Promos, evaluates both cart thresholds without customer-attribute
-overrides, retries a committed bundle idempotently, and proves program-wide cap and
-budget exhaustion across selected rules. Run the complete workspace gate before
+That test also authors and publishes a capped percentage Promo plus a fixed line Promo,
+evaluates duplicate-product lines with distinct stable identities, verifies exact basket
+and line allocations in the signed D1 snapshot, commits and persists the same breakdown,
+checks counters and budget decrements, retries exactly, and rejects changed key reuse.
+It retains the tiered/no-fallback and exhaustion scenarios. See the executable
+[GAP-030/031 end-to-end plan](../testing/gap-030-031-e2e.md) for the automated coverage
+map, adversarial cases, manual browser/staging checks, environment, teardown, and evidence.
+Run the complete workspace gate before
 integration changes are merged:
 
 ```bash

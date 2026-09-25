@@ -42,6 +42,20 @@ function validateRewardAndCaps(program: PromoProgram): void {
   const fixedRewards = rewards.filter((entry): entry is typeof entry & {
     reward: Extract<CommerceReward, { calculation: 'fixed' }>;
   } => 'amount' in entry.reward);
+  const monetaryRewards = rewards.flatMap(({ reward, path }) => {
+    if ('amount' in reward) return [{ amount: reward.amount, path: `${path}.amount` }];
+    if (
+      reward.type !== 'free_shipping'
+      && reward.calculation === 'percent'
+      && reward.maximumDiscountAmount !== undefined
+    ) {
+      return [{
+        amount: reward.maximumDiscountAmount,
+        path: `${path}.maximumDiscountAmount`,
+      }];
+    }
+    return [];
+  });
 
   for (const { reward, path } of fixedRewards) {
     if (reward.amount.minorUnits <= 0) {
@@ -53,15 +67,15 @@ function validateRewardAndCaps(program: PromoProgram): void {
     }
   }
 
-  const firstCurrency = fixedRewards[0]?.reward.amount.currency;
-  const mismatchedCurrency = fixedRewards.find(({ reward }) => (
-    firstCurrency !== undefined && reward.amount.currency !== firstCurrency
+  const firstCurrency = monetaryRewards[0]?.amount.currency;
+  const mismatchedCurrency = monetaryRewards.find(({ amount }) => (
+    firstCurrency !== undefined && amount.currency !== firstCurrency
   ));
   if (mismatchedCurrency !== undefined) {
     throw validationError({
-      path: `${mismatchedCurrency.path}.amount.currency`,
+      path: `${mismatchedCurrency.path}.currency`,
       code: 'mixed_reward_currencies',
-      message: 'All fixed rewards must use the same currency',
+      message: 'All monetary reward amounts must use the same currency',
     });
   }
 

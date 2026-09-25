@@ -15,7 +15,7 @@ interface CommerceConnector<TCustomer, TCart, TOrder, TDecision> {
 }
 ```
 
-Normalization must preserve opaque customer, product, variant, order, and idempotency references byte-for-byte. Money must be uppercase-currency integer minor units. Customer normalization preserves stored attributes when supported; cart normalization must never leak them into live cart or line-item attributes. Request verification must return `{ verified: true }` for an authentic source and `{ verified: false }` for an invalid source.
+Normalization must preserve opaque customer, cart/order line, product, variant, order, and idempotency references byte-for-byte. Each normalized item needs a stable, non-empty `lineRef`, and cart line identities must be unique even when `productRef` repeats. Money must be uppercase-currency integer minor units. Customer normalization preserves stored attributes when supported; cart normalization must never leak them into live cart or line-item attributes. Request verification must return `{ verified: true }` for an authentic source and `{ verified: false }` for an invalid source.
 
 This is the exact executable example connector; its `mapDecision` helper is shown below:
 
@@ -36,6 +36,7 @@ export function createDocumentationConnector(): CommerceConnector<
       currency: input.currency,
       subtotal: input.subtotal,
       items: [{
+        lineRef: input.lineId,
         productRef: input.productId,
         variantRef: input.variantId,
         quantity: 1,
@@ -49,6 +50,7 @@ export function createDocumentationConnector(): CommerceConnector<
       total: input.total,
       customerRef: input.customerId,
       items: [{
+        lineRef: input.lineId,
         productRef: input.productId,
         variantRef: input.variantId,
         quantity: 1,
@@ -145,6 +147,7 @@ export const exampleConformanceValues = {
   cartInput: {
     currency: 'GBP',
     subtotal: 6_500,
+    lineId: ' Line::001 ',
     productId: ' Product::001 ',
     variantId: ' Variant::001 ',
   },
@@ -155,6 +158,7 @@ export const exampleConformanceValues = {
     currency: 'GBP',
     subtotal: 6_500,
     total: 5_500,
+    lineId: ' Line::001 ',
     productId: ' Product::001 ',
     variantId: ' Variant::001 ',
   },
@@ -164,7 +168,7 @@ export const exampleConformanceValues = {
 } as const;
 ```
 
-The intentional spaces in the opaque references are sentinel-like proof that an adapter does not trim or reinterpret platform IDs.
+The intentional spaces in the opaque references are sentinel-like proof that an adapter does not trim or reinterpret platform IDs. The conformance fixture compares `lineRef`, `productRef`, and `variantRef` independently so duplicate product lines remain distinguishable.
 
 ## Integration recipe
 

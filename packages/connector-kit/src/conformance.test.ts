@@ -27,6 +27,7 @@ interface FakeCustomer {
 interface FakeCart {
   currency: string;
   subtotal: number;
+  lineId: string;
   productId: string;
   variantId: string;
 }
@@ -37,6 +38,7 @@ interface FakeOrder {
   currency: string;
   total: number;
   customerId: string;
+  lineId: string;
   productId: string;
   variantId: string;
 }
@@ -95,6 +97,7 @@ function canonicalCartFromFake(input: FakeCart): CartSnapshot {
     currency: input.currency,
     subtotal: input.subtotal,
     items: [{
+      lineRef: input.lineId,
       productRef: input.productId,
       variantRef: input.variantId,
       quantity: 1,
@@ -111,6 +114,7 @@ function canonicalOrderFromFake(input: FakeOrder): OrderSnapshot {
     total: input.total,
     customerRef: input.customerId,
     items: [{
+      lineRef: input.lineId,
       productRef: input.productId,
       variantRef: input.variantId,
       quantity: 1,
@@ -254,6 +258,7 @@ function createHarness(): {
       cartInput: {
         currency: 'GBP',
         subtotal: 6_500,
+        lineId: ' Line::001 ',
         productId: ' Product::001 ',
         variantId: ' Variant::001 ',
       },
@@ -263,6 +268,7 @@ function createHarness(): {
         currency: 'GBP',
         total: 6_000,
         customerId: ' Customer::001 ',
+        lineId: ' Line::001 ',
         productId: ' Product::001 ',
         variantId: ' Variant::001 ',
       },
@@ -276,10 +282,12 @@ function createHarness(): {
       expectedOrderCustomerRef: ' Customer::001 ',
       expectedIdempotencyKey: ' Idempotency::001 ',
       expectedCartLineRefs: [{
+        lineRef: ' Line::001 ',
         productRef: ' Product::001 ',
         variantRef: ' Variant::001 ',
       }],
       expectedOrderLineRefs: [{
+        lineRef: ' Line::001 ',
         productRef: ' Product::001 ',
         variantRef: ' Variant::001 ',
       }],
@@ -511,6 +519,15 @@ describe('runConnectorConformanceSuite', () => {
   });
 
   test.each([
+    ['cart line', (harness: ReturnType<typeof createHarness>) => {
+      harness.connector.normalizeCart = input => ({
+        ...canonicalCartFromFake(input),
+        items: [{
+          ...canonicalCartFromFake(input).items[0]!,
+          lineRef: input.lineId.trim(),
+        }],
+      });
+    }],
     ['cart product', (harness: ReturnType<typeof createHarness>) => {
       harness.connector.normalizeCart = input => ({
         ...canonicalCartFromFake(input),
@@ -535,6 +552,15 @@ describe('runConnectorConformanceSuite', () => {
         items: [{
           ...canonicalOrderFromFake(input).items[0]!,
           productRef: input.productId.trim(),
+        }],
+      });
+    }],
+    ['order line', (harness: ReturnType<typeof createHarness>) => {
+      harness.connector.normalizeOrder = input => ({
+        ...canonicalOrderFromFake(input),
+        items: [{
+          ...canonicalOrderFromFake(input).items[0]!,
+          lineRef: input.lineId.trim(),
         }],
       });
     }],
