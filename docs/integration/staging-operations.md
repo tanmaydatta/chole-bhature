@@ -256,6 +256,48 @@ restore sequence, and evidence-retention rules are in the
 The dated activation record's older inline direct-Wrangler rollout draft is
 historical and must not be executed.
 
+### Rotate existing staging secrets
+
+This is an owner-run operation on the existing staging Workers. It does not authorize the
+E2E migrations, source deployments, or fixture writes above. Each `wrangler secret put`
+immediately deploys a new version of its named Worker, so confirm the staging account and
+Worker before each command and complete the read-only preconditions above first.
+
+1. Store each replacement value as a **new** Bitwarden item before putting it anywhere else.
+   Generate distinct random values of at least 32 characters for `AUTH_SECRET` and
+   `OPERATOR_SELECTION_SECRET` when rotating them. For `RESEND_API_KEY`, first confirm the
+   `RESEND_FROM` sender domain is verified in Resend. Create a sending-only key restricted
+   to that domain where available, and immediately store its one-time value in a new
+   Bitwarden item. Do not create the key if its value cannot be captured safely. Keep the
+   previous Resend key active while validating the replacement. Never edit, overwrite, or
+   delete any existing Bitwarden item, even an erroneous one; create another new item for
+   each correction or supersession. Read back and verify every new item in Bitwarden
+   before copying its value elsewhere. Never display, log, commit, or send a value in chat.
+2. Only after Bitwarden readback verification, copy the applicable values into the
+   git-ignored, mode-`0600` `.env.staging` using a local editor. Set `RESEND_FROM` to the
+   verified sender. Confirm the intended test address is already in the deployed staging
+   recipient allowlist, and keep `STAGING_ALLOWED_RECIPIENTS` in the local file aligned as
+   a JSON array of approved real addresses; editing the file does not change the deployed
+   allowlist. For initial preparation while all three secret fields are still placeholders,
+   the local helper below reads the named Bitwarden items through the unlocked CLI, verifies
+   them, and replaces those fields without displaying their values. Supply item IDs only;
+   it refuses to overwrite a populated field.
+
+   ```sh
+   node scripts/staging-vault-to-env.mjs \
+     "$AUTH_ITEM_ID" "$OPERATOR_ITEM_ID" "$RESEND_ITEM_ID"
+   ```
+3. The owner then runs only the applicable Identity and Operator Web `wrangler secret put`
+   commands shown above, one at a time, entering each value at Wrangler's hidden prompt
+   and checking the result before the next command. A sender change also requires the
+   `RESEND_FROM` secret put. Do not run the separate E2E deployment sequence for rotation.
+4. Confirm a fresh staging sign-in, delivery to an allowed address from the verified
+   sender, and a fresh merchant selection after rotating the Operator secret. Existing
+   selection cookies will no longer verify. Avoid rotating the Operator secret during an
+   active merchant-provisioning attempt because it also derives provisioning IDs.
+5. Only after the new Resend key has delivered successfully, revoke the previous key in
+   Resend.
+
 ### Failure and recovery rules
 
 - A failed migration stops activation. Do not automatically restore Product D1.

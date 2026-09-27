@@ -2,12 +2,14 @@
 
 **Updated:** 2026-09-25
 
-**Status:** Active — Gate C complete; GAP-030/031 implemented and locally
-verified, with merge/deployment/staging verification pending
+**Status:** Active — Gate C complete; GAP-030/031 is merged on `dev`; the
+draft E2E platform change is locally verified and ready for owner-run staging
+activation
 
 **Notion mirror:** https://app.notion.com/p/Product-Current-State-and-Roadmap-3a6e5c7c2b8e81f6b412c45a2bc7b344
 
-**Mirror state:** Repository updated for GAP-030/031 on 2026-09-25; Notion synchronization pending.
+**Mirror state:** Repository status updated for the merged GAP-030/031 change
+and pending E2E staging activation; Notion synchronization pending.
 
 This is the canonical operational answer to:
 
@@ -26,14 +28,14 @@ deferred issue remains in the
 | Question | Current answer |
 |---|---|
 | Overall phase | Post-Gate-C client-readiness corrections |
-| Current activity | GAP-030/031 committed and pushed on `gap-030-031-authoritative-pricing`; approved staging release blocked at local preflight |
-| Current repository baseline | PR #11 merge commit `6de1d80` on `dev`; it follows the PR #10 product-code baseline with documentation-only status reconciliation |
-| Current product-code baseline | PR #10 merge commit `1ebc5fe` |
-| Local feature state | Promo-selection clean break remains staging-verified; authoritative merchandise pricing and percentage maximums are implemented on the local branch with focused and real Worker/D1 coverage |
-| Current deployment gap | GAP-030/031 migration `0007`, API, and Operator Web changes are not merged, deployed, or staging-verified |
-| Current blocker | Staging target configuration is unavailable: ignored `.env.staging` is absent and preflight reports `STAGING_ENVIRONMENT is required`; see the [2026-09-25 release attempt](../testing/gap-030-031-staging-run-2026-09-25.md) |
+| Current activity | GAP-030/031 merged as PR #13; draft E2E platform PR #14 passes its local suite, while owner-run staging deployment and E2E remain pending |
+| Current repository baseline | PR #13 merge commit `1404725` on `dev`; it follows the Gate C / Task 10 baseline |
+| Current product-code baseline | PR #13 merge commit `1404725` |
+| Local feature state | Authoritative merchandise pricing is merged; draft E2E platform PR #14 passed its local suite (5 Playwright tests) |
+| Current deployment gap | Owner must apply Product migrations `0007` then `0008`, Auth migrations `0005` and `0006`, then deploy API, Identity, and Operator Web before staging E2E |
+| Current blocker | Bitwarden-first local staging configuration and sanitized preflight are ready; the remaining work is the reviewed owner-run secret puts, migrations, deployments, passkey login, and staging E2E. No assistant Cloudflare write has occurred. |
 | Gate C finish line | Complete — all mandatory clean-break selection, redemption, tenant-isolation, concurrency, and observability cases passed |
-| Next plan work | Restore approved staging configuration, complete the authorized GAP-030/031 rollout and remote E2E, and review/merge separately; then complete the approved free-shipping financial-authority plan/work and resume the Evaluation Playground |
+| Next plan work | Review/merge PR #14, then complete the owner-run staging rollout and remote E2E; afterwards complete the approved free-shipping financial-authority plan/work and resume the Evaluation Playground |
 
 ## Source-of-truth map
 
@@ -258,13 +260,16 @@ richer stacking policies are recorded as deliberately deferred in `GAP-032`.
 They remain extension points and become implementation work only when a client
 case justifies them.
 
-The focused `GAP-030`/`GAP-031` implementation is now locally complete and uses
-the [executable end-to-end plan](../testing/gap-030-031-e2e.md). The owner approved
-the feature-branch staging release on 2026-09-25. The implementation is committed
-and pushed; [staging preflight is blocked](../testing/gap-030-031-staging-run-2026-09-25.md)
-by missing local target configuration. Complete migration `0007`, deployment,
-and staging evidence before marking either gap Done or resuming the Evaluation
-Playground. Review and merge remain a separate step.
+The focused `GAP-030`/`GAP-031` implementation merged as PR #13 and uses the
+[executable end-to-end plan](../testing/gap-030-031-e2e.md). Draft E2E platform
+PR #14 passed its local suite (5 Playwright tests). The Bitwarden-first local
+staging configuration is prepared and its sanitized preflight passes, but no
+assistant Cloudflare write has occurred. After PR #14 is reviewed and merged,
+the owner must put the existing per-Worker secrets, apply Product migrations
+`0007` then `0008` and Auth migrations `0005` and `0006`, deploy API, Identity,
+and Operator Web, create a fresh passkey state, and run staging Playwright.
+Complete that staging evidence before marking either gap Done or resuming the
+Evaluation Playground.
 
 ### 3. Turn the approved free-shipping financial design into an implementation plan
 
@@ -337,10 +342,10 @@ must be updated whenever a finding changes state. It currently preserves:
 - integration-specific incurred-cost mapping; and
 - staging verification that the now-implemented sanitized structured public-API
   error event is locatable by the correlation ID returned to a client;
-- authoritative Promo price calculation and per-Promo/line allocation, locally
-  implemented but not yet deployed/staging-verified;
-- optional maximum monetary caps for percentage rewards, locally implemented
-  but not yet deployed/staging-verified; and
+- authoritative Promo price calculation and per-Promo/line allocation, merged
+  in PR #13 with the E2E-platform staging rollout and verification pending;
+- optional maximum monetary caps for percentage rewards, merged in PR #13 with
+  the E2E-platform staging rollout and verification pending; and
 - deliberately deferred Voucherify breadth rather than speculative expansion
   before a first-client requirement exists.
 

@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "build": "pnpm -r build",
-    "test": "pnpm -r test",
+    "test": "pnpm -r test && node --test scripts/staging-vault-to-env.test.mjs",
     "test:e2e": "pnpm --filter @incentives/e2e test:e2e",
     "e2e:local": "E2E_TARGET=local pnpm --filter @incentives/e2e exec playwright test",
     "e2e:local:headed": "E2E_TARGET=local E2E_BROWSER_CHANNEL=chrome pnpm --filter @incentives/e2e exec playwright test --project=browser --headed",
@@ -12,7 +12,7 @@
     "e2e:staging:headed": "E2E_TARGET=staging E2E_ENABLE_STAGING=1 E2E_BROWSER_CHANNEL=chrome pnpm --filter @incentives/e2e exec playwright test --project=browser --headed",
     "e2e:staging:login": "E2E_TARGET=staging E2E_ENABLE_STAGING=1 pnpm --filter @incentives/e2e login:staging",
     "recipe:e2e": "pnpm --filter @incentives/e2e recipe",
-    "lint": "apps/identity/node_modules/.bin/oxlint scripts/local-workers-runner.mjs scripts/staging-preflight.mjs scripts/staging-wrangler-config.mjs scripts/staging-wrangler-runner.mjs scripts/staging-wrangler-task10-queries.mjs && pnpm -r lint",
+    "lint": "apps/identity/node_modules/.bin/oxlint scripts/local-workers-runner.mjs scripts/staging-preflight.mjs scripts/staging-vault-to-env.mjs scripts/staging-wrangler-config.mjs scripts/staging-wrangler-runner.mjs scripts/staging-wrangler-task10-queries.mjs && pnpm -r lint",
     "dev:local": "node scripts/local-workers-runner.mjs",
     "staging:preflight": "node scripts/staging-preflight.mjs",
     "verify:clean-tests": "bash scripts/verify-clean-test-gate.sh"
