@@ -28,4 +28,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
       - run: pnpm lint
+      - name: Install PTY test dependency
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y expect
       - run: pnpm test
