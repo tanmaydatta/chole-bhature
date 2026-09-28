@@ -35,6 +35,91 @@ Staging contains:
 Operator Web reaches Identity and Core through service bindings. Identity reaches Core through a
 service binding. Only the API and Operator Web Workers receive custom-domain routes.
 
+### E2E platform deployment order
+
+The [GAP-030/031 automated scenario](../testing/gap-030-031-e2e.md) adds protected,
+run-scoped fixture, inspection, and full-disposal behavior across **both** D1
+databases. The earlier GAP guidance that Identity need not deploy is obsolete
+for this release. On 2026-09-28, the owner completed this staging rollout:
+Product `0007` required an approved migration-ledger repair after its exact
+nullable `price_breakdown_json` `TEXT` schema was confirmed already present;
+the protected Product migration then applied `0008`; Auth `0005` and `0006`
+applied; and API, private Identity, and Operator Web deployed. Root passkey
+sign-in followed, and the staging suite passed 4 tests with 1 local-only test
+skipped in 29.3 seconds. See the
+[GAP-030/031 automated end-to-end verification](../testing/gap-030-031-e2e.md)
+for assertions and evidence limits.
+
+For a later staging rollout or a different environment, these commands remain
+an owner-reviewed release procedure, not authorization to deploy as part of a
+local test run. Commit and push the reviewed matching source revision only
+after explicit release approval; do not start a staging E2E run while a
+migration/deployment is in progress or any Worker is on an older revision.
+
+After the read-only preflight and repository gates below pass, the owner runs
+one command at a time and checks the protected, sanitized result before the
+next:
+
+```sh
+pnpm --filter @incentives/api db:migrate:staging
+pnpm --filter @incentives/identity db:migrate:staging
+pnpm --filter @incentives/api deploy:staging
+pnpm --filter @incentives/identity deploy:staging
+pnpm --filter @incentives/operator-web deploy:staging
+```
+
+For a target where Product migration `0007_merchandise_price_breakdowns.sql`
+is pending, the Product migration command must apply `0007` and then
+`0008_e2e_tenant_lifecycle.sql`, in that order, before the Core deploy. In the
+2026-09-28 staging rollout, `0007` was absent from the migration ledger even
+though its schema was already present; the owner approved one exact ledger-row
+repair before `0008` applied. This is a recorded exception, not permission for
+an unreviewed direct D1 write. If schema and migration-ledger state disagree,
+stop, confirm the exact schema and migration history, and obtain explicit
+owner approval for any narrowly scoped repair. Auth migrations
+`0005_e2e_tenant_lifecycle.sql` and `0006_e2e_fixture_session.sql` must be
+present before the Identity deploy.
+Operator deploys last because its root-only capability, fixture, inventory,
+and inspection BFF routes depend on both private services. The generated
+staging Wrangler configs preserve the private Identity/Core bindings and
+exact `APP_ENV=staging` guard; do not expose Identity publicly. Existing
+staging secrets remain required. No raw remote D1 write or arbitrary-merchant
+deletion is part of the E2E client.
+
+After all five actions, use the ordinary owner passkey to create a private
+short-lived Playwright state, then run the **read-only handshake before any
+fixture write** as part of the E2E command:
+
+```sh
+mkdir -p tests/e2e/.runs
+chmod 700 tests/e2e/.runs
+pnpm e2e:staging:login --output "$PWD/tests/e2e/.runs/staging-root.json"
+E2E_OPERATOR_STORAGE_STATE="$PWD/tests/e2e/.runs/staging-root.json" pnpm e2e:staging
+```
+
+For a visible browser-only pass, replace the last command with
+`E2E_OPERATOR_STORAGE_STATE="$PWD/tests/e2e/.runs/staging-root.json" pnpm e2e:staging:headed`.
+The login helper does not create an account: it opens Chrome for the real
+passkey flow, verifies root authority, and writes a new 0600 state file in an
+owner-only directory. Re-run with a new filename after expiry. The E2E global
+setup checks the exact versioned Operator→Identity→Core capability protocol,
+Product 0008/Auth 0005+0006 migration markers and required tables, and a live
+root session. An old/mixed release fails **before** `add-merchant` or any
+other recipe writes. The 2026-09-28 staging run completed this handshake and
+subsequent applicable suite; repeat the procedure only with separately
+approved source and release scope.
+
+Both migrations are forward-only. Do not attempt to undo a migration or roll
+back only one Worker while E2E tenants exist: fixture sessions, provenance,
+inspection, and two-DB disposal would be version-incompatible. Stop new runs,
+retain each private run manifest/proof, preview and resume scoped disposal
+through the current compatible Workers, and use a reviewed forward fix for a
+partial deployment. Product disposal commits before Auth; interruption is
+resumable with the same run proof. A successful disposal leaves only sanitized
+audit tombstones. Any exceptional database restore requires the separate
+quiet-window/owner-approved recovery procedure below, not a direct E2E
+client SQL command.
+
 ### Prepare the ignored environment file
 
 Copy `.env.staging.example` to `.env.staging` with owner-only permissions. Replace the two D1
@@ -97,7 +182,8 @@ demo build before allowing it to deploy.
 The assistant must not run these Cloudflare-changing commands. The user runs exactly one command,
 checks its result, and only then moves to the next command.
 
-First apply the forward-only Product migrations:
+First apply the forward-only Product migrations. It applies pending Product
+`0007` before `0008`; do not deploy Core between those migrations:
 
 ```sh
 pnpm --filter @incentives/api db:migrate:staging
@@ -122,7 +208,10 @@ pnpm --filter @incentives/identity deploy:staging
 ```
 
 Enter each Identity value only at Wrangler's hidden prompt. Do not include a value in the command
-or paste one into chat:
+or paste one into chat. Never invoke `secret put` through a noninteractive
+runner, pipe, or redirected standard input: a noninteractive invocation during
+the 2026-09-28 rollout appeared to succeed without prompting and was
+immediately replaced through the interactive prompt.
 
 ```sh
 pnpm --filter @incentives/identity exec wrangler secret put AUTH_SECRET \
@@ -139,7 +228,8 @@ Deploy Operator Web and attach its custom domain:
 pnpm --filter @incentives/operator-web deploy:staging
 ```
 
-Enter the Operator selection secret only at Wrangler's hidden prompt:
+Enter the Operator selection secret only at Wrangler's hidden prompt, under
+the same interactive-only rule:
 
 ```sh
 pnpm --filter @incentives/operator-web exec wrangler secret put OPERATOR_SELECTION_SECRET \
@@ -187,6 +277,48 @@ restore sequence, and evidence-retention rules are in the
 [Task 10 protected staging cutover and recovery guide](../testing/task10-staging-cutover.md).
 The dated activation record's older inline direct-Wrangler rollout draft is
 historical and must not be executed.
+
+### Rotate existing staging secrets
+
+This is an owner-run operation on the existing staging Workers. It does not authorize the
+E2E migrations, source deployments, or fixture writes above. Each `wrangler secret put`
+immediately deploys a new version of its named Worker, so confirm the staging account and
+Worker before each command and complete the read-only preconditions above first.
+
+1. Store each replacement value as a **new** Bitwarden item before putting it anywhere else.
+   Generate distinct random values of at least 32 characters for `AUTH_SECRET` and
+   `OPERATOR_SELECTION_SECRET` when rotating them. For `RESEND_API_KEY`, first confirm the
+   `RESEND_FROM` sender domain is verified in Resend. Create a sending-only key restricted
+   to that domain where available, and immediately store its one-time value in a new
+   Bitwarden item. Do not create the key if its value cannot be captured safely. Keep the
+   previous Resend key active while validating the replacement. Never edit, overwrite, or
+   delete any existing Bitwarden item, even an erroneous one; create another new item for
+   each correction or supersession. Read back and verify every new item in Bitwarden
+   before copying its value elsewhere. Never display, log, commit, or send a value in chat.
+2. Only after Bitwarden readback verification, copy the applicable values into the
+   git-ignored, mode-`0600` `.env.staging` using a local editor. Set `RESEND_FROM` to the
+   verified sender. Confirm the intended test address is already in the deployed staging
+   recipient allowlist, and keep `STAGING_ALLOWED_RECIPIENTS` in the local file aligned as
+   a JSON array of approved real addresses; editing the file does not change the deployed
+   allowlist. For initial preparation while all three secret fields are still placeholders,
+   the local helper below reads the named Bitwarden items through the unlocked CLI, verifies
+   them, and replaces those fields without displaying their values. Supply item IDs only;
+   it refuses to overwrite a populated field.
+
+   ```sh
+   node scripts/staging-vault-to-env.mjs \
+     "$AUTH_ITEM_ID" "$OPERATOR_ITEM_ID" "$RESEND_ITEM_ID"
+   ```
+3. The owner then runs only the applicable Identity and Operator Web `wrangler secret put`
+   commands shown above, one at a time, entering each value at Wrangler's hidden prompt
+   and checking the result before the next command. A sender change also requires the
+   `RESEND_FROM` secret put. Do not run the separate E2E deployment sequence for rotation.
+4. Confirm a fresh staging sign-in, delivery to an allowed address from the verified
+   sender, and a fresh merchant selection after rotating the Operator secret. Existing
+   selection cookies will no longer verify. Avoid rotating the Operator secret during an
+   active merchant-provisioning attempt because it also derives provisioning IDs.
+5. Only after the new Resend key has delivered successfully, revoke the previous key in
+   Resend.
 
 ### Failure and recovery rules
 

@@ -18,7 +18,8 @@
   "dependencies": {
     "@better-auth/passkey": "1.6.23",
     "@incentives/contracts": "workspace:*",
-    "better-auth": "1.6.23"
+    "better-auth": "1.6.23",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "0.18.6",

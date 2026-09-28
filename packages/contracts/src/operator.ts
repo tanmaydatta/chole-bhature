@@ -1,5 +1,6 @@
 import { z } from './zod.js';
 import { ApiErrorSchema } from './errors.js';
+import { MerchandisePriceBreakdownSchema, RedemptionResponseSchema } from './evaluation.js';
 
 export const PermissionKeySchema = z.enum([
   'members:read',
@@ -41,10 +42,108 @@ export const OperatorCallContextSchema = z.object({
   permission: PermissionKeySchema,
 }).strict();
 
+export const E2eRunIdSchema = z.string().regex(/^e2e_[a-f0-9]{24}$/u);
+export const E2eRunProofSchema = z.object({
+  runId: E2eRunIdSchema,
+  proof: z.string().regex(/^[A-Za-z0-9_-]{43}$/u),
+}).strict();
+export const E2eRunClaimSchema = z.object({
+  runId: E2eRunIdSchema,
+  proofHash: z.string().regex(/^[a-f0-9]{64}$/u),
+}).strict();
+export const ProductE2eCapabilitiesSchema = z.object({
+  version: z.literal(1),
+  migrations: z.tuple([z.literal('0008_e2e_tenant_lifecycle.sql')]),
+  inspection: z.literal(true), disposal: z.literal(true),
+}).strict();
+export const IdentityE2eCapabilitiesSchema = z.object({
+  version: z.literal(1),
+  migrations: z.tuple([
+    z.literal('0005_e2e_tenant_lifecycle.sql'),
+    z.literal('0006_e2e_fixture_session.sql'),
+  ]),
+  product: ProductE2eCapabilitiesSchema,
+}).strict();
+export const E2eCapabilitiesSchema = z.object({
+  protocol: z.literal('incentives-e2e'), version: z.literal(1),
+  operator: z.object({ version: z.literal(1) }).strict(),
+  identity: IdentityE2eCapabilitiesSchema.omit({ product: true }),
+  product: ProductE2eCapabilitiesSchema,
+}).strict();
+export const E2eTenantIdentitySchema = E2eRunClaimSchema.extend({
+  merchantId: z.string().min(1),
+  provisioningId: z.string().min(1),
+}).strict();
+export type E2eTenantIdentity = z.infer<typeof E2eTenantIdentitySchema>;
+export const E2eRunActionRequestSchema = z.object({
+  runId: E2eRunIdSchema,
+  proof: E2eRunProofSchema.shape.proof,
+  correlationId: z.string().min(1).max(200),
+  sessionId: z.string().min(1),
+}).strict();
+export const E2eFixtureAccountRequestSchema = E2eRunActionRequestSchema.extend({
+  slug: z.string().regex(/^[a-z][a-z0-9_]{0,39}$/u),
+  role: z.enum(['admin', 'operator', 'viewer']),
+}).strict();
+export const E2eFixtureAccountSchema = z.object({
+  runId: E2eRunIdSchema,
+  merchantId: z.string().min(1),
+  organizationId: z.string().min(1),
+  userId: z.string().min(1),
+  membershipId: z.string().min(1),
+  email: z.email(),
+  role: z.enum(['admin', 'operator', 'viewer']),
+  sessionId: z.string().min(1),
+  cookieHeader: z.string().min(1).regex(/^[^\r\n]+$/u),
+}).strict();
+export const E2eRunInventorySchema = z.object({
+  runId: E2eRunIdSchema,
+  merchantId: z.string().min(1),
+  status: z.enum(['active', 'disposing', 'disposed']),
+  productStatus: z.enum(['active', 'disposed']),
+  auth: z.record(z.string(), z.number().int().nonnegative()),
+  product: z.record(z.string(), z.number().int().nonnegative()),
+}).strict();
+export const E2eInspectionQuerySchema = z.object({
+  evaluationId: z.string().min(1).max(200),
+  idempotencyKey: z.string().min(1).max(200),
+  programRefs: z.array(z.string().min(1).max(200)).min(1).max(4),
+}).strict();
+export type E2eInspectionQuery = z.infer<typeof E2eInspectionQuerySchema>;
+export const E2eRunInspectionRequestSchema = E2eRunActionRequestSchema.extend(
+  E2eInspectionQuerySchema.shape,
+).strict();
+export const E2eRunInspectionSchema = z.object({
+  runId: E2eRunIdSchema,
+  merchantId: z.string().min(1),
+  evaluation: z.object({
+    evaluationId: z.string().min(1),
+    priceBreakdown: MerchandisePriceBreakdownSchema,
+    integrityVerified: z.literal(true),
+  }).strict(),
+  redemption: z.object({
+    redemptionId: z.string().min(1),
+    result: RedemptionResponseSchema,
+    receiptIntegrityVerified: z.literal(true),
+    entries: z.array(z.object({
+      position: z.number().int().nonnegative(),
+      programRef: z.string().min(1),
+      discountMinorUnits: z.number().int().nonnegative(),
+    }).strict()),
+  }).strict(),
+  counters: z.array(z.object({
+    programRef: z.string().min(1),
+    usageCount: z.number().int().nonnegative(),
+    budgetRemaining: z.number().int().nonnegative().nullable(),
+    committedSpend: z.number().int().nonnegative(),
+  }).strict()),
+}).strict();
+
 export const MerchantProvisionRequestSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1).max(200),
   provisioningId: z.string().min(1),
+  e2eRun: E2eRunClaimSchema.optional(),
 }).strict();
 
 const MerchantProvisionRecordSchema = MerchantProvisionRequestSchema.extend({
@@ -94,6 +193,7 @@ export const ClientProvisionInputSchema = z.object({
   merchantId: z.string().min(1),
   name: z.string().min(1).max(200),
   correlationId: z.string().min(1),
+  e2eRun: E2eRunProofSchema.optional(),
 }).strict();
 
 export const ClientProvisioningViewSchema = z.object({

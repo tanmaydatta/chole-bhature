@@ -1471,6 +1471,8 @@ describe('operations-only root bootstrap', () => {
       buildBootstrapRootWranglerCommand(input: {
         environment: 'local' | 'staging';
         sqlFile: string;
+        localConfig?: string;
+        localPersistTo?: string;
       }): { command: string; arguments: string[] };
     };
     expect(JSON.parse(identityPackageSource)).toMatchObject({
@@ -1494,6 +1496,21 @@ describe('operations-only root bootstrap', () => {
         '--env', 'staging', '--remote', '--file', '/tmp/bootstrap-safe.sql', '--json',
       ],
     });
+    expect(task6Cli.buildBootstrapRootWranglerCommand({
+      environment: 'local', sqlFile: '/tmp/bootstrap-safe.sql',
+      localConfig: '/tmp/e2e/identity/wrangler.json', localPersistTo: '/tmp/e2e/state',
+    })).toEqual({
+      command: 'pnpm',
+      arguments: [
+        'exec', 'wrangler', 'd1', 'execute', 'incentives-auth-local',
+        '--local', '--config', '/tmp/e2e/identity/wrangler.json',
+        '--persist-to', '/tmp/e2e/state', '--file', '/tmp/bootstrap-safe.sql', '--json',
+      ],
+    });
+    expect(() => task6Cli.buildBootstrapRootWranglerCommand({
+      environment: 'staging', sqlFile: '/tmp/bootstrap-safe.sql',
+      localConfig: '/tmp/e2e/identity/wrangler.json', localPersistTo: '/tmp/e2e/state',
+    })).toThrow(/local only/u);
   });
 
   test('writes correlation-safe onboarding audits without invitation, grant, or code secrets', async () => {

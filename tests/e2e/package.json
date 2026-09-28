@@ -1,0 +1,26 @@
+{
+  "name": "@incentives/e2e",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run test/unit",
+    "test:e2e": "playwright test",
+    "recipe": "tsx src/cli.ts",
+    "login:staging": "tsx src/staging-login-runner.ts",
+    "lint": "oxlint src test playwright.config.ts"
+  },
+  "dependencies": {
+    "@incentives/contracts": "workspace:*",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.56.1",
+    "@types/node": "24.13.3",
+    "oxlint": "^1.69.0",
+    "tsx": "^4.23.1",
+    "typescript": "~6.0.2",
+    "vitest": "^4.1.10"
+  }
+}

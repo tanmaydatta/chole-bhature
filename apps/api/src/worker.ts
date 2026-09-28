@@ -6,6 +6,9 @@ import {
   CoreMerchantProvisionResultSchema,
   CustomerPatchRequestSchema,
   CustomerRecordSchema,
+  ProductE2eCapabilitiesSchema,
+  E2eTenantIdentitySchema,
+  E2eInspectionQuerySchema,
   MerchantActivationRequestSchema,
   MerchantActivationResultSchema,
   MerchantProvisionRequestSchema,
@@ -27,6 +30,8 @@ import {
   type MerchantActivationRequest,
   type MerchantProvisionRequest,
   type OperatorCallContext,
+  type E2eTenantIdentity,
+  type E2eInspectionQuery,
   type PromoProgram,
   type VariableDefinition,
 } from '@incentives/contracts';
@@ -34,6 +39,7 @@ import { z } from 'zod';
 import { WorkerEntrypoint } from 'cloudflare:workers';
 
 import { createApp } from './app.js';
+import { productE2eCapabilities } from './services/e2e-capabilities.js';
 import { MerchantIdentityConflictError } from './errors/merchant-errors.js';
 import { requireOperatorContext } from './auth/operator-context.js';
 import type { Env } from './env.js';
@@ -68,6 +74,8 @@ import {
   createCustomerService,
   createOperatorCustomerMutationService,
 } from './services/customer-service.js';
+import { createProductE2eLifecycle } from './services/e2e-lifecycle.js';
+import { inspectProductE2eRun } from './services/e2e-inspection.js';
 
 function coreMerchantFailure(error: unknown) {
   if (error instanceof MerchantIdentityConflictError) {
@@ -91,6 +99,53 @@ function coreMerchantFailure(error: unknown) {
 }
 
 export class CoreOperatorService extends WorkerEntrypoint<Env> {
+  async getE2eCapabilities(context: { actorUserId: string;
+    actorKind: 'root' | 'member'; correlationId: string }) {
+    if (context.actorKind !== 'root' || !context.actorUserId || !context.correlationId) {
+      throw new Error('E2E capability inspection requires root authority');
+    }
+    return ProductE2eCapabilitiesSchema.parse(await productE2eCapabilities(this.env));
+  }
+
+  async inspectE2eRun(
+    context: OperatorCallContext,
+    identity: E2eTenantIdentity,
+    query: E2eInspectionQuery,
+  ) {
+    const operator = requireOperatorContext(
+      OperatorCallContextSchema.parse(context), 'credentials:manage',
+    );
+    const input = E2eTenantIdentitySchema.parse(identity);
+    if (operator.actorKind !== 'root' || operator.merchantId !== input.merchantId) {
+      throw new Error('E2E inspection requires matching root merchant authority');
+    }
+    return inspectProductE2eRun(this.env, input, E2eInspectionQuerySchema.parse(query));
+  }
+
+  async previewE2eRun(context: OperatorCallContext, identity: E2eTenantIdentity) {
+    const operator = requireOperatorContext(
+      OperatorCallContextSchema.parse(context), 'credentials:manage',
+    );
+    const input = E2eTenantIdentitySchema.parse(identity);
+    if (operator.actorKind !== 'root' || operator.merchantId !== input.merchantId) {
+      throw new Error('E2E lifecycle requires matching root merchant authority');
+    }
+    return createProductE2eLifecycle(this.env).preview(input);
+  }
+
+  async disposeE2eRun(context: OperatorCallContext, identity: E2eTenantIdentity) {
+    const operator = requireOperatorContext(
+      OperatorCallContextSchema.parse(context), 'credentials:manage',
+    );
+    const input = E2eTenantIdentitySchema.parse(identity);
+    if (operator.actorKind !== 'root' || operator.merchantId !== input.merchantId) {
+      throw new Error('E2E lifecycle requires matching root merchant authority');
+    }
+    return createProductE2eLifecycle(this.env).dispose(
+      input, operator.actorUserId, operator.correlationId,
+    );
+  }
+
   async provisionMerchant(context: OperatorCallContext, input: MerchantProvisionRequest) {
     const parsedContext = OperatorCallContextSchema.parse(context);
     const parsedInput = MerchantProvisionRequestSchema.parse(input);

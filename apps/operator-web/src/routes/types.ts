@@ -26,6 +26,7 @@ export interface RuntimeSchema<T = unknown> {
 }
 
 export interface IdentityRpcService {
+  getE2eCapabilities(input: { sessionId: string; correlationId: string }): Promise<unknown>;
   resolveBrowserPrincipal(input: IdentityResolveBrowserPrincipalRequest): Promise<unknown>;
   listClients(input: IdentityRootBrowserRequest): Promise<unknown>;
   getProvisioningForRoot(input: IdentityRootProvisioningRequest): Promise<unknown>;
@@ -38,6 +39,20 @@ export interface IdentityRpcService {
   acceptInvitation(input: IdentityAcceptInvitationRequest): Promise<unknown>;
   removeMember(input: IdentityRemoveMemberRequest): Promise<unknown>;
   changeMemberRole(input: IdentityChangeMemberRoleRequest): Promise<unknown>;
+  previewE2eRun(input: {
+    sessionId: string; runId: string; proof: string; correlationId: string;
+  }): Promise<unknown>;
+  disposeE2eRun(input: {
+    sessionId: string; runId: string; proof: string; correlationId: string;
+  }): Promise<unknown>;
+  inspectE2eRun(input: {
+    sessionId: string; runId: string; proof: string; correlationId: string;
+    evaluationId: string; idempotencyKey: string; programRefs: string[];
+  }): Promise<unknown>;
+  createE2eAccount(input: {
+    sessionId: string; runId: string; proof: string; correlationId: string;
+    slug: string; role: 'admin' | 'operator' | 'viewer';
+  }): Promise<unknown>;
 }
 
 export interface CoreRpcService {
@@ -81,6 +96,7 @@ export interface CoreRpcService {
 
 export interface OperatorWebEnv {
   APP_ENV: 'local' | 'staging';
+  E2E_LOCAL_TEST_MODE?: string;
   PUBLIC_APP_ORIGIN: string;
   OPERATOR_SELECTION_SECRET: string;
   IDENTITY_AUTH: { fetch(request: Request): Promise<Response> };

@@ -1,13 +1,15 @@
 # Product Current State and Roadmap
 
-**Updated:** 2026-09-25
+**Updated:** 2026-09-28
 
-**Status:** Active — Gate C complete; GAP-030/031 implemented and locally
-verified, with merge/deployment/staging verification pending
+**Status:** Active — Gate C complete; GAP-030/031 is merged on `dev` and its
+staging E2E evidence is recorded. The E2E platform source is deployed to
+staging but PR #14 remains open as a draft.
 
 **Notion mirror:** https://app.notion.com/p/Product-Current-State-and-Roadmap-3a6e5c7c2b8e81f6b412c45a2bc7b344
 
-**Mirror state:** Repository updated for GAP-030/031 on 2026-09-25; Notion synchronization pending.
+**Mirror state:** Repository and Notion synchronized for the 2026-09-28
+staging result.
 
 This is the canonical operational answer to:
 
@@ -26,14 +28,14 @@ deferred issue remains in the
 | Question | Current answer |
 |---|---|
 | Overall phase | Post-Gate-C client-readiness corrections |
-| Current activity | GAP-030/031 committed and pushed on `gap-030-031-authoritative-pricing`; approved staging release blocked at local preflight |
-| Current repository baseline | PR #11 merge commit `6de1d80` on `dev`; it follows the PR #10 product-code baseline with documentation-only status reconciliation |
-| Current product-code baseline | PR #10 merge commit `1ebc5fe` |
-| Local feature state | Promo-selection clean break remains staging-verified; authoritative merchandise pricing and percentage maximums are implemented on the local branch with focused and real Worker/D1 coverage |
-| Current deployment gap | GAP-030/031 migration `0007`, API, and Operator Web changes are not merged, deployed, or staging-verified |
-| Current blocker | Staging target configuration is unavailable: ignored `.env.staging` is absent and preflight reports `STAGING_ENVIRONMENT is required`; see the [2026-09-25 release attempt](../testing/gap-030-031-staging-run-2026-09-25.md) |
+| Current activity | GAP-030/031 merged as PR #13; the draft E2E platform source at `d0939057ebcf5d0691e655457e1e6bba3094ade5` is deployed to staging and its applicable Playwright suite passed |
+| Current repository baseline | PR #13 merge commit `1404725` on `dev`; it follows the Gate C / Task 10 baseline |
+| Current product-code baseline | PR #13 merge commit `1404725` |
+| Local feature state | Authoritative merchandise pricing is merged; draft E2E platform PR #14 passed 5 local Playwright tests and 4 applicable staging tests |
+| Current deployment state | Product migration `0007` ledger repair followed by `0008`, Auth migrations `0005` and `0006`, and API, Identity, and Operator Web deployments completed in staging |
+| Current release decision | PR #14 is ready for review and remains open as a draft. The next infrastructure change is a separate Cloudflare Secrets Store migration; no Secrets Store migration has started. |
 | Gate C finish line | Complete — all mandatory clean-break selection, redemption, tenant-isolation, concurrency, and observability cases passed |
-| Next plan work | Restore approved staging configuration, complete the authorized GAP-030/031 rollout and remote E2E, and review/merge separately; then complete the approved free-shipping financial-authority plan/work and resume the Evaluation Playground |
+| Next plan work | Review/merge PR #14; then migrate Worker secrets to Cloudflare Secrets Store with Bitwarden as source of truth, rerun staging E2E, and continue the approved free-shipping financial-authority work |
 
 ## Source-of-truth map
 
@@ -43,7 +45,8 @@ Use this page for current sequencing and status. Follow its links for detail:
 |---|---|
 | Current state and next work | This page |
 | Every known gap, resolved incident, and deferred capability | [Repository](./follow-up-register.md) · [Notion](https://app.notion.com/p/Product-Follow-up-Register-3a6e5c7c2b8e81cebe96de50b64f3bbd) |
-| Current staging evidence | [Repository](../testing/staging-activation-run-2026-07-21.md) · [Notion](https://app.notion.com/p/3a5e5c7c2b8e81739dfed75f998e6489) |
+| Gate C staging evidence | [Repository](../testing/staging-activation-run-2026-07-21.md) · [Notion](https://app.notion.com/p/3a5e5c7c2b8e81739dfed75f998e6489) |
+| GAP-030/031 staging E2E evidence | [Repository](../testing/gap-030-031-e2e.md) |
 | Protected Task 10 cutover and recovery | [Repository](../testing/task10-staging-cutover.md) · [Notion](https://app.notion.com/p/Task-10-protected-staging-cutover-and-recovery-3a7e5c7c2b8e817f9c0cf0acab3e8c2e) |
 | Repeatable manual procedure | [Repository](../testing/gate-c-manual-test.md) · [Notion](https://app.notion.com/p/3a3e5c7c2b8e8155aa10c869b97b7e5a) |
 | GAP-030/031 local and staging E2E procedure | [Repository](../testing/gap-030-031-e2e.md) |
@@ -155,6 +158,26 @@ manually:
   `api_request_failed` event for the expected `POST /v1/redemptions`
   `VERSION_CONFLICT`, including safe merchant/credential identifiers and no
   secret or request payload (`OBS-API-01`).
+- the 2026-09-28 E2E rollout: Product migration-ledger repair for `0007`
+  after its exact nullable `price_breakdown_json` `TEXT` schema was confirmed,
+  followed by Product migration `0008`; Auth migrations `0005` and `0006`;
+  and API, private Identity, and Operator Web deployments;
+- root passkey sign-in followed by the staging Playwright suite: 4 passed, 1
+  local-only test skipped, in 29.3 seconds. The passed tests exercised exact
+  GAP-030/031 authoring, evaluation, signed redemption and retry; concurrent
+  run-scoped tenant isolation; failed-run disposal; and real-browser Promo
+  authoring, persistence, and publication. Each cleanup assertion found zero
+  run-owned rows in both Product and Auth D1; and
+- interactive entry of `AUTH_SECRET`, `RESEND_API_KEY`, `RESEND_FROM`, and
+  `OPERATOR_SELECTION_SECRET`. A noninteractive secret put was immediately
+  replaced interactively and is not accepted as a safe secret-upload method.
+
+The detailed automated evidence and its boundaries are in the
+[GAP-030/031 automated end-to-end verification](../testing/gap-030-031-e2e.md).
+PR #14 remains open as a draft at
+[`d0939057ebcf5d0691e655457e1e6bba3094ade5`](https://github.com/tanmaydatta/chole-bhature/commit/d0939057ebcf5d0691e655457e1e6bba3094ade5);
+its CI `verify` check passed. This record does not state Worker version IDs or
+claim a headed staging run or manual email-delivery verification.
 
 ## Current work
 
@@ -206,14 +229,15 @@ The Gate C sequence completed as follows:
 7. Completed: the final Gate C result was reconciled across the staging report,
    follow-up register, active plans, this page, and their Notion mirrors.
 
-The current local correction adds a single authoritative merchandise
-calculator; required stable line identities; ordered per-Promo and per-line
-allocations; optional exact-currency percentage maximums; signed evaluation and
-redemption evidence; atomic per-Promo ledger/budget amounts; historical
-version-2 redemption compatibility; and operator cap authoring/detail display.
-Focused contract, calculator, module, connector, dashboard, API, repository,
-and real Worker/D1 full-flow tests are the acceptance boundary. Nothing in this
-status claims a merge, migration, deployment, or staging pass.
+The authoritative merchandise-pricing correction adds a single calculator;
+required stable line identities; ordered per-Promo and per-line allocations;
+optional exact-currency percentage maximums; signed evaluation and redemption
+evidence; atomic per-Promo ledger/budget amounts; historical version-2
+redemption compatibility; and operator cap authoring/detail display. Focused
+contract, calculator, module, connector, dashboard, API, repository, and real
+Worker/D1 full-flow tests are the acceptance boundary. The 2026-09-28 staging
+result covers the E2E scenarios described above; it does not claim a merge of
+PR #14, Worker version IDs, a headed staging run, or email-delivery verification.
 
 No assistant-run Cloudflare mutation is permitted. The assistant supplies one
 command at a time; the account owner runs every deployment, migration, secret,
@@ -258,13 +282,14 @@ richer stacking policies are recorded as deliberately deferred in `GAP-032`.
 They remain extension points and become implementation work only when a client
 case justifies them.
 
-The focused `GAP-030`/`GAP-031` implementation is now locally complete and uses
-the [executable end-to-end plan](../testing/gap-030-031-e2e.md). The owner approved
-the feature-branch staging release on 2026-09-25. The implementation is committed
-and pushed; [staging preflight is blocked](../testing/gap-030-031-staging-run-2026-09-25.md)
-by missing local target configuration. Complete migration `0007`, deployment,
-and staging evidence before marking either gap Done or resuming the Evaluation
-Playground. Review and merge remain a separate step.
+The focused `GAP-030`/`GAP-031` implementation merged as PR #13 and uses the
+[executable end-to-end plan](../testing/gap-030-031-e2e.md). The E2E platform
+source was deployed and verified in staging on 2026-09-28, while PR #14 remains
+open as a draft. The next separate change migrates Worker secrets to Cloudflare
+Secrets Store with Bitwarden retained as source of truth; it requires Worker
+binding and asynchronous retrieval changes, deployment, and another staging
+E2E pass. Do not describe the Secrets Store migration as started until that
+separate work is underway.
 
 ### 3. Turn the approved free-shipping financial design into an implementation plan
 
@@ -337,10 +362,10 @@ must be updated whenever a finding changes state. It currently preserves:
 - integration-specific incurred-cost mapping; and
 - staging verification that the now-implemented sanitized structured public-API
   error event is locatable by the correlation ID returned to a client;
-- authoritative Promo price calculation and per-Promo/line allocation, locally
-  implemented but not yet deployed/staging-verified;
-- optional maximum monetary caps for percentage rewards, locally implemented
-  but not yet deployed/staging-verified; and
+- authoritative Promo price calculation and per-Promo/line allocation, merged
+  in PR #13 and exercised by the 2026-09-28 staging E2E run; and
+- optional maximum monetary caps for percentage rewards, merged in PR #13 and
+  exercised by the 2026-09-28 staging E2E run; and
 - deliberately deferred Voucherify breadth rather than speculative expansion
   before a first-client requirement exists.
 

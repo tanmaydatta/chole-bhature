@@ -1,6 +1,6 @@
 import { passkey } from '@better-auth/passkey';
-import { betterAuth } from 'better-auth';
-import { magicLink } from 'better-auth/plugins';
+import { betterAuth, type BetterAuthPlugin } from 'better-auth';
+import { magicLink, testUtils } from 'better-auth/plugins';
 
 import { createIdentityEmailAdapter, type EmailAdapter } from './email.js';
 import {
@@ -12,9 +12,12 @@ import {
 } from './recovery.js';
 import type { Env } from './worker.js';
 
-export type AuthenticationMethod = 'magic-link' | 'passkey' | 'recovery';
+export type AuthenticationMethod = 'magic-link' | 'passkey' | 'recovery' | 'e2e-fixture';
 
 export interface IdentityAuth {
+  createFixtureSession(input: { userId: string; runId: string; merchantId: string }): Promise<{
+    sessionId: string; cookieHeader: string;
+  }>;
   handler(request: Request, executionContext?: ExecutionContext): Promise<Response>;
   getSession(headers: Headers): Promise<{
     session: {
@@ -375,7 +378,7 @@ async function isPasskeyAuthorizationCurrent(
   ).first() !== null;
 }
 
-async function getSessionAccess(env: Env, sessionId: string): Promise<SessionAccess | null> {
+export async function getSessionAccess(env: Env, sessionId: string): Promise<SessionAccess | null> {
   return env.AUTH_DB.prepare(`
     SELECT session.id AS sessionId, session.userId AS userId,
       auth_profile.subject_kind AS subjectKind,
@@ -383,8 +386,11 @@ async function getSessionAccess(env: Env, sessionId: string): Promise<SessionAcc
       session.recoveryOnly
     FROM session
     INNER JOIN auth_profile ON auth_profile.user_id = session.userId
-    WHERE session.id = ?1 AND session.expiresAt > ?2
-      AND session.authenticationMethod IN ('magic-link', 'passkey', 'recovery')
+    WHERE session.id = ?1 AND
+      (CASE WHEN typeof(session.expiresAt) = 'text'
+        THEN CAST(strftime('%s', session.expiresAt) AS INTEGER) * 1000
+        ELSE session.expiresAt END) > ?2
+      AND session.authenticationMethod IN ('magic-link', 'passkey', 'recovery', 'e2e-fixture')
       AND session.authenticatedAt IS NOT NULL
       AND session.recoveryOnly IN (0, 1)
       AND (
@@ -407,6 +413,33 @@ async function getSessionAccess(env: Env, sessionId: string): Promise<SessionAcc
           AND session.recoveryOnly = 0
           AND auth_profile.subject_kind = 'employee'
           AND auth_profile.email_login_enabled = 1
+        )
+        OR (
+          session.authenticationMethod = 'e2e-fixture'
+          AND ?3 = 'staging'
+          AND session.recoveryOnly = 0
+          AND auth_profile.subject_kind = 'employee'
+          AND auth_profile.email_login_enabled = 0
+          AND EXISTS (
+            SELECT 1 FROM e2e_fixture_sessions
+            JOIN memberships ON memberships.user_id = e2e_fixture_sessions.user_id
+            JOIN organizations ON organizations.id = memberships.organization_id
+            JOIN e2e_run_claims ON e2e_run_claims.merchant_id = organizations.merchant_id
+            JOIN user ON user.id = memberships.user_id
+            WHERE e2e_fixture_sessions.session_id = session.id
+              AND e2e_fixture_sessions.user_id = session.userId
+              AND e2e_fixture_sessions.run_id = e2e_run_claims.run_id
+              AND e2e_fixture_sessions.merchant_id = organizations.merchant_id
+              AND e2e_fixture_sessions.hard_expires_at > ?2
+              AND e2e_fixture_sessions.hard_expires_at
+                = e2e_fixture_sessions.issued_at + 900000
+              AND memberships.status = 'active'
+              AND organizations.status = 'active'
+              AND e2e_run_claims.status = 'active'
+              AND substr(user.email, 1, length('e2e+' || e2e_run_claims.run_id || '_'))
+                = 'e2e+' || e2e_run_claims.run_id || '_'
+              AND substr(user.email, -12) = '@e2e.invalid'
+          )
         )
         OR (
           session.authenticationMethod = 'passkey'
@@ -437,7 +470,7 @@ async function getSessionAccess(env: Env, sessionId: string): Promise<SessionAcc
           )
         )
       )
-  `).bind(sessionId, Date.now()).first<SessionAccess>();
+  `).bind(sessionId, Date.now(), env.APP_ENV).first<SessionAccess>();
 }
 
 function isPasskeyManagementPath(pathname: string): boolean {
@@ -558,6 +591,9 @@ export function createIdentityAuth(
     userId: string | null;
   } | null = null;
   let passkeyAuthorization: PasskeyAuthorization | null = null;
+  // createIdentityAuth is instantiated per private RPC invocation. This grant is
+  // held only across one Better Auth testUtils.login call and never exposed as a route.
+  let fixtureUserGrant: string | null = null;
   const auth = betterAuth({
     appName: 'Incentives Operator',
     database: env.AUTH_DB,
@@ -608,16 +644,19 @@ export function createIdentityAuth(
       session: {
         create: {
           before: async (session, context) => {
-            const method = authenticationMethodForPath(context?.path ?? '');
+            const method = fixtureUserGrant === session.userId && env.APP_ENV === 'staging'
+              ? 'e2e-fixture' : authenticationMethodForPath(context?.path ?? '');
             const allowed = method === 'passkey'
               ? await isPasskeyAuthorizationCurrent(env, passkeyAuthorization, session.userId)
-              : method !== null && await isSessionCreationAllowed(env, session.userId, method);
+              : method === 'e2e-fixture' ? true
+                : method !== null && await isSessionCreationAllowed(env, session.userId, method);
             if (!method || !allowed) {
               return false;
             }
             return {
               data: {
                 ...session,
+                ...(method === 'e2e-fixture' ? { expiresAt: new Date(Date.now() + 900_000) } : {}),
                 authenticationMethod: method,
                 authenticatedAt: method === 'passkey'
                   ? Math.max(Date.now(), (passkeyAuthorization?.recoveryFence ?? 0) + 1)
@@ -744,6 +783,9 @@ export function createIdentityAuth(
           },
         },
       }),
+      // Better Auth's testUtils declaration permits `init().options` to be
+      // undefined under exactOptionalPropertyTypes; the runtime plugin is valid.
+      ...(env.APP_ENV === 'staging' ? [testUtils() as unknown as BetterAuthPlugin] : []),
     ],
   });
 
@@ -780,6 +822,48 @@ export function createIdentityAuth(
 
   return {
     getSession,
+    async createFixtureSession(input) {
+      if (env.APP_ENV !== 'staging') throw new Error('E2E fixture sessions are staging-only');
+      if (fixtureUserGrant !== null) throw new Error('E2E fixture session creation is busy');
+      const owned = await env.AUTH_DB.prepare(`
+        SELECT memberships.id
+        FROM memberships
+        JOIN organizations ON organizations.id = memberships.organization_id
+        JOIN e2e_run_claims ON e2e_run_claims.merchant_id = organizations.merchant_id
+        JOIN user ON user.id = memberships.user_id
+        JOIN auth_profile ON auth_profile.user_id = user.id
+        WHERE memberships.user_id = ?1 AND e2e_run_claims.run_id = ?2
+          AND e2e_run_claims.merchant_id = ?3 AND e2e_run_claims.status = 'active'
+          AND organizations.status = 'active' AND memberships.status = 'active'
+          AND auth_profile.subject_kind = 'employee' AND auth_profile.status = 'active'
+          AND auth_profile.email_login_enabled = 0
+          AND substr(user.email, 1, length('e2e+' || e2e_run_claims.run_id || '_'))
+            = 'e2e+' || e2e_run_claims.run_id || '_'
+          AND substr(user.email, -12) = '@e2e.invalid'
+      `).bind(input.userId, input.runId, input.merchantId).first();
+      if (!owned) throw new Error('E2E fixture session user is not run-owned');
+      fixtureUserGrant = input.userId;
+      try {
+        const context = await auth.$context as typeof auth.$context extends Promise<infer T>
+          ? T & { test?: { login(input: { userId: string }): Promise<{
+            session: { id: string } | null; headers: Headers;
+          }> } } : never;
+        if (!context.test) throw new Error('Better Auth fixture helper is unavailable');
+        const result = await context.test.login({ userId: input.userId });
+        const cookieHeader = result.headers.get('cookie');
+        if (!result.session || !cookieHeader) throw new Error('Better Auth fixture session failed');
+        const issuedAt = Date.now();
+        await env.AUTH_DB.prepare(`
+          INSERT INTO e2e_fixture_sessions
+            (session_id, user_id, run_id, merchant_id, issued_at, hard_expires_at)
+          VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+        `).bind(result.session.id, input.userId, input.runId, input.merchantId,
+          issuedAt, issuedAt + 900_000).run();
+        return { sessionId: result.session.id, cookieHeader };
+      } finally {
+        fixtureUserGrant = null;
+      }
+    },
     async handler(request, executionContext) {
       const pathname = new URL(request.url).pathname;
       const id = correlationId(request);

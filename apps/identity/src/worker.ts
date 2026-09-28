@@ -15,6 +15,14 @@ import type {
 } from '@incentives/contracts';
 import {
   ApiErrorSchema,
+  IdentityE2eCapabilitiesSchema,
+  ProductE2eCapabilitiesSchema,
+  E2eFixtureAccountRequestSchema,
+  E2eFixtureAccountSchema,
+  E2eRunActionRequestSchema,
+  E2eRunInventorySchema,
+  E2eRunInspectionRequestSchema,
+  E2eRunInspectionSchema,
   IdentityResolveBrowserPrincipalRequestSchema,
   IdentityRootBrowserRequestSchema,
   IdentityRootProvisioningRequestSchema,
@@ -35,11 +43,31 @@ import {
 } from './recovery.js';
 import { createIdentityOperatorService } from './routes/internal.js';
 import type { CoreMerchantProvisioningClient } from './services/organizations.js';
+import { createOrganizationService } from './services/organizations.js';
+import { createIdentityE2eLifecycle, type E2eTenantIdentity } from './services/e2e-lifecycle.js';
+import { assertAuthE2eMigrations } from './services/e2e-capabilities.js';
+import { createIdentityE2eFixtures } from './services/e2e-fixtures.js';
+import type { OperatorCallContext } from '@incentives/contracts';
+
+interface CoreE2eLifecycleClient {
+  getE2eCapabilities(context: { actorUserId: string;
+    actorKind: 'root'; correlationId: string }): Promise<unknown>;
+  inspectE2eRun(context: OperatorCallContext, input: E2eTenantIdentity, query: {
+    evaluationId: string; idempotencyKey: string; programRefs: string[];
+  }): Promise<unknown>;
+  previewE2eRun(context: OperatorCallContext, input: E2eTenantIdentity): Promise<{
+    status: string; counts: Record<string, number>;
+  }>;
+  disposeE2eRun(context: OperatorCallContext, input: E2eTenantIdentity): Promise<{
+    status: string; counts: Record<string, number>;
+  }>;
+}
 
 export interface Env {
   AUTH_DB: D1Database;
   AUTH_SECRET: string;
   APP_ENV: 'local' | 'staging';
+  E2E_LOCAL_TEST_MODE?: string;
   PUBLIC_APP_ORIGIN: string;
   COOKIE_PREFIX: string;
   EMAIL_MODE: 'local-capture' | 'resend';
@@ -51,7 +79,7 @@ export interface Env {
   PASSKEY_RP_NAME: string;
   RESEND_API_KEY?: string;
   RESEND_FROM?: string;
-  CORE: CoreMerchantProvisioningClient;
+  CORE: CoreMerchantProvisioningClient & CoreE2eLifecycleClient;
 }
 
 function withCorrelationId(request: Request, correlationId: string): Request {
@@ -109,10 +137,170 @@ function operatorService(env: Env) {
       ...(env.RESEND_FROM === undefined ? {} : { resendFrom: env.RESEND_FROM }),
     }),
     publicOrigin: env.PUBLIC_APP_ORIGIN,
+    appEnv: env.APP_ENV,
+    localTestMode: env.E2E_LOCAL_TEST_MODE,
   });
 }
 
 export class IdentityOperatorService extends WorkerEntrypoint<Env> {
+  async getE2eCapabilities(input: unknown) {
+    const parsed = input && typeof input === 'object'
+      ? input as { sessionId?: unknown; correlationId?: unknown } : {};
+    const correlationId = typeof parsed.correlationId === 'string'
+      && parsed.correlationId.length > 0 && parsed.correlationId.length <= 200
+      ? parsed.correlationId : crypto.randomUUID();
+    const failure = (code: 'NOT_FOUND' | 'INVALID_REQUEST' | 'UNAUTHORIZED'
+      | 'FORBIDDEN' | 'IDENTITY_UNAVAILABLE') => ApiErrorSchema.parse({
+      error: { code, message: 'E2E capability handshake is unavailable',
+        correlationId, retryable: code === 'IDENTITY_UNAVAILABLE' },
+    });
+    if (this.env.APP_ENV !== 'staging'
+      && !(this.env.APP_ENV === 'local' && this.env.E2E_LOCAL_TEST_MODE === '1')) {
+      return failure('NOT_FOUND');
+    }
+    if (typeof parsed.sessionId !== 'string' || !parsed.sessionId
+      || typeof parsed.correlationId !== 'string' || !parsed.correlationId) {
+      return failure('INVALID_REQUEST');
+    }
+    try {
+      const principal = await createOrganizationService({ database: this.env.AUTH_DB })
+        .resolvePrincipal(parsed.sessionId);
+      if (!principal) return failure('UNAUTHORIZED');
+      if (principal.platformRole !== 'root') return failure('FORBIDDEN');
+      await assertAuthE2eMigrations(this.env.AUTH_DB);
+      const product = ProductE2eCapabilitiesSchema.parse(
+        await this.env.CORE.getE2eCapabilities({ actorKind: 'root',
+          actorUserId: principal.userId, correlationId }),
+      );
+      return IdentityE2eCapabilitiesSchema.parse({ version: 1,
+        migrations: ['0005_e2e_tenant_lifecycle.sql', '0006_e2e_fixture_session.sql'],
+        product });
+    } catch {
+      return failure('IDENTITY_UNAVAILABLE');
+    }
+  }
+
+  async createE2eAccount(input: unknown) {
+    const parsed = E2eFixtureAccountRequestSchema.safeParse(input);
+    const correlationId = parsed.success ? parsed.data.correlationId : crypto.randomUUID();
+    const failure = (code: 'NOT_FOUND' | 'INVALID_REQUEST' | 'UNAUTHORIZED'
+      | 'FORBIDDEN' | 'IDENTITY_UNAVAILABLE') => ApiErrorSchema.parse({
+      error: { code, message: 'Operation is not permitted', correlationId,
+        retryable: code === 'IDENTITY_UNAVAILABLE' },
+    });
+    if (this.env.APP_ENV !== 'staging') return failure('NOT_FOUND');
+    if (!parsed.success) return failure('INVALID_REQUEST');
+    try {
+      const principal = await createOrganizationService({ database: this.env.AUTH_DB })
+        .resolvePrincipal(parsed.data.sessionId);
+      if (!principal) return failure('UNAUTHORIZED');
+      if (principal.platformRole !== 'root') return failure('FORBIDDEN');
+      const digest = await crypto.subtle.digest(
+        'SHA-256', new TextEncoder().encode(parsed.data.proof),
+      );
+      const proofHash = [...new Uint8Array(digest)]
+        .map(byte => byte.toString(16).padStart(2, '0')).join('');
+      const claim = await this.env.AUTH_DB.prepare(`
+        SELECT merchant_id AS merchantId, provisioning_id AS provisioningId,
+          proof_hash AS proofHash, status FROM e2e_run_claims WHERE run_id = ?1
+      `).bind(parsed.data.runId).first<{
+        merchantId: string; provisioningId: string; proofHash: string; status: string;
+      }>();
+      if (!claim || claim.proofHash !== proofHash || claim.status !== 'active') {
+        return failure('FORBIDDEN');
+      }
+      const auth = createIdentityAuth(this.env);
+      const fixtures = createIdentityE2eFixtures({
+        database: this.env.AUTH_DB, appEnv: this.env.APP_ENV,
+        createSession: (userId, runId, merchantId) => auth.createFixtureSession({
+          userId, runId, merchantId,
+        }),
+      });
+      return E2eFixtureAccountSchema.parse(await fixtures.createAccount({
+        runId: parsed.data.runId, merchantId: claim.merchantId,
+        provisioningId: claim.provisioningId, proofHash,
+        slug: parsed.data.slug, role: parsed.data.role,
+      }, principal.userId, correlationId));
+    } catch {
+      return failure('IDENTITY_UNAVAILABLE');
+    }
+  }
+
+  async inspectE2eRun(input: unknown) {
+    return this.e2eRunAction(input, 'inspect');
+  }
+
+  async previewE2eRun(input: unknown) {
+    return this.e2eRunAction(input, 'preview');
+  }
+
+  async disposeE2eRun(input: unknown) {
+    return this.e2eRunAction(input, 'dispose');
+  }
+
+  private async e2eRunAction(input: unknown, action: 'preview' | 'dispose' | 'inspect') {
+    const parsed = action === 'inspect'
+      ? E2eRunInspectionRequestSchema.safeParse(input)
+      : E2eRunActionRequestSchema.safeParse(input);
+    const correlationId = parsed.success ? parsed.data.correlationId : crypto.randomUUID();
+    const failure = (code: 'NOT_FOUND' | 'INVALID_REQUEST' | 'UNAUTHORIZED'
+      | 'FORBIDDEN' | 'IDENTITY_UNAVAILABLE', retryable = false) => ApiErrorSchema.parse({
+      error: { code, message: code === 'IDENTITY_UNAVAILABLE'
+        ? 'Identity is temporarily unavailable' : 'Operation is not permitted',
+      correlationId, retryable },
+    });
+    if (this.env.APP_ENV !== 'staging'
+      && !(this.env.APP_ENV === 'local' && this.env.E2E_LOCAL_TEST_MODE === '1')) {
+      return failure('NOT_FOUND');
+    }
+    if (!parsed.success) return failure('INVALID_REQUEST');
+    try {
+      const principal = await createOrganizationService({ database: this.env.AUTH_DB })
+        .resolvePrincipal(parsed.data.sessionId);
+      if (!principal) return failure('UNAUTHORIZED');
+      if (principal.platformRole !== 'root') return failure('FORBIDDEN');
+      const digest = await crypto.subtle.digest(
+        'SHA-256', new TextEncoder().encode(parsed.data.proof),
+      );
+      const proofHash = [...new Uint8Array(digest)]
+        .map(byte => byte.toString(16).padStart(2, '0')).join('');
+      const claim = await this.env.AUTH_DB.prepare(`
+        SELECT merchant_id AS merchantId, provisioning_id AS provisioningId,
+          proof_hash AS proofHash FROM e2e_run_claims WHERE run_id = ?1
+      `).bind(parsed.data.runId).first<{
+        merchantId: string; provisioningId: string; proofHash: string;
+      }>();
+      if (!claim || claim.proofHash !== proofHash) return failure('FORBIDDEN');
+      const identity = { runId: parsed.data.runId, merchantId: claim.merchantId,
+        provisioningId: claim.provisioningId, proofHash };
+      const context: OperatorCallContext = {
+        actorKind: 'root', actorUserId: principal.userId,
+        merchantId: claim.merchantId, permission: 'credentials:manage', correlationId,
+      };
+      const lifecycle = createIdentityE2eLifecycle({
+        database: this.env.AUTH_DB, appEnv: this.env.APP_ENV,
+        localTestMode: this.env.E2E_LOCAL_TEST_MODE,
+        core: {
+          preview: tenant => this.env.CORE.previewE2eRun(context, tenant),
+          dispose: tenant => this.env.CORE.disposeE2eRun(context, tenant),
+        },
+      });
+      if (action === 'inspect') {
+        const query = E2eRunInspectionRequestSchema.parse(parsed.data);
+        await lifecycle.preview(identity);
+        return E2eRunInspectionSchema.parse(await this.env.CORE.inspectE2eRun(context, identity, {
+          evaluationId: query.evaluationId, idempotencyKey: query.idempotencyKey,
+          programRefs: query.programRefs,
+        }));
+      }
+      return E2eRunInventorySchema.parse(action === 'preview'
+        ? await lifecycle.preview(identity)
+        : await lifecycle.dispose(identity, principal.userId, correlationId));
+    } catch {
+      return failure('IDENTITY_UNAVAILABLE', true);
+    }
+  }
+
   async resolveBrowserPrincipal(input: IdentityResolveBrowserPrincipalRequest) {
     const parsed = IdentityResolveBrowserPrincipalRequestSchema.safeParse(input);
     const correlationId = parsed.success && parsed.data.correlationId

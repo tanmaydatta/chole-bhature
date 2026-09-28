@@ -39,6 +39,8 @@ export interface BootstrapWranglerCommand {
 export function buildBootstrapRootWranglerCommand(input: {
   environment: BootstrapEnvironment;
   sqlFile: string;
+  localConfig?: string;
+  localPersistTo?: string;
 }): BootstrapWranglerCommand {
   return buildWranglerCommand(input);
 }

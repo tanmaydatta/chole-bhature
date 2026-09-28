@@ -1196,10 +1196,15 @@ export function createRepositories(env: Env): Repositories {
     merchants: {
       async provision(input) {
         const parsed = parseMerchantProvision(input);
-        await env.DB.prepare(`
+        const insertMerchant = env.DB.prepare(`
           INSERT INTO merchants (
             id, name, status, provisioning_id, created_at, updated_at
-          ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+          ) SELECT ?1, ?2, ?3, ?4, ?5, ?6
+          WHERE ?7 = 0 OR EXISTS (
+            SELECT 1 FROM e2e_run_claims
+            WHERE run_id = ?8 AND merchant_id = ?1 AND provisioning_id = ?4
+              AND proof_hash = ?9 AND status = 'active'
+          )
           ON CONFLICT DO NOTHING
         `).bind(
           parsed.id,
@@ -1208,7 +1213,46 @@ export function createRepositories(env: Env): Repositories {
           parsed.provisioningId,
           parsed.createdAt,
           parsed.updatedAt,
-        ).run();
+          input.e2eRun ? 1 : 0,
+          input.e2eRun?.runId ?? '',
+          input.e2eRun?.proofHash ?? '',
+        );
+        if (input.e2eRun) {
+          if (env.APP_ENV !== 'staging'
+            && !(env.APP_ENV === 'local' && env.E2E_LOCAL_TEST_MODE === '1')) {
+            throw new Error('E2E provisioning requires staging or explicit local test mode');
+          }
+          await env.DB.batch([
+            env.DB.prepare(`
+              INSERT INTO e2e_run_claims (
+                run_id, merchant_id, provisioning_id, proof_hash, status, created_at
+              ) SELECT ?1, ?2, ?3, ?4, 'active', ?5
+              WHERE NOT EXISTS (
+                SELECT 1 FROM merchants WHERE id = ?2 OR provisioning_id = ?3
+              )
+              ON CONFLICT DO NOTHING
+            `).bind(input.e2eRun.runId, parsed.id, parsed.provisioningId,
+              input.e2eRun.proofHash, parsed.createdAt),
+            insertMerchant,
+          ]);
+          const claim = await env.DB.prepare(`
+            SELECT run_id AS runId, merchant_id AS merchantId,
+              provisioning_id AS provisioningId, proof_hash AS proofHash, status
+            FROM e2e_run_claims WHERE run_id = ?1 OR merchant_id = ?2
+          `).bind(input.e2eRun.runId, parsed.id).all<{
+            runId: string; merchantId: string; provisioningId: string;
+            proofHash: string; status: string;
+          }>();
+          if (claim.results.length !== 1 || claim.results[0]?.runId !== input.e2eRun.runId
+            || claim.results[0].merchantId !== parsed.id
+            || claim.results[0].provisioningId !== parsed.provisioningId
+            || claim.results[0].proofHash !== input.e2eRun.proofHash
+            || claim.results[0].status !== 'active') {
+            throw new MerchantIdentityConflictError('E2E tenant provenance conflicts');
+          }
+        } else {
+          await insertMerchant.run();
+        }
         const existing = await env.DB.prepare(`
           SELECT id, name, status, provisioning_id AS provisioningId,
             created_at AS createdAt, updated_at AS updatedAt
