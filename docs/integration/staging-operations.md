@@ -40,11 +40,21 @@ service binding. Only the API and Operator Web Workers receive custom-domain rou
 The [GAP-030/031 automated scenario](../testing/gap-030-031-e2e.md) adds protected,
 run-scoped fixture, inspection, and full-disposal behavior across **both** D1
 databases. The earlier GAP guidance that Identity need not deploy is obsolete
-for this release. These commands are an owner-reviewed **future deployment
-plan**, not authorization to deploy as part of a local test run. Commit and
-push the reviewed matching source revision only after explicit release
-approval; do not start a staging E2E run while a migration/deployment is in
-progress or any Worker is on an older revision.
+for this release. On 2026-09-28, the owner completed this staging rollout:
+Product `0007` required an approved migration-ledger repair after its exact
+nullable `price_breakdown_json` `TEXT` schema was confirmed already present;
+the protected Product migration then applied `0008`; Auth `0005` and `0006`
+applied; and API, private Identity, and Operator Web deployed. Root passkey
+sign-in followed, and the staging suite passed 4 tests with 1 local-only test
+skipped in 29.3 seconds. See the
+[GAP-030/031 automated end-to-end verification](../testing/gap-030-031-e2e.md)
+for assertions and evidence limits.
+
+For a later staging rollout or a different environment, these commands remain
+an owner-reviewed release procedure, not authorization to deploy as part of a
+local test run. Commit and push the reviewed matching source revision only
+after explicit release approval; do not start a staging E2E run while a
+migration/deployment is in progress or any Worker is on an older revision.
 
 After the read-only preflight and repository gates below pass, the owner runs
 one command at a time and checks the protected, sanitized result before the
@@ -58,10 +68,17 @@ pnpm --filter @incentives/identity deploy:staging
 pnpm --filter @incentives/operator-web deploy:staging
 ```
 
-Product migration `0007_merchandise_price_breakdowns.sql` may still be pending
-in staging. The Product migration command must therefore apply `0007` and then
-`0008_e2e_tenant_lifecycle.sql`, in that order, before the Core deploy. Auth migrations `0005_e2e_tenant_lifecycle.sql` and
-`0006_e2e_fixture_session.sql` must be present before the Identity deploy.
+For a target where Product migration `0007_merchandise_price_breakdowns.sql`
+is pending, the Product migration command must apply `0007` and then
+`0008_e2e_tenant_lifecycle.sql`, in that order, before the Core deploy. In the
+2026-09-28 staging rollout, `0007` was absent from the migration ledger even
+though its schema was already present; the owner approved one exact ledger-row
+repair before `0008` applied. This is a recorded exception, not permission for
+an unreviewed direct D1 write. If schema and migration-ledger state disagree,
+stop, confirm the exact schema and migration history, and obtain explicit
+owner approval for any narrowly scoped repair. Auth migrations
+`0005_e2e_tenant_lifecycle.sql` and `0006_e2e_fixture_session.sql` must be
+present before the Identity deploy.
 Operator deploys last because its root-only capability, fixture, inventory,
 and inspection BFF routes depend on both private services. The generated
 staging Wrangler configs preserve the private Identity/Core bindings and
@@ -88,8 +105,9 @@ owner-only directory. Re-run with a new filename after expiry. The E2E global
 setup checks the exact versioned Operator→Identity→Core capability protocol,
 Product 0008/Auth 0005+0006 migration markers and required tables, and a live
 root session. An old/mixed release fails **before** `add-merchant` or any
-other recipe writes. No staging E2E execution is claimed until these commands
-have been separately approved and actually run.
+other recipe writes. The 2026-09-28 staging run completed this handshake and
+subsequent applicable suite; repeat the procedure only with separately
+approved source and release scope.
 
 Both migrations are forward-only. Do not attempt to undo a migration or roll
 back only one Worker while E2E tenants exist: fixture sessions, provenance,
@@ -190,7 +208,10 @@ pnpm --filter @incentives/identity deploy:staging
 ```
 
 Enter each Identity value only at Wrangler's hidden prompt. Do not include a value in the command
-or paste one into chat:
+or paste one into chat. Never invoke `secret put` through a noninteractive
+runner, pipe, or redirected standard input: a noninteractive invocation during
+the 2026-09-28 rollout appeared to succeed without prompting and was
+immediately replaced through the interactive prompt.
 
 ```sh
 pnpm --filter @incentives/identity exec wrangler secret put AUTH_SECRET \
@@ -207,7 +228,8 @@ Deploy Operator Web and attach its custom domain:
 pnpm --filter @incentives/operator-web deploy:staging
 ```
 
-Enter the Operator selection secret only at Wrangler's hidden prompt:
+Enter the Operator selection secret only at Wrangler's hidden prompt, under
+the same interactive-only rule:
 
 ```sh
 pnpm --filter @incentives/operator-web exec wrangler secret put OPERATOR_SELECTION_SECRET \
