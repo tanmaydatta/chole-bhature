@@ -123,8 +123,8 @@ describe('staging-only E2E fixture accounts', () => {
     expect(raw?.authenticationMethod).toBe('e2e-fixture');
     expect(raw?.recoveryOnly).toBe(0);
     expect(Date.parse(String(raw?.expiresAt))).toBeGreaterThan(Date.now());
-    expect(Date.parse(String(raw?.expiresAt)))
-      .toBeLessThanOrEqual(Date.parse(String(raw?.createdAt)) + 900_000);
+    expect(Date.parse(String(raw?.expiresAt)) - Date.parse(String(raw?.createdAt)))
+      .toBe(900_000);
     const directPrincipal = await createOrganizationService({ database: env.AUTH_DB,
       appEnv: 'staging' }).resolvePrincipal(created.sessionId);
     expect(directPrincipal).toMatchObject({ merchantId: first.merchantId });
