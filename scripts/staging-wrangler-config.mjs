@@ -11,6 +11,7 @@ import {
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
 const RP_ID_PATTERN = /^(?=.{1,253}$)(?!-)(?:[a-z0-9-]{1,63}\.)+[a-z0-9-]{2,63}$/u;
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/u;
+const STORE_ID_PATTERN = /^[0-9a-f]{32}$/iu;
 const SENTINEL_DATABASE_IDS = new Set([
   '00000000-0000-0000-0000-000000000000',
   '10000000-0000-0000-0000-000000000001',
@@ -114,6 +115,13 @@ export function loadStagingConfiguration(environment) {
     apiOrigin,
     passkeyRpId: passkeyRpId(environment, origin),
     allowedRecipients: allowedRecipients(environment),
+    secretsStoreId: (() => {
+      const id = required(environment, 'STAGING_SECRETS_STORE_ID').toLowerCase();
+      if (!STORE_ID_PATTERN.test(id) || /^0+$/u.test(id)) {
+        throw new Error('STAGING_SECRETS_STORE_ID must be a real Secrets Store ID.');
+      }
+      return id;
+    })(),
   });
 }
 
@@ -155,6 +163,11 @@ ${STAGING_OBSERVABILITY_TOML}
 [vars]
 APP_ENV = "staging"
 PUBLIC_APP_ORIGIN = ${tomlString(configuration.operatorOrigin)}
+
+[[secrets_store_secrets]]
+binding = "OPERATOR_SELECTION_SECRET_STORE"
+store_id = "${configuration.secretsStoreId}"
+secret_name = "OPERATOR_SELECTION_SECRET"
 
 [[services]]
 binding = "IDENTITY_AUTH"
@@ -198,6 +211,21 @@ EMAIL_RATE_LIMIT_WINDOW_SECONDS = "60"
 STAGING_ALLOWED_RECIPIENTS = ${tomlString(configuration.allowedRecipients)}
 PASSKEY_RP_ID = ${tomlString(configuration.passkeyRpId)}
 PASSKEY_RP_NAME = "Incentives Operator (Staging)"
+
+[[secrets_store_secrets]]
+binding = "AUTH_SECRET_STORE"
+store_id = "${configuration.secretsStoreId}"
+secret_name = "AUTH_SECRET"
+
+[[secrets_store_secrets]]
+binding = "RESEND_API_KEY_STORE"
+store_id = "${configuration.secretsStoreId}"
+secret_name = "RESEND_API_KEY"
+
+[[secrets_store_secrets]]
+binding = "RESEND_FROM_STORE"
+store_id = "${configuration.secretsStoreId}"
+secret_name = "RESEND_FROM"
 
 [[d1_databases]]
 binding = "AUTH_DB"

@@ -43,9 +43,10 @@ describe('repository deployment policy', () => {
     expect(operations).toContain('pnpm staging:preflight');
     expect(operations).toContain('pnpm --filter @incentives/api db:migrate:staging');
     expect(operations).toContain('pnpm --filter @incentives/identity db:migrate:staging');
-    expect(operations).toContain('--name incentives-identity-staging');
-    expect(operations).toContain('--name incentives-operator-web-staging');
+    expect(operations).toContain('pnpm staging:secret-transfer AUTH_SECRET "$AUTH_ITEM_ID"');
+    expect(operations).toContain('pnpm staging:secret-transfer OPERATOR_SELECTION_SECRET "$OPERATOR_ITEM_ID"');
     expect(operations).toContain('demo/*');
-    expect(operations).toContain('The assistant must not run these Cloudflare-changing commands');
+    expect(operations).toContain('The owner-run procedure below is the default for future cutovers');
+    expect(operations).toContain('the owner explicitly authorized agent-performed **staging** writes');
   });
 });

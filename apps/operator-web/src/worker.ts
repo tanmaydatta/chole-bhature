@@ -29,6 +29,7 @@ import { programRoutes } from './routes/programs.js';
 import { schemaRoutes } from './routes/schemas.js';
 import { teamRoutes } from './routes/team.js';
 import type { OperatorWebEnv, ProtectedRoute } from './routes/types.js';
+import { resolveOperatorSecret, type OperatorWebWorkerEnv } from './staging-secrets.js';
 import {
   apiError,
   apiErrorStatus,
@@ -607,12 +608,20 @@ async function handleProtected(
   }
 }
 
-export function createOperatorWebWorker(): ExportedHandler<OperatorWebEnv> {
+export function createOperatorWebWorker(): ExportedHandler<OperatorWebWorkerEnv> {
   return {
-    async fetch(request, env) {
+    async fetch(request, workerEnv) {
       const id = correlationId(request);
       const url = new URL(request.url);
       try {
+        if (
+          !url.pathname.startsWith('/auth/')
+          && !url.pathname.startsWith('/internal/')
+          && !url.pathname.startsWith('/operator/v1/')
+        ) {
+          return await workerEnv.ASSETS.fetch(request);
+        }
+        const env = await resolveOperatorSecret(workerEnv);
         if (unsafeOperatorRequest(request, env)) {
           return errorResponse(apiError(id, 'FORBIDDEN', 'Operation is not permitted'));
         }

@@ -198,7 +198,10 @@ describe('staging-only E2E fixture accounts', () => {
           'fixture-root', 'passkey', ?2, 0)`).bind(now + 60000, now),
     ]);
     const staging = { ...env, APP_ENV: 'staging', EMAIL_MODE: 'resend',
-      RESEND_API_KEY: 'test-key', RESEND_FROM: 'fixture@example.test' } as Env;
+      RESEND_API_KEY: 'test-key', RESEND_FROM: 'fixture@example.test',
+      AUTH_SECRET_STORE: { get: async () => env.AUTH_SECRET },
+      RESEND_API_KEY_STORE: { get: async () => 'test-key' },
+      RESEND_FROM_STORE: { get: async () => 'fixture@example.test' } } as Env;
     const service = new IdentityOperatorService(createExecutionContext(), staging);
     const request = { runId: first.runId, proof, slug: 'viewer', role: 'viewer',
       sessionId: 'fixture-root-session', correlationId: 'fixture-rpc' };

@@ -15,6 +15,11 @@ const second = {
   provisioningId: 'provision-e2e-second', proofHash: 'b'.repeat(64),
 };
 const proof = 'A'.repeat(43);
+const stagingSecretBindings = {
+  AUTH_SECRET_STORE: { get: async () => env.AUTH_SECRET },
+  RESEND_API_KEY_STORE: { get: async () => 'test-resend-key' },
+  RESEND_FROM_STORE: { get: async () => 'Fixture <fixture@example.test>' },
+};
 
 async function seedRoot() {
   const now = Date.now();
@@ -193,7 +198,7 @@ describe('staging E2E tenant disposal in Auth D1', () => {
       async disposeE2eRun() { throw new Error('not expected'); },
     };
     const service = new IdentityOperatorService(createExecutionContext(), {
-      ...env, APP_ENV: 'staging', CORE: core,
+      ...env, ...stagingSecretBindings, APP_ENV: 'staging', CORE: core,
     } as unknown as Env);
     const request = { sessionId: 'e2e-root-session', runId: first.runId,
       proof, correlationId: 'e2e-rpc-test' };
@@ -222,7 +227,7 @@ describe('staging E2E tenant disposal in Auth D1', () => {
       return { version: 1, migrations: ['0008_e2e_tenant_lifecycle.sql'],
         inspection: true, disposal: true }; } };
     const service = new IdentityOperatorService(createExecutionContext(), {
-      ...env, APP_ENV: 'staging', CORE: core,
+      ...env, ...stagingSecretBindings, APP_ENV: 'staging', CORE: core,
     } as unknown as Env);
     const input = { sessionId: 'e2e-root-session', correlationId: 'capability-test' };
     expect(await service.getE2eCapabilities({ ...input, sessionId: 'missing' }))
@@ -249,7 +254,8 @@ describe('staging E2E tenant disposal in Auth D1', () => {
     await seed(first);
     let called = false;
     const service = new IdentityOperatorService(createExecutionContext(), {
-      ...env, APP_ENV: 'staging', CORE: { async inspectE2eRun() { called = true; } },
+      ...env, ...stagingSecretBindings, APP_ENV: 'staging',
+      CORE: { async inspectE2eRun() { called = true; } },
     } as unknown as Env);
     expect(await service.inspectE2eRun({ sessionId: 'e2e-root-session',
       runId: first.runId, proof: 'B'.repeat(43), correlationId: 'inspect-correlation',
