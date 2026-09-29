@@ -219,16 +219,27 @@ rotate the values as a rollback step. Then validate fresh passkey sign-in, allow
 delivery, merchant selection, and the protected E2E handshake. Do not remove the old per-Worker
 secrets until that behavior is verified and a separate cleanup is reviewed.
 
+#### Completed staging evidence — 2026-09-29
+
+The approved staging cutover reused the existing account Secrets Store and
+activated all four entries at Workers scope. Identity deployed 100% to
+`b247bae5-d34a-4e4a-ab21-5874089e1d3a`; Operator Web deployed 100% to
+`9e9c9580-b915-4200-befb-502cdda750c0`; both originated from PR #15 head
+`df05d8d`. The old per-Worker secrets were deliberately retained.
+
+A live root session and the read-only cross-Worker capability handshake passed.
+The complete applicable staging Playwright suite had **4 passed, 1 local-only skipped, 0 failed** in **32.0 seconds**. Scenario-level cleanup asserted zero
+run-owned rows in both Product and Auth; final inventories each reported zero
+active or disposing claims, 10 disposed claims, and 10 audit rows. This cutover
+did not run API/Core deployment or any D1 migration, and it does not verify
+email delivery or a headed browser run. PR #15 remains pending review/merge.
+
 ### User-controlled Cloudflare activation
 
 The owner-run procedure below is the default for future cutovers: the owner runs one command,
-checks its result, and only then moves to the next. For this one-time Secrets Store migration,
-the owner explicitly authorized agent-performed **staging** writes limited to creating a store
-if none exists, creating the four named account secrets, and deploying the reviewed Identity
-and Operator Web changes, followed by scoped staging E2E verification. This authorization does
-not cover Product or Auth D1 migrations, Core deployment, production, unrelated resources, or
-future rotations and cutovers. Execute each approved staging action separately and inspect its
-sanitized result before continuing.
+checks its result, and only then moves to the next. The one-time 2026-09-29 staging authorization
+has been consumed and is recorded above. It did not cover Product or Auth D1 migrations, Core
+deployment, production, unrelated resources, or future rotations and cutovers.
 
 First apply the forward-only Product migrations. It applies pending Product
 `0007` before `0008`; do not deploy Core between those migrations:

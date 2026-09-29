@@ -1,16 +1,16 @@
 # Product Current State and Roadmap
 
-**Updated:** 2026-09-28
+**Updated:** 2026-09-29
 
 **Status:** Active — Gate C complete; GAP-030/031 and the E2E platform are
-merged on `dev`. The E2E platform source is deployed to staging and its
-staging E2E evidence is recorded. The Secrets Store migration is in progress
-and has not been deployed.
+merged on `dev`. The separate Secrets Store cutover is deployed and verified
+in staging; PR #15 remains to be reviewed and merged. No production, API/Core,
+or D1 migration is part of that cutover.
 
 **Notion mirror:** https://app.notion.com/p/Product-Current-State-and-Roadmap-3a6e5c7c2b8e81f6b412c45a2bc7b344
 
-**Mirror state:** Repository and Notion synchronized for the 2026-09-28 PR #14
-merge and staging result.
+**Mirror state:** Repository and Notion synchronized for the 2026-09-29
+Secrets Store cutover evidence.
 
 This is the canonical operational answer to:
 
@@ -29,14 +29,14 @@ deferred issue remains in the
 | Question | Current answer |
 |---|---|
 | Overall phase | Post-Gate-C client-readiness corrections |
-| Current activity | GAP-030/031 merged as PR #13; E2E platform PR #14 merged at `b524c32b98652cfcadb75c7af2f234cf33495f6b`. The previously deployed E2E platform source passed its applicable staging Playwright suite |
+| Current activity | GAP-030/031 merged as PR #13; E2E platform PR #14 merged at `b524c32b98652cfcadb75c7af2f234cf33495f6b`. Secrets Store source is PR #15 at `df05d8d`, deployed and staging-verified pending PR review/merge |
 | Current repository baseline | PR #14 merge commit `b524c32b98652cfcadb75c7af2f234cf33495f6b` on `dev` |
 | Current product-code baseline | PR #14 merge commit `b524c32b98652cfcadb75c7af2f234cf33495f6b` |
 | Local feature state | Authoritative merchandise pricing and the E2E platform are merged; the E2E platform passed 5 local Playwright tests and 4 applicable staging tests |
-| Current deployment state | Product migration `0007` ledger repair followed by `0008`, Auth migrations `0005` and `0006`, and API, Identity, and Operator Web deployments completed in staging |
-| Current release decision | PR #14 is merged. The separate Cloudflare Secrets Store migration is in progress locally; no Secrets Store deployment has occurred. |
+| Current deployment state | The 2026-09-28 Product/Auth/API/Identity/Operator rollout remains in staging. On 2026-09-29, existing-store Secrets Store bindings deployed to Identity and Operator only; no API/Core/D1 migration occurred |
+| Current release decision | PR #14 is merged. PR #15 is deployed to staging at source head `df05d8d`, validated, and awaiting review/merge; old per-Worker secrets are retained |
 | Gate C finish line | Complete — all mandatory clean-break selection, redemption, tenant-isolation, concurrency, and observability cases passed |
-| Next plan work | Complete the Secrets Store migration with Bitwarden as source of truth, deploy the staging Workers, rerun staging E2E, and continue the approved free-shipping financial-authority work |
+| Next plan work | Review and merge PR #15; then design E2E/CI execution. Free-shipping financial-authority work remains later |
 
 ## Source-of-truth map
 
@@ -172,13 +172,24 @@ manually:
 - interactive entry of `AUTH_SECRET`, `RESEND_API_KEY`, `RESEND_FROM`, and
   `OPERATOR_SELECTION_SECRET`. A noninteractive secret put was immediately
   replaced interactively and is not accepted as a safe secret-upload method.
+- the 2026-09-29 Secrets Store cutover: the existing account store was reused;
+  all four staging entries were active at Workers scope; Identity deployed 100%
+  to `b247bae5-d34a-4e4a-ab21-5874089e1d3a`; and Operator Web deployed 100%
+  to `9e9c9580-b915-4200-befb-502cdda750c0`. The source was PR #15 head
+  `df05d8d`; the old per-Worker secrets remain retained;
+- a live root session and read-only capability handshake passed after that
+  cutover; the complete staging Playwright suite had **4 passed, 1 local-only skipped, 0 failed** in **32.0 seconds**. Scenario-level cleanup asserted
+  zero run-owned rows in both Product and Auth; the cumulative final inventory
+  found zero active or disposing claims in both, with 10 disposed claims and
+  10 audit rows in each.
 
 The detailed automated evidence and its boundaries are in the
 [GAP-030/031 automated end-to-end verification](../testing/gap-030-031-e2e.md).
 PR #14 merged into `dev` at
 [`b524c32b98652cfcadb75c7af2f234cf33495f6b`](https://github.com/tanmaydatta/chole-bhature/commit/b524c32b98652cfcadb75c7af2f234cf33495f6b)
-after its CI `verify` check passed. This record does not state Worker version IDs or
-claim a headed staging run or manual email-delivery verification.
+after its CI `verify` check passed. The 2026-09-28 record does not state Worker
+version IDs or claim a headed staging run or manual email-delivery verification.
+The 2026-09-29 cutover likewise does not verify email delivery or a headed run.
 
 ## Current work
 
@@ -240,12 +251,11 @@ Worker/D1 full-flow tests are the acceptance boundary. The 2026-09-28 staging
 result covers the E2E scenarios described above; it does not claim Worker
 version IDs, a headed staging run, or email-delivery verification.
 
-Cloudflare writes are owner-run by default. The owner explicitly authorized
-agent-performed staging writes for the current Secrets Store migration only:
-store creation if needed, four named account secrets, reviewed Identity and
-Operator Web deployments, and scoped staging E2E verification. The approval
-does not extend to database migrations, Core deployment, production, unrelated
-resources, or future cutovers.
+The approved staging-only Secrets Store cutover is complete: the existing store
+was reused, four Workers-scope entries were activated, and reviewed Identity and
+Operator Web source deployed and passed its scoped E2E verification. It did not
+include database migrations, Core deployment, production, or unrelated
+resources. Old per-Worker secrets remain pending separately reviewed cleanup.
 
 ## What happens after Gate C
 
@@ -289,11 +299,23 @@ The focused `GAP-030`/`GAP-031` implementation merged as PR #13 and uses the
 [executable end-to-end plan](../testing/gap-030-031-e2e.md). The E2E platform
 source was deployed and verified in staging on 2026-09-28, and PR #14 merged
 into `dev` at `b524c32b98652cfcadb75c7af2f234cf33495f6b`. The separate
-Cloudflare Secrets Store migration is in progress locally with Bitwarden
-retained as source of truth; its Worker binding and asynchronous retrieval
-changes have not deployed or passed a new staging E2E run.
+Cloudflare Secrets Store cutover then deployed to staging from PR #15 head
+`df05d8d` on 2026-09-29: it reused the existing store, activated four
+Workers-scope entries, deployed Identity and Operator Web, and passed the
+read-only root/capability gate plus 4 passed, 1 local-only skipped, and 0
+failed staging Playwright tests in 32.0 seconds. PR #15 is still awaiting
+review/merge; Bitwarden remains the source of truth and old per-Worker secrets
+remain retained.
 
-### 3. Turn the approved free-shipping financial design into an implementation plan
+### 3. Review PR #15, then design E2E/CI execution
+
+Review and merge the staging-validated Secrets Store source in PR #15. After
+that, decide the E2E/CI design: local isolated Playwright coverage on every
+PR, with staging execution gated by reviewed credentials and deployment scope,
+or a separately approved staging-per-PR model. Do not treat either choice as
+implemented yet.
+
+### 4. Turn the approved free-shipping financial design into an implementation plan
 
 Create a separate plan under the Notion Plans page for the approved
 free-shipping financial authority. The implementation must preserve:
