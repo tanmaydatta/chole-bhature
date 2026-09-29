@@ -4,13 +4,14 @@
 
 **Status:** Active — Gate C complete; GAP-030/031 and the E2E platform are
 merged on `dev`. The separate Secrets Store cutover is deployed and verified
-in staging; PR #15 remains to be reviewed and merged. No production, API/Core,
+in staging and PR #15 merged into `dev` at
+`0c5e5f1a068d942af8f091ab0fc4b7ff8bf44e9d`. No production, API/Core,
 or D1 migration is part of that cutover.
 
 **Notion mirror:** https://app.notion.com/p/Product-Current-State-and-Roadmap-3a6e5c7c2b8e81f6b412c45a2bc7b344
 
-**Mirror state:** Repository and Notion synchronized for the 2026-09-29
-Secrets Store cutover evidence.
+**Mirror state:** Repository and Notion synchronized for the 2026-09-29 PR #15
+merge record.
 
 This is the canonical operational answer to:
 
@@ -29,14 +30,14 @@ deferred issue remains in the
 | Question | Current answer |
 |---|---|
 | Overall phase | Post-Gate-C client-readiness corrections |
-| Current activity | GAP-030/031 merged as PR #13; E2E platform PR #14 merged at `b524c32b98652cfcadb75c7af2f234cf33495f6b`. Secrets Store source is PR #15 at `df05d8d`, deployed and staging-verified pending PR review/merge |
-| Current repository baseline | PR #14 merge commit `b524c32b98652cfcadb75c7af2f234cf33495f6b` on `dev` |
-| Current product-code baseline | PR #14 merge commit `b524c32b98652cfcadb75c7af2f234cf33495f6b` |
+| Current activity | GAP-030/031 merged as PR #13; E2E platform PR #14 merged at `b524c32b98652cfcadb75c7af2f234cf33495f6b`; Secrets Store PR #15 merged at `0c5e5f1a068d942af8f091ab0fc4b7ff8bf44e9d` after staging validation from source head `df05d8d` |
+| Current repository baseline | PR #15 merge commit `0c5e5f1a068d942af8f091ab0fc4b7ff8bf44e9d` on `dev` |
+| Current product-code baseline | PR #15 merge commit `0c5e5f1a068d942af8f091ab0fc4b7ff8bf44e9d` |
 | Local feature state | Authoritative merchandise pricing and the E2E platform are merged; the E2E platform passed 5 local Playwright tests and 4 applicable staging tests |
 | Current deployment state | The 2026-09-28 Product/Auth/API/Identity/Operator rollout remains in staging. On 2026-09-29, existing-store Secrets Store bindings deployed to Identity and Operator only; no API/Core/D1 migration occurred |
-| Current release decision | PR #14 is merged. PR #15 is deployed to staging at source head `df05d8d`, validated, and awaiting review/merge; old per-Worker secrets are retained |
+| Current release decision | PR #15 merged into `dev` at `0c5e5f1a068d942af8f091ab0fc4b7ff8bf44e9d` after staging validation from source head `df05d8d`; old per-Worker secrets are retained |
 | Gate C finish line | Complete — all mandatory clean-break selection, redemption, tenant-isolation, concurrency, and observability cases passed |
-| Next plan work | Review and merge PR #15; then design E2E/CI execution. Free-shipping financial-authority work remains later |
+| Next plan work | Design E2E/CI execution. Free-shipping financial-authority work remains later |
 
 ## Source-of-truth map
 
@@ -176,7 +177,9 @@ manually:
   all four staging entries were active at Workers scope; Identity deployed 100%
   to `b247bae5-d34a-4e4a-ab21-5874089e1d3a`; and Operator Web deployed 100%
   to `9e9c9580-b915-4200-befb-502cdda750c0`. The source was PR #15 head
-  `df05d8d`; the old per-Worker secrets remain retained;
+  `df05d8d`, and PR #15 merged into `dev` at
+  `0c5e5f1a068d942af8f091ab0fc4b7ff8bf44e9d`; the old per-Worker secrets
+  remain retained;
 - a live root session and read-only capability handshake passed after that
   cutover; the complete staging Playwright suite had **4 passed, 1 local-only skipped, 0 failed** in **32.0 seconds**. Scenario-level cleanup asserted
   zero run-owned rows in both Product and Auth; the cumulative final inventory
@@ -303,16 +306,15 @@ Cloudflare Secrets Store cutover then deployed to staging from PR #15 head
 `df05d8d` on 2026-09-29: it reused the existing store, activated four
 Workers-scope entries, deployed Identity and Operator Web, and passed the
 read-only root/capability gate plus 4 passed, 1 local-only skipped, and 0
-failed staging Playwright tests in 32.0 seconds. PR #15 is still awaiting
-review/merge; Bitwarden remains the source of truth and old per-Worker secrets
-remain retained.
+failed staging Playwright tests in 32.0 seconds. PR #15 then merged into `dev`
+at `0c5e5f1a068d942af8f091ab0fc4b7ff8bf44e9d`; Bitwarden remains the source
+of truth and old per-Worker secrets remain retained.
 
-### 3. Review PR #15, then design E2E/CI execution
+### 3. Design E2E/CI execution
 
-Review and merge the staging-validated Secrets Store source in PR #15. After
-that, decide the E2E/CI design: local isolated Playwright coverage on every
-PR, with staging execution gated by reviewed credentials and deployment scope,
-or a separately approved staging-per-PR model. Do not treat either choice as
+Decide the E2E/CI design: local isolated Playwright coverage on every PR, with
+staging execution gated by reviewed credentials and deployment scope, or a
+separately approved staging-per-PR model. Do not treat either choice as
 implemented yet.
 
 ### 4. Turn the approved free-shipping financial design into an implementation plan

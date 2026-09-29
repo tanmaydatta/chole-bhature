@@ -225,14 +225,16 @@ The approved staging cutover reused the existing account Secrets Store and
 activated all four entries at Workers scope. Identity deployed 100% to
 `b247bae5-d34a-4e4a-ab21-5874089e1d3a`; Operator Web deployed 100% to
 `9e9c9580-b915-4200-befb-502cdda750c0`; both originated from PR #15 head
-`df05d8d`. The old per-Worker secrets were deliberately retained.
+`df05d8d`. PR #15 then merged into `dev` at
+`0c5e5f1a068d942af8f091ab0fc4b7ff8bf44e9d`. The old per-Worker secrets were
+deliberately retained.
 
 A live root session and the read-only cross-Worker capability handshake passed.
 The complete applicable staging Playwright suite had **4 passed, 1 local-only skipped, 0 failed** in **32.0 seconds**. Scenario-level cleanup asserted zero
 run-owned rows in both Product and Auth; final inventories each reported zero
 active or disposing claims, 10 disposed claims, and 10 audit rows. This cutover
 did not run API/Core deployment or any D1 migration, and it does not verify
-email delivery or a headed browser run. PR #15 remains pending review/merge.
+email delivery or a headed browser run.
 
 ### User-controlled Cloudflare activation
 
