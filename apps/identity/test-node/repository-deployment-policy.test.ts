@@ -47,6 +47,14 @@ describe('repository deployment policy', () => {
     expect(operations).toContain('pnpm staging:secret-transfer OPERATOR_SELECTION_SECRET "$OPERATOR_ITEM_ID"');
     expect(operations).toContain('demo/*');
     expect(operations).toContain('The owner-run procedure below is the default for future cutovers');
-    expect(operations).toContain('the owner explicitly authorized agent-performed **staging** writes');
+    expect(operations).toMatch(
+      /The one-time 2026-09-29 staging authorization\s+has been consumed and is recorded above\./u,
+    );
+    expect(operations).toMatch(
+      /It did not cover Product or Auth D1 migrations, Core\s+deployment, production, unrelated resources, or future rotations and cutovers\./u,
+    );
+    expect(operations).not.toContain(
+      'the owner explicitly authorized agent-performed **staging** writes',
+    );
   });
 });
