@@ -33,7 +33,10 @@ Staging contains:
 - Auth D1 `incentives-auth-staging`.
 
 Operator Web reaches Identity and Core through service bindings. Identity reaches Core through a
-service binding. Only the API and Operator Web Workers receive custom-domain routes.
+service binding. Only the API and Operator Web Workers receive custom-domain routes. Identity's
+`AUTH_SECRET`, `RESEND_API_KEY`, and `RESEND_FROM`, and Operator Web's
+`OPERATOR_SELECTION_SECRET` are staging Secrets Store bindings. Local Workers continue to read
+their direct `.dev.vars` values.
 
 ### E2E platform deployment order
 
@@ -123,7 +126,8 @@ client SQL command.
 ### Prepare the ignored environment file
 
 Copy `.env.staging.example` to `.env.staging` with owner-only permissions. Replace the two D1
-instructions with the distinct UUIDs returned when the databases were created. Replace the
+instructions with the distinct UUIDs returned when the databases were created. Set
+`STAGING_SECRETS_STORE_ID` to the existing account Secrets Store ID (32 hex characters). Replace the
 recipient instruction with a JSON array containing only real addresses approved for staging
 email. Replace the four secret instructions locally; never commit, print, or paste those values
 into chat.
@@ -163,7 +167,8 @@ CI=true pnpm test
 ```
 
 The preflight output is deliberately sanitized. It lists resource names, public origins, the
-passkey RP ID, and an allowed-recipient count. It does not contain D1 UUIDs, addresses, or secrets.
+passkey RP ID, and an allowed-recipient count. It does not contain D1 or Secrets Store IDs,
+addresses, or secret values.
 Stop if any precondition fails.
 
 ### Legacy demo build isolation
@@ -177,10 +182,64 @@ Cloudflare can bypass path matching for an empty push, a push containing at leas
 files, or a push containing at least 20 commits. Treat those cases as exceptional and inspect the
 demo build before allowing it to deploy.
 
+### Secrets Store staging cutover
+
+Use the [Workers Secrets Store integration](https://developers.cloudflare.com/secrets-store/integrations/workers/)
+and the installed Wrangler 4.112.0 command help for this cutover. Confirm the intended Cloudflare
+account before writing. A Cloudflare account supports one Secrets Store in the current beta. Find
+the existing store with `wrangler secrets-store store list --remote`; create one with
+`wrangler secrets-store store create <name> --remote` only if none exists. Record its returned ID
+in the ignored `.env.staging` as `STAGING_SECRETS_STORE_ID`, then reload the file and rerun
+preflight. Do not put a secret value in the config, shell command arguments, or command output.
+
+Create the four account secrets with Workers scope before deploying either changed Worker. The
+transfer helper validates the named Bitwarden item's ID, folder, name, and value in memory; it
+passes the value through a pipe to a quiet `expect` PTY that answers Wrangler's hidden prompt.
+For `RESEND_FROM`, it reads the single validated sender from mode-`0600` `.env.staging`. It
+rejects an absent prompt or failed Wrangler exit and prints only the secret name, store ID, and
+status. Keep the Bitwarden vault unlocked and supply item IDs only:
+
+```sh
+pnpm staging:secret-transfer AUTH_SECRET "$AUTH_ITEM_ID"
+pnpm staging:secret-transfer RESEND_API_KEY "$RESEND_ITEM_ID"
+pnpm staging:secret-transfer RESEND_FROM
+pnpm staging:secret-transfer OPERATOR_SELECTION_SECRET "$OPERATOR_ITEM_ID"
+```
+
+Do not use Wrangler's `--value` flag or direct noninteractive Wrangler invocation. The helper
+does not pass a value in argv or child environment and never forwards Wrangler output. Check
+each sanitized completion, then list the store with `wrangler secrets-store secret list "$STAGING_SECRETS_STORE_ID"
+--remote` to confirm all four names and Workers scope without reading secret values. The
+generated staging configs bind these names using the store ID; they contain no values. A missing
+binding, failed `get()`, or empty value makes staging fail closed. Existing per-Worker secrets
+may remain during cutover, but staging code does not fall back to them. Roll back a partial
+cutover by redeploying the previous compatible source revision for **both** Identity and
+Operator Web after checking current deployment state; do not delete Secrets Store entries or
+rotate the values as a rollback step. Then validate fresh passkey sign-in, allowed-address mail
+delivery, merchant selection, and the protected E2E handshake. Do not remove the old per-Worker
+secrets until that behavior is verified and a separate cleanup is reviewed.
+
+#### Completed staging evidence — 2026-09-29
+
+The approved staging cutover reused the existing account Secrets Store and
+activated all four entries at Workers scope. Identity deployed 100% to
+`b247bae5-d34a-4e4a-ab21-5874089e1d3a`; Operator Web deployed 100% to
+`9e9c9580-b915-4200-befb-502cdda750c0`; both originated from PR #15 head
+`df05d8d`. The old per-Worker secrets were deliberately retained.
+
+A live root session and the read-only cross-Worker capability handshake passed.
+The complete applicable staging Playwright suite had **4 passed, 1 local-only skipped, 0 failed** in **32.0 seconds**. Scenario-level cleanup asserted zero
+run-owned rows in both Product and Auth; final inventories each reported zero
+active or disposing claims, 10 disposed claims, and 10 audit rows. This cutover
+did not run API/Core deployment or any D1 migration, and it does not verify
+email delivery or a headed browser run. PR #15 remains pending review/merge.
+
 ### User-controlled Cloudflare activation
 
-The assistant must not run these Cloudflare-changing commands. The user runs exactly one command,
-checks its result, and only then moves to the next command.
+The owner-run procedure below is the default for future cutovers: the owner runs one command,
+checks its result, and only then moves to the next. The one-time 2026-09-29 staging authorization
+has been consumed and is recorded above. It did not cover Product or Auth D1 migrations, Core
+deployment, production, unrelated resources, or future rotations and cutovers.
 
 First apply the forward-only Product migrations. It applies pending Product
 `0007` before `0008`; do not deploy Core between those migrations:
@@ -201,39 +260,17 @@ Deploy Core and attach its API custom domain:
 pnpm --filter @incentives/api deploy:staging
 ```
 
-Deploy private Identity. This config has no route and publishes no `workers.dev` hostname:
+Deploy private Identity after the three Identity Secrets Store entries exist. This config has no
+route and publishes no `workers.dev` hostname:
 
 ```sh
 pnpm --filter @incentives/identity deploy:staging
 ```
 
-Enter each Identity value only at Wrangler's hidden prompt. Do not include a value in the command
-or paste one into chat. Never invoke `secret put` through a noninteractive
-runner, pipe, or redirected standard input: a noninteractive invocation during
-the 2026-09-28 rollout appeared to succeed without prompting and was
-immediately replaced through the interactive prompt.
-
-```sh
-pnpm --filter @incentives/identity exec wrangler secret put AUTH_SECRET \
-  --name incentives-identity-staging
-pnpm --filter @incentives/identity exec wrangler secret put RESEND_API_KEY \
-  --name incentives-identity-staging
-pnpm --filter @incentives/identity exec wrangler secret put RESEND_FROM \
-  --name incentives-identity-staging
-```
-
-Deploy Operator Web and attach its custom domain:
+Deploy Operator Web after its Secrets Store entry exists and attach its custom domain:
 
 ```sh
 pnpm --filter @incentives/operator-web deploy:staging
-```
-
-Enter the Operator selection secret only at Wrangler's hidden prompt, under
-the same interactive-only rule:
-
-```sh
-pnpm --filter @incentives/operator-web exec wrangler secret put OPERATOR_SELECTION_SECRET \
-  --name incentives-operator-web-staging
 ```
 
 The staging runner generates a mode-`0600` temporary Wrangler config for the selected app, invokes
@@ -245,7 +282,7 @@ unrelated cloud/service credentials, application secrets, or `STAGING_*` inputs.
 works through the allowed home/config paths. Remote staging `dev` is intentionally unsupported:
 an interactive, indefinite Wrangler session cannot be buffered without either leaking remote
 metadata or hiding useful development output. Use the local three-Worker stack for development.
-Migrate and deploy commands never put application secrets in the generated TOML.
+Migrate and deploy commands never put application secret values in the generated TOML.
 
 Before every remote runner action, authenticated Wrangler resolves Product D1
 through a separate generated API config pinned to `STAGING_PRODUCT_D1_ID`. The
@@ -281,9 +318,8 @@ historical and must not be executed.
 ### Rotate existing staging secrets
 
 This is an owner-run operation on the existing staging Workers. It does not authorize the
-E2E migrations, source deployments, or fixture writes above. Each `wrangler secret put`
-immediately deploys a new version of its named Worker, so confirm the staging account and
-Worker before each command and complete the read-only preconditions above first.
+E2E migrations, source deployments, or fixture writes above. Confirm the staging account,
+store ID, bound secret name and ID, and read-only preconditions above before each update.
 
 1. Store each replacement value as a **new** Bitwarden item before putting it anywhere else.
    Generate distinct random values of at least 32 characters for `AUTH_SECRET` and
@@ -309,10 +345,13 @@ Worker before each command and complete the read-only preconditions above first.
    node scripts/staging-vault-to-env.mjs \
      "$AUTH_ITEM_ID" "$OPERATOR_ITEM_ID" "$RESEND_ITEM_ID"
    ```
-3. The owner then runs only the applicable Identity and Operator Web `wrangler secret put`
-   commands shown above, one at a time, entering each value at Wrangler's hidden prompt
-   and checking the result before the next command. A sender change also requires the
-   `RESEND_FROM` secret put. Do not run the separate E2E deployment sequence for rotation.
+3. List Secrets Store entries with the remote `secrets-store secret list` command above and
+   identify the exact secret ID. Run `wrangler secrets-store secret update
+   "$STAGING_SECRETS_STORE_ID" --secret-id <ID> --remote` for only the applicable entry,
+   entering its replacement value at Wrangler's hidden prompt and checking the result before
+   the next update. A sender change also requires updating `RESEND_FROM`. Do not run the
+   separate E2E deployment sequence for rotation. An account secret update changes the value
+   consumed by the bound Workers; coordinate it as a live change.
 4. Confirm a fresh staging sign-in, delivery to an allowed address from the verified
    sender, and a fresh merchant selection after rotating the Operator secret. Existing
    selection cookies will no longer verify. Avoid rotating the Operator secret during an

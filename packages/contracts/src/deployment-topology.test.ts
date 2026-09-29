@@ -67,6 +67,7 @@ describe('local and staging worker topology', () => {
       STAGING_ENVIRONMENT: 'staging',
       STAGING_PRODUCT_D1_ID: productDatabaseId,
       STAGING_AUTH_D1_ID: authDatabaseId,
+      STAGING_SECRETS_STORE_ID: '8f7a1cdced6342c18d223ece462fd88d',
       STAGING_OPERATOR_ORIGIN: 'https://operator.staging.example.com',
       STAGING_API_ORIGIN: 'https://api.staging.example.com',
       STAGING_PASSKEY_RP_ID: 'operator.staging.example.com',
@@ -110,6 +111,10 @@ describe('local and staging worker topology', () => {
       'routes = [{ pattern = "operator.staging.example.com", custom_domain = true }]',
     );
     expect(identityStaging).not.toMatch(/^routes\s*=/mu);
+    expect(identityStaging.match(/^\[\[secrets_store_secrets\]\]$/gmu) ?? [])
+      .toHaveLength(3);
+    expect(operatorStaging.match(/^\[\[secrets_store_secrets\]\]$/gmu) ?? [])
+      .toHaveLength(1);
   });
 
   test('provides local and non-interactive staging commands without declaring production', () => {

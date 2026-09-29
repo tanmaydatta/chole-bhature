@@ -11,6 +11,7 @@ describe('staging deployment preflight', () => {
       STAGING_ENVIRONMENT: 'staging',
       STAGING_PRODUCT_D1_ID: productId,
       STAGING_AUTH_D1_ID: authId,
+      STAGING_SECRETS_STORE_ID: '8f7a1cdced6342c18d223ece462fd88d',
       STAGING_OPERATOR_ORIGIN: 'https://operator.staging.wastd.dev',
       STAGING_API_ORIGIN: 'https://api.staging.wastd.dev',
       STAGING_PASSKEY_RP_ID: 'operator.staging.wastd.dev',

@@ -20,6 +20,7 @@ function validEnvironment(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv 
     STAGING_ENVIRONMENT: 'staging',
     STAGING_PRODUCT_D1_ID: 'd918b5cc-7ce4-4bf6-a33e-90c8335f2ef1',
     STAGING_AUTH_D1_ID: '6a65017f-df57-474e-bebb-e676e09377e5',
+    STAGING_SECRETS_STORE_ID: '8f7a1cdced6342c18d223ece462fd88d',
     STAGING_OPERATOR_ORIGIN: 'https://operator.staging.example.com',
     STAGING_API_ORIGIN: 'https://api.staging.example.com',
     STAGING_PASSKEY_RP_ID: 'operator.staging.example.com',

@@ -25,6 +25,7 @@ function validEnvironment(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv 
     STAGING_ENVIRONMENT: 'staging',
     STAGING_PRODUCT_D1_ID: productId,
     STAGING_AUTH_D1_ID: authId,
+    STAGING_SECRETS_STORE_ID: '8f7a1cdced6342c18d223ece462fd88d',
     STAGING_OPERATOR_ORIGIN: origin,
     STAGING_API_ORIGIN: apiOrigin,
     STAGING_PASSKEY_RP_ID: 'operator.staging.example.com',
@@ -215,12 +216,23 @@ head_sampling_rate = 1`);
       expect(capture.config).toContain(`PUBLIC_APP_ORIGIN = "${origin}"`);
       expect(capture.config).toContain('PASSKEY_RP_ID = "operator.staging.example.com"');
       expect(capture.config).toContain('service = "incentives-api-staging"');
-      expect(capture.config).not.toMatch(/AUTH_SECRET|RESEND_API_KEY|must-not-reach/);
+      for (const [binding, secret] of [
+        ['AUTH_SECRET_STORE', 'AUTH_SECRET'],
+        ['RESEND_API_KEY_STORE', 'RESEND_API_KEY'],
+        ['RESEND_FROM_STORE', 'RESEND_FROM'],
+      ]) {
+        expect(capture.config).toContain(`binding = "${binding}"`);
+        expect(capture.config).toContain(`secret_name = "${secret}"`);
+      }
+      expect(capture.config).toContain('store_id = "8f7a1cdced6342c18d223ece462fd88d"');
+      expect(capture.config).not.toContain('must-not-reach');
     } else {
       expect(capture.config).toContain('name = "incentives-operator-web-staging"');
       expect(capture.config).toContain('service = "incentives-identity-staging"');
       expect(capture.config).toContain('service = "incentives-api-staging"');
-      expect(capture.config).not.toMatch(/d1_databases|database_id|OPERATOR_SELECTION_SECRET/);
+      expect(capture.config).toContain('binding = "OPERATOR_SELECTION_SECRET_STORE"');
+      expect(capture.config).toContain('secret_name = "OPERATOR_SELECTION_SECRET"');
+      expect(capture.config).not.toMatch(/d1_databases|database_id|must-not-reach/);
     }
   });
 
@@ -232,6 +244,8 @@ head_sampling_rate = 1`);
     ['sentinel Product UUID', { STAGING_PRODUCT_D1_ID: '30000000-0000-0000-0000-000000000003' }],
     ['sentinel Auth UUID', { STAGING_AUTH_D1_ID: '20000000-0000-0000-0000-000000000002' }],
     ['equal database IDs', { STAGING_AUTH_D1_ID: productId }],
+    ['missing Secrets Store ID', { STAGING_SECRETS_STORE_ID: undefined }],
+    ['invalid Secrets Store ID', { STAGING_SECRETS_STORE_ID: 'replace-with-store-id' }],
     ['non-HTTPS origin', { STAGING_OPERATOR_ORIGIN: 'http://operator.staging.example.com' }],
     ['reserved origin', { STAGING_OPERATOR_ORIGIN: 'https://operator.example.invalid' }],
     ['origin path', { STAGING_OPERATOR_ORIGIN: `${origin}/admin` }],

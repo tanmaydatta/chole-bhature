@@ -27,7 +27,7 @@ export function replacePlaceholderSecrets(original, secrets) {
   return updated;
 }
 
-function readVaultItem(bwPath, id, key) {
+export function readVaultItem(bwPath, id, key) {
   if (!ITEM_ID_PATTERN.test(id)) {
     throw new Error(`Invalid ${key} item ID.`);
   }

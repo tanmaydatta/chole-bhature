@@ -656,7 +656,8 @@ export function createIdentityAuth(
             return {
               data: {
                 ...session,
-                ...(method === 'e2e-fixture' ? { expiresAt: new Date(Date.now() + 900_000) } : {}),
+                ...(method === 'e2e-fixture'
+                  ? { expiresAt: new Date(session.createdAt.getTime() + 900_000) } : {}),
                 authenticationMethod: method,
                 authenticatedAt: method === 'passkey'
                   ? Math.max(Date.now(), (passkeyAuthorization?.recoveryFence ?? 0) + 1)

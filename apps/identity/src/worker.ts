@@ -42,6 +42,7 @@ import {
   writeIdentityAudit,
 } from './recovery.js';
 import { createIdentityOperatorService } from './routes/internal.js';
+import { resolveIdentitySecrets, type IdentityWorkerEnv } from './staging-secrets.js';
 import type { CoreMerchantProvisioningClient } from './services/organizations.js';
 import { createOrganizationService } from './services/organizations.js';
 import { createIdentityE2eLifecycle, type E2eTenantIdentity } from './services/e2e-lifecycle.js';
@@ -142,8 +143,9 @@ function operatorService(env: Env) {
   });
 }
 
-export class IdentityOperatorService extends WorkerEntrypoint<Env> {
+export class IdentityOperatorService extends WorkerEntrypoint<IdentityWorkerEnv> {
   async getE2eCapabilities(input: unknown) {
+    await resolveIdentitySecrets(this.env);
     const parsed = input && typeof input === 'object'
       ? input as { sessionId?: unknown; correlationId?: unknown } : {};
     const correlationId = typeof parsed.correlationId === 'string'
@@ -181,6 +183,7 @@ export class IdentityOperatorService extends WorkerEntrypoint<Env> {
   }
 
   async createE2eAccount(input: unknown) {
+    const env = await resolveIdentitySecrets(this.env);
     const parsed = E2eFixtureAccountRequestSchema.safeParse(input);
     const correlationId = parsed.success ? parsed.data.correlationId : crypto.randomUUID();
     const failure = (code: 'NOT_FOUND' | 'INVALID_REQUEST' | 'UNAUTHORIZED'
@@ -209,7 +212,7 @@ export class IdentityOperatorService extends WorkerEntrypoint<Env> {
       if (!claim || claim.proofHash !== proofHash || claim.status !== 'active') {
         return failure('FORBIDDEN');
       }
-      const auth = createIdentityAuth(this.env);
+      const auth = createIdentityAuth(env);
       const fixtures = createIdentityE2eFixtures({
         database: this.env.AUTH_DB, appEnv: this.env.APP_ENV,
         createSession: (userId, runId, merchantId) => auth.createFixtureSession({
@@ -239,6 +242,7 @@ export class IdentityOperatorService extends WorkerEntrypoint<Env> {
   }
 
   private async e2eRunAction(input: unknown, action: 'preview' | 'dispose' | 'inspect') {
+    await resolveIdentitySecrets(this.env);
     const parsed = action === 'inspect'
       ? E2eRunInspectionRequestSchema.safeParse(input)
       : E2eRunActionRequestSchema.safeParse(input);
@@ -302,6 +306,11 @@ export class IdentityOperatorService extends WorkerEntrypoint<Env> {
   }
 
   async resolveBrowserPrincipal(input: IdentityResolveBrowserPrincipalRequest) {
+    const env = await resolveIdentitySecrets(this.env);
+    return this.resolveBrowserPrincipalWithEnv(input, env);
+  }
+
+  private async resolveBrowserPrincipalWithEnv(input: IdentityResolveBrowserPrincipalRequest, env: Env) {
     const parsed = IdentityResolveBrowserPrincipalRequestSchema.safeParse(input);
     const correlationId = parsed.success && parsed.data.correlationId
       ? parsed.data.correlationId
@@ -317,7 +326,7 @@ export class IdentityOperatorService extends WorkerEntrypoint<Env> {
     try {
       const headers = new Headers();
       if (parsed.data.cookieHeader) headers.set('cookie', parsed.data.cookieHeader);
-      const session = await createIdentityAuth(this.env).getSession(headers);
+      const session = await createIdentityAuth(env).getSession(headers);
       if (!session) {
         return ApiErrorSchema.parse({
           error: {
@@ -326,7 +335,7 @@ export class IdentityOperatorService extends WorkerEntrypoint<Env> {
           },
         });
       }
-      const service = operatorService(this.env);
+      const service = operatorService(env);
       const base = await service.resolvePrincipal({
         sessionId: session.session.id,
         correlationId,
@@ -372,12 +381,13 @@ export class IdentityOperatorService extends WorkerEntrypoint<Env> {
   }
 
   async resolvePrincipal(input: IdentityResolvePrincipalRequest) {
-    return operatorService(this.env).resolvePrincipal(input);
+    return operatorService(await resolveIdentitySecrets(this.env)).resolvePrincipal(input);
   }
 
   async listClients(input: IdentityRootBrowserRequest) {
+    const env = await resolveIdentitySecrets(this.env);
     const parsed = IdentityRootBrowserRequestSchema.parse(input);
-    const principal = await this.resolveBrowserPrincipal(parsed);
+    const principal = await this.resolveBrowserPrincipalWithEnv(parsed, env);
     if ('error' in principal) return principal;
     if (principal.platformRole !== 'root') {
       return ApiErrorSchema.parse({
@@ -387,18 +397,19 @@ export class IdentityOperatorService extends WorkerEntrypoint<Env> {
         },
       });
     }
-    return operatorService(this.env).listClients({
+    return operatorService(env).listClients({
       sessionId: principal.sessionId,
       correlationId: parsed.correlationId,
     });
   }
 
   async getProvisioningForRoot(input: IdentityRootProvisioningRequest) {
+    const env = await resolveIdentitySecrets(this.env);
     const parsed = IdentityRootProvisioningRequestSchema.parse(input);
-    const principal = await this.resolveBrowserPrincipal({
+    const principal = await this.resolveBrowserPrincipalWithEnv({
       cookieHeader: parsed.cookieHeader,
       correlationId: parsed.correlationId,
-    });
+    }, env);
     if ('error' in principal) return principal;
     if (principal.platformRole !== 'root') {
       return ApiErrorSchema.parse({
@@ -408,7 +419,7 @@ export class IdentityOperatorService extends WorkerEntrypoint<Env> {
         },
       });
     }
-    return operatorService(this.env).getProvisioningForRoot({
+    return operatorService(env).getProvisioningForRoot({
       sessionId: principal.sessionId,
       provisioningId: parsed.provisioningId,
       correlationId: parsed.correlationId,
@@ -416,39 +427,39 @@ export class IdentityOperatorService extends WorkerEntrypoint<Env> {
   }
 
   async provisionClient(input: IdentityProvisionClientRequest) {
-    return operatorService(this.env).provisionClient(input);
+    return operatorService(await resolveIdentitySecrets(this.env)).provisionClient(input);
   }
 
   async getProvisioning(input: IdentityGetProvisioningRequest) {
-    return operatorService(this.env).getProvisioning(input);
+    return operatorService(await resolveIdentitySecrets(this.env)).getProvisioning(input);
   }
 
   async createInvitation(input: IdentityCreateInvitationRequest) {
-    return operatorService(this.env).createInvitation(input);
+    return operatorService(await resolveIdentitySecrets(this.env)).createInvitation(input);
   }
 
   async listMembers(input: IdentityListMembersRequest) {
-    return operatorService(this.env).listMembers(input);
+    return operatorService(await resolveIdentitySecrets(this.env)).listMembers(input);
   }
 
   async listInvitations(input: IdentityListInvitationsRequest) {
-    return operatorService(this.env).listInvitations(input);
+    return operatorService(await resolveIdentitySecrets(this.env)).listInvitations(input);
   }
 
   async retryInvitation(input: IdentityRetryInvitationRequest) {
-    return operatorService(this.env).retryInvitation(input);
+    return operatorService(await resolveIdentitySecrets(this.env)).retryInvitation(input);
   }
 
   async acceptInvitation(input: IdentityAcceptInvitationRequest) {
-    return operatorService(this.env).acceptInvitation(input);
+    return operatorService(await resolveIdentitySecrets(this.env)).acceptInvitation(input);
   }
 
   async removeMember(input: IdentityRemoveMemberRequest) {
-    return operatorService(this.env).removeMember(input);
+    return operatorService(await resolveIdentitySecrets(this.env)).removeMember(input);
   }
 
   async changeMemberRole(input: IdentityChangeMemberRoleRequest) {
-    return operatorService(this.env).changeMemberRole(input);
+    return operatorService(await resolveIdentitySecrets(this.env)).changeMemberRole(input);
   }
 }
 
@@ -456,8 +467,10 @@ export default {
   async fetch(originalRequest, env, executionContext) {
     const correlationId = originalRequest.headers.get('x-correlation-id') ?? crypto.randomUUID();
     const request = withCorrelationId(originalRequest, correlationId);
+    let resolvedEnv: Env | undefined;
     try {
-      validateIdentityEnvironment(env);
+      resolvedEnv = await resolveIdentitySecrets(env);
+      validateIdentityEnvironment(resolvedEnv);
       const url = new URL(request.url);
       let response: Response;
       if (
@@ -468,28 +481,28 @@ export default {
       } else if (url.pathname.startsWith('/auth/sign-up/')) {
         response = signupDisabled(correlationId);
       } else if (url.pathname === '/auth/root/recovery' && request.method === 'POST') {
-        response = await beginRootRecovery(request, env, correlationId);
+        response = await beginRootRecovery(request, resolvedEnv, correlationId);
       } else if (
         url.pathname === '/auth/root/recovery/exchange'
         && request.method === 'POST'
       ) {
-        response = await exchangeRecoveryGrant(request, env, correlationId);
+        response = await exchangeRecoveryGrant(request, resolvedEnv, correlationId);
       } else if (
         url.pathname === '/auth/root/recovery/rotate-codes'
         && request.method === 'POST'
       ) {
-        const identity = createIdentityAuth(env);
+        const identity = createIdentityAuth(resolvedEnv);
         const session = await identity.getSession(request.headers);
         const recovery = session
-          ? await getRecoverySession(env, session.session.id)
+          ? await getRecoverySession(resolvedEnv, session.session.id)
           : null;
         if (recovery) {
-          response = await rotateRecoveryCodes(env, recovery.sessionId, correlationId);
+          response = await rotateRecoveryCodes(resolvedEnv, recovery.sessionId, correlationId);
         } else if (
           session?.session.authenticationMethod === 'passkey'
           && session.session.recoveryOnly === false
         ) {
-          response = await reissueRecoveryCodes(env, session.user.id, correlationId);
+          response = await reissueRecoveryCodes(resolvedEnv, session.user.id, correlationId);
         } else {
           response = errorResponse(
               correlationId,
@@ -499,15 +512,17 @@ export default {
             );
         }
       } else {
-        const identity = createIdentityAuth(env);
+        const identity = createIdentityAuth(resolvedEnv);
         response = await identity.handler(request, executionContext);
       }
       return correlated(response, correlationId);
     } catch {
-      await writeIdentityAudit(env, correlationId, {
-        actorKind: 'system', actorId: 'identity', action: 'identity.worker_failure',
-        targetType: 'identity', targetId: 'worker', outcome: 'failed',
-      });
+      if (resolvedEnv) {
+        await writeIdentityAudit(resolvedEnv, correlationId, {
+          actorKind: 'system', actorId: 'identity', action: 'identity.worker_failure',
+          targetType: 'identity', targetId: 'worker', outcome: 'failed',
+        });
+      }
       return errorResponse(
         correlationId,
         503,
@@ -517,4 +532,4 @@ export default {
       );
     }
   },
-} satisfies ExportedHandler<Env>;
+} satisfies ExportedHandler<IdentityWorkerEnv>;
