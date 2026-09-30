@@ -14,19 +14,21 @@ function quarantine(message, alert) {
 }
 
 function d1Name(inventory, role) {
-  if (!['api', 'identity'].includes(role)) return null;
-  return role === 'identity' ? inventory.names.auth : inventory.names.api;
+  if (!['product', 'auth'].includes(role)) return null;
+  return role === 'product' ? inventory.names.product : inventory.names.auth;
 }
 
 function workerName(inventory, role) {
-  return ['api', 'identity', 'operator', 'product'].includes(role) ? inventory.names[role] : null;
+  return ['api', 'identity', 'operator'].includes(role) ? inventory.names[role] : null;
 }
 
 function result(response) {
   if (!response || typeof response !== 'object') throw new TypeError('Cloudflare transport returned an invalid response.');
   if (response.status === 404) return { missing: true };
-  if (response.status && response.status >= 400) throw new Error(`Cloudflare API request failed with status ${response.status}.`);
-  return { result: response.result };
+  if (!Number.isInteger(response.status) || response.status < 200 || response.status >= 300 || response.success !== true || !Object.hasOwn(response, 'result')) {
+    throw new TypeError('Cloudflare API envelope is malformed or unsuccessful.');
+  }
+  return { result: response.result, resultInfo: response.result_info };
 }
 
 function cloneWith(inventory, section, role, id, now) {
@@ -37,7 +39,17 @@ function cloneWith(inventory, section, role, id, now) {
   };
 }
 
-function normalizeWorkerBindings(rawBindings) {
+function normalizeAccessGraph(app) {
+  const destination = Array.isArray(app?.destinations) && app.destinations.length === 1 ? app.destinations[0] : null;
+  const policy = Array.isArray(app?.policies) && app.policies.length === 1 ? app.policies[0] : null;
+  const include = Array.isArray(policy?.include) && policy.include.length === 1 ? policy.include[0]?.service_token : null;
+  if (!destination || destination.type !== 'worker' || typeof destination.worker_id !== 'string'
+    || !Array.isArray(destination.overrides) || destination.overrides.length !== 0 || !policy || policy.decision !== 'non_identity'
+    || !include || typeof include.token_id !== 'string') throw new TypeError('Cloudflare Access application graph is unsupported or malformed.');
+  return { workerId: destination.worker_id, tokenId: include.token_id, decision: policy.decision, exclusive: true, publicOverrides: false };
+}
+
+function normalizeWorkerBindings(rawBindings, workerTags) {
   if (!Array.isArray(rawBindings)) throw new TypeError('Cloudflare Worker settings bindings are invalid.');
   const d1 = {};
   const services = {};
@@ -49,8 +61,8 @@ function normalizeWorkerBindings(rawBindings) {
       d1[binding.name] = binding.id;
       continue;
     }
-    if (binding.type === 'service' && typeof binding.service === 'string' && !Object.hasOwn(services, binding.name)) {
-      services[binding.name] = binding.service;
+    if (binding.type === 'service' && typeof binding.service === 'string' && typeof workerTags[binding.service] === 'string' && !Object.hasOwn(services, binding.name)) {
+      services[binding.name] = workerTags[binding.service];
       continue;
     }
     throw new TypeError('Cloudflare Worker settings contain an unsupported binding.');
@@ -58,12 +70,26 @@ function normalizeWorkerBindings(rawBindings) {
   return { d1, services };
 }
 
-export function createCloudflareClient({ accountId, inventory: rawInventory, transport, store, alert, now = () => new Date().toISOString(), workerUpload, accessAppCreate, serviceTokenCreate }) {
+export function createCloudflareClient({ accountId, inventory: rawInventory, transport, store, alert, now = () => new Date().toISOString(), accessAppCreate, serviceTokenCreate }) {
   let inventory = validateInventory(rawInventory);
+  let poisoned = false;
   if (accountId !== inventory.cloudflare.accountId) quarantine('Cloudflare account is not certified by inventory.', alert);
   if (!transport || typeof transport.request !== 'function') throw new TypeError('Expected an injected Cloudflare transport with request().');
   const root = `/accounts/${accountId}`;
-  const call = async (method, path, body) => result(await transport.request(body === undefined ? { method, path } : { method, path, body }));
+  const call = async (method, path, body) => {
+    if (poisoned) quarantine('Cloudflare client is quarantined after ambiguous persistence.', alert);
+    try { return result(await transport.request(body === undefined ? { method, path } : { method, path, body })); }
+    catch (error) { poisoned = true; quarantine(error.message, alert); }
+  };
+  const completeList = (response, validEntry) => {
+    if (!Array.isArray(response.result) || !response.resultInfo || !Number.isSafeInteger(response.resultInfo.total_count) || response.resultInfo.total_count !== response.result.length) {
+      poisoned = true; quarantine('Cloudflare list response is incomplete or malformed.', alert);
+    }
+    if (response.result.some(entry => !validEntry(entry))) {
+      poisoned = true; quarantine('Cloudflare list contains a malformed resource entry.', alert);
+    }
+    return response.result;
+  };
   const evidence = async value => {
     if (!store || typeof store.put !== 'function') throw new TypeError('Expected a restricted evidence store with put().');
     await store.put(value, { classification: 'controller-evidence', retentionDays: 7, restricted: true });
@@ -71,21 +97,22 @@ export function createCloudflareClient({ accountId, inventory: rawInventory, tra
   const intent = async (kind, exactName) => evidence({ type: 'create-intent', key: inventory.key, kind, exactName, startedAt: now(), noPreexistingMatch: true });
   const check = async next => { inventory = validateInventory(next); await checkpoint(inventory, store); };
 
-  async function listD1() { return (await call('GET', `${root}/d1/database`)).result; }
+  async function listD1() { return completeList(await call('GET', `${root}/d1/database`), entry => typeof entry?.name === 'string' && typeof entry?.uuid === 'string'); }
   async function getD1(uuid) {
-    if (typeof uuid !== 'string' || uuid !== inventory.cloudflare.d1Ids.api && uuid !== inventory.cloudflare.d1Ids.identity) quarantine('D1 target is not certified by inventory.', alert);
+    if (typeof uuid !== 'string' || uuid !== inventory.cloudflare.d1Ids.product && uuid !== inventory.cloudflare.d1Ids.auth) quarantine('D1 target is not certified by inventory.', alert);
     return call('GET', `${root}/d1/database/${uuid}`);
   }
   async function createD1(role) {
     const name = d1Name(inventory, role);
     if (!name) quarantine('D1 role is not certified by inventory.', alert);
+    if (inventory.cloudflare.d1Ids[role]) quarantine('D1 role already has a recorded exact ID.', alert);
     const listed = await listD1();
     if (!Array.isArray(listed)) throw new TypeError('Cloudflare D1 list response is invalid.');
     if (listed.some(database => database?.name === name)) quarantine('D1 already exists; create is ambiguous.', alert);
     await intent(`d1:${role}`, name);
     const created = (await call('POST', `${root}/d1/database`, { name })).result;
     if (!created || created.name !== name || typeof created.uuid !== 'string') quarantine('D1 create response is not an exact identity.', alert);
-    await check(cloneWith(inventory, 'd1Ids', role, created.uuid, now));
+    try { await check(cloneWith(inventory, 'd1Ids', role, created.uuid, now)); } catch (error) { poisoned = true; quarantine(error.message, alert); }
     return created;
   }
   async function deleteD1(role) {
@@ -99,7 +126,7 @@ export function createCloudflareClient({ accountId, inventory: rawInventory, tra
     await call('DELETE', `${root}/d1/database/${id}`);
     return { status: 'deleted' };
   }
-  async function listWorkers() { return (await call('GET', `${root}/workers/scripts`)).result; }
+  async function listWorkers() { return completeList(await call('GET', `${root}/workers/scripts`), entry => typeof entry?.id === 'string' && typeof entry?.tag === 'string'); }
   async function getWorker(role) {
     const name = workerName(inventory, role);
     const id = inventory.cloudflare.workerIds[role];
@@ -111,49 +138,23 @@ export function createCloudflareClient({ accountId, inventory: rawInventory, tra
     if (matches.length !== 1) quarantine('Worker lookup is ambiguous.', alert);
     const settings = await call('GET', `${root}/workers/scripts/${name}/settings`);
     if (settings.missing) return { missing: true };
-    return { name, tag: matches[0].tag, bindings: normalizeWorkerBindings(settings.result?.bindings) };
+    const tags = Object.fromEntries(listed.filter(script => typeof script?.id === 'string' && typeof script?.tag === 'string').map(script => [script.id, script.tag]));
+    return { name, tag: matches[0].tag, bindings: normalizeWorkerBindings(settings.result?.bindings, tags) };
   }
   async function deleteWorker(role) {
-    const name = workerName(inventory, role);
-    if (!name) quarantine('Worker role is not certified by inventory.', alert);
-    const current = await getWorker(role);
-    if (current.missing) return { status: 'missing' };
-    try { assertOwnedResource(inventory, { accountId, kind: 'worker', role, name: current.name, id: current.tag, bindings: current.bindings }, `worker:${role}`); } catch (error) { quarantine(error.message, alert); }
-    await call('DELETE', `${root}/workers/scripts/${name}`);
-    return { status: 'deleted' };
+    return createWorker(role);
   }
   async function createWorker(role) {
-    const name = workerName(inventory, role);
-    if (!name) quarantine('Worker role is not certified by inventory.', alert);
-    if (typeof workerUpload !== 'function') throw new TypeError('Expected a protected workerUpload builder.');
-    const listed = await listWorkers();
-    if (!Array.isArray(listed)) throw new TypeError('Cloudflare Worker list response is invalid.');
-    if (listed.some(script => script?.id === name)) quarantine('Worker already exists; create is ambiguous.', alert);
-    await intent(`worker:${role}`, name);
-    const body = await workerUpload({ role, name, inventory: structuredClone(inventory) });
-    if (!body || typeof body !== 'object') throw new TypeError('Protected workerUpload builder returned an invalid body.');
-    const created = (await call('PUT', `${root}/workers/scripts/${name}`, body)).result;
-    if (!created || typeof created.tag !== 'string' || created.tag.length === 0) quarantine('Worker create response is missing its immutable tag.', alert);
-    await check(cloneWith(inventory, 'workerIds', role, created.tag, now));
-    return created;
+    if (!workerName(inventory, role)) quarantine('Worker role is not certified by inventory.', alert);
+    if (typeof alert === 'function') alert({ status: 'unsupported', reason: 'immutable-worker-mutation-unproven' });
+    return { status: 'unsupported', reason: 'immutable-worker-mutation-unproven' };
   }
   async function updateWorker(role) {
-    const name = workerName(inventory, role);
-    if (!name) quarantine('Worker role is not certified by inventory.', alert);
-    if (typeof workerUpload !== 'function') throw new TypeError('Expected a protected workerUpload builder.');
-    const current = await getWorker(role);
-    if (current.missing) return { status: 'missing' };
-    try { assertOwnedResource(inventory, { accountId, kind: 'worker', role, name: current.name, id: current.tag, bindings: current.bindings }, `worker:${role}`); } catch (error) { quarantine(error.message, alert); }
-    const body = await workerUpload({ role, name, inventory: structuredClone(inventory), operation: 'update' });
-    if (!body || typeof body !== 'object') throw new TypeError('Protected workerUpload builder returned an invalid body.');
-    return (await call('PUT', `${root}/workers/scripts/${name}`, body)).result;
+    return createWorker(role);
   }
   async function setWorkerSubdomain(role, enabled) {
     if (typeof enabled !== 'boolean') throw new TypeError('Expected subdomain enabled to be boolean.');
-    const current = await getWorker(role);
-    if (current.missing) return { status: 'missing' };
-    try { assertOwnedResource(inventory, { accountId, kind: 'worker', role, name: current.name, id: current.tag, bindings: current.bindings }, `worker:${role}`); } catch (error) { quarantine(error.message, alert); }
-    return (await call('POST', `${root}/workers/scripts/${current.name}/subdomain`, { enabled, previews_enabled: false })).result;
+    return createWorker(role);
   }
   async function queryD1(role, sql, params = []) {
     const id = inventory.cloudflare.d1Ids[role];
@@ -166,10 +167,11 @@ export function createCloudflareClient({ accountId, inventory: rawInventory, tra
   function accessAppName(role) {
     return role === 'api' ? inventory.names.accessApi : role === 'operator' ? inventory.names.accessOperator : null;
   }
-  async function listAccessApps() { return (await call('GET', `${root}/access/apps`)).result; }
+  async function listAccessApps() { return completeList(await call('GET', `${root}/access/apps`), entry => typeof entry?.id === 'string' && typeof entry?.name === 'string'); }
   async function createAccessApp(role) {
     const name = accessAppName(role);
     if (!name) quarantine('Access application role is not certified by inventory.', alert);
+    if (inventory.cloudflare.accessAppIds[role]) quarantine('Access application role already has a recorded exact ID.', alert);
     if (typeof accessAppCreate !== 'function') throw new TypeError('Expected a protected accessAppCreate builder.');
     const listed = await listAccessApps();
     if (!Array.isArray(listed)) throw new TypeError('Cloudflare Access app list response is invalid.');
@@ -177,6 +179,10 @@ export function createCloudflareClient({ accountId, inventory: rawInventory, tra
     await intent(`accessApp:${role}`, name);
     const body = await accessAppCreate({ role, name, inventory: structuredClone(inventory) });
     if (!body || typeof body !== 'object') throw new TypeError('Protected accessAppCreate builder returned an invalid body.');
+    try {
+      if (body.name !== name) throw new TypeError('Protected Access application name is not controller-derived.');
+      assertOwnedResource({ ...inventory, cloudflare: { ...inventory.cloudflare, accessAppIds: { ...inventory.cloudflare.accessAppIds, [role]: '__pending__' } } }, { accountId, kind: 'accessApp', role, name, id: '__pending__', graph: normalizeAccessGraph(body) }, `accessApp:${role}`);
+    } catch (error) { poisoned = true; quarantine(error.message, alert); }
     const created = (await call('POST', `${root}/access/apps`, body)).result;
     if (!created || created.name !== name || typeof created.id !== 'string' || created.id.length === 0) quarantine('Access application create response is not an exact identity.', alert);
     await check(cloneWith(inventory, 'accessAppIds', role, created.id, now));
@@ -191,13 +197,14 @@ export function createCloudflareClient({ accountId, inventory: rawInventory, tra
     const matches = listed.filter(app => app?.id === id);
     if (matches.length === 0) return { status: 'missing' };
     if (matches.length !== 1) quarantine('Access application lookup is ambiguous.', alert);
-    try { assertOwnedResource(inventory, { accountId, kind: 'accessApp', role, name: matches[0].name, id: matches[0].id }, `accessApp:${role}`); } catch (error) { quarantine(error.message, alert); }
+    try { assertOwnedResource(inventory, { accountId, kind: 'accessApp', role, name: matches[0].name, id: matches[0].id, graph: normalizeAccessGraph(matches[0]) }, `accessApp:${role}`); } catch (error) { poisoned = true; quarantine(error.message, alert); }
     await call('DELETE', `${root}/access/apps/${id}`);
     return { status: 'deleted' };
   }
-  async function listServiceTokens() { return (await call('GET', `${root}/access/service_tokens`)).result; }
+  async function listServiceTokens() { return completeList(await call('GET', `${root}/access/service_tokens`), entry => typeof entry?.id === 'string' && typeof entry?.name === 'string'); }
   async function createServiceToken() {
     const name = inventory.names.token;
+    if (inventory.cloudflare.tokenId) quarantine('Service token already has a recorded exact ID.', alert);
     if (typeof serviceTokenCreate !== 'function') throw new TypeError('Expected a protected serviceTokenCreate builder.');
     const listed = await listServiceTokens();
     if (!Array.isArray(listed)) throw new TypeError('Cloudflare service token list response is invalid.');
@@ -207,8 +214,9 @@ export function createCloudflareClient({ accountId, inventory: rawInventory, tra
     if (!body || typeof body !== 'object') throw new TypeError('Protected serviceTokenCreate builder returned an invalid body.');
     const created = (await call('POST', `${root}/access/service_tokens`, body)).result;
     if (!created || created.name !== name || typeof created.id !== 'string' || created.id.length === 0) quarantine('Service token create response is not an exact identity.', alert);
-    inventory = validateInventory({ ...inventory, cloudflare: { ...inventory.cloudflare, tokenId: created.id }, updatedAt: now() });
-    await checkpoint(inventory, store);
+    const candidate = validateInventory({ ...inventory, cloudflare: { ...inventory.cloudflare, tokenId: created.id }, updatedAt: now() });
+    try { await checkpoint(candidate, store); } catch (error) { poisoned = true; quarantine(error.message, alert); }
+    inventory = candidate;
     return created;
   }
   async function deleteServiceToken() {

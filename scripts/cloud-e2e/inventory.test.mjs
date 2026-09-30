@@ -17,7 +17,7 @@ const names = resourceNames(key);
 const inventory = {
   key,
   names,
-  cloudflare: { accountId: 'account-1', workerIds: { api: 'worker-tag-1' }, d1Ids: { api: '11111111-1111-4111-8111-111111111111' }, accessAppIds: { api: 'access-app-1' }, tokenId: 'token-1' },
+  cloudflare: { accountId: 'account-1', workerIds: { api: 'worker-tag-1' }, d1Ids: { product: '11111111-1111-4111-8111-111111111111', auth: '22222222-2222-4222-8222-222222222222' }, accessAppIds: { api: 'access-app-1' }, tokenId: 'token-1' },
   stage: 'active',
   createdAt: '2026-09-30T10:00:00.000Z',
   updatedAt: '2026-09-30T10:00:00.000Z',
@@ -36,26 +36,26 @@ test('checkpoints only seven-day restricted controller evidence and never creden
 test('requires exact account, immutable Worker tag, UUID, and binding graph', () => {
   assert.doesNotThrow(() => assertOwnedResource(inventory, {
     accountId: 'account-1', kind: 'worker', role: 'api', name: inventory.names.api, id: 'worker-tag-1',
-    bindings: { d1: { DB: inventory.cloudflare.d1Ids.api }, services: {} },
+    bindings: { d1: { DB: inventory.cloudflare.d1Ids.product }, services: {} },
   }, 'worker:api'));
   for (const discovered of [
-    { accountId: 'other-account', kind: 'worker', role: 'api', name: inventory.names.api, id: 'worker-tag-1', bindings: { d1: { DB: inventory.cloudflare.d1Ids.api }, services: {} } },
-    { accountId: 'account-1', kind: 'worker', role: 'api', name: inventory.names.api, id: 'worker-tag-changed', bindings: { d1: { DB: inventory.cloudflare.d1Ids.api }, services: {} } },
-    { accountId: 'account-1', kind: 'worker', role: 'api', name: inventory.names.api, id: 'worker-tag-1', bindings: { d1: { DB: inventory.cloudflare.d1Ids.api }, services: { OTHER: 'worker-tag-1' } } },
-    { accountId: 'account-1', kind: 'd1', role: 'api', name: 'demo', id: '11111111-1111-4111-8111-111111111111' },
-    { accountId: 'account-1', kind: 'd1', role: 'api', name: inventory.names.auth, id: '11111111-1111-4111-8111-111111111111' },
-  ]) assert.throws(() => assertOwnedResource(inventory, discovered, discovered.kind === 'd1' ? 'd1:api' : 'worker:api'), InventoryQuarantineError);
+    { accountId: 'other-account', kind: 'worker', role: 'api', name: inventory.names.api, id: 'worker-tag-1', bindings: { d1: { DB: inventory.cloudflare.d1Ids.product }, services: {} } },
+    { accountId: 'account-1', kind: 'worker', role: 'api', name: inventory.names.api, id: 'worker-tag-changed', bindings: { d1: { DB: inventory.cloudflare.d1Ids.product }, services: {} } },
+    { accountId: 'account-1', kind: 'worker', role: 'api', name: inventory.names.api, id: 'worker-tag-1', bindings: { d1: { DB: inventory.cloudflare.d1Ids.product }, services: { OTHER: 'worker-tag-1' } } },
+    { accountId: 'account-1', kind: 'd1', role: 'product', name: 'demo', id: inventory.cloudflare.d1Ids.product },
+    { accountId: 'account-1', kind: 'd1', role: 'product', name: inventory.names.auth, id: inventory.cloudflare.d1Ids.product },
+  ]) assert.throws(() => assertOwnedResource(inventory, discovered, discovered.kind === 'd1' ? 'd1:product' : 'worker:api'), InventoryQuarantineError);
 });
 
 test('discovery rejects matching prefixes, short hashes, untrusted inventory, and crash recovery without independent audit proof', async () => {
   const foreign = { ...inventory, cloudflare: { ...inventory.cloudflare, workerIds: {} } };
   const api = {
     async loadCheckpoint() { return { inventory: foreign, intents: [] }; },
-    async listWorkers() { return [{ name: inventory.names.api, tag: 'foreign-tag' }]; },
+    async listWorkers() { return [{ id: inventory.names.api, tag: 'foreign-tag' }]; },
     async listD1() { return []; },
     async listAccessApps() { return []; },
     async listServiceTokens() { return []; },
-    async listAudit() { return []; },
+    async listAudit() { return []; }, controllerTokenId: 'controller-token',
   };
   await assert.rejects(discoverRun(key, api), InventoryQuarantineError);
   await assert.rejects(discoverRun({ ...key, pr: 43 }, api), InventoryQuarantineError);
@@ -65,8 +65,8 @@ test('crash recovery records only an exact read plus independently matching audi
   const writes = [];
   const api = {
     async loadCheckpoint() { return { inventory: { ...inventory, stage: 'creating', cloudflare: { ...inventory.cloudflare, workerIds: {} } }, intents: [{ key, kind: 'worker:api', exactName: inventory.names.api, startedAt: '2026-09-30T10:01:00.000Z', noPreexistingMatch: true }] }; },
-    async listWorkers() { return [{ name: inventory.names.api, tag: 'worker-tag-2' }]; },
-    async getWorker(name) { return { name, tag: 'worker-tag-2', bindings: { d1: { DB: inventory.cloudflare.d1Ids.api }, services: {} } }; },
+    async listWorkers() { return [{ id: inventory.names.api, tag: 'worker-tag-2' }]; },
+    async getWorker(name) { return { name, tag: 'worker-tag-2', bindings: { d1: { DB: inventory.cloudflare.d1Ids.product }, services: {} } }; },
     async listD1() { return []; }, async listAccessApps() { return []; }, async listServiceTokens() { return []; },
     async listAudit() { return []; },
     controllerTokenId: 'controller-token',
@@ -82,14 +82,44 @@ test('crash recovery records only an exact read plus independently matching audi
 test('D1 recovery requires the exact UUID and an independently matching POST audit entry', async () => {
   const writes = [];
   const api = {
-    async loadCheckpoint() { return { inventory: { ...inventory, stage: 'creating', cloudflare: { ...inventory.cloudflare, d1Ids: {} } }, intents: [{ key, kind: 'd1:api', exactName: inventory.names.api, startedAt: '2026-09-30T10:01:00.000Z', noPreexistingMatch: true }] }; },
+    async loadCheckpoint() { return { inventory: { ...inventory, stage: 'creating', cloudflare: { ...inventory.cloudflare, d1Ids: {} } }, intents: [{ key, kind: 'd1:product', exactName: inventory.names.product, startedAt: '2026-09-30T10:01:00.000Z', noPreexistingMatch: true }] }; },
     async listWorkers() { return []; },
-    async listD1() { return [{ name: inventory.names.api, uuid: '22222222-2222-4222-8222-222222222222' }]; },
+    async listD1() { return [{ name: inventory.names.product, uuid: '33333333-3333-4333-8333-333333333333' }]; },
     async listAccessApps() { return []; }, async listServiceTokens() { return []; },
-    async listAudit() { return [{ actor: { token_id: 'controller-token' }, action: { type: 'create', result: true, time: '2026-09-30T10:01:01.000Z' }, resource: { id: '22222222-2222-4222-8222-222222222222' }, raw: { method: 'POST', uri: '/accounts/account-1/d1/database' } }]; },
+    async listAudit() { return [{ actor: { token_id: 'controller-token' }, action: { type: 'create', result: true, time: '2026-09-30T10:01:01.000Z' }, resource: { id: '33333333-3333-4333-8333-333333333333' }, raw: { method: 'POST', uri: '/accounts/account-1/d1/database' } }]; },
     controllerTokenId: 'controller-token', async saveCheckpoint(value) { writes.push(value); },
   };
   const recovered = await discoverRun(key, api);
-  assert.equal(recovered.cloudflare.d1Ids.api, '22222222-2222-4222-8222-222222222222');
+  assert.equal(recovered.cloudflare.d1Ids.product, '33333333-3333-4333-8333-333333333333');
   assert.equal(writes.length, 1);
+});
+
+test('uses the required three-Worker/two-D1 topology and preserves incomplete discovery', async () => {
+  const correct = {
+    ...inventory,
+    cloudflare: { ...inventory.cloudflare, workerIds: { api: 'worker-tag-1', identity: 'worker-tag-2', operator: 'worker-tag-3' }, d1Ids: { product: '11111111-1111-4111-8111-111111111111', auth: '22222222-2222-4222-8222-222222222222' } },
+  };
+  assert.doesNotThrow(() => assertOwnedResource(correct, { accountId: 'account-1', kind: 'd1', role: 'product', name: names.product, id: correct.cloudflare.d1Ids.product }, 'd1:product'));
+  const api = { async loadCheckpoint() { return { inventory: { ...correct, stage: 'creating', cloudflare: { ...correct.cloudflare, workerIds: {}, d1Ids: {}, accessAppIds: {}, tokenId: null } }, intents: [] }; }, async listWorkers() { return []; }, async listD1() { return []; }, async listAccessApps() { return []; }, async listServiceTokens() { return []; }, controllerTokenId: 'controller-token', alert() {} };
+  assert.equal((await discoverRun(key, api)).stage, 'creating');
+});
+
+test('never accepts an audit recovery without a nonempty trusted actor token', async () => {
+  const api = {
+    async loadCheckpoint() { return { inventory: { ...inventory, stage: 'creating', cloudflare: { ...inventory.cloudflare, workerIds: {} } }, intents: [{ key, kind: 'worker:api', exactName: inventory.names.api, startedAt: '2026-09-30T10:01:00.000Z', noPreexistingMatch: true }] }; },
+    async listWorkers() { return [{ id: inventory.names.api, tag: 'worker-tag-2' }]; }, async getWorker() { return { tag: 'worker-tag-2', bindings: { d1: { DB: inventory.cloudflare.d1Ids.product }, services: {} } }; }, async listD1() { return []; }, async listAccessApps() { return []; }, async listServiceTokens() { return []; },
+    async listAudit() { return [{ actor: {}, action: { type: 'create', result: true, time: '2026-09-30T10:01:01.000Z' }, resource: { id: 'worker-tag-2' }, raw: { method: 'PUT', uri: `/accounts/account-1/workers/scripts/${inventory.names.api}` } }]; }, alert() {},
+  };
+  await assert.rejects(discoverRun(key, api), InventoryQuarantineError);
+});
+
+test('does not return recovered IDs before saveCheckpoint durably succeeds and alerts malformed evidence', async () => {
+  const alerts = [];
+  const api = {
+    async loadCheckpoint() { return { inventory: { ...inventory, stage: 'creating', cloudflare: { ...inventory.cloudflare, d1Ids: { auth: inventory.cloudflare.d1Ids.auth } } }, intents: [{ key, kind: 'd1:product', exactName: inventory.names.product, startedAt: '2026-09-30T10:01:00.000Z', noPreexistingMatch: true }] }; },
+    async listWorkers() { return []; }, async listD1() { return [{ name: inventory.names.product, uuid: '33333333-3333-4333-8333-333333333333' }]; }, async listAccessApps() { return []; }, async listServiceTokens() { return []; },
+    async listAudit() { return [{ actor: { token_id: 'controller-token' }, action: { type: 'create', result: true, time: '2026-09-30T10:01:01.000Z' }, resource: { id: '33333333-3333-4333-8333-333333333333' }, raw: { method: 'POST', uri: '/accounts/account-1/d1/database' } }]; }, controllerTokenId: 'controller-token', alert: value => alerts.push(value),
+  };
+  await assert.rejects(discoverRun(key, api), InventoryQuarantineError);
+  assert.equal(alerts.length, 1);
 });

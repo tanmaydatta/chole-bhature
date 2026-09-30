@@ -3,8 +3,8 @@ import { parseStackKey, resourceNames } from './key.mjs';
 const ISO_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 const roles = {
-  worker: ['api', 'identity', 'operator', 'product'],
-  d1: ['api', 'identity'],
+  worker: ['api', 'identity', 'operator'],
+  d1: ['product', 'auth'],
   accessApp: ['api', 'operator'],
 };
 
@@ -49,7 +49,7 @@ function checkedIdMap(value, validRoles, { uuid = false } = {}) {
 }
 
 function d1Name(inventory, role) {
-  return role === 'identity' ? inventory.names.auth : inventory.names.api;
+  return role === 'product' ? inventory.names.product : inventory.names.auth;
 }
 
 function expectedName(inventory, kind, role) {
@@ -100,10 +100,9 @@ function validBindings(inventory, role, bindings) {
   object(bindings.d1, 'Worker D1 bindings are invalid.');
   object(bindings.services, 'Worker service bindings are invalid.');
   const expected = {
-    api: { d1: inventory.cloudflare.d1Ids.api ? { DB: inventory.cloudflare.d1Ids.api } : {}, services: {} },
-    identity: { d1: inventory.cloudflare.d1Ids.identity ? { DB: inventory.cloudflare.d1Ids.identity } : {}, services: {} },
-    operator: { d1: {}, services: Object.fromEntries(Object.entries({ API: inventory.names.api, IDENTITY: inventory.names.identity }).filter(([binding]) => binding && inventory.cloudflare.workerIds[binding.toLowerCase()])), },
-    product: { d1: {}, services: {} },
+    api: { d1: inventory.cloudflare.d1Ids.product ? { DB: inventory.cloudflare.d1Ids.product } : {}, services: {} },
+    identity: { d1: inventory.cloudflare.d1Ids.auth ? { DB: inventory.cloudflare.d1Ids.auth } : {}, services: {} },
+    operator: { d1: {}, services: Object.fromEntries(Object.entries({ API: inventory.cloudflare.workerIds.api, IDENTITY: inventory.cloudflare.workerIds.identity }).filter(([, tag]) => tag)) },
   }[role];
   if (!sameJson(bindings, expected)) quarantine('Worker binding graph does not match the exact inventory.');
 }
@@ -117,6 +116,14 @@ export function assertOwnedResource(rawInventory, discovered, kindValue) {
     quarantine('Discovered resource does not match the exact inventory identity.');
   }
   if (kind === 'worker') validBindings(inventory, role, discovered.bindings);
+  if (kind === 'accessApp') {
+    object(discovered.graph, 'Access application binding graph is missing.');
+    exactKeys(discovered.graph, ['workerId', 'tokenId', 'decision', 'exclusive', 'publicOverrides'], 'Access application binding graph is invalid.');
+    if (discovered.graph.workerId !== inventory.cloudflare.workerIds[role] || discovered.graph.tokenId !== inventory.cloudflare.tokenId
+      || discovered.graph.decision !== 'non_identity' || discovered.graph.exclusive !== true || discovered.graph.publicOverrides !== false) {
+      quarantine('Access application binding graph does not match the exact inventory.');
+    }
+  }
   return undefined;
 }
 
@@ -144,25 +151,28 @@ function matchingIntent(key, intents, kind, name) {
 }
 
 function auditProvesCreation(entry, { controllerTokenId, id, startedAt, method, uri }) {
-  return entry && entry.actor?.token_id === controllerTokenId && entry.action?.type === 'create'
+  return typeof controllerTokenId === 'string' && controllerTokenId.length > 0
+    && typeof entry?.actor?.token_id === 'string' && entry.actor.token_id.length > 0 && entry.actor.token_id === controllerTokenId && entry.action?.type === 'create'
     && entry.action?.result === true && typeof entry.action?.time === 'string' && entry.action.time >= startedAt
     && entry.resource?.id === id && entry.raw?.method === method && entry.raw?.uri === uri;
 }
 
-export async function discoverRun(rawKey, api) {
+async function discoverRunInner(rawKey, api) {
   let key;
   try { key = parseStackKey(rawKey); } catch { quarantine('Discovery key is invalid.'); }
   if (!api || typeof api.loadCheckpoint !== 'function') throw new TypeError('Expected a discovery API with loadCheckpoint().');
+  if (typeof api.controllerTokenId !== 'string' || api.controllerTokenId.length === 0) quarantine('Discovery requires a trusted nonempty controller token ID.');
   const { inventory, intents } = parseCheckpointRecord(await api.loadCheckpoint(key));
   if (!sameJson(inventory.key, key)) quarantine('Checkpoint key does not match the trusted run.');
   const next = structuredClone(inventory);
+  let recovered = false;
   for (const role of roles.worker) {
     if (next.cloudflare.workerIds[role]) continue;
     const name = expectedName(next, 'worker', role);
     const intent = matchingIntent(key, intents, `worker:${role}`, name);
     if (typeof api.listWorkers !== 'function') quarantine('Discovery evidence source is incomplete.');
     const listed = await api.listWorkers();
-    const matches = Array.isArray(listed) ? listed.filter(resource => resource?.name === name) : [];
+    const matches = Array.isArray(listed) ? listed.filter(resource => resource?.id === name) : [];
     if (!intent) {
       if (matches.length > 0) quarantine('An uncheckpointed deterministic name is foreign or ambiguous.');
       continue;
@@ -178,6 +188,7 @@ export async function discoverRun(rawKey, api) {
       quarantine('Audit evidence cannot independently prove the Worker creation.');
     }
     next.cloudflare.workerIds[role] = matches[0].tag;
+    recovered = true;
   }
   const recoverListed = async ({ kind, section, validRoles, list, idField, method, uri }) => {
     for (const role of validRoles) {
@@ -201,13 +212,27 @@ export async function discoverRun(rawKey, api) {
       }
       if (section === 'tokenId') next.cloudflare.tokenId = id;
       else next.cloudflare[section][role] = id;
+      recovered = true;
     }
   };
   await recoverListed({ kind: 'd1', section: 'd1Ids', validRoles: roles.d1, list: 'listD1', idField: 'uuid', method: 'POST', uri: () => `/accounts/${next.cloudflare.accountId}/d1/database` });
   await recoverListed({ kind: 'accessApp', section: 'accessAppIds', validRoles: roles.accessApp, list: 'listAccessApps', idField: 'id', method: 'POST', uri: () => `/accounts/${next.cloudflare.accountId}/access/apps` });
   await recoverListed({ kind: 'token', section: 'tokenId', validRoles: [undefined], list: 'listServiceTokens', idField: 'id', method: 'POST', uri: () => `/accounts/${next.cloudflare.accountId}/access/service_tokens` });
-  next.stage = 'active';
+  const complete = roles.worker.every(role => next.cloudflare.workerIds[role])
+    && roles.d1.every(role => next.cloudflare.d1Ids[role])
+    && roles.accessApp.every(role => next.cloudflare.accessAppIds[role]) && next.cloudflare.tokenId;
+  if (complete) next.stage = 'active';
   next.updatedAt = new Date().toISOString();
-  if (typeof api.saveCheckpoint === 'function') await api.saveCheckpoint(validateInventory(next));
+  if (recovered && typeof api.saveCheckpoint !== 'function') quarantine('Recovered IDs cannot be returned before a durable checkpoint.');
+  if (recovered) await api.saveCheckpoint(validateInventory(next));
   return validateInventory(next);
+}
+
+export async function discoverRun(rawKey, api) {
+  try {
+    return await discoverRunInner(rawKey, api);
+  } catch (error) {
+    if (typeof api?.alert === 'function') api.alert({ status: 'quarantined', message: error.message });
+    throw error;
+  }
 }
