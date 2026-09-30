@@ -5,6 +5,7 @@ import { StaleRunStop, verifyCurrentPr } from './verify-run.mjs';
 
 const eventSha = 'a'.repeat(40);
 const liveSha = 'b'.repeat(40);
+const defaultBranchRunSha = 'c'.repeat(40);
 const repository = {
   id: 987654321,
   full_name: 'trusted-owner/incentives-platform',
@@ -42,7 +43,14 @@ function githubClient({ pull = {}, run = {}, repo = repository } = {}) {
         };
       }
       if (path === '/repos/trusted-owner/incentives-platform/actions/runs/123456789') {
-        return { id: 123456789, run_attempt: 2, head_sha: eventSha, status: 'queued', ...run };
+        return {
+          id: 123456789,
+          run_attempt: 2,
+          head_sha: defaultBranchRunSha,
+          event: 'pull_request_target',
+          status: 'queued',
+          ...run,
+        };
       }
       throw new Error(`Unexpected GitHub request: ${path}`);
     },
@@ -96,6 +104,14 @@ test('rejects mismatched GitHub run metadata instead of using event-controlled r
   await assert.rejects(
     verifyCurrentPr({ event: event(), githubClient: mock.client, phase: 'predeploy' }),
     /GitHub run metadata/u,
+  );
+});
+
+test('rejects a GitHub run that was not triggered by pull_request_target', async () => {
+  const mock = githubClient({ run: { event: 'push' } });
+  await assert.rejects(
+    verifyCurrentPr({ event: event(), githubClient: mock.client, phase: 'predeploy' }),
+    /GitHub run event/u,
   );
 });
 

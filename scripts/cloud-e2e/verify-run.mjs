@@ -51,13 +51,12 @@ function requirePullRecord(pull, repository, number) {
   return { headSha };
 }
 
-function requireRunRecord(run, runId, attempt, headSha) {
+function requireRunRecord(run, runId, attempt) {
   if (run?.id !== runId || run?.run_attempt !== attempt) {
     throw new TypeError('Expected matching GitHub run metadata.');
   }
-  if (requireSha(run?.head_sha, 'Expected GitHub run head SHA.') !== headSha) {
-    throw new TypeError('Expected matching GitHub run metadata.');
-  }
+  requireSha(run?.head_sha, 'Expected GitHub run head SHA.');
+  if (run?.event !== 'pull_request_target') throw new TypeError('Expected GitHub run event pull_request_target.');
   requireString(run?.status, 'Expected GitHub run status.');
 }
 
@@ -98,7 +97,7 @@ export async function verifyCurrentPr({ event, githubClient, phase }) {
   const run = await githubClient.request({
     method: 'GET', path: `/repos/${repository.owner}/${repository.name}/actions/runs/${runId}`,
   });
-  requireRunRecord(run, runId, attempt, eventHeadSha);
+  requireRunRecord(run, runId, attempt);
   return parseStackKey({
     repository_id: repository.id,
     repository: repository.fullName,
