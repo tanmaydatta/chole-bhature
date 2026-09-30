@@ -1,6 +1,6 @@
 # Product Current State and Roadmap
 
-**Updated:** 2026-09-29
+**Updated:** 2026-09-30
 
 **Status:** Active — Gate C complete; GAP-030/031 and the E2E platform are
 merged on `dev`. The separate Secrets Store cutover is deployed and verified
@@ -8,10 +8,19 @@ in staging and PR #15 merged into `dev` at
 `0c5e5f1a068d942af8f091ab0fc4b7ff8bf44e9d`. No production, API/Core,
 or D1 migration is part of that cutover.
 
+The approved per-PR Cloud E2E design is now being implemented on
+`feat/per-pr-cloud-e2e`, based on `origin/dev` commit
+`f189f5a0a527e8f350b1e77f4dcb29e96020d778`. Tasks 1–3 are locally verified
+through `09e6e2b`; they establish the local test baseline, trusted PR run
+identity, and untrusted-artifact verification. This does not deploy or test a
+Cloudflare stack: automatic per-PR Cloudflare writes are disabled, and no live
+pilot has run.
+
 **Notion mirror:** https://app.notion.com/p/Product-Current-State-and-Roadmap-3a6e5c7c2b8e81f6b412c45a2bc7b344
 
-**Mirror state:** Repository and Notion synchronized for the 2026-09-29 PR #15
-merge record.
+**Mirror state:** Repository and Notion synchronized for the 2026-09-30
+per-PR Cloud E2E design and Tasks 1–3 progress record, while retaining the
+2026-09-29 PR #15 merge evidence.
 
 This is the canonical operational answer to:
 
@@ -29,15 +38,15 @@ deferred issue remains in the
 
 | Question | Current answer |
 |---|---|
-| Overall phase | Post-Gate-C client-readiness corrections |
-| Current activity | GAP-030/031 merged as PR #13; E2E platform PR #14 merged at `b524c32b98652cfcadb75c7af2f234cf33495f6b`; Secrets Store PR #15 merged at `0c5e5f1a068d942af8f091ab0fc4b7ff8bf44e9d` after staging validation from source head `df05d8d` |
-| Current repository baseline | PR #15 merge commit `0c5e5f1a068d942af8f091ab0fc4b7ff8bf44e9d` on `dev` |
+| Overall phase | Post-Gate-C client-readiness corrections; per-PR Cloud E2E foundations in progress |
+| Current activity | GAP-030/031 merged as PR #13; E2E platform PR #14 merged at `b524c32b98652cfcadb75c7af2f234cf33495f6b`; Secrets Store PR #15 merged at `0c5e5f1a068d942af8f091ab0fc4b7ff8bf44e9d` after staging validation from source head `df05d8d`; per-PR Cloud E2E Tasks 1–3 are locally verified on `feat/per-pr-cloud-e2e` through `09e6e2b` |
+| Current repository baseline | `origin/dev` at `f189f5a0a527e8f350b1e77f4dcb29e96020d778`; the per-PR Cloud E2E worktree starts at `407cb3a6c8f9b66078c69f7621b8100956f8629f` and is locally verified through `09e6e2b` |
 | Current product-code baseline | PR #15 merge commit `0c5e5f1a068d942af8f091ab0fc4b7ff8bf44e9d` |
-| Local feature state | Authoritative merchandise pricing and the E2E platform are merged; the E2E platform passed 5 local Playwright tests and 4 applicable staging tests |
+| Local feature state | Authoritative merchandise pricing and the E2E platform are merged; the E2E platform passed 5 local Playwright tests and 4 applicable staging tests. Per-PR Cloud E2E Tasks 1–3 passed local baseline, run-identity, and artifact-boundary verification; the baseline records 5 local Playwright tests in 24.4 seconds |
 | Current deployment state | The 2026-09-28 Product/Auth/API/Identity/Operator rollout remains in staging. On 2026-09-29, existing-store Secrets Store bindings deployed to Identity and Operator only; no API/Core/D1 migration occurred |
 | Current release decision | PR #15 merged into `dev` at `0c5e5f1a068d942af8f091ab0fc4b7ff8bf44e9d` after staging validation from source head `df05d8d`; old per-Worker secrets are retained |
 | Gate C finish line | Complete — all mandatory clean-break selection, redemption, tenant-isolation, concurrency, and observability cases passed |
-| Next plan work | Design E2E/CI execution. Free-shipping financial-authority work remains later |
+| Next plan work | Implement exact-ID inventory, then—with separate approval—run the protected two-stack infrastructure pilot; automatic every-push Cloudflare execution remains gated on the full pilot security matrix |
 
 ## Source-of-truth map
 
@@ -56,6 +65,7 @@ Use this page for current sequencing and status. Follow its links for detail:
 | Approved Promo selection and atomic-redemption design | [Repository](../superpowers/specs/2026-07-23-promo-selection-code-stacking-design.md) · [Notion](https://app.notion.com/p/Promo-Selection-Code-Stacking-and-Atomic-Redemption-Design-Spec-3a6e5c7c2b8e81549b6adc7f3d096455) |
 | Current correction implementation plan | [Repository](../superpowers/plans/2026-07-24-promo-selection-code-stacking.md) · [Notion](https://app.notion.com/p/Promo-Selection-Code-Stacking-and-Atomic-Redemption-Implementation-Plan-3a7e5c7c2b8e811791dee0d21803c8e2) |
 | Approved free-shipping financial design | [Repository](../superpowers/specs/2026-07-23-free-shipping-budget-authority-design.md) · [Notion](https://app.notion.com/p/Free-Shipping-Budget-Authority-Reservations-and-Reversals-Design-Spec-3a6e5c7c2b8e81f49c6ecbf878d7d48c) |
+| Per-PR Cloud E2E design and implementation plan | [Repository design](../superpowers/specs/2026-09-29-per-pr-cloud-e2e-design.md) · [Notion design](https://app.notion.com/p/Per-PR-Cloud-E2E-Design-Spec-3ebe5c7c2b8e8186866ef1e158bfd880) · [Repository plan](../superpowers/plans/2026-09-30-per-pr-cloud-e2e.md) · [Notion plan](https://app.notion.com/p/Per-PR-Cloud-E2E-Implementation-Plan-3ebe5c7c2b8e81229ee0d8a0acb2d309) |
 | All implementation plans and their statuses | [Notion Plans index](https://app.notion.com/p/Plans-390e5c7c2b8e8165b7f7d77392eab088) |
 
 When these documents disagree about what is happening now, update this page
@@ -260,6 +270,16 @@ Operator Web source deployed and passed its scoped E2E verification. It did not
 include database migrations, Core deployment, production, or unrelated
 resources. Old per-Worker secrets remain pending separately reviewed cleanup.
 
+The approved [per-PR Cloud E2E design](../superpowers/specs/2026-09-29-per-pr-cloud-e2e-design.md)
+and [implementation plan](../superpowers/plans/2026-09-30-per-pr-cloud-e2e.md)
+preserve manual staging and exclude fork pull requests. Tasks 1–3 are verified
+locally: the 5-test Playwright baseline ran in 24.4 seconds, the trusted
+run-identity boundary rejects forks and stale heads, and the controller-side
+artifact boundary verifies only a bounded untrusted bundle. `pnpm build`,
+`pnpm lint`, and unit tests passed for this increment. No Cloudflare resource
+was created, no disposable-stack feasibility pilot has run, and no deployment,
+full cloud suite, or automatic per-PR Cloudflare write is claimed.
+
 ## What happens after Gate C
 
 ### 1. Gate C verification milestone — complete
@@ -310,12 +330,23 @@ failed staging Playwright tests in 32.0 seconds. PR #15 then merged into `dev`
 at `0c5e5f1a068d942af8f091ab0fc4b7ff8bf44e9d`; Bitwarden remains the source
 of truth and old per-Worker secrets remain retained.
 
-### 3. Design E2E/CI execution
+### 3. Implement approved per-PR Cloud E2E execution
 
-Decide the E2E/CI design: local isolated Playwright coverage on every PR, with
-staging execution gated by reviewed credentials and deployment scope, or a
-separately approved staging-per-PR model. Do not treat either choice as
-implemented yet.
+The approved design uses a trusted controller and isolated, disposable
+Cloudflare resources for same-repository pull requests; it does not repurpose
+manual staging. Tasks 1–3 are complete locally, but the design is not deployed
+and cannot yet run automatically.
+
+The remaining milestones are, in order:
+
+1. exact-ID inventory and mutation guards;
+2. a separately approved protected two-stack infrastructure pilot;
+3. `cloud-ci` runtime guards and exact-D1 root bootstrap;
+4. a real HTTPS passkey/full-suite pilot;
+5. failure and cancellation cleanup, including independent reconciliation and
+   janitor behavior; and
+6. a protected every-push workflow only after the full pilot security matrix
+   passes. Fork pull requests remain excluded.
 
 ### 4. Turn the approved free-shipping financial design into an implementation plan
 

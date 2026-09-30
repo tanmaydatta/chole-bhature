@@ -10,6 +10,17 @@
 
 **Spec:** [2026-09-29-per-pr-cloud-e2e-design.md](../specs/2026-09-29-per-pr-cloud-e2e-design.md)
 
+**Notion mirror:** https://app.notion.com/p/Per-PR-Cloud-E2E-Implementation-Plan-3ebe5c7c2b8e81229ee0d8a0acb2d309
+
+**Verified status (2026-09-30):** Tasks 1–3 are complete on
+`feat/per-pr-cloud-e2e` after scoped review: the baseline records 5 local
+Playwright tests in 24.4 seconds, trusted run identity rejects ineligible or
+stale PR events, and the artifact boundary verifies the untrusted bundle. No
+Cloudflare resource has been created, no live pilot has run, and automatic
+per-PR cloud writes remain disabled. Two minor artifact hardening observations
+(long tar paths and partial extraction residue on write failure) are deferred
+to final branch review.
+
 ## Global Constraints
 
 - Only same-repository `pull_request_target` `opened`, `reopened`, and `synchronize` events may provision; `closed` requests cleanup; fork PRs are excluded. Current PR head SHA is authoritative before deploy and before test.
@@ -57,9 +68,9 @@ The operator assets multipart upload, Worker module metadata (`assets`, `main_mo
 
 **Interfaces:** Consumes the existing `pnpm build`, `pnpm lint`, `pnpm test`, `pnpm e2e:local`; produces recorded test count, duration, assertion inventory and artifact sizes for Task 3.
 
-- [ ] Run `pnpm install --frozen-lockfile`, `pnpm build`, `pnpm lint`, `pnpm test`, then `E2E_BROWSER_CHANNEL=chromium pnpm e2e:local` after installing Playwright Chromium if needed. Expected: full local suite passes; record counts/timing, including the local-only simultaneous-stack test.
-- [ ] Enumerate assertions from `tests/e2e/src/gap-scenario.ts`, `test/playwright/gap.api.spec.ts`, `promo.browser.spec.ts`, and `scenario-run.ts` in the ledger: exact 3,000/7,001 and line allocations, published persistence, signed receipt, idempotency/409, browser edit/reload/publish, failure cleanup, zero Product/Auth rows. State that real email delivery is absent.
-- [ ] Record current Worker build output sizes and asset total; verify 20 MiB/file and 64 MiB/total artifact caps, or propose a reviewed cap change before Task 3. Commit only this ledger if changed: `git add docs/testing/per-pr-cloud-e2e.md && git commit -m "docs: record cloud E2E baseline"`.
+- [x] Run `pnpm install --frozen-lockfile`, `pnpm build`, `pnpm lint`, `pnpm test`, then `E2E_BROWSER_CHANNEL=chromium pnpm e2e:local` after installing Playwright Chromium if needed. Expected: full local suite passes; record counts/timing, including the local-only simultaneous-stack test.
+- [x] Enumerate assertions from `tests/e2e/src/gap-scenario.ts`, `test/playwright/gap.api.spec.ts`, `promo.browser.spec.ts`, and `scenario-run.ts` in the ledger: exact 3,000/7,001 and line allocations, published persistence, signed receipt, idempotency/409, browser edit/reload/publish, failure cleanup, zero Product/Auth rows. State that real email delivery is absent.
+- [x] Record current Worker build output sizes and asset total; verify 20 MiB/file and 64 MiB/total artifact caps, or propose a reviewed cap change before Task 3. Commit only this ledger if changed: `git add docs/testing/per-pr-cloud-e2e.md && git commit -m "docs: record cloud E2E baseline"`.
 
 ## Task 2: Trusted run identity and GitHub eligibility
 
@@ -67,9 +78,9 @@ The operator assets multipart upload, Worker module metadata (`assets`, `main_mo
 
 **Interfaces:** `parseStackKey(value) -> StackKeyV1`; `resourceNames(key) -> {api,identity,operator,product,auth,accessApi,accessOperator,token}`; `verifyCurrentPr({event, githubClient, phase}) -> Promise<StackKeyV1 | null>` where `null` means ineligible fork/closed PR, stale SHA throws a typed stop. `phase` is `predeploy` or `pretest`.
 
-- [ ] Write `node:test` cases asserting deterministic legal names under Cloudflare limits, distinct names for attempt/head/PR/repository changes, fork rejection, `opened/reopened/synchronize` acceptance, live-head mismatch rejection at both phases, and closed-event cleanup-only behavior. Mock `GET /repos/{owner}/{repo}/pulls/{number}` and repository/run records; include a queued older run whose event SHA is stale.
-- [ ] Run `node --test scripts/cloud-e2e/key.test.mjs scripts/cloud-e2e/verify-run.test.mjs`. Expected: fail because exports are missing.
-- [ ] Implement the two modules with strict field schemas, canonical repository identity from GitHub's API rather than event text alone, and no PR-controlled names. Run the same command; expected pass. Commit: `git add scripts/cloud-e2e/key* scripts/cloud-e2e/verify-run* && git commit -m "feat: validate cloud E2E run identity"`.
+- [x] Write `node:test` cases asserting deterministic legal names under Cloudflare limits, distinct names for attempt/head/PR/repository changes, fork rejection, `opened/reopened/synchronize` acceptance, live-head mismatch rejection at both phases, and closed-event cleanup-only behavior. Mock `GET /repos/{owner}/{repo}/pulls/{number}` and repository/run records; include a queued older run whose event SHA is stale.
+- [x] Run `node --test scripts/cloud-e2e/key.test.mjs scripts/cloud-e2e/verify-run.test.mjs`. Expected: fail because exports are missing.
+- [x] Implement the two modules with strict field schemas, canonical repository identity from GitHub's API rather than event text alone, and no PR-controlled names. Run the same command; expected pass. Commit: `git add scripts/cloud-e2e/key* scripts/cloud-e2e/verify-run* && git commit -m "feat: validate cloud E2E run identity"`.
 
 ## Task 3: Untrusted artifact format and build boundary
 
@@ -77,9 +88,9 @@ The operator assets multipart upload, Worker module metadata (`assets`, `main_mo
 
 **Interfaces:** `createBundleV1({key, checkout, outputDir}) -> Promise<manifest>` runs only in unprivileged PR build job; `verifyBundleV1({archive, expectedKey, expectedRun, destination}) -> Promise<VerifiedBundle>` runs only in trusted job and returns controller-owned absolute file paths and hashes, never executable instructions.
 
-- [ ] Add table-driven tests for exact manifest/hash and producing run ID/attempt, altered bytes, stale SHA, unexpected config/command, symlink/traversal/duplicate path, extra file, oversize, and archive extraction that would leave `destination`. Assert all bad inputs fail before a mocked Cloudflare client is called.
-- [ ] Run `node --test scripts/cloud-e2e/artifact.test.mjs`; expected fail for missing exports.
-- [ ] Implement deterministic prebuilt module/assets/migration collection from an unprivileged build, strict archive reader and verifier. The build may use PR package scripts; the verifier may only read bytes and parse JSON. Verify the operator asset manifest and bundle include the same built SPA currently configured by `apps/operator-web/wrangler.toml`. Run tests and `pnpm build`; expected pass. Commit: `git add scripts/cloud-e2e/build-artifact.mjs scripts/cloud-e2e/artifact* package.json && git commit -m "feat: verify disposable cloud build artifacts"`.
+- [x] Add table-driven tests for exact manifest/hash and producing run ID/attempt, altered bytes, stale SHA, unexpected config/command, symlink/traversal/duplicate path, extra file, oversize, and archive extraction that would leave `destination`. Assert all bad inputs fail before a mocked Cloudflare client is called.
+- [x] Run `node --test scripts/cloud-e2e/artifact.test.mjs`; expected fail for missing exports.
+- [x] Implement deterministic prebuilt module/assets/migration collection from an unprivileged build, strict archive reader and verifier. The build may use PR package scripts; the verifier may only read bytes and parse JSON. Verify the operator asset manifest and bundle include the same built SPA currently configured by `apps/operator-web/wrangler.toml`. Run tests and `pnpm build`; expected pass. Commit: `git add scripts/cloud-e2e/build-artifact.mjs scripts/cloud-e2e/artifact* package.json && git commit -m "feat: verify disposable cloud build artifacts"`.
 
 ## Task 4: Exact-ID inventory and mutation guard
 

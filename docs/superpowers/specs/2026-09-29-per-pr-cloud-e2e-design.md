@@ -4,6 +4,8 @@
 
 **Date:** 2026-09-29
 
+**Notion mirror:** https://app.notion.com/p/Per-PR-Cloud-E2E-Design-Spec-3ebe5c7c2b8e8186866ef1e158bfd880
+
 ## Goal and success criteria
 
 Run the existing staging-class Core/API, Identity, and Operator Playwright suite on **every new push to a same-repository pull request**, against that push's own temporary Cloudflare stack. A newer push cancels the older run for that PR. Different PRs may run together without sharing Workers, databases, root sessions, Access credentials, fixtures, or cleanup ownership. Fork PRs do not receive cloud E2E. The manually operated staging stack and static demo remain untouched.
