@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { lstat, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -83,23 +83,40 @@ async function fixture({ files = requiredFiles, manifest = manifestFor(files), e
   return { root, archive, destination: path.join(root, 'extracted') };
 }
 
+function cloudflareSpy() {
+  const calls = [];
+  return {
+    calls,
+    async provision(verified) {
+      calls.push(verified);
+    },
+  };
+}
+
+async function provisionAfterVerification(input, cloudflare) {
+  const verified = await verifyBundleV1({ ...input, expectedKey: key, expectedRun: { run_id: key.run_id, attempt: key.attempt } });
+  await cloudflare.provision(verified);
+  return verified;
+}
+
 async function expectRejected(input, pattern) {
+  const cloudflare = cloudflareSpy();
   await assert.rejects(
-    verifyBundleV1({ ...input, expectedKey: key, expectedRun: { run_id: key.run_id, attempt: key.attempt } }),
+    provisionAfterVerification(input, cloudflare),
     pattern,
   );
+  assert.deepEqual(cloudflare.calls, []);
+  await assert.rejects(lstat(input.destination), error => error?.code === 'ENOENT');
 }
 
 test('verifies the exact manifest, hashes, StackKeyV1, and producing run identity', async (t) => {
   const input = await fixture();
   t.after(() => rm(input.root, { recursive: true, force: true }));
 
-  const verified = await verifyBundleV1({
-    ...input,
-    expectedKey: key,
-    expectedRun: { run_id: key.run_id, attempt: key.attempt },
-  });
+  const cloudflare = cloudflareSpy();
+  const verified = await provisionAfterVerification(input, cloudflare);
 
+  assert.deepEqual(cloudflare.calls, [verified]);
   assert.deepEqual(verified.key, key);
   assert.equal(verified.buildSha, key.head_sha);
   assert.equal(verified.run.run_id, key.run_id);
@@ -116,12 +133,9 @@ test('rejects altered bytes before extracting or making a Cloudflare call', asyn
   alteredApi[0] ^= 1;
   const files = { ...requiredFiles, 'workers/api.mjs': alteredApi };
   const input = await fixture({ files, manifest: manifestFor(requiredFiles) });
-  let cloudflareCalls = 0;
   t.after(() => rm(input.root, { recursive: true, force: true }));
 
   await expectRejected(input, /hash|SHA-256/i);
-  assert.equal(cloudflareCalls, 0);
-  await assert.rejects(readFile(path.join(input.destination, 'workers/api.mjs')));
 });
 
 test('rejects stale build SHA and producing run identity', async (t) => {
