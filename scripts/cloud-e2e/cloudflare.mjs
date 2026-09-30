@@ -25,7 +25,7 @@ function workerName(inventory, role) {
 function result(response) {
   if (!response || typeof response !== 'object') throw new TypeError('Cloudflare transport returned an invalid response.');
   if (response.status === 404) return { missing: true };
-  if (!Number.isInteger(response.status) || response.status < 200 || response.status >= 300 || response.success !== true || !Object.hasOwn(response, 'result')) {
+  if (!Number.isInteger(response.status) || response.status < 200 || response.status >= 300 || response.success !== true || !Object.hasOwn(response, 'result') || response.result === undefined) {
     throw new TypeError('Cloudflare API envelope is malformed or unsuccessful.');
   }
   return { result: response.result, resultInfo: response.result_info };
@@ -43,9 +43,9 @@ function normalizeAccessGraph(app) {
   const destination = Array.isArray(app?.destinations) && app.destinations.length === 1 ? app.destinations[0] : null;
   const policy = Array.isArray(app?.policies) && app.policies.length === 1 ? app.policies[0] : null;
   const include = Array.isArray(policy?.include) && policy.include.length === 1 ? policy.include[0]?.service_token : null;
-  if (!destination || destination.type !== 'worker' || typeof destination.worker_id !== 'string'
+  if (!destination || Object.keys(destination).length !== 3 || destination.type !== 'worker' || typeof destination.worker_id !== 'string' || destination.worker_id.length === 0
     || !Array.isArray(destination.overrides) || destination.overrides.length !== 0 || !policy || policy.decision !== 'non_identity'
-    || !include || typeof include.token_id !== 'string') throw new TypeError('Cloudflare Access application graph is unsupported or malformed.');
+    || Object.keys(policy).length !== 2 || !include || Object.keys(include).length !== 1 || typeof include.token_id !== 'string' || include.token_id.length === 0) throw new TypeError('Cloudflare Access application graph is unsupported or malformed.');
   return { workerId: destination.worker_id, tokenId: include.token_id, decision: policy.decision, exclusive: true, publicOverrides: false };
 }
 
@@ -85,7 +85,7 @@ export function createCloudflareClient({ accountId, inventory: rawInventory, tra
     if (!Array.isArray(response.result) || !response.resultInfo || !Number.isSafeInteger(response.resultInfo.total_count) || response.resultInfo.total_count !== response.result.length) {
       poisoned = true; quarantine('Cloudflare list response is incomplete or malformed.', alert);
     }
-    if (response.result.some(entry => !validEntry(entry))) {
+    if (response.result.some(entry => !validEntry(entry)) || new Set(response.result.filter(entry => typeof entry?.id === 'string').map(entry => entry.id)).size !== response.result.filter(entry => typeof entry?.id === 'string').length) {
       poisoned = true; quarantine('Cloudflare list contains a malformed resource entry.', alert);
     }
     return response.result;
@@ -95,9 +95,9 @@ export function createCloudflareClient({ accountId, inventory: rawInventory, tra
     await store.put(value, { classification: 'controller-evidence', retentionDays: 7, restricted: true });
   };
   const intent = async (kind, exactName) => evidence({ type: 'create-intent', key: inventory.key, kind, exactName, startedAt: now(), noPreexistingMatch: true });
-  const check = async next => { inventory = validateInventory(next); await checkpoint(inventory, store); };
+  const check = async next => { const candidate = validateInventory(next); await checkpoint(candidate, store); inventory = candidate; };
 
-  async function listD1() { return completeList(await call('GET', `${root}/d1/database`), entry => typeof entry?.name === 'string' && typeof entry?.uuid === 'string'); }
+  async function listD1() { return completeList(await call('GET', `${root}/d1/database`), entry => typeof entry?.name === 'string' && entry.name.length > 0 && typeof entry?.uuid === 'string' && entry.uuid.length > 0); }
   async function getD1(uuid) {
     if (typeof uuid !== 'string' || uuid !== inventory.cloudflare.d1Ids.product && uuid !== inventory.cloudflare.d1Ids.auth) quarantine('D1 target is not certified by inventory.', alert);
     return call('GET', `${root}/d1/database/${uuid}`);
@@ -126,7 +126,7 @@ export function createCloudflareClient({ accountId, inventory: rawInventory, tra
     await call('DELETE', `${root}/d1/database/${id}`);
     return { status: 'deleted' };
   }
-  async function listWorkers() { return completeList(await call('GET', `${root}/workers/scripts`), entry => typeof entry?.id === 'string' && typeof entry?.tag === 'string'); }
+  async function listWorkers() { return completeList(await call('GET', `${root}/workers/scripts`), entry => typeof entry?.id === 'string' && entry.id.length > 0 && typeof entry?.tag === 'string' && entry.tag.length > 0); }
   async function getWorker(role) {
     const name = workerName(inventory, role);
     const id = inventory.cloudflare.workerIds[role];
@@ -138,8 +138,10 @@ export function createCloudflareClient({ accountId, inventory: rawInventory, tra
     if (matches.length !== 1) quarantine('Worker lookup is ambiguous.', alert);
     const settings = await call('GET', `${root}/workers/scripts/${name}/settings`);
     if (settings.missing) return { missing: true };
-    const tags = Object.fromEntries(listed.filter(script => typeof script?.id === 'string' && typeof script?.tag === 'string').map(script => [script.id, script.tag]));
-    return { name, tag: matches[0].tag, bindings: normalizeWorkerBindings(settings.result?.bindings, tags) };
+    try {
+      const tags = Object.fromEntries(listed.map(script => [script.id, script.tag]));
+      return { name, tag: matches[0].tag, bindings: normalizeWorkerBindings(settings.result?.bindings, tags) };
+    } catch (error) { poisoned = true; quarantine(error.message, alert); }
   }
   async function deleteWorker(role) {
     return createWorker(role);
@@ -167,7 +169,7 @@ export function createCloudflareClient({ accountId, inventory: rawInventory, tra
   function accessAppName(role) {
     return role === 'api' ? inventory.names.accessApi : role === 'operator' ? inventory.names.accessOperator : null;
   }
-  async function listAccessApps() { return completeList(await call('GET', `${root}/access/apps`), entry => typeof entry?.id === 'string' && typeof entry?.name === 'string'); }
+  async function listAccessApps() { return completeList(await call('GET', `${root}/access/apps`), entry => typeof entry?.id === 'string' && entry.id.length > 0 && typeof entry?.name === 'string' && entry.name.length > 0); }
   async function createAccessApp(role) {
     const name = accessAppName(role);
     if (!name) quarantine('Access application role is not certified by inventory.', alert);
@@ -185,7 +187,7 @@ export function createCloudflareClient({ accountId, inventory: rawInventory, tra
     } catch (error) { poisoned = true; quarantine(error.message, alert); }
     const created = (await call('POST', `${root}/access/apps`, body)).result;
     if (!created || created.name !== name || typeof created.id !== 'string' || created.id.length === 0) quarantine('Access application create response is not an exact identity.', alert);
-    await check(cloneWith(inventory, 'accessAppIds', role, created.id, now));
+    try { await check(cloneWith(inventory, 'accessAppIds', role, created.id, now)); } catch (error) { poisoned = true; quarantine(error.message, alert); }
     return created;
   }
   async function deleteAccessApp(role) {
@@ -201,7 +203,7 @@ export function createCloudflareClient({ accountId, inventory: rawInventory, tra
     await call('DELETE', `${root}/access/apps/${id}`);
     return { status: 'deleted' };
   }
-  async function listServiceTokens() { return completeList(await call('GET', `${root}/access/service_tokens`), entry => typeof entry?.id === 'string' && typeof entry?.name === 'string'); }
+  async function listServiceTokens() { return completeList(await call('GET', `${root}/access/service_tokens`), entry => typeof entry?.id === 'string' && entry.id.length > 0 && typeof entry?.name === 'string' && entry.name.length > 0); }
   async function createServiceToken() {
     const name = inventory.names.token;
     if (inventory.cloudflare.tokenId) quarantine('Service token already has a recorded exact ID.', alert);

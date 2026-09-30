@@ -105,3 +105,44 @@ test('rejects an Access app with a wrong Worker destination or policy graph befo
   assert.deepEqual(transport.calls.map(call => call.method), ['GET']);
   assert.equal(alerts.length, 1);
 });
+
+test('rejects Access require, exclude, and unrecognized policy fields before delete', async () => {
+  for (const policy of [
+    { decision: 'non_identity', include: [{ service_token: { token_id: 'token-1' } }], require: [{ email: { email: 'x@example.test' } }] },
+    { decision: 'non_identity', include: [{ service_token: { token_id: 'token-1' } }], exclude: [{ everyone: {} }] },
+    { decision: 'non_identity', include: [{ service_token: { token_id: 'token-1' } }], approval_required: false },
+  ]) {
+    const transport = mockTransport([{ result: [{ id: 'access-app-1', name: names.accessApi, destinations: [{ type: 'worker', worker_id: 'worker-tag-1', overrides: [] }], policies: [policy] }] }]);
+    const alerts = [];
+    const client = createCloudflareClient({ accountId: 'account-1', inventory, transport, alert: value => alerts.push(value) });
+    await assert.rejects(client.deleteAccessApp('api'), MutationQuarantinedError);
+    assert.deepEqual(transport.calls.map(call => call.method), ['GET']);
+    assert.equal(alerts.length, 1);
+  }
+});
+
+test('rejects empty and duplicate Worker list IDs/tags plus unsupported settings with alerts', async () => {
+  for (const list of [
+    [{ id: '', tag: 'worker-tag-1' }],
+    [{ id: names.api, tag: '' }],
+    [{ id: names.api, tag: 'worker-tag-1' }, { id: names.identity, tag: 'identity-a' }, { id: names.identity, tag: 'identity-b' }],
+  ]) {
+    const transport = mockTransport([{ result: list }]); const alerts = [];
+    const client = createCloudflareClient({ accountId: 'account-1', inventory, transport, alert: value => alerts.push(value) });
+    await assert.rejects(client.getWorker('api'), MutationQuarantinedError); assert.equal(alerts.length, 1);
+  }
+  const transport = mockTransport([{ result: [{ id: names.api, tag: 'worker-tag-1' }] }, { result: { bindings: [{ type: 'plain_text', name: 'UNPROVEN' }] } }]);
+  const alerts = []; const client = createCloudflareClient({ accountId: 'account-1', inventory, transport, alert: value => alerts.push(value) });
+  await assert.rejects(client.getWorker('api'), MutationQuarantinedError); assert.equal(alerts.length, 1);
+});
+
+test('rejects undefined operation results and poisons after Access inventory checkpoint failure', async () => {
+  const deleteTransport = mockTransport([{ result: { uuid: inventory.cloudflare.d1Ids.product, name: names.product } }, { result: undefined }]); const deleteAlerts = [];
+  const deleteClient = createCloudflareClient({ accountId: 'account-1', inventory, transport: deleteTransport, alert: value => deleteAlerts.push(value) });
+  await assert.rejects(deleteClient.deleteD1('product'), MutationQuarantinedError); assert.equal(deleteAlerts.length, 1);
+  const writes = []; const transport = mockTransport([{ result: [] }, { result: { id: 'access-created', name: names.accessApi } }]);
+  const client = createCloudflareClient({ accountId: 'account-1', inventory: { ...inventory, cloudflare: { ...inventory.cloudflare, accessAppIds: {} } }, transport, store: { async put(value) { writes.push(value); if (writes.length === 2) throw new Error('inventory checkpoint failed'); } }, alert() {}, accessAppCreate: () => ({ name: names.accessApi, destinations: [{ type: 'worker', worker_id: 'worker-tag-1', overrides: [] }], policies: [{ decision: 'non_identity', include: [{ service_token: { token_id: 'token-1' } }] }] }) });
+  await assert.rejects(client.createAccessApp('api'));
+  await assert.rejects(client.deleteAccessApp('api'));
+  assert.equal(transport.calls.length, 2);
+});

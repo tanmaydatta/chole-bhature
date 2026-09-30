@@ -179,7 +179,7 @@ async function discoverRunInner(rawKey, api) {
     }
     if (typeof api.getWorker !== 'function' || typeof api.listAudit !== 'function') quarantine('Discovery evidence source is incomplete.');
     if (matches.length !== 1 || typeof matches[0].tag !== 'string' || matches[0].tag.length === 0) quarantine('Worker discovery is ambiguous.');
-    const current = await api.getWorker(name);
+    const current = await api.getWorker(role);
     const candidate = { ...next, cloudflare: { ...next.cloudflare, workerIds: { ...next.cloudflare.workerIds, [role]: matches[0].tag } } };
     const discovered = { accountId: next.cloudflare.accountId, kind: 'worker', role, name, id: current?.tag, bindings: current?.bindings };
     assertOwnedResource(candidate, discovered, `worker:${role}`);
@@ -221,10 +221,12 @@ async function discoverRunInner(rawKey, api) {
   const complete = roles.worker.every(role => next.cloudflare.workerIds[role])
     && roles.d1.every(role => next.cloudflare.d1Ids[role])
     && roles.accessApp.every(role => next.cloudflare.accessAppIds[role]) && next.cloudflare.tokenId;
+  let lifecycleChanged = false;
   if (complete) next.stage = 'active';
+  else if (next.stage === 'active') { next.stage = 'creating'; lifecycleChanged = true; }
   next.updatedAt = new Date().toISOString();
-  if (recovered && typeof api.saveCheckpoint !== 'function') quarantine('Recovered IDs cannot be returned before a durable checkpoint.');
-  if (recovered) await api.saveCheckpoint(validateInventory(next));
+  if ((recovered || lifecycleChanged) && typeof api.saveCheckpoint !== 'function') quarantine('Changed inventory cannot be returned before a durable checkpoint.');
+  if (recovered || lifecycleChanged) await api.saveCheckpoint(validateInventory(next));
   return validateInventory(next);
 }
 

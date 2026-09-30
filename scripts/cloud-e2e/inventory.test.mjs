@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import { assertOwnedResource, checkpoint, discoverRun, InventoryQuarantineError } from './inventory.mjs';
 import { resourceNames } from './key.mjs';
+import { createCloudflareClient } from './cloudflare.mjs';
 
 const key = {
   repository_id: 987654321,
@@ -122,4 +123,33 @@ test('does not return recovered IDs before saveCheckpoint durably succeeds and a
   };
   await assert.rejects(discoverRun(key, api), InventoryQuarantineError);
   assert.equal(alerts.length, 1);
+});
+
+test('downgrades incomplete active inventory and wires discovery to client list/get normalization', async () => {
+  const active = { ...inventory, cloudflare: { ...inventory.cloudflare, workerIds: {}, d1Ids: {}, accessAppIds: {}, tokenId: null } };
+  const saved = []; const incompleteApi = { async loadCheckpoint() { return { inventory: active, intents: [] }; }, async listWorkers() { return []; }, async listD1() { return []; }, async listAccessApps() { return []; }, async listServiceTokens() { return []; }, async saveCheckpoint(value) { saved.push(value); }, controllerTokenId: 'controller-token', alert() {} };
+  assert.equal((await discoverRun(key, incompleteApi)).stage, 'creating');
+  assert.equal(saved.length, 1);
+});
+
+test('wires discoverRun to actual client listWorkers and getWorker(role) normalization', async () => {
+  const responses = [
+    { result: [{ id: names.api, tag: 'worker-tag-recovered' }] },
+    { result: [{ id: names.api, tag: 'worker-tag-recovered' }] },
+    { result: { bindings: [{ type: 'd1', name: 'DB', id: inventory.cloudflare.d1Ids.product }] } },
+    { result: [] },
+    { result: [] },
+  ];
+  const calls = [];
+  const client = createCloudflareClient({ accountId: 'account-1', inventory, transport: { async request(request) { calls.push(request); const response = responses.shift(); return { status: 200, success: true, result_info: Array.isArray(response.result) ? { total_count: response.result.length } : undefined, ...response }; } } });
+  const saved = [];
+  const api = {
+    async loadCheckpoint() { return { inventory: { ...inventory, stage: 'creating', cloudflare: { ...inventory.cloudflare, workerIds: {} } }, intents: [{ key, kind: 'worker:api', exactName: names.api, startedAt: '2026-09-30T10:01:00.000Z', noPreexistingMatch: true }] }; },
+    listWorkers: client.listWorkers, getWorker: client.getWorker,
+    async listD1() { return []; }, async listAccessApps() { return []; }, async listServiceTokens() { return []; },
+    async listAudit() { return [{ actor: { token_id: 'controller-token' }, action: { type: 'create', result: true, time: '2026-09-30T10:01:01.000Z' }, resource: { id: 'worker-tag-recovered' }, raw: { method: 'PUT', uri: `/accounts/account-1/workers/scripts/${names.api}` } }]; },
+    controllerTokenId: 'controller-token', async saveCheckpoint(value) { saved.push(value); },
+  };
+  assert.equal((await discoverRun(key, api)).cloudflare.workerIds.api, 'worker-tag-recovered');
+  assert.equal(saved.length, 1); assert.deepEqual(calls.map(call => call.path), ['/accounts/account-1/workers/scripts', '/accounts/account-1/workers/scripts', `/accounts/account-1/workers/scripts/${names.api}/settings`, '/accounts/account-1/workers/scripts', '/accounts/account-1/workers/scripts']);
 });
