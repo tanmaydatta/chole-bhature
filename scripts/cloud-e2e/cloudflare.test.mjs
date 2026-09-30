@@ -108,6 +108,7 @@ test('rejects an Access app with a wrong Worker destination or policy graph befo
 
 test('rejects Access require, exclude, and unrecognized policy fields before delete', async () => {
   for (const policy of [
+    { decision: 'non_identity', include: [{ service_token: { token_id: 'token-1' }, everyone: {} }] },
     { decision: 'non_identity', include: [{ service_token: { token_id: 'token-1' } }], require: [{ email: { email: 'x@example.test' } }] },
     { decision: 'non_identity', include: [{ service_token: { token_id: 'token-1' } }], exclude: [{ everyone: {} }] },
     { decision: 'non_identity', include: [{ service_token: { token_id: 'token-1' } }], approval_required: false },
@@ -119,6 +120,15 @@ test('rejects Access require, exclude, and unrecognized policy fields before del
     assert.deepEqual(transport.calls.map(call => call.method), ['GET']);
     assert.equal(alerts.length, 1);
   }
+});
+
+test('rejects duplicate immutable Worker tags and D1 UUIDs before graph or create certification', async () => {
+  const workerTransport = mockTransport([{ result: [{ id: names.api, tag: 'tag-api' }, { id: names.operator, tag: 'tag-operator' }, { id: 'foreign-script', tag: 'tag-api' }] }]);
+  const workerAlerts = []; const workerClient = createCloudflareClient({ accountId: 'account-1', inventory: { ...inventory, cloudflare: { ...inventory.cloudflare, workerIds: { api: 'tag-api', operator: 'tag-operator' } } }, transport: workerTransport, alert: value => workerAlerts.push(value) });
+  await assert.rejects(workerClient.getWorker('operator'), MutationQuarantinedError); assert.equal(workerAlerts.length, 1);
+  const d1Transport = mockTransport([{ result: [{ name: 'foreign-product-a', uuid: '33333333-3333-4333-8333-333333333333' }, { name: 'foreign-product-b', uuid: '33333333-3333-4333-8333-333333333333' }] }]);
+  const d1Alerts = []; const d1Client = createCloudflareClient({ accountId: 'account-1', inventory: { ...inventory, cloudflare: { ...inventory.cloudflare, d1Ids: {} } }, transport: d1Transport, store: { async put() {} }, alert: value => d1Alerts.push(value) });
+  await assert.rejects(d1Client.createD1('product'), MutationQuarantinedError); assert.equal(d1Alerts.length, 1); assert.deepEqual(d1Transport.calls.map(call => call.method), ['GET']);
 });
 
 test('rejects empty and duplicate Worker list IDs/tags plus unsupported settings with alerts', async () => {
