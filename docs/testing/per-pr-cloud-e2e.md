@@ -2,7 +2,7 @@
 
 **Baseline recorded:** 2026-09-30
 **Status:** Local baseline, Tasks 1–4 guard foundation, and the approved
-2026-10-01 Task 5a mock-only Beta planning slice are complete. Public Worker
+2026-10-01 Task 5a/5b mock-only Beta protocol slices are complete. Public Worker
 mutations remain disabled; the local evidence is not an approved Cloudflare
 pilot, deployment, credential change, or every-push workflow.
 
@@ -155,6 +155,41 @@ this proves request/validation behavior and existing zero-call guards only.
 Its connected in-memory protocol enforces receipt ordering for request planning;
 it is not a transport controller and does not establish provider behavior or
 live transition proof.
+
+### Task 5b mock-only identity and Access protocol (2026-10-01)
+
+The follow-up local protocol addresses real create order without future-ID
+preseeding. Three disabled empty Worker create intents, plans, POST results,
+exact-ID GET readbacks, and ID checkpoints establish separate Beta receipts.
+An empty service-token pre-create list and durable, run-scoped token intent
+precede its single-use fixed POST plan. Only a same-store, same-run set of
+three current role receipts with the exact inert Product/Auth D1 binding graph,
+and the matching token POST result plus exact-ID
+GET readback can checkpoint the complete Beta ID/token inventory. That write
+finishes before any successor receipt is returned. Old receipts for **all
+three** roles are revoked together; copied raw inventory cannot renew them.
+
+Each Access app separately requires an empty pre-create list and durable
+intent before a single-use pure POST plan. The API and Operator plans address
+only their certified 32-lowercase-hex Beta Worker IDs, controller-derived
+names, and the run token with one `non_identity` policy and one service-token
+include. A correlated POST result and exact-app-ID GET must match that whole
+graph before its ID enters a durable inventory checkpoint. Each checkpoint
+rotates all three role receipts and revokes older attachments and prepared
+evidence. Both app IDs, both durable attachment receipts, and later fresh
+exact-policy readbacks remain mandatory before a supported Worker code plan.
+The legacy Access client's `workerIds` continue to mean legacy script tags;
+the Beta planner makes no transport call and accepts no name fallback.
+
+The 2026-10-01 local `node --test scripts/cloud-e2e/*.test.mjs` result is
+**62/62**. Tests cover ordered empty-inventory progression, intent and ID
+checkpoint failure, same-run overlap, distinct-run independence, forged
+account/run/role/path/ID/token/policy/time evidence, expiry and superseded
+receipts, both Access gates, and the unchanged zero-transport public Worker
+refusal. Synthetic envelopes and a local store/process registry are correlation
+fixtures, not authenticated Cloudflare provider proof, distributed CAS,
+recovery, a controller, live readiness, or complete cleanup. Operator service
+binding remapping, assets/JWT, and the other live gates above remain unsupported.
 
 **NO-GO for a live pilot:** Beta recovery/audit evidence, provider response
 completeness, assets/JWT, service-name remapping, D1 migrations, version/preview

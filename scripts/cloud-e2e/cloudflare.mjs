@@ -1,4 +1,4 @@
-import { assertOwnedResource, betaWorkerAttachmentReceipt, betaWorkerEvidencePhase, betaWorkerReceipt, checkpoint, consumeBetaWorkerAction, consumeBetaWorkerCreatePlan, InventoryQuarantineError, validateInventory } from './inventory.mjs';
+import { assertOwnedResource, betaWorkerAttachmentReceipt, betaWorkerEvidencePhase, betaWorkerReceipt, checkpoint, consumeBetaAccessCreatePlan, consumeBetaTokenCreatePlan, consumeBetaWorkerAction, consumeBetaWorkerCreatePlan, InventoryQuarantineError, validateInventory } from './inventory.mjs';
 
 export class MutationQuarantinedError extends InventoryQuarantineError {
   constructor(message) {
@@ -105,6 +105,23 @@ export function planBetaWorkerCreate(intentReceipt, now = () => new Date().toISO
 export function planBetaWorkerRead(idReceipt, now = () => new Date().toISOString()) {
   const { inventory, role } = receipt(idReceipt, 'id', now);
   return { method: 'GET', path: betaWorkerPath(inventory, role) };
+}
+
+export function planBetaTokenCreate(tokenIntentReceipt, now = () => new Date().toISOString()) {
+  const { inventory } = consumeBetaTokenCreatePlan(tokenIntentReceipt, now);
+  return { method: 'POST', path: `/accounts/${inventory.cloudflare.accountId}/access/service_tokens`, body: { name: inventory.names.token } };
+}
+
+export function planBetaAccessCreate(accessIntentReceipt, now = () => new Date().toISOString()) {
+  const { inventory, role } = consumeBetaAccessCreatePlan(accessIntentReceipt, now);
+  return {
+    method: 'POST', path: `/accounts/${inventory.cloudflare.accountId}/access/apps`,
+    body: {
+      name: role === 'api' ? inventory.names.accessApi : inventory.names.accessOperator,
+      destinations: [{ type: 'worker', worker_id: betaWorkerId(inventory, role), overrides: [] }],
+      policies: [{ decision: 'non_identity', include: [{ service_token: { token_id: inventory.cloudflare.tokenId } }] }],
+    },
+  };
 }
 
 function exactD1Bindings(inventory, role, bindings) {

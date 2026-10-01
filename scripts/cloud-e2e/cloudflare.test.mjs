@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import * as cloudflareProtocol from './cloudflare.mjs';
 import { createCloudflareClient, MutationQuarantinedError, planBetaWorkerCreate, planBetaWorkerDelete, planBetaWorkerRead, planBetaWorkerVersion, prepareBetaWorkerEvidence } from './cloudflare.mjs';
-import { checkpointBetaWorkerAccessAttachment, checkpointBetaWorkerCreateIntent, checkpointBetaWorkerObservation, InventoryQuarantineError } from './inventory.mjs';
+import { checkpointBetaAccessCreateIntent, checkpointBetaAccessIdentity, checkpointBetaTokenCreateIntent, checkpointBetaWorkerAccessAttachment, checkpointBetaWorkerCreateIntent, checkpointBetaWorkerDependencies, checkpointBetaWorkerObservation, InventoryQuarantineError } from './inventory.mjs';
 import { resourceNames } from './key.mjs';
 
 const key = { repository_id: 987654321, repository: 'trusted-owner/incentives-platform', pr: 42, head_sha: 'a'.repeat(40), run_id: 123456789, attempt: 2 };
@@ -18,6 +19,7 @@ const ACCESS_AT = '2026-10-01T09:00:01.000Z';
 const PREP_AT = '2026-10-01T09:00:02.000Z';
 const API_ID = 'e8f70fdbc8b1fb0b8ddb1af166186758';
 const OPERATOR_ID = 'f8f70fdbc8b1fb0b8ddb1af166186758';
+const IDENTITY_ID = 'd8f70fdbc8b1fb0b8ddb1af166186758';
 
 function mockTransport(responses) {
   const calls = [];
@@ -64,13 +66,61 @@ function deferred() {
   return { promise, release };
 }
 
+async function workerReceipts(store, runKey = key, runIds = { api: API_ID, identity: IDENTITY_ID, operator: OPERATOR_ID }, overrides = {}) {
+  const runNames = resourceNames(runKey);
+  const state = { ...inventory, key: runKey, names: runNames, cloudflare: { ...inventory.cloudflare, workerIds: {}, accessAppIds: {}, tokenId: null }, betaWorkerIds: {} };
+  const ids = {};
+  let intent; let create;
+  for (const [role, databaseId] of [['api', inventory.cloudflare.d1Ids.product], ['identity', inventory.cloudflare.d1Ids.auth], ['operator', null]]) {
+    const betaId = runIds[role];
+    const result = { id: betaId, name: runNames[role], routes: [], subdomain: { enabled: false, previews_enabled: false }, deployed_on: null, bindings: databaseId ? [{ name: 'DB', type: 'd1', database_id: databaseId }] : [], ...overrides[role] };
+    const roleIntent = await checkpointBetaWorkerCreateIntent(state, role, { ...envelope('beta-worker-precreate-list', role, '/accounts/account-1/workers/workers', []), run: runKey }, store, () => NOW);
+    const roleCreate = planBetaWorkerCreate(roleIntent, () => NOW);
+    ids[role] = await checkpointBetaWorkerObservation(roleIntent, { ...envelope('beta-worker-create-result', role, '/accounts/account-1/workers/workers', result, NOW, 'POST'), run: runKey }, { ...envelope('beta-worker-readback', role, `/accounts/account-1/workers/workers/${betaId}`, result), run: runKey }, store, () => NOW);
+    if (role === 'api') { intent = roleIntent; create = roleCreate; }
+  }
+  return { ids, intent, create, runNames };
+}
+
+function tokenCreate(result = { id: 'token-1', name: names.token }) {
+  return envelope('beta-token-create-result', 'api', '/accounts/account-1/access/service_tokens', result, NOW, 'POST');
+}
+
+function tokenRead(result = { id: 'token-1', name: names.token }) {
+  return envelope('beta-token-readback', 'api', '/accounts/account-1/access/service_tokens/token-1', result);
+}
+
+async function plannedToken(ids, store) {
+  const receipt = await checkpointBetaTokenCreateIntent(ids.api, ids, envelope('beta-token-precreate-list', 'api', '/accounts/account-1/access/service_tokens', []), store, () => NOW);
+  assert.deepEqual(cloudflareProtocol.planBetaTokenCreate(receipt, () => NOW), { method: 'POST', path: '/accounts/account-1/access/service_tokens', body: { name: names.token } });
+  return receipt;
+}
+
+async function plannedAccess(id, role, store) {
+  const receipt = await checkpointBetaAccessCreateIntent(id, role, envelope('beta-access-precreate-list', role, '/accounts/account-1/access/apps', []), store, () => NOW);
+  return { receipt, plan: cloudflareProtocol.planBetaAccessCreate(receipt, () => NOW) };
+}
+
+async function beforeAccess(store) {
+  const { ids } = await workerReceipts(store);
+  const receipts = await checkpointBetaWorkerDependencies(await plannedToken(ids, store), ids, tokenCreate(), tokenRead(), store, () => NOW);
+  return { ids, receipts };
+}
+
 async function established(withAttachments = true) {
   const writes = [];
   const store = { async put(value) { writes.push(value); } };
-  const state = pending();
-  const intent = await checkpointBetaWorkerCreateIntent(state, 'api', envelope('beta-worker-precreate-list', 'api', '/accounts/account-1/workers/workers', []), store, () => NOW);
-  const create = planBetaWorkerCreate(intent, () => NOW);
-  const id = await checkpointBetaWorkerObservation(intent, createResult(), worker(), store, () => NOW);
+  const { ids, intent, create } = await workerReceipts(store);
+  const token = { id: 'token-1', name: names.token };
+  let receipts = await checkpointBetaWorkerDependencies(await plannedToken(ids, store), ids, envelope('beta-token-create-result', 'api', '/accounts/account-1/access/service_tokens', token, NOW, 'POST'), envelope('beta-token-readback', 'api', '/accounts/account-1/access/service_tokens/token-1', token), store, () => NOW);
+  for (const role of ['api', 'operator']) {
+    const appId = role === 'api' ? 'access-app-1' : 'access-app-2';
+    const workerId = role === 'api' ? API_ID : OPERATOR_ID;
+    const app = { id: appId, name: role === 'api' ? names.accessApi : names.accessOperator, destinations: [{ type: 'worker', worker_id: workerId, overrides: [] }], policies: [{ decision: 'non_identity', include: [{ service_token: { token_id: 'token-1' } }] }] };
+    await plannedAccess(receipts.api, role, store);
+    receipts = await checkpointBetaAccessIdentity(receipts.api, role, envelope('beta-access-create-result', role, '/accounts/account-1/access/apps', app, NOW, 'POST'), envelope('beta-access-readback', role, `/accounts/account-1/access/apps/${appId}`, app), store, () => NOW);
+  }
+  const id = receipts.api;
   if (!withAttachments) return { writes, store, intent, create, id, attachments: {} };
   const apiAttachment = await checkpointBetaWorkerAccessAttachment(id, 'api', attachment('api'), store, () => NOW);
   const operatorAttachment = await checkpointBetaWorkerAccessAttachment(id, 'operator', attachment('operator'), store, () => NOW);
@@ -81,9 +131,233 @@ test('requires opaque durable intent and immutable-ID receipts for create and re
   const { create, id, writes } = await established();
   assert.deepEqual(create, { method: 'POST', path: '/accounts/account-1/workers/workers', body: { name: names.api, subdomain: { enabled: false, previews_enabled: false } } });
   assert.deepEqual(planBetaWorkerRead(id, () => NOW), { method: 'GET', path: `/accounts/account-1/workers/workers/${API_ID}` });
-  assert.equal(writes.length, 4);
+  assert.equal(writes.length, 14);
   assert.throws(() => planBetaWorkerCreate(pending(), 'api'), /receipt/u);
   assert.throws(() => planBetaWorkerRead({}), /receipt/u);
+});
+
+test('plans Beta-ID Access creation after empty-inventory Worker identity checkpoints', async () => {
+  const empty = { ...inventory, cloudflare: { ...inventory.cloudflare, workerIds: {}, accessAppIds: {}, tokenId: null }, betaWorkerIds: {} };
+  const writes = [];
+  const store = { async put(value) { writes.push(value); } };
+  const ids = {};
+  for (const [role, id, d1] of [['api', API_ID, inventory.cloudflare.d1Ids.product], ['identity', IDENTITY_ID, inventory.cloudflare.d1Ids.auth], ['operator', OPERATOR_ID, null]]) {
+    const result = { id, name: names[role], routes: [], subdomain: { enabled: false, previews_enabled: false }, deployed_on: null, bindings: d1 ? [{ name: 'DB', type: 'd1', database_id: d1 }] : [] };
+    const intent = await checkpointBetaWorkerCreateIntent(empty, role, envelope('beta-worker-precreate-list', role, '/accounts/account-1/workers/workers', []), store, () => NOW);
+    assert.equal(planBetaWorkerCreate(intent, () => NOW).body.name, names[role]);
+    ids[role] = await checkpointBetaWorkerObservation(intent, envelope('beta-worker-create-result', role, '/accounts/account-1/workers/workers', result, NOW, 'POST'), envelope('beta-worker-readback', role, `/accounts/account-1/workers/workers/${id}`, result), store, () => NOW);
+  }
+  assert.throws(() => cloudflareProtocol.planBetaAccessCreate(ids.api, () => NOW), /intent/u);
+  const token = { id: 'token-1', name: names.token };
+  const certified = await checkpointBetaWorkerDependencies(await plannedToken(ids, store), ids,
+    envelope('beta-token-create-result', 'api', '/accounts/account-1/access/service_tokens', token, NOW, 'POST'),
+    envelope('beta-token-readback', 'api', '/accounts/account-1/access/service_tokens/token-1', token), store, () => NOW);
+  assert.equal(writes.at(-1).betaWorkerIds.identity, IDENTITY_ID);
+  assert.equal(writes.at(-1).cloudflare.tokenId, 'token-1');
+  assert.throws(() => cloudflareProtocol.planBetaAccessCreate(ids.api, () => NOW), /intent/u);
+  assert.deepEqual((await plannedAccess(certified.api, 'api', store)).plan, {
+    method: 'POST', path: '/accounts/account-1/access/apps',
+    body: { name: names.accessApi, destinations: [{ type: 'worker', worker_id: API_ID, overrides: [] }], policies: [{ decision: 'non_identity', include: [{ service_token: { token_id: 'token-1' } }] }] },
+  });
+  const apiApp = { id: 'access-app-1', name: names.accessApi, destinations: [{ type: 'worker', worker_id: API_ID, overrides: [] }], policies: [{ decision: 'non_identity', include: [{ service_token: { token_id: 'token-1' } }] }] };
+  const api = await checkpointBetaAccessIdentity(certified.api, 'api', envelope('beta-access-create-result', 'api', '/accounts/account-1/access/apps', apiApp, NOW, 'POST'), access('api'), store, () => NOW);
+  assert.equal(writes.at(-1).cloudflare.accessAppIds.api, 'access-app-1');
+  assert.throws(() => planBetaWorkerRead(certified.api, () => NOW), /receipt/u);
+  assert.deepEqual((await plannedAccess(api.api, 'operator', store)).plan, {
+    method: 'POST', path: '/accounts/account-1/access/apps',
+    body: { name: names.accessOperator, destinations: [{ type: 'worker', worker_id: OPERATOR_ID, overrides: [] }], policies: [{ decision: 'non_identity', include: [{ service_token: { token_id: 'token-1' } }] }] },
+  });
+  const operatorApp = { id: 'access-app-2', name: names.accessOperator, destinations: [{ type: 'worker', worker_id: OPERATOR_ID, overrides: [] }], policies: [{ decision: 'non_identity', include: [{ service_token: { token_id: 'token-1' } }] }] };
+  const ready = await checkpointBetaAccessIdentity(api.api, 'operator', envelope('beta-access-create-result', 'operator', '/accounts/account-1/access/apps', operatorApp, NOW, 'POST'), access('operator'), store, () => NOW);
+  assert.equal(writes.at(-1).cloudflare.accessAppIds.operator, 'access-app-2');
+  assert.deepEqual(planBetaWorkerRead(ready.api, () => NOW), { method: 'GET', path: `/accounts/account-1/workers/workers/${API_ID}` });
+  assert.deepEqual(planBetaWorkerRead(ready.identity, () => NOW), { method: 'GET', path: `/accounts/account-1/workers/workers/${IDENTITY_ID}` });
+});
+
+test('raw future IDs cannot authorize a Beta Access create plan after a real Worker checkpoint', async () => {
+  const seeded = { ...pending(), cloudflare: { ...pending().cloudflare, accessAppIds: {}, tokenId: 'token-1' }, betaWorkerIds: { identity: IDENTITY_ID, operator: OPERATOR_ID } };
+  const store = { async put() {} };
+  const intent = await checkpointBetaWorkerCreateIntent(seeded, 'api', envelope('beta-worker-precreate-list', 'api', '/accounts/account-1/workers/workers', []), store, () => NOW);
+  planBetaWorkerCreate(intent, () => NOW);
+  const id = await checkpointBetaWorkerObservation(intent, createResult(), worker(), store, () => NOW);
+  assert.throws(() => cloudflareProtocol.planBetaAccessCreate(id, () => NOW), /intent/u);
+});
+
+test('dependency checkpoint is durable before every sibling ID becomes usable and poisons failed or overlapping transitions', async () => {
+  const barrier = deferred(); let entered = 0; let fail = false;
+  const store = { async put() { entered += 1; if (entered === 8) { await barrier.promise; if (fail) throw new Error('dependency checkpoint lost'); } } };
+  const { ids } = await workerReceipts(store);
+  const tokenIntent = await plannedToken(ids, store);
+  const first = checkpointBetaWorkerDependencies(tokenIntent, ids, tokenCreate(), tokenRead(), store, () => NOW);
+  while (entered < 8) await Promise.resolve();
+  assert.throws(() => cloudflareProtocol.planBetaAccessCreate(ids.api, () => NOW), /intent/u);
+  await assert.rejects(checkpointBetaWorkerDependencies(tokenIntent, ids, tokenCreate(), tokenRead(), store, () => NOW), /required/u);
+  fail = true; barrier.release();
+  await assert.rejects(first, /dependency checkpoint lost/u);
+  await assert.rejects(checkpointBetaWorkerDependencies(tokenIntent, ids, tokenCreate(), tokenRead(), store, () => NOW), /required/u);
+  assert.throws(() => cloudflareProtocol.planBetaAccessCreate(ids.api, () => NOW), /intent/u);
+});
+
+test('resource names and a Worker ID receipt alone cannot authorize an Access POST plan', async () => {
+  const store = { async put() {} };
+  const { ids } = await workerReceipts(store);
+  assert.throws(() => cloudflareProtocol.planBetaTokenCreate(ids.api, () => NOW), /intent/u);
+  await assert.rejects(checkpointBetaWorkerDependencies(ids.api, ids, tokenCreate(), tokenRead(), store, () => NOW), /intent/u);
+  const certified = await checkpointBetaWorkerDependencies(await plannedToken(ids, store), ids, tokenCreate(), tokenRead(), store, () => NOW);
+  assert.throws(() => cloudflareProtocol.planBetaAccessCreate(certified.api, () => NOW), /intent/u);
+});
+
+test('token and Access intents reserve before persistence and failed writes remain poisoned', async () => {
+  const tokenBarrier = deferred(); let tokenWrites = 0;
+  const store = { async put() { tokenWrites += 1; if (tokenWrites === 7) { await tokenBarrier.promise; throw new Error('token intent lost'); } } };
+  const { ids } = await workerReceipts(store);
+  const discovery = envelope('beta-token-precreate-list', 'api', '/accounts/account-1/access/service_tokens', []);
+  const first = checkpointBetaTokenCreateIntent(ids.api, ids, discovery, store, () => NOW);
+  while (tokenWrites < 7) await Promise.resolve();
+  await assert.rejects(checkpointBetaTokenCreateIntent(ids.api, ids, discovery, store, () => NOW), /reserved|ambiguous/u);
+  tokenBarrier.release();
+  await assert.rejects(first, /token intent lost/u);
+  await assert.rejects(checkpointBetaTokenCreateIntent(ids.api, ids, discovery, store, () => NOW), /reserved|ambiguous/u);
+
+  const accessStore = { async put() {} };
+  const { receipts } = await beforeAccess(accessStore);
+  const accessBarrier = deferred(); let accessWrites = 0;
+  accessStore.put = async () => { accessWrites += 1; await accessBarrier.promise; throw new Error('Access intent lost'); };
+  const accessDiscovery = envelope('beta-access-precreate-list', 'api', '/accounts/account-1/access/apps', []);
+  const accessFirst = checkpointBetaAccessCreateIntent(receipts.api, 'api', accessDiscovery, accessStore, () => NOW);
+  while (accessWrites === 0) await Promise.resolve();
+  await assert.rejects(checkpointBetaAccessCreateIntent(receipts.api, 'api', accessDiscovery, accessStore, () => NOW), /phase|incomplete|planned/u);
+  accessBarrier.release();
+  await assert.rejects(accessFirst, /Access intent lost/u);
+  await assert.rejects(checkpointBetaAccessCreateIntent(receipts.api, 'api', accessDiscovery, accessStore, () => NOW), /phase|incomplete|planned/u);
+});
+
+test('different trusted runs can checkpoint token identities concurrently in one local store', async () => {
+  const otherKey = { ...key, run_id: key.run_id + 1 };
+  const otherIds = { api: 'b8f70fdbc8b1fb0b8ddb1af166186758', identity: 'c8f70fdbc8b1fb0b8ddb1af166186758', operator: 'a8f70fdbc8b1fb0b8ddb1af166186758' };
+  const barrier = deferred(); let firstEntered = false;
+  const store = { async put(value) { if (value.type === 'beta-token-create-intent' && value.key.run_id === key.run_id) { firstEntered = true; await barrier.promise; } } };
+  const first = await workerReceipts(store);
+  const second = await workerReceipts(store, otherKey, otherIds);
+  const firstIntentPromise = checkpointBetaTokenCreateIntent(first.ids.api, first.ids, envelope('beta-token-precreate-list', 'api', '/accounts/account-1/access/service_tokens', []), store, () => NOW);
+  while (!firstEntered) await Promise.resolve();
+  const secondDiscovery = { ...envelope('beta-token-precreate-list', 'api', '/accounts/account-1/access/service_tokens', []), run: otherKey };
+  const secondIntent = await checkpointBetaTokenCreateIntent(second.ids.api, second.ids, secondDiscovery, store, () => NOW);
+  assert.equal(cloudflareProtocol.planBetaTokenCreate(secondIntent, () => NOW).body.name, second.runNames.token);
+  const secondToken = { id: 'token-other', name: second.runNames.token };
+  const secondReceipts = await checkpointBetaWorkerDependencies(secondIntent, second.ids,
+    { ...envelope('beta-token-create-result', 'api', '/accounts/account-1/access/service_tokens', secondToken, NOW, 'POST'), run: otherKey },
+    { ...envelope('beta-token-readback', 'api', '/accounts/account-1/access/service_tokens/token-other', secondToken), run: otherKey }, store, () => NOW);
+  assert.deepEqual(planBetaWorkerRead(secondReceipts.api, () => NOW), { method: 'GET', path: `/accounts/account-1/workers/workers/${otherIds.api}` });
+  barrier.release();
+  const firstIntent = await firstIntentPromise;
+  cloudflareProtocol.planBetaTokenCreate(firstIntent, () => NOW);
+  const firstReceipts = await checkpointBetaWorkerDependencies(firstIntent, first.ids, tokenCreate(), tokenRead(), store, () => NOW);
+  assert.deepEqual(planBetaWorkerRead(firstReceipts.api, () => NOW), { method: 'GET', path: `/accounts/account-1/workers/workers/${API_ID}` });
+});
+
+test('new identity transitions use one canonical injected clock snapshot each', async () => {
+  const store = { async put() {} };
+  const { ids } = await workerReceipts(store);
+  let calls = 0;
+  const changingNow = () => { calls += 1; return calls === 1 ? NOW : '2026-13-01T09:00:00.000Z'; };
+  const intent = await checkpointBetaTokenCreateIntent(ids.api, ids, envelope('beta-token-precreate-list', 'api', '/accounts/account-1/access/service_tokens', []), store, changingNow);
+  assert.equal(calls, 1);
+  cloudflareProtocol.planBetaTokenCreate(intent, () => NOW);
+  const receipts = await checkpointBetaWorkerDependencies(intent, ids, tokenCreate(), tokenRead(), store, () => NOW);
+  calls = 0;
+  const accessIntent = await checkpointBetaAccessCreateIntent(receipts.api, 'api', envelope('beta-access-precreate-list', 'api', '/accounts/account-1/access/apps', []), store, changingNow);
+  assert.equal(calls, 1);
+  assert.equal(cloudflareProtocol.planBetaAccessCreate(accessIntent, () => NOW).body.name, names.accessApi);
+});
+
+test('Access create checkpoint rejects mismatched account, role, ID, destination, token, policy, and time', async () => {
+  const app = { id: 'access-app-1', name: names.accessApi, destinations: [{ type: 'worker', worker_id: API_ID, overrides: [] }], policies: [{ decision: 'non_identity', include: [{ service_token: { token_id: 'token-1' } }] }] };
+  const cases = [
+    { create: { ...envelope('beta-access-create-result', 'api', '/accounts/account-1/access/apps', app, NOW, 'POST'), run: { ...key, attempt: 3 } } },
+    { create: envelope('beta-access-create-result', 'operator', '/accounts/account-1/access/apps', app, NOW, 'POST') },
+    { create: envelope('beta-access-create-result', 'api', '/accounts/other/access/apps', app, NOW, 'POST') },
+    { create: envelope('beta-access-create-result', 'api', '/accounts/account-1/access/apps', { ...app, id: 'foreign/id' }, NOW, 'POST') },
+    { create: envelope('beta-access-create-result', 'api', '/accounts/account-1/access/apps', { ...app, destinations: [{ type: 'worker', worker_id: OPERATOR_ID, overrides: [] }] }, NOW, 'POST') },
+    { create: envelope('beta-access-create-result', 'api', '/accounts/account-1/access/apps', { ...app, policies: [{ decision: 'non_identity', include: [{ service_token: { token_id: 'foreign' } }] }] }, NOW, 'POST') },
+    { create: envelope('beta-access-create-result', 'api', '/accounts/account-1/access/apps', { ...app, policies: [{ decision: 'allow', include: [{ service_token: { token_id: 'token-1' } }] }] }, NOW, 'POST') },
+    { create: envelope('beta-access-create-result', 'api', '/accounts/account-1/access/apps', { ...app, policies: [{ decision: 'non_identity', include: [{ service_token: { token_id: 'token-1' } }], require: [] }] }, NOW, 'POST') },
+    { create: envelope('beta-access-create-result', 'api', '/accounts/account-1/access/apps', app, '2026-13-01T09:00:00.000Z', 'POST') },
+    { read: envelope('beta-access-readback', 'api', '/accounts/account-1/access/apps/foreign', app) },
+    { read: envelope('beta-access-readback', 'api', '/accounts/account-1/access/apps/access-app-1', { ...app, id: 'foreign' }) },
+  ];
+  for (const sample of cases) {
+    const writes = []; const store = { async put(value) { writes.push(value); } };
+    const { receipts } = await beforeAccess(store);
+    await plannedAccess(receipts.api, 'api', store);
+    await assert.rejects(checkpointBetaAccessIdentity(receipts.api, 'api', sample.create ?? envelope('beta-access-create-result', 'api', '/accounts/account-1/access/apps', app, NOW, 'POST'), sample.read ?? envelope('beta-access-readback', 'api', '/accounts/account-1/access/apps/access-app-1', app), store, () => NOW), InventoryQuarantineError);
+    assert.equal(writes.length, 9);
+    assert.throws(() => cloudflareProtocol.planBetaAccessCreate(receipts.api, () => NOW), /intent/u);
+  }
+});
+
+test('Access ID remains unusable through an overlapping or failed durable checkpoint', async () => {
+  const store = { async put() {} };
+  const { receipts } = await beforeAccess(store);
+  await plannedAccess(receipts.api, 'api', store);
+  const app = { id: 'access-app-1', name: names.accessApi, destinations: [{ type: 'worker', worker_id: API_ID, overrides: [] }], policies: [{ decision: 'non_identity', include: [{ service_token: { token_id: 'token-1' } }] }] };
+  const created = envelope('beta-access-create-result', 'api', '/accounts/account-1/access/apps', app, NOW, 'POST');
+  const readback = envelope('beta-access-readback', 'api', '/accounts/account-1/access/apps/access-app-1', app);
+  await assert.rejects(checkpointBetaAccessIdentity(receipts.identity, 'api', created, readback, store, () => NOW), /lifecycle/u);
+  const barrier = deferred(); let entered = false;
+  store.put = async () => { entered = true; await barrier.promise; throw new Error('Access ID checkpoint lost'); };
+  const first = checkpointBetaAccessIdentity(receipts.api, 'api', created, readback, store, () => NOW);
+  while (!entered) await Promise.resolve();
+  await assert.rejects(checkpointBetaAccessIdentity(receipts.api, 'api', created, readback, store, () => NOW), /lifecycle/u);
+  assert.throws(() => planBetaWorkerRead(receipts.api, () => NOW), /receipt|phase|expired/u, 'old ID read may remain only while its exact Worker ID is valid');
+  barrier.release();
+  await assert.rejects(first, /Access ID checkpoint lost/u);
+  await assert.rejects(checkpointBetaAccessIdentity(receipts.api, 'api', created, readback, store, () => NOW), /lifecycle/u);
+  await assert.rejects(checkpointBetaWorkerAccessAttachment(receipts.api, 'api', attachment('api'), store, () => NOW), /phase/u);
+});
+
+test('dependency transition refuses foreign, malformed, stale, and uncorrelated token or sibling evidence', async () => {
+  const cases = [
+    ({ ids }) => ({ ids, create: { ...tokenCreate(), run: { ...key, attempt: 3 } }, read: tokenRead() }),
+    ({ ids }) => ({ ids, create: { ...tokenCreate(), request: { method: 'POST', path: '/accounts/other/access/service_tokens' } }, read: tokenRead() }),
+    ({ ids }) => ({ ids, create: tokenCreate({ id: 'token-1', name: 'foreign' }), read: tokenRead() }),
+    ({ ids }) => ({ ids, create: tokenCreate(), read: tokenRead({ id: 'token-2', name: names.token }) }),
+    ({ ids }) => ({ ids, create: { ...tokenCreate(), observedAt: '2026-13-01T09:00:00.000Z' }, read: tokenRead() }),
+    ({ ids }) => ({ ids, create: { ...tokenCreate(), observedAt: '2026-10-01T08:54:59.999Z' }, read: tokenRead() }),
+  ];
+  for (const makeCase of cases) {
+    const writes = []; const store = { async put(value) { writes.push(value); } };
+    const ids = (await workerReceipts(store)).ids;
+    const input = makeCase({ ids });
+    const tokenIntent = await plannedToken(ids, store);
+    await assert.rejects(checkpointBetaWorkerDependencies(tokenIntent, input.ids, input.create, input.read, store, () => NOW), InventoryQuarantineError);
+    assert.equal(writes.length, 7);
+    assert.throws(() => cloudflareProtocol.planBetaAccessCreate(ids.api, () => NOW), /intent/u);
+  }
+  const store = { async put() {} };
+  const ids = (await workerReceipts(store)).ids;
+  await assert.rejects(checkpointBetaTokenCreateIntent(ids.api, { ...ids, operator: {} }, envelope('beta-token-precreate-list', 'api', '/accounts/account-1/access/service_tokens', []), store, () => NOW), InventoryQuarantineError);
+});
+
+test('a sibling ID with an unresolved Worker graph cannot authorize the token intent', async () => {
+  const store = { async put() {} };
+  const { ids } = await workerReceipts(store, key, { api: API_ID, identity: IDENTITY_ID, operator: OPERATOR_ID }, { operator: { deployed_on: 'production' } });
+  await assert.rejects(checkpointBetaTokenCreateIntent(ids.api, ids, envelope('beta-token-precreate-list', 'api', '/accounts/account-1/access/service_tokens', []), store, () => NOW), /graph|inert/u);
+});
+
+test('dependency and Access checkpoints revoke every prior role receipt without extending its lifetime', async () => {
+  const store = { async put() {} };
+  const { ids } = await workerReceipts(store);
+  const certified = await checkpointBetaWorkerDependencies(await plannedToken(ids, store), ids, tokenCreate(), tokenRead(), store, () => NOW);
+  for (const role of ['api', 'identity', 'operator']) assert.throws(() => planBetaWorkerRead(ids[role], () => NOW), /receipt/u);
+  const accessIntent = await checkpointBetaAccessCreateIntent(certified.api, 'api', envelope('beta-access-precreate-list', 'api', '/accounts/account-1/access/apps', []), store, () => NOW);
+  assert.throws(() => cloudflareProtocol.planBetaAccessCreate(accessIntent, () => '2026-10-01T09:05:00.001Z'), /expired/u);
+  cloudflareProtocol.planBetaAccessCreate(accessIntent, () => NOW);
+  const app = { id: 'access-app-1', name: names.accessApi, destinations: [{ type: 'worker', worker_id: API_ID, overrides: [] }], policies: [{ decision: 'non_identity', include: [{ service_token: { token_id: 'token-1' } }] }] };
+  const next = await checkpointBetaAccessIdentity(certified.api, 'api', envelope('beta-access-create-result', 'api', '/accounts/account-1/access/apps', app, NOW, 'POST'), access('api'), store, () => NOW);
+  for (const role of ['api', 'identity', 'operator']) assert.throws(() => planBetaWorkerRead(certified[role], () => NOW), /receipt/u);
+  const operatorIntent = await checkpointBetaAccessCreateIntent(next.api, 'operator', envelope('beta-access-precreate-list', 'operator', '/accounts/account-1/access/apps', []), store, () => NOW);
+  assert.throws(() => cloudflareProtocol.planBetaAccessCreate(operatorIntent, () => '2026-10-01T09:05:00.001Z'), /expired/u);
 });
 
 test('enforces single create-plan before correlated create-result and immutable-ID checkpoint', async () => {
@@ -111,12 +385,13 @@ test('reserves each local run-role transition before an awaited durable write', 
   while (idEntered === 0) await Promise.resolve();
   await assert.rejects(checkpointBetaWorkerObservation(intent, createResult(), worker(), store, () => NOW), /lifecycle|receipt/u);
   idWrite.release();
-  const id = await checkpoint;
+  await checkpoint;
+  const { id, store: attachmentStore } = await established(false);
   const attachmentWrite = deferred(); let attachmentEntered = 0;
-  store.put = async () => { attachmentEntered += 1; await attachmentWrite.promise; };
-  const attached = checkpointBetaWorkerAccessAttachment(id, 'api', attachment('api'), store, () => NOW);
+  attachmentStore.put = async () => { attachmentEntered += 1; await attachmentWrite.promise; };
+  const attached = checkpointBetaWorkerAccessAttachment(id, 'api', attachment('api'), attachmentStore, () => NOW);
   while (attachmentEntered === 0) await Promise.resolve();
-  await assert.rejects(checkpointBetaWorkerAccessAttachment(id, 'api', attachment('api'), store, () => NOW), /phase/u);
+  await assert.rejects(checkpointBetaWorkerAccessAttachment(id, 'api', attachment('api'), attachmentStore, () => NOW), /phase/u);
   attachmentWrite.release();
   await attached;
   const failedStore = { async put() { throw new Error('intent persistence lost'); } };

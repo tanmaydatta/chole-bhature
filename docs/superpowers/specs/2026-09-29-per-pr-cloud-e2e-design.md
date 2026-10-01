@@ -1,8 +1,8 @@
 # Per-PR Cloud E2E — Design Spec
 
 **Status:** Approved design under local implementation. On 2026-10-01, the
-Beta lifecycle amendment was approved for bounded mock-only planning and
-validation; it is not approval for a live API call, pilot, deployment, or
+Beta lifecycle amendments 5a/5b were approved for bounded mock-only planning,
+identity transitions, and validation; they are not approval for a live API call, pilot, deployment, or
 workflow.
 
 **Date:** 2026-09-29
@@ -65,9 +65,8 @@ creating Worker-level Access is **superseded for implementation**. It cannot
 establish that the first code upload avoids a transient public route or
 alternate version/deployment URL. No Task 5 Worker create, upload, deploy,
 route change, or delete may use that sequence. Task 4's zero-transport Worker
-write refusal stays in force until the proposed lifecycle below receives
-written design approval and mock-only validation; a live pilot has its own
-separate approval gate. The proposal below is not an adopted API procedure.
+write refusal stays in force. The approved mock-only protocol below does not
+establish provider behavior; a live pilot has its own separate approval gate.
 
 The required provisioning checks remain: validate eligibility, current SHA,
 budget/quotas, generated names, and the two newly created exact-ID D1s with
@@ -100,6 +99,22 @@ GET readback, with the same run/role/account, bounded freshness, and one exact
 result, can be durably checkpointed into the ID receipt. Both Access
 attachments then require their own durable synthetic receipts before later
 readbacks. Legacy `workerIds` remain legacy tags and cannot enter any Beta path.
+A subsequent approved local amendment removes future-ID preseeding: all three
+disabled empty Worker ID receipts are required before a service-token
+pre-create list and durable create intent can yield a single-use fixed POST
+plan. Matching token POST result and exact-ID GET readback must pass a durable
+inventory checkpoint before its ID is usable. The sibling receipts must share
+the same run/account and exact inert Product/Auth D1 binding graph. Each Access app similarly
+requires an empty pre-create list, durable intent, pure single-use POST plan,
+whole-graph POST result and exact-app-ID GET readback, then durable ID
+checkpoint. The plans require certified 32-lowercase-hex Beta Worker IDs,
+controller-derived names, the exact account and this run's token, and exactly
+one `non_identity` service-token include without overrides or extra conditions.
+Each successful identity checkpoint rotates all three role receipts and revokes
+their earlier planning, attachments, and prepared evidence. Failed or
+overlapping checkpoints remain fail-closed; an old receipt cannot be refreshed
+with a later clock or caller-supplied inventory. This is a local store/process
+reservation and synthetic correlation contract, not provider creation proof.
 A complete fresh local context additionally requires the exact inert Worker
 graph, empty-version-list observation, and exact API/Operator Access
 observations. Only that context may produce PATCH/DELETE/version plans.
