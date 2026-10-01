@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { assertOwnedResource, checkpoint, checkpointBetaWorkerObservation, discoverRun, InventoryQuarantineError, recordBetaWorkerObservation } from './inventory.mjs';
+import { assertOwnedResource, checkpoint, checkpointBetaWorkerCreateIntent, checkpointBetaWorkerObservation, discoverRun, InventoryQuarantineError } from './inventory.mjs';
 import { resourceNames } from './key.mjs';
 import { createCloudflareClient } from './cloudflare.mjs';
 
@@ -24,38 +24,21 @@ const inventory = {
   updatedAt: '2026-09-30T10:00:00.000Z',
 };
 
-test('records only a readback-certified Beta immutable Worker ID, never a legacy tag', () => {
-  const observed = recordBetaWorkerObservation(inventory, 'api', {
-    id: 'e8f70fdbc8b1fb0b8ddb1af166186758',
-    name: names.api,
-    routes: [],
-    subdomain: { enabled: false, previews_enabled: false },
-  });
-  assert.equal(observed.betaWorkerIds.api, 'e8f70fdbc8b1fb0b8ddb1af166186758');
-  for (const id of ['worker-tag-1', names.api, '../other-worker', 'e8f70fdbc8b1fb0b8ddb1af16618675/']) {
-    assert.throws(() => recordBetaWorkerObservation(inventory, 'api', { id, name: names.api, routes: [], subdomain: { enabled: false, previews_enabled: false } }), InventoryQuarantineError);
-  }
-});
-
-test('rejects a Beta checkpoint that assigns one immutable ID to multiple roles', () => {
-  assert.throws(() => recordBetaWorkerObservation({
-    ...inventory,
-    betaWorkerIds: {
-      api: 'e8f70fdbc8b1fb0b8ddb1af166186758',
-      identity: 'e8f70fdbc8b1fb0b8ddb1af166186758',
-    },
-  }, 'api', { id: 'e8f70fdbc8b1fb0b8ddb1af166186758', name: names.api, routes: [], subdomain: { enabled: false, previews_enabled: false } }), InventoryQuarantineError);
-});
-
-test('durably checkpoints the exact Beta readback before dependent planning can consume it', async () => {
+test('durably checkpoints only provenance-correlated Beta intent and exact immutable readback', async () => {
   const writes = [];
-  const checkpointed = await checkpointBetaWorkerObservation(inventory, 'api', {
-    id: 'e8f70fdbc8b1fb0b8ddb1af166186758', name: names.api, routes: [], subdomain: { enabled: false, previews_enabled: false },
-  }, { async put(value, options) { writes.push({ value, options }); } });
-  assert.equal(checkpointed.betaWorkerIds.api, 'e8f70fdbc8b1fb0b8ddb1af166186758');
-  assert.equal(writes.length, 1);
-  assert.equal(writes[0].value.betaWorkerIds.api, 'e8f70fdbc8b1fb0b8ddb1af166186758');
-  assert.deepEqual(writes[0].options, { classification: 'controller-evidence', retentionDays: 7, restricted: true });
+  const creating = { ...inventory, stage: 'creating' };
+  const now = () => '2026-10-01T09:00:00.000Z';
+  const intent = await checkpointBetaWorkerCreateIntent(creating, 'api', {
+    kind: 'beta-worker-precreate-list', run: key, role: 'api', observedAt: now(), request: { method: 'GET', path: '/accounts/account-1/workers/workers' }, response: { success: true, result: [] },
+  }, { async put(value, options) { writes.push({ value, options }); } }, now);
+  await checkpointBetaWorkerObservation(intent, {
+    kind: 'beta-worker-readback', run: key, role: 'api', observedAt: now(), request: { method: 'GET', path: '/accounts/account-1/workers/workers/e8f70fdbc8b1fb0b8ddb1af166186758' },
+    response: { success: true, result: { id: 'e8f70fdbc8b1fb0b8ddb1af166186758', name: names.api, routes: [], subdomain: { enabled: false, previews_enabled: false }, deployed_on: null, bindings: [{ name: 'DB', type: 'd1', database_id: inventory.cloudflare.d1Ids.product }] } },
+  }, { async put(value, options) { writes.push({ value, options }); } }, now);
+  assert.equal(writes.length, 2);
+  assert.equal(writes[1].value.betaWorkerIds.api, 'e8f70fdbc8b1fb0b8ddb1af166186758');
+  assert.equal(writes.every(entry => entry.options.retentionDays === 7), true);
+  await assert.rejects(checkpointBetaWorkerCreateIntent({ ...creating, stage: 'quarantined' }, 'api', { kind: 'beta-worker-precreate-list', run: key, role: 'api', observedAt: now(), request: { method: 'GET', path: '/accounts/account-1/workers/workers' }, response: { success: true, result: [] } }, { async put() {} }, now), InventoryQuarantineError);
 });
 
 test('checkpoints only seven-day restricted controller evidence and never credentials', async () => {

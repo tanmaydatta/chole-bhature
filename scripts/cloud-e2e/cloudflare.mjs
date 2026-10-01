@@ -1,4 +1,4 @@
-import { assertOwnedResource, checkpoint, InventoryQuarantineError, recordBetaWorkerObservation, validateInventory } from './inventory.mjs';
+import { assertOwnedResource, betaWorkerReceipt, checkpoint, InventoryQuarantineError, validateInventory } from './inventory.mjs';
 
 export class MutationQuarantinedError extends InventoryQuarantineError {
   constructor(message) {
@@ -70,6 +70,8 @@ function normalizeWorkerBindings(rawBindings, workerTags) {
   return { d1, services };
 }
 
+const betaEvidence = new WeakMap();
+
 function betaWorkerId(inventory, role) {
   const id = inventory.betaWorkerIds?.[role];
   if (typeof id !== 'string' || !/^[0-9a-f]{32}$/u.test(id)) throw new InventoryQuarantineError('Beta Worker has no certified immutable ID.');
@@ -80,9 +82,13 @@ function betaWorkerPath(inventory, role) {
   return `/accounts/${inventory.cloudflare.accountId}/workers/workers/${betaWorkerId(inventory, role)}`;
 }
 
-export function planBetaWorkerCreate(rawInventory, role) {
-  const inventory = validateInventory(rawInventory);
-  if (!workerName(inventory, role) || inventory.betaWorkerIds?.[role]) throw new InventoryQuarantineError('Beta Worker create is not a new certified role.');
+function receipt(receipt, kind) {
+  return betaWorkerReceipt(receipt, kind);
+}
+
+export function planBetaWorkerCreate(intentReceipt) {
+  const { inventory, role } = receipt(intentReceipt, 'intent');
+  if (!workerName(inventory, role) || inventory.betaWorkerIds?.[role]) throw new InventoryQuarantineError('Beta Worker create receipt is not a new certified role.');
   return {
     method: 'POST',
     path: `/accounts/${inventory.cloudflare.accountId}/workers/workers`,
@@ -90,50 +96,77 @@ export function planBetaWorkerCreate(rawInventory, role) {
   };
 }
 
-export function certifyBetaWorkerReadback(rawInventory, role, observation) {
-  return recordBetaWorkerObservation(rawInventory, role, observation);
-}
-
-export function planBetaWorkerRead(rawInventory, role) {
-  const inventory = validateInventory(rawInventory);
+export function planBetaWorkerRead(idReceipt) {
+  const { inventory, role } = receipt(idReceipt, 'id');
   return { method: 'GET', path: betaWorkerPath(inventory, role) };
 }
 
-function inertBetaMutationInventory(rawInventory, role, proof) {
-  if (!proof || typeof proof !== 'object' || Object.keys(proof).length !== 2 || !Object.hasOwn(proof, 'worker') || !Object.hasOwn(proof, 'version')) {
-    throw new InventoryQuarantineError('Beta Worker mutation observation is incomplete.');
+function exactD1Bindings(inventory, role, bindings) {
+  const expected = role === 'api' ? inventory.cloudflare.d1Ids.product : role === 'identity' ? inventory.cloudflare.d1Ids.auth : null;
+  if (!expected) return false;
+  return Array.isArray(bindings) && bindings.length === 1 && bindings[0]?.name === 'DB' && bindings[0]?.type === 'd1'
+    && bindings[0]?.database_id === expected && Object.keys(bindings[0]).length === 3;
+}
+
+function observationEnvelope(inventory, role, envelope, kind, path, now, after) {
+  if (!envelope || typeof envelope !== 'object' || Object.keys(envelope).length !== 6
+    || envelope.kind !== kind || envelope.role !== role || JSON.stringify(envelope.run) !== JSON.stringify(inventory.key)
+    || typeof envelope.observedAt !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u.test(envelope.observedAt)
+    || !envelope.request || Object.keys(envelope.request).length !== 2 || envelope.request.method !== 'GET' || envelope.request.path !== path
+    || !envelope.response || Object.keys(envelope.response).length !== 2 || envelope.response.success !== true) {
+    throw new InventoryQuarantineError('Beta Worker observation provenance is invalid.');
   }
-  if (proof.worker?.deployed_on !== null || proof.version !== null) {
-    throw new InventoryQuarantineError('Beta Worker mutation is supported only for an inert Worker.');
-  }
-  return certifyBetaWorkerReadback(rawInventory, role, proof.worker);
+  const observed = Date.parse(envelope.observedAt); const current = Date.parse(now());
+  if (observed > current || current - observed > 5 * 60 * 1000 || observed < after) throw new InventoryQuarantineError('Beta Worker observation is stale or out of order.');
+  return envelope.response.result;
 }
 
-export function planBetaWorkerDisable(rawInventory, role, proof) {
-  const inventory = inertBetaMutationInventory(rawInventory, role, proof);
-  return { method: 'PATCH', path: betaWorkerPath(inventory, role), body: { subdomain: { enabled: false, previews_enabled: false } } };
-}
-
-export function planBetaWorkerDelete(rawInventory, role, proof) {
-  const inventory = inertBetaMutationInventory(rawInventory, role, proof);
-  return { method: 'DELETE', path: betaWorkerPath(inventory, role) };
-}
-
-function exactAccessGate(inventory, role, app) {
+function exactAccessGate(inventory, role, envelope, now, after) {
   const expectedName = role === 'api' ? inventory.names.accessApi : inventory.names.accessOperator;
   const expectedId = inventory.cloudflare.accessAppIds[role];
   const expectedWorkerId = betaWorkerId(inventory, role);
-  const destinations = Array.isArray(app?.destinations) && app.destinations.length === 1 ? app.destinations[0] : null;
-  const policy = Array.isArray(app?.policies) && app.policies.length === 1 ? app.policies[0] : null;
+  const app = observationEnvelope(inventory, role, envelope, 'beta-access-readback', `/accounts/${inventory.cloudflare.accountId}/access/apps/${expectedId}`, now, after);
+  if (!app || typeof app !== 'object' || Object.keys(app).length !== 4) throw new InventoryQuarantineError('Beta Worker Access readback is not exact.');
+  const destinations = Array.isArray(app.destinations) && app.destinations.length === 1 ? app.destinations[0] : null;
+  const policy = Array.isArray(app.policies) && app.policies.length === 1 ? app.policies[0] : null;
   const include = Array.isArray(policy?.include) && policy.include.length === 1 ? policy.include[0] : null;
-  if (!expectedId || app?.id !== expectedId || app?.name !== expectedName || !destinations
+  if (!expectedId || app.id !== expectedId || app.name !== expectedName || !destinations
     || Object.keys(destinations).length !== 3 || destinations.type !== 'worker' || destinations.worker_id !== expectedWorkerId
     || !Array.isArray(destinations.overrides) || destinations.overrides.length !== 0 || !policy
     || Object.keys(policy).length !== 2 || policy.decision !== 'non_identity' || !include
     || Object.keys(include).length !== 1 || !include.service_token || Object.keys(include.service_token).length !== 1
-    || include.service_token.token_id !== inventory.cloudflare.tokenId) {
-    throw new InventoryQuarantineError('Beta Worker Access readback is not the exact token-exclusive policy.');
-  }
+    || include.service_token.token_id !== inventory.cloudflare.tokenId) throw new InventoryQuarantineError('Beta Worker Access readback is not the exact token-exclusive policy.');
+}
+
+export function prepareBetaWorkerEvidence(idReceipt, observations, now = () => new Date().toISOString()) {
+  const { inventory, role, observedAt, observation } = receipt(idReceipt, 'id');
+  if (role === 'operator') return { status: 'unsupported', reason: 'service-binding-remapping-unresolved' };
+  if (!observations || typeof observations !== 'object' || Object.keys(observations).length !== 3 || !observations.access || Object.keys(observations.access).length !== 2) throw new InventoryQuarantineError('Beta Worker evidence is incomplete.');
+  const path = betaWorkerPath(inventory, role);
+  const worker = observationEnvelope(inventory, role, observations.worker, 'beta-worker-readback', path, now, observedAt);
+  if (JSON.stringify(worker) !== JSON.stringify(observation) || worker.deployed_on !== null || !exactD1Bindings(inventory, role, worker.bindings)) throw new InventoryQuarantineError('Beta Worker inert graph is unsupported or changed.');
+  const versions = observationEnvelope(inventory, role, observations.versions, 'beta-version-list', `${path}/versions`, now, observedAt);
+  if (!Array.isArray(versions) || versions.length !== 0) throw new InventoryQuarantineError('Beta Worker version state is unknown or non-inert.');
+  exactAccessGate(inventory, 'api', observations.access.api, now, observedAt);
+  exactAccessGate(inventory, 'operator', observations.access.operator, now, observedAt);
+  const evidence = {}; betaEvidence.set(evidence, { inventory, role });
+  return evidence;
+}
+
+function evidence(receipt) {
+  const state = betaEvidence.get(receipt);
+  if (!state) throw new InventoryQuarantineError('Beta Worker evidence receipt is invalid or incomplete.');
+  return state;
+}
+
+export function planBetaWorkerDisable(evidenceReceipt) {
+  const { inventory, role } = evidence(evidenceReceipt);
+  return { method: 'PATCH', path: betaWorkerPath(inventory, role), body: { subdomain: { enabled: false, previews_enabled: false } } };
+}
+
+export function planBetaWorkerDelete(evidenceReceipt) {
+  const { inventory, role } = evidence(evidenceReceipt);
+  return { method: 'DELETE', path: betaWorkerPath(inventory, role) };
 }
 
 function safeModule(module) {
@@ -147,16 +180,16 @@ function safeModule(module) {
 function safeBindings(inventory, role, bindings) {
   if (!Array.isArray(bindings)) throw new InventoryQuarantineError('Beta Worker bindings are invalid.');
   const expected = role === 'api' ? inventory.cloudflare.d1Ids.product : role === 'identity' ? inventory.cloudflare.d1Ids.auth : null;
-  if (!expected && bindings.some(binding => binding?.type === 'service')) return { status: 'unsupported', reason: 'service-binding-remapping-unresolved' };
+  if (role === 'operator') return { status: 'unsupported', reason: 'service-binding-remapping-unresolved' };
+  if (!expected) throw new InventoryQuarantineError('Beta Worker required D1 binding ID is missing.');
   if (expected && bindings.length === 1 && bindings[0]?.type === 'd1' && bindings[0]?.name === 'DB' && bindings[0]?.database_id === expected && Object.keys(bindings[0]).length === 3) return null;
   if (!expected && bindings.length === 0) return null;
   throw new InventoryQuarantineError('Beta Worker bindings are not the allowlisted exact graph.');
 }
 
-export function planBetaWorkerVersion(rawInventory, role, { observation, accessApps, module, bindings = [] }) {
-  let inventory = certifyBetaWorkerReadback(rawInventory, role, observation);
-  exactAccessGate(inventory, 'api', accessApps?.api);
-  exactAccessGate(inventory, 'operator', accessApps?.operator);
+export function planBetaWorkerVersion(evidenceReceipt, { module, bindings = [] }, requestedRole) {
+  const { inventory, role } = evidence(evidenceReceipt);
+  if (requestedRole && requestedRole !== role) throw new InventoryQuarantineError('Beta Worker role cannot change after evidence validation.');
   const unsupported = safeBindings(inventory, role, bindings);
   if (unsupported) return unsupported;
   safeModule(module);

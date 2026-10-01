@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { createCloudflareClient, MutationQuarantinedError, planBetaWorkerCreate, planBetaWorkerDelete, planBetaWorkerDisable, planBetaWorkerRead, planBetaWorkerVersion } from './cloudflare.mjs';
-import { checkpointBetaWorkerCreateIntent, checkpointBetaWorkerObservation } from './inventory.mjs';
+import { createCloudflareClient, MutationQuarantinedError, planBetaWorkerCreate, planBetaWorkerDelete, planBetaWorkerDisable, planBetaWorkerRead, planBetaWorkerVersion, prepareBetaWorkerEvidence } from './cloudflare.mjs';
+import { checkpointBetaWorkerCreateIntent, checkpointBetaWorkerObservation, InventoryQuarantineError } from './inventory.mjs';
 import { resourceNames } from './key.mjs';
 
 const key = { repository_id: 987654321, repository: 'trusted-owner/incentives-platform', pr: 42, head_sha: 'a'.repeat(40), run_id: 123456789, attempt: 2 };
@@ -11,108 +11,95 @@ const inventory = {
   key,
   names,
   cloudflare: { accountId: 'account-1', workerIds: { api: 'worker-tag-1' }, d1Ids: { product: '11111111-1111-4111-8111-111111111111', auth: '22222222-2222-4222-8222-222222222222' }, accessAppIds: { api: 'access-app-1' }, tokenId: 'token-1' },
-  stage: 'active', createdAt: '2026-09-30T10:00:00.000Z', updatedAt: '2026-09-30T10:00:00.000Z',
+  stage: 'creating', createdAt: '2026-09-30T10:00:00.000Z', updatedAt: '2026-09-30T10:00:00.000Z',
 };
+const NOW = '2026-10-01T09:00:00.000Z';
+const API_ID = 'e8f70fdbc8b1fb0b8ddb1af166186758';
+const OPERATOR_ID = 'f8f70fdbc8b1fb0b8ddb1af166186758';
 
 function mockTransport(responses) {
   const calls = [];
   return { calls, async request(request) { calls.push(request); const next = responses.shift(); if (next instanceof Error) throw next; if (!next) return next; return { status: 200, success: true, ...(Array.isArray(next.result) ? { result_info: { total_count: next.result.length } } : {}), ...next }; } };
 }
 
-test('plans only the deterministic disabled Beta Worker create request', () => {
-  assert.deepEqual(planBetaWorkerCreate(inventory, 'api'), {
-    method: 'POST',
-    path: '/accounts/account-1/workers/workers',
-    body: {
-      name: names.api,
-      subdomain: { enabled: false, previews_enabled: false },
-    },
-  });
-});
+function envelope(kind, role, path, result, observedAt = NOW) {
+  return { kind, run: key, role, observedAt, request: { method: 'GET', path }, response: { success: true, result } };
+}
 
-test('plans Beta reads, disabled patches, and deletes by certified immutable ID only', () => {
-  const beta = { ...inventory, betaWorkerIds: { api: 'e8f70fdbc8b1fb0b8ddb1af166186758' } };
-  const inert = { worker: { id: 'e8f70fdbc8b1fb0b8ddb1af166186758', name: names.api, routes: [], subdomain: { enabled: false, previews_enabled: false }, deployed_on: null }, version: null };
-  assert.deepEqual(planBetaWorkerRead(beta, 'api'), { method: 'GET', path: '/accounts/account-1/workers/workers/e8f70fdbc8b1fb0b8ddb1af166186758' });
-  assert.deepEqual(planBetaWorkerDisable(beta, 'api', inert), { method: 'PATCH', path: '/accounts/account-1/workers/workers/e8f70fdbc8b1fb0b8ddb1af166186758', body: { subdomain: { enabled: false, previews_enabled: false } } });
-  assert.deepEqual(planBetaWorkerDelete(beta, 'api', inert), { method: 'DELETE', path: '/accounts/account-1/workers/workers/e8f70fdbc8b1fb0b8ddb1af166186758' });
-  assert.throws(() => planBetaWorkerDelete(beta, 'api', { worker: { ...inert.worker, routes: ['public-route'] }, version: null }), /observation/u);
-  assert.throws(() => planBetaWorkerDisable(beta, 'api', { worker: inert.worker, version: { id: '182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e', bindings: [{ name: 'DB', type: 'd1', database_id: inventory.cloudflare.d1Ids.product }] } }), /inert/u);
-  assert.throws(() => planBetaWorkerRead(inventory, 'api'), /certified immutable ID/u);
-});
+function pending() {
+  return { ...inventory, cloudflare: { ...inventory.cloudflare, accessAppIds: { api: 'access-app-1', operator: 'access-app-2' } }, betaWorkerIds: { operator: OPERATOR_ID } };
+}
 
-test('plans an inert non-deploying Beta version only after disabled ID and exact Access readback', () => {
-  const beta = {
-    ...inventory,
-    cloudflare: { ...inventory.cloudflare, accessAppIds: { api: 'access-app-1', operator: 'access-app-2' } },
-    betaWorkerIds: { api: 'e8f70fdbc8b1fb0b8ddb1af166186758', operator: 'f8f70fdbc8b1fb0b8ddb1af166186758' },
-  };
-  const accessApps = {
-    api: { id: 'access-app-1', name: names.accessApi, destinations: [{ type: 'worker', worker_id: 'e8f70fdbc8b1fb0b8ddb1af166186758', overrides: [] }], policies: [{ decision: 'non_identity', include: [{ service_token: { token_id: 'token-1' } }] }] },
-    operator: { id: 'access-app-2', name: names.accessOperator, destinations: [{ type: 'worker', worker_id: 'f8f70fdbc8b1fb0b8ddb1af166186758', overrides: [] }], policies: [{ decision: 'non_identity', include: [{ service_token: { token_id: 'token-1' } }] }] },
-  };
-  const plan = planBetaWorkerVersion(beta, 'api', {
-    observation: { id: 'e8f70fdbc8b1fb0b8ddb1af166186758', name: names.api, routes: [], subdomain: { enabled: false, previews_enabled: false } },
-    accessApps, module: { name: 'index.js', contentType: 'application/javascript+module', contentBase64: 'ZXhwb3J0IGRlZmF1bHQge307' },
-    bindings: [{ name: 'DB', type: 'd1', database_id: inventory.cloudflare.d1Ids.product }],
+function worker(result = {}) {
+  return envelope('beta-worker-readback', 'api', `/accounts/account-1/workers/workers/${API_ID}`, {
+    id: API_ID, name: names.api, routes: [], subdomain: { enabled: false, previews_enabled: false }, deployed_on: null,
+    bindings: [{ name: 'DB', type: 'd1', database_id: inventory.cloudflare.d1Ids.product }], ...result,
   });
-  assert.deepEqual(plan, {
-    method: 'POST', path: '/accounts/account-1/workers/workers/e8f70fdbc8b1fb0b8ddb1af166186758/versions', query: { deploy: false },
-    body: { main_module: 'index.js', modules: [{ name: 'index.js', content_type: 'application/javascript+module', content_base64: 'ZXhwb3J0IGRlZmF1bHQge307' }], bindings: [{ name: 'DB', type: 'd1', database_id: inventory.cloudflare.d1Ids.product }] },
-  });
-  assert.throws(() => planBetaWorkerVersion(beta, 'api', {
-    observation: { id: 'e8f70fdbc8b1fb0b8ddb1af166186758', name: names.api, routes: [], subdomain: { enabled: false, previews_enabled: false } },
-    accessApps: { ...accessApps, api: { ...accessApps.api, policies: [{ decision: 'non_identity', include: [{ service_token: { token_id: 'token-1' }, everyone: {} }] }] } },
-    module: { name: 'index.js', contentType: 'application/javascript+module', contentBase64: 'ZXhwb3J0IGRlZmF1bHQge307' }, bindings: [{ name: 'DB', type: 'd1', database_id: inventory.cloudflare.d1Ids.product }],
-  }), /Access readback/u);
-  assert.deepEqual(planBetaWorkerVersion({ ...beta, betaWorkerIds: { ...beta.betaWorkerIds, operator: 'f8f70fdbc8b1fb0b8ddb1af166186758' } }, 'operator', {
-    observation: { id: 'f8f70fdbc8b1fb0b8ddb1af166186758', name: names.operator, routes: [], subdomain: { enabled: false, previews_enabled: false } }, accessApps,
-    module: { name: 'index.js', contentType: 'application/javascript+module', contentBase64: 'ZXhwb3J0IGRlZmF1bHQge307' }, bindings: [{ name: 'API', type: 'service', service: names.api }],
-  }), { status: 'unsupported', reason: 'service-binding-remapping-unresolved' });
-});
+}
 
-test('connects disabled create intent, durable Beta readback, both Access gates, and inert version planning locally', async () => {
-  const pending = {
-    ...inventory,
-    cloudflare: { ...inventory.cloudflare, accessAppIds: { api: 'access-app-1', operator: 'access-app-2' } },
-    betaWorkerIds: { operator: 'f8f70fdbc8b1fb0b8ddb1af166186758' },
-  };
-  const accessApps = {
-    api: { id: 'access-app-1', name: names.accessApi, destinations: [{ type: 'worker', worker_id: 'e8f70fdbc8b1fb0b8ddb1af166186758', overrides: [] }], policies: [{ decision: 'non_identity', include: [{ service_token: { token_id: 'token-1' } }] }] },
-    operator: { id: 'access-app-2', name: names.accessOperator, destinations: [{ type: 'worker', worker_id: 'f8f70fdbc8b1fb0b8ddb1af166186758', overrides: [] }], policies: [{ decision: 'non_identity', include: [{ service_token: { token_id: 'token-1' } }] }] },
-  };
+function access(role, result = {}, observedAt = NOW) {
+  const id = role === 'api' ? API_ID : OPERATOR_ID;
+  const appId = role === 'api' ? 'access-app-1' : 'access-app-2';
+  const appName = role === 'api' ? names.accessApi : names.accessOperator;
+  return envelope('beta-access-readback', role, `/accounts/account-1/access/apps/${appId}`, {
+    id: appId, name: appName, destinations: [{ type: 'worker', worker_id: id, overrides: [] }], policies: [{ decision: 'non_identity', include: [{ service_token: { token_id: 'token-1' } }] }], ...result,
+  }, observedAt);
+}
+
+async function established() {
   const writes = [];
-  await checkpointBetaWorkerCreateIntent(pending, 'api', { async put(value) { writes.push(value); } }, () => '2026-10-01T09:00:00.000Z');
-  const create = planBetaWorkerCreate(pending, 'api');
-  assert.deepEqual(create, { method: 'POST', path: '/accounts/account-1/workers/workers', body: { name: names.api, subdomain: { enabled: false, previews_enabled: false } } });
-  const checkpointed = await checkpointBetaWorkerObservation(pending, 'api', {
-    id: 'e8f70fdbc8b1fb0b8ddb1af166186758', name: names.api, routes: [], subdomain: { enabled: false, previews_enabled: false },
-  }, { async put(value) { writes.push(value); } });
-  const version = planBetaWorkerVersion(checkpointed, 'api', {
-    observation: { id: 'e8f70fdbc8b1fb0b8ddb1af166186758', name: names.api, routes: [], subdomain: { enabled: false, previews_enabled: false } },
-    accessApps, module: { name: 'index.js', contentType: 'application/javascript+module', contentBase64: 'ZXhwb3J0IGRlZmF1bHQge307' },
-    bindings: [{ name: 'DB', type: 'd1', database_id: inventory.cloudflare.d1Ids.product }],
-  });
+  const state = pending();
+  const intent = await checkpointBetaWorkerCreateIntent(state, 'api', envelope('beta-worker-precreate-list', 'api', '/accounts/account-1/workers/workers', []), { async put(value) { writes.push(value); } }, () => NOW);
+  const id = await checkpointBetaWorkerObservation(intent, worker(), { async put(value) { writes.push(value); } }, () => NOW);
+  return { writes, intent, id };
+}
+
+test('requires opaque durable intent and immutable-ID receipts for create and reads', async () => {
+  const { intent, id, writes } = await established();
+  assert.deepEqual(planBetaWorkerCreate(intent), { method: 'POST', path: '/accounts/account-1/workers/workers', body: { name: names.api, subdomain: { enabled: false, previews_enabled: false } } });
+  assert.deepEqual(planBetaWorkerRead(id), { method: 'GET', path: `/accounts/account-1/workers/workers/${API_ID}` });
   assert.equal(writes.length, 2);
-  assert.deepEqual(writes[0], {
-    type: 'beta-worker-create-intent', key, role: 'api', exactName: names.api,
-    startedAt: '2026-10-01T09:00:00.000Z', noPreexistingMatch: true,
-  });
-  assert.equal(version.path, '/accounts/account-1/workers/workers/e8f70fdbc8b1fb0b8ddb1af166186758/versions');
-  assert.deepEqual(version.query, { deploy: false });
+  assert.throws(() => planBetaWorkerCreate(pending(), 'api'), /receipt/u);
+  assert.throws(() => planBetaWorkerRead({}), /receipt/u);
 });
 
-test('does not plan a dependent Beta version after its immutable-ID checkpoint fails', async () => {
-  let versionPlans = 0;
-  const pending = { ...inventory, betaWorkerIds: { operator: 'f8f70fdbc8b1fb0b8ddb1af166186758' } };
-  await assert.rejects(async () => {
-    const checkpointed = await checkpointBetaWorkerObservation(pending, 'api', {
-      id: 'e8f70fdbc8b1fb0b8ddb1af166186758', name: names.api, routes: [], subdomain: { enabled: false, previews_enabled: false },
-    }, { async put() { throw new Error('checkpoint unavailable'); } });
-    versionPlans += 1;
-    planBetaWorkerVersion(checkpointed, 'api', {});
-  }, /checkpoint unavailable/u);
-  assert.equal(versionPlans, 0);
+test('plans version, patch, and delete only from fresh complete local evidence', async () => {
+  const { id } = await established();
+  const evidence = prepareBetaWorkerEvidence(id, { worker: worker(), versions: envelope('beta-version-list', 'api', `/accounts/account-1/workers/workers/${API_ID}/versions`, []), access: { api: access('api'), operator: access('operator') } }, () => NOW);
+  const bindings = [{ name: 'DB', type: 'd1', database_id: inventory.cloudflare.d1Ids.product }];
+  assert.equal(planBetaWorkerVersion(evidence, { module: { name: 'index.js', contentType: 'application/javascript+module', contentBase64: 'ZXhwb3J0IGRlZmF1bHQge307' }, bindings }).path, `/accounts/account-1/workers/workers/${API_ID}/versions`);
+  assert.equal(planBetaWorkerDisable(evidence).method, 'PATCH');
+  assert.equal(planBetaWorkerDelete(evidence).method, 'DELETE');
+});
+
+test('quarantines skipped checkpoints, bad provenance, stale or duplicate envelopes, and non-inert graph state', async () => {
+  assert.throws(() => prepareBetaWorkerEvidence({}, {}), /receipt/u);
+  await assert.rejects(checkpointBetaWorkerCreateIntent(pending(), 'api', envelope('beta-worker-precreate-list', 'api', '/accounts/account-1/workers/workers', [{}]), { async put() {} }, () => NOW), /ambiguous/u);
+  const { intent } = await established();
+  await assert.rejects(checkpointBetaWorkerObservation(intent, envelope('beta-worker-readback', 'api', `/accounts/account-1/workers/workers/${API_ID}`, [worker().response.result]), { async put() {} }, () => NOW), /invalid/u);
+  const { id } = await established();
+  const versions = envelope('beta-version-list', 'api', `/accounts/account-1/workers/workers/${API_ID}/versions`, []);
+  const base = { worker: worker(), versions, access: { api: access('api'), operator: access('operator') } };
+  for (const bad of [
+    { ...base, worker: worker({ deployed_on: 'production' }) },
+    { ...base, worker: worker({ bindings: [] }) },
+    { ...base, worker: { ...worker(), run: { ...key, attempt: 3 } } },
+    { ...base, access: { api: access('api', { public_override: true }), operator: access('operator') } },
+    { ...base, access: { api: access('api', {}, '2026-10-01T08:00:00.000Z'), operator: access('operator') } },
+    { ...base, versions: envelope('beta-version-list', 'api', `/accounts/account-1/workers/workers/${API_ID}/versions`, [{ id: 'v1' }]) },
+  ]) assert.throws(() => prepareBetaWorkerEvidence(id, bad, () => NOW), InventoryQuarantineError);
+});
+
+test('refuses deleted phase, lost checkpoint, and unresolved Operator service graph', async () => {
+  const deleted = { ...pending(), stage: 'deleted' };
+  await assert.rejects(checkpointBetaWorkerCreateIntent(deleted, 'api', envelope('beta-worker-precreate-list', 'api', '/accounts/account-1/workers/workers', []), { async put() {} }, () => NOW), /phase/u);
+  await assert.rejects(checkpointBetaWorkerCreateIntent(pending(), 'api', envelope('beta-worker-precreate-list', 'api', '/accounts/account-1/workers/workers', []), { async put() { throw new Error('lost'); } }, () => NOW), /lost/u);
+  const writes = [];
+  const intent = await checkpointBetaWorkerCreateIntent(inventory, 'operator', envelope('beta-worker-precreate-list', 'operator', '/accounts/account-1/workers/workers', []), { async put(value) { writes.push(value); } }, () => NOW);
+  const operator = await checkpointBetaWorkerObservation(intent, envelope('beta-worker-readback', 'operator', `/accounts/account-1/workers/workers/${OPERATOR_ID}`, {
+    id: OPERATOR_ID, name: names.operator, routes: [], subdomain: { enabled: false, previews_enabled: false }, deployed_on: null, bindings: [],
+  }), { async put(value) { writes.push(value); } }, () => NOW);
+  assert.deepEqual(prepareBetaWorkerEvidence(operator, {}), { status: 'unsupported', reason: 'service-binding-remapping-unresolved' });
 });
 
 test('checkpoints durable intent before create and returned D1 UUID immediately after response', async () => {

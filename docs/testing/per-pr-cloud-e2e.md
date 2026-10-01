@@ -123,27 +123,30 @@ mutation as a zero-call refusal. `InventoryV1` may now carry a separate
 controller-derived name, a 32-lowercase-hex fixture ID, explicit `routes: []`,
 and `subdomain.enabled:false` plus `previews_enabled:false`. Missing/unknown
 routes, malformed/duplicate IDs, legacy tags, wrong names, public overrides,
-and changed IDs refuse. A controller-derived pre-create intent and the returned
-inventory must each pass the existing restricted seven-day checkpoint before a
-dependent planner consumes it.
+and changed IDs refuse. The protocol accepts only fixed, fresh synthetic mock
+envelopes correlated to account/run/role: an empty pre-create GET must be
+durably checkpointed in `creating` phase, then a single exact ID GET must also
+be checkpointed. Opaque receipts from those successful writes—not raw inventory
+or caller-supplied flags—are the only planner inputs.
 
 The pure planners emit the documented create `POST /accounts/{accountId}/workers/workers`,
 the ID-only Worker GET/PATCH/DELETE paths, and a version `POST` whose
 `deploy:false` is a query field, never body data. The local inert version form
 allows only a controller-selected JavaScript module and exact `DB` D1 binding;
 it requires both exact token-exclusive API and Operator Access readbacks.
-PATCH/DELETE require the local mock protocol's exact Worker observation plus
-explicit `version:null` inert proof, so a changed route/identity/deployment or
-binding state refuses. This is synthetic transition evidence, not a claim that
-Beta Worker GET proves no outgoing bindings or versions; a complete
+PATCH/DELETE require an opaque context with exact inert Worker/D1 graph, an
+empty fixed version-list envelope, and both exact Access envelopes, so changed
+route/identity/deployment or unknown graph/version state refuses. This is
+synthetic local correlation evidence, not authenticated provider proof or a
+claim that Beta Worker GET proves no outgoing bindings or versions; a complete
 version-observation adapter and live provider schema proof remain gates.
 Service-name binding replacement/remapping returns unsupported, and assets/JWT
 remain unsupported. `references.workers` is not used as evidence of an outgoing
-binding graph. `node --test scripts/cloud-e2e/*.test.mjs` passed **45/45**;
+binding graph. `node --test scripts/cloud-e2e/*.test.mjs` passed **42/42**;
 this proves request/validation behavior and existing zero-call guards only.
-Its connected in-memory harness orders pre-create intent, disabled create plan,
-ID checkpoint, Access readbacks, and inert version plan; it is not a controller
-orchestrator and therefore does not establish provider-enforced transition order.
+Its connected in-memory protocol enforces receipt ordering for request planning;
+it is not a transport controller and does not establish provider behavior or
+live transition proof.
 
 **NO-GO for a live pilot:** Beta recovery/audit evidence, provider response
 completeness, assets/JWT, service-name remapping, D1 migrations, version/preview

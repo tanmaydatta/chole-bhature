@@ -104,13 +104,42 @@ export function validateInventory(value) {
   return structuredClone(value);
 }
 
-export function recordBetaWorkerObservation(rawInventory, role, observation) {
-  const inventory = validateInventory(rawInventory);
+const betaReceipts = new WeakMap();
+const BETA_EVIDENCE_MAX_AGE_MS = 5 * 60 * 1000;
+
+function betaRole(role) {
   if (!roles.worker.includes(role)) quarantine('Beta Worker role is invalid.');
+}
+
+function betaTime(value, message) {
+  if (typeof value !== 'string' || !ISO_TIME.test(value)) quarantine(message);
+  return Date.parse(value);
+}
+
+function betaEnvelope(inventory, envelope, { kind, role, path, now, after }) {
+  object(envelope, 'Beta Worker observation envelope is invalid.');
+  exactKeys(envelope, ['kind', 'run', 'role', 'observedAt', 'request', 'response'], 'Beta Worker observation envelope is invalid.');
+  if (envelope.kind !== kind || envelope.role !== role || !sameJson(envelope.run, inventory.key)) quarantine('Beta Worker observation provenance does not match this run.');
+  const observedAt = betaTime(envelope.observedAt, 'Beta Worker observation time is invalid.');
+  const current = betaTime(now(), 'Beta Worker evidence clock is invalid.');
+  if (observedAt > current || current - observedAt > BETA_EVIDENCE_MAX_AGE_MS || after !== undefined && observedAt < after) quarantine('Beta Worker observation is stale or out of order.');
+  object(envelope.request, 'Beta Worker observation request is invalid.');
+  exactKeys(envelope.request, ['method', 'path'], 'Beta Worker observation request is invalid.');
+  if (envelope.request.method !== 'GET' || envelope.request.path !== path) quarantine('Beta Worker observation request does not match the fixed protocol.');
+  object(envelope.response, 'Beta Worker observation response is invalid.');
+  exactKeys(envelope.response, ['success', 'result'], 'Beta Worker observation response is invalid.');
+  if (envelope.response.success !== true) quarantine('Beta Worker observation response is unsuccessful.');
+  return { result: envelope.response.result, observedAt };
+}
+
+function recordBetaWorkerObservation(rawInventory, role, observation) {
+  const inventory = validateInventory(rawInventory);
+  betaRole(role);
   object(observation, 'Beta Worker observation is invalid.');
+  exactKeys(observation, ['id', 'name', 'routes', 'subdomain', 'deployed_on', 'bindings'], 'Beta Worker observation is incomplete.');
   if (!BETA_WORKER_ID.test(observation.id) || observation.name !== inventory.names[role]
     || !Array.isArray(observation.routes) || observation.routes.length !== 0
-    || !observation.subdomain || observation.subdomain.enabled !== false || observation.subdomain.previews_enabled !== false) {
+    || !observation.subdomain || Object.keys(observation.subdomain).length !== 2 || observation.subdomain.enabled !== false || observation.subdomain.previews_enabled !== false) {
     quarantine('Beta Worker observation is not a disabled exact immutable identity.');
   }
   const prior = inventory.betaWorkerIds?.[role];
@@ -118,22 +147,42 @@ export function recordBetaWorkerObservation(rawInventory, role, observation) {
   return validateInventory({ ...inventory, betaWorkerIds: { ...inventory.betaWorkerIds, [role]: observation.id } });
 }
 
-export async function checkpointBetaWorkerCreateIntent(rawInventory, role, store, now = () => new Date().toISOString()) {
+export async function checkpointBetaWorkerCreateIntent(rawInventory, role, discovery, store, now = () => new Date().toISOString()) {
   const inventory = validateInventory(rawInventory);
-  if (!roles.worker.includes(role)) quarantine('Beta Worker role is invalid.');
+  betaRole(role);
+  if (inventory.stage !== 'creating') quarantine('Beta Worker creation phase is not permitted.');
   if (inventory.betaWorkerIds?.[role]) quarantine('Beta Worker already has a certified immutable ID.');
   if (!store || typeof store.put !== 'function') throw new TypeError('Expected a restricted evidence store with put().');
-  const startedAt = now();
-  if (!ISO_TIME.test(startedAt)) quarantine('Beta Worker creation intent time is invalid.');
+  const path = `/accounts/${inventory.cloudflare.accountId}/workers/workers`;
+  const { result, observedAt } = betaEnvelope(inventory, discovery, { kind: 'beta-worker-precreate-list', role, path, now });
+  if (!Array.isArray(result) || result.length !== 0) quarantine('Beta Worker pre-create discovery is ambiguous.');
+  const startedAt = new Date(observedAt).toISOString();
   await store.put({
     type: 'beta-worker-create-intent', key: inventory.key, role, exactName: inventory.names[role], startedAt, noPreexistingMatch: true,
   }, { classification: 'controller-evidence', retentionDays: 7, restricted: true });
+  const receipt = {};
+  betaReceipts.set(receipt, { kind: 'intent', inventory, role, observedAt });
+  return receipt;
 }
 
-export async function checkpointBetaWorkerObservation(rawInventory, role, observation, store) {
-  const inventory = recordBetaWorkerObservation(rawInventory, role, observation);
+export async function checkpointBetaWorkerObservation(intentReceipt, envelope, store, now = () => new Date().toISOString()) {
+  const intent = betaReceipts.get(intentReceipt);
+  if (!intent || intent.kind !== 'intent') quarantine('Beta Worker intent receipt is invalid or was not durably checkpointed.');
+  const id = envelope?.response?.result?.id;
+  if (!BETA_WORKER_ID.test(id)) quarantine('Beta Worker readback immutable ID is invalid.');
+  const path = `/accounts/${intent.inventory.cloudflare.accountId}/workers/workers/${id}`;
+  const { result, observedAt } = betaEnvelope(intent.inventory, envelope, { kind: 'beta-worker-readback', role: intent.role, path, now, after: intent.observedAt });
+  const inventory = recordBetaWorkerObservation(intent.inventory, intent.role, result);
   await checkpoint(inventory, store);
-  return inventory;
+  const receipt = {};
+  betaReceipts.set(receipt, { kind: 'id', inventory, role: intent.role, observedAt, observation: structuredClone(result) });
+  return receipt;
+}
+
+export function betaWorkerReceipt(receipt, kind) {
+  const state = betaReceipts.get(receipt);
+  if (!state || state.kind !== kind) quarantine('Beta Worker evidence receipt is invalid or incomplete.');
+  return { inventory: structuredClone(state.inventory), role: state.role, observedAt: state.observedAt, observation: state.observation && structuredClone(state.observation) };
 }
 
 function validBindings(inventory, role, bindings) {

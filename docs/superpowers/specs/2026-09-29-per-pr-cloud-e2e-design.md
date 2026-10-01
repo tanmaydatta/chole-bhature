@@ -91,28 +91,21 @@ Worker mutations are enabled.
 **Approved mock-only Beta lifecycle amendment (2026-10-01; not live):** Public [Beta Worker
 create/get/edit/delete](https://developers.cloudflare.com/api/resources/workers/subresources/beta/) and [ID-addressed version creation](https://developers.cloudflare.com/api/resources/workers/subresources/beta/subresources/workers/subresources/versions/methods/create/) suggest creating an empty Worker with `subdomain.enabled:false` and `previews_enabled:false` in its initial JSON request, checkpointing its returned immutable Beta `id`, attaching and reading back Worker-level Access, and only then uploading/deploying code by that certified ID. The current name-based script upload followed by a disable call is not a proven safe first-publication sequence; Task 4 correctly refuses all Worker writes. The Beta `{worker_id}` path also accepts names, so the controller must never use a name fallback. Legacy script-list `tag` is documented as an immutable script ID, but its equivalence to Beta Worker `id` is not established. Service bindings still name target Workers, so exact-ID caller operations alone do not settle target replacement/remapping. Keep the same isolation, credential separation, checkpoints, audit recovery, route and alternate-URL denial, and fail-closed requirements. The [feasibility ledger](../../testing/per-pr-cloud-e2e.md#worker-api-feasibility-public-documentation-2026-09-30) lists the unresolved API and live-proof gates; none authorizes an implementation change or live Cloudflare call.
 
-The approved local scope records a separate `betaWorkerIds` map only after an
-exact mock readback has the controller-derived name, a 32-lowercase-hex fixture
-ID, explicit empty `routes`, and both disabled subdomain flags. This strict
-fixture normalizer deliberately refuses absent/unknown routes or malformed
-IDs; it is not a claim that it exhausts the provider schema. Legacy `workerIds`
-remain legacy tags and cannot enter a Beta path. The local planners produce
-fixed request descriptions only: initial create, ID-only GET/PATCH/DELETE, and
-an inert non-deploying version request after exact API and Operator Access
-readbacks. PATCH/DELETE additionally require the local mock protocol's exact
-Worker observation and explicit `version:null` inert-state proof; this is not
-claimed to come from Beta Worker GET, which does not prove outgoing bindings or
-version absence. A separately complete version-observation adapter and live
-schema proof remain gates. Changed routes, identity, deployment, or binding
-state refuses. They never execute a transport. Incoming `references.workers` is
-not inferred to prove outgoing D1/service bindings. Assets/JWT, service-name
-remapping, Beta crash recovery/audit proof, version/preview reachability and
-all live acceptance remain unresolved.
-
-The connected local fixture harness records pre-create intent, then a disabled
-create plan, immutable-ID checkpoint, Access gates, and inert version plan in
-that order. It demonstrates the planner/observation interfaces only; no Task
-5a controller orchestration enforces that ordering against a provider.
+The approved local scope uses opaque local receipts, not caller-provided
+inventory/boolean/version sentinels. In `creating` phase, a fixed synthetic
+mock GET pre-create envelope must prove an empty result and be durably
+checkpointed; only that receipt can create the fixed disabled request. A later
+fixed ID-addressed synthetic mock GET with the same run/role/account, bounded
+freshness, and a single exact result can be durably checkpointed into the ID
+receipt. Legacy `workerIds` remain legacy tags and cannot enter any Beta path.
+A complete fresh local context additionally requires the exact inert Worker
+graph, empty-version-list observation, and exact API/Operator Access
+observations. Only that context may produce PATCH/DELETE/version plans.
+Unknown fields, duplicate/malformed/stale/wrong-run envelopes,
+deleted/quarantined phase, deployment, public override, unknown version/binding
+graph, assets, and service remapping refuse; Operator upload reports
+unsupported. These synthetic envelopes are local correlation evidence only,
+not authenticated provider proof or Cloudflare authorization.
 
 ## Cloud-CI application mode and suite behavior
 
