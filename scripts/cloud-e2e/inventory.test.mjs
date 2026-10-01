@@ -26,11 +26,12 @@ const inventory = {
 
 test('durably checkpoints only provenance-correlated Beta intent and exact immutable readback', async () => {
   const writes = [];
+  const store = { async put(value, options) { writes.push({ value, options }); } };
   const creating = { ...inventory, stage: 'creating' };
   const now = () => '2026-10-01T09:00:00.000Z';
   const intent = await checkpointBetaWorkerCreateIntent(creating, 'api', {
     kind: 'beta-worker-precreate-list', run: key, role: 'api', observedAt: now(), request: { method: 'GET', path: '/accounts/account-1/workers/workers' }, response: { success: true, result: [] },
-  }, { async put(value, options) { writes.push({ value, options }); } }, now);
+  }, store, now);
   planBetaWorkerCreate(intent, now);
   const beta = { id: 'e8f70fdbc8b1fb0b8ddb1af166186758', name: names.api, routes: [], subdomain: { enabled: false, previews_enabled: false }, deployed_on: null, bindings: [{ name: 'DB', type: 'd1', database_id: inventory.cloudflare.d1Ids.product }] };
   await checkpointBetaWorkerObservation(intent, {
@@ -39,7 +40,7 @@ test('durably checkpoints only provenance-correlated Beta intent and exact immut
   }, {
     kind: 'beta-worker-readback', run: key, role: 'api', observedAt: now(), request: { method: 'GET', path: '/accounts/account-1/workers/workers/e8f70fdbc8b1fb0b8ddb1af166186758' },
     response: { success: true, result: beta },
-  }, { async put(value, options) { writes.push({ value, options }); } }, now);
+  }, store, now);
   assert.equal(writes.length, 2);
   assert.equal(writes[1].value.betaWorkerIds.api, 'e8f70fdbc8b1fb0b8ddb1af166186758');
   assert.equal(writes.every(entry => entry.options.retentionDays === 7), true);

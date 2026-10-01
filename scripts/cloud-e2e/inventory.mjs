@@ -105,7 +105,17 @@ export function validateInventory(value) {
 }
 
 const betaReceipts = new WeakMap();
+const betaLifecyclesByStore = new WeakMap();
 const BETA_EVIDENCE_MAX_AGE_MS = 5 * 60 * 1000;
+
+function lifecycleFor(store, inventory, role) {
+  let entries = betaLifecyclesByStore.get(store);
+  if (!entries) { entries = new Map(); betaLifecyclesByStore.set(store, entries); }
+  const key = `${JSON.stringify(inventory.key)}:${role}`;
+  let lifecycle = entries.get(key);
+  if (!lifecycle) { lifecycle = { phase: 'new', attachments: {} }; entries.set(key, lifecycle); }
+  return lifecycle;
+}
 
 function betaRole(role) {
   if (!roles.worker.includes(role)) quarantine('Beta Worker role is invalid.');
@@ -155,15 +165,21 @@ export async function checkpointBetaWorkerCreateIntent(rawInventory, role, disco
   if (inventory.stage !== 'creating') quarantine('Beta Worker creation phase is not permitted.');
   if (inventory.betaWorkerIds?.[role]) quarantine('Beta Worker already has a certified immutable ID.');
   if (!store || typeof store.put !== 'function') throw new TypeError('Expected a restricted evidence store with put().');
+  const lifecycle = lifecycleFor(store, inventory, role);
+  if (lifecycle.phase !== 'new') quarantine('Beta Worker lifecycle intent is already reserved or ambiguous.');
+  lifecycle.phase = 'intent-reserving';
   const path = `/accounts/${inventory.cloudflare.accountId}/workers/workers`;
   const { result, observedAt } = betaEnvelope(inventory, discovery, { kind: 'beta-worker-precreate-list', role, path, now });
   if (!Array.isArray(result) || result.length !== 0) quarantine('Beta Worker pre-create discovery is ambiguous.');
   const startedAt = new Date(observedAt).toISOString();
-  await store.put({
-    type: 'beta-worker-create-intent', key: inventory.key, role, exactName: inventory.names[role], startedAt, noPreexistingMatch: true,
-  }, { classification: 'controller-evidence', retentionDays: 7, restricted: true });
+  try {
+    await store.put({
+      type: 'beta-worker-create-intent', key: inventory.key, role, exactName: inventory.names[role], startedAt, noPreexistingMatch: true,
+    }, { classification: 'controller-evidence', retentionDays: 7, restricted: true });
+  } catch (error) { lifecycle.phase = 'failed'; throw error; }
+  lifecycle.phase = 'intent';
   const receipt = {};
-  betaReceipts.set(receipt, { kind: 'intent', inventory, role, observedAt, expiresAt: observedAt + BETA_EVIDENCE_MAX_AGE_MS, generation: 0 });
+  betaReceipts.set(receipt, { kind: 'intent', inventory, role, observedAt, expiresAt: observedAt + BETA_EVIDENCE_MAX_AGE_MS, generation: 0, lifecycle, store });
   return receipt;
 }
 
@@ -177,6 +193,8 @@ function currentReceipt(receipt, kind, now) {
 
 export function consumeBetaWorkerCreatePlan(intentReceipt, now = () => new Date().toISOString()) {
   const intent = currentReceipt(intentReceipt, 'intent', now);
+  if (intent.lifecycle.phase !== 'intent') quarantine('Beta Worker create plan lifecycle is invalid or ambiguous.');
+  intent.lifecycle.phase = 'create-planned';
   intent.kind = 'create-planned';
   intent.generation += 1;
   intent.plannedAt = betaTime(now(), 'Beta Worker evidence clock is invalid.');
@@ -186,6 +204,8 @@ export function consumeBetaWorkerCreatePlan(intentReceipt, now = () => new Date(
 
 export async function checkpointBetaWorkerObservation(createReceipt, createEnvelope, readbackEnvelope, store, now = () => new Date().toISOString()) {
   const intent = currentReceipt(createReceipt, 'create-planned', now);
+  if (intent.store !== store || intent.lifecycle.phase !== 'create-planned') quarantine('Beta Worker ID checkpoint lifecycle is invalid or ambiguous.');
+  intent.lifecycle.phase = 'id-checkpointing';
   const createPath = `/accounts/${intent.inventory.cloudflare.accountId}/workers/workers`;
   const created = betaEnvelope(intent.inventory, createEnvelope, { kind: 'beta-worker-create-result', role: intent.role, path: createPath, now, after: intent.plannedAt, method: 'POST' });
   const id = created.result?.id;
@@ -194,26 +214,30 @@ export async function checkpointBetaWorkerObservation(createReceipt, createEnvel
   const { result, observedAt } = betaEnvelope(intent.inventory, readbackEnvelope, { kind: 'beta-worker-readback', role: intent.role, path, now, after: created.observedAt });
   if (!sameJson(created.result, result)) quarantine('Beta Worker create result and readback do not match.');
   const inventory = recordBetaWorkerObservation(intent.inventory, intent.role, result);
-  await checkpoint(inventory, store);
+  try { await checkpoint(inventory, store); } catch (error) { intent.lifecycle.phase = 'failed'; throw error; }
   intent.kind = 'revoked';
+  intent.lifecycle.phase = 'id';
   const receipt = {};
-  betaReceipts.set(receipt, { kind: 'id', inventory, role: intent.role, observedAt, observation: structuredClone(result), expiresAt: observedAt + BETA_EVIDENCE_MAX_AGE_MS, generation: intent.generation + 1, attachments: {} });
+  betaReceipts.set(receipt, { kind: 'id', inventory, role: intent.role, observedAt, observation: structuredClone(result), expiresAt: observedAt + BETA_EVIDENCE_MAX_AGE_MS, generation: intent.generation + 1, attachments: {}, lifecycle: intent.lifecycle, store });
   return receipt;
 }
 
 export async function checkpointBetaWorkerAccessAttachment(idReceipt, role, envelope, store, now = () => new Date().toISOString()) {
   const state = currentReceipt(idReceipt, 'id', now);
-  if (!['api', 'operator'].includes(role) || state.attachments[role]) quarantine('Beta Worker Access attachment phase is invalid.');
+  if (state.store !== store || state.lifecycle.phase !== 'id' && state.lifecycle.phase !== 'access-ready' || !['api', 'operator'].includes(role) || state.attachments[role] || state.lifecycle.attachments[role]) quarantine('Beta Worker Access attachment phase is invalid.');
   if (!store || typeof store.put !== 'function') throw new TypeError('Expected a restricted evidence store with put().');
   const appId = state.inventory.cloudflare.accessAppIds[role];
   const result = betaEnvelope(state.inventory, envelope, { kind: 'beta-access-attachment', role, path: `/accounts/${state.inventory.cloudflare.accountId}/access/apps/${appId}`, now, after: state.observedAt, method: 'POST' }).result;
   const workerId = betaWorkerIdFor(state.inventory, role);
   if (!result || typeof result !== 'object' || Object.keys(result).length !== 3 || result.id !== appId || result.worker_id !== workerId || result.token_id !== state.inventory.cloudflare.tokenId) quarantine('Beta Worker Access attachment is not exact.');
-  await store.put({ type: 'beta-access-attachment', key: state.inventory.key, role, appId, workerId, tokenId: state.inventory.cloudflare.tokenId, attachedAt: envelope.observedAt }, { classification: 'controller-evidence', retentionDays: 7, restricted: true });
+  state.lifecycle.attachments[role] = 'reserving';
+  try { await store.put({ type: 'beta-access-attachment', key: state.inventory.key, role, appId, workerId, tokenId: state.inventory.cloudflare.tokenId, attachedAt: envelope.observedAt }, { classification: 'controller-evidence', retentionDays: 7, restricted: true }); } catch (error) { state.lifecycle.attachments[role] = 'failed'; state.lifecycle.phase = 'failed'; throw error; }
   state.generation += 1;
   state.attachments[role] = { observedAt: betaTime(envelope.observedAt, 'Beta Worker observation time is invalid.'), generation: state.generation };
+  state.lifecycle.attachments[role] = 'attached';
+  if (state.lifecycle.attachments.api === 'attached' && state.lifecycle.attachments.operator === 'attached') state.lifecycle.phase = 'access-ready';
   const receipt = {};
-  betaReceipts.set(receipt, { kind: 'attachment', parent: idReceipt, role, inventory: state.inventory, observedAt: state.attachments[role].observedAt, expiresAt: state.attachments[role].observedAt + BETA_EVIDENCE_MAX_AGE_MS, generation: state.generation });
+  betaReceipts.set(receipt, { kind: 'attachment', parent: idReceipt, role, inventory: state.inventory, observedAt: state.attachments[role].observedAt, expiresAt: state.attachments[role].observedAt + BETA_EVIDENCE_MAX_AGE_MS, generation: state.generation, lifecycle: state.lifecycle });
   return receipt;
 }
 
@@ -230,8 +254,22 @@ export function betaWorkerReceipt(receipt, kind, now = () => new Date().toISOStr
 
 export function betaWorkerAttachmentReceipt(receipt, role, idReceipt, now = () => new Date().toISOString()) {
   const state = currentReceipt(receipt, 'attachment', now);
-  if (state.role !== role || state.parent !== idReceipt) quarantine('Beta Worker Access attachment receipt is invalid.');
+  const parent = betaReceipts.get(idReceipt);
+  if (state.role !== role || state.parent !== idReceipt || !parent || parent.attachments[role]?.generation !== state.generation || state.lifecycle.attachments[role] !== 'attached') quarantine('Beta Worker Access attachment receipt is invalid.');
   return { observedAt: state.observedAt, generation: state.generation };
+}
+
+export function betaWorkerEvidencePhase(idReceipt, now = () => new Date().toISOString()) {
+  const state = currentReceipt(idReceipt, 'id', now);
+  if (state.lifecycle.phase !== 'access-ready' || state.lifecycle.attachments.api !== 'attached' || state.lifecycle.attachments.operator !== 'attached') quarantine('Beta Worker evidence lifecycle is incomplete or revoked.');
+  return { generation: state.generation };
+}
+
+export function consumeBetaWorkerAction(idReceipt, generation, now = () => new Date().toISOString()) {
+  const state = currentReceipt(idReceipt, 'id', now);
+  if (state.lifecycle.phase !== 'access-ready' || state.generation !== generation) quarantine('Beta Worker action lifecycle is stale or revoked.');
+  state.generation += 1;
+  state.lifecycle.phase = 'action-planned';
 }
 
 function validBindings(inventory, role, bindings) {
