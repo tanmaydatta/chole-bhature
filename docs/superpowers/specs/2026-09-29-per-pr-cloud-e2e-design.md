@@ -58,12 +58,31 @@ GitHub's [`pull_request_target` guidance](https://docs.github.com/en/actions/ref
 
 The controller writes a trusted inventory checkpoint after each successful create and can rediscover deterministic names if cancellation occurs between creation and checkpoint. It records the exact Cloudflare IDs and run tuple in restricted, short-retention controller evidence; the janitor also enumerates the reserved prefix to find incomplete stacks. Discovery must verify exact names, IDs, bindings, and creation ownership before mutation; an ambiguous or foreign match stops and alerts rather than deleting it.
 
-Provision in this order:
+The original sequence that deployed Core, Identity, and Operator **before**
+creating Worker-level Access is **superseded for implementation**. It cannot
+establish that the first code upload avoids a transient public route or
+alternate version/deployment URL. No Task 5 Worker create, upload, deploy,
+route change, or delete may use that sequence. Task 4's zero-transport Worker
+write refusal stays in force until the proposed lifecycle below receives
+written design approval and mock-only validation; a live pilot has its own
+separate approval gate. The proposal below is not an adopted API procedure.
 
-1. Validate eligibility, current SHA, budget/quotas, and generated names. Create the two D1 databases and apply the matching PR migrations to those exact database IDs. A missing, reused, or staging ID stops the run.
-2. Deploy Core, Identity, and Operator with `workers_dev = false`, no custom domains/routes, and preview URLs disabled. Verify no alternate version/deployment URL reaches them before Access is active; if that cannot be proven, stop and tear down. Identity stays unrouted. Bind each service and D1 by the controller's recorded IDs/names, generate unique `AUTH_SECRET`, `OPERATOR_SELECTION_SECRET`, and `DECISION_SIGNING_SECRET`, and use no manual staging or shared Secrets Store entries.
-3. Create a short-lived per-stack Access service token and two Worker-level Access applications with `Service Auth` policies that include **that token's ID**, not “any service token.” Verify the applications target the exact Core and Operator Worker IDs. Only after both protections are active may the controller enable their `workers.dev` routes. A failure before that point leaves both routes disabled and triggers teardown. A failed anonymous probe or a cross-stack token probe blocks testing and tears down the stack; no Worker may be exposed while policy state is uncertain.
-4. Verify anonymous requests are denied and the stack token reaches each HTTPS origin. Verify Identity still has no public route and every service binding and D1 ID matches this run. Then bootstrap a synthetic root in this run's Auth D1, complete real browser WebAuthn registration and passkey sign-in, perform the read-only cross-Worker migration/capability handshake, and release the stack to tests.
+The required provisioning checks remain: validate eligibility, current SHA,
+budget/quotas, generated names, and the two newly created exact-ID D1s with
+matching PR migrations. Reject a missing, reused, or staging D1 ID. Keep
+Identity unrouted, use only this run's validated service/D1 graph and unique
+`AUTH_SECRET`, `OPERATOR_SELECTION_SECRET`, and `DECISION_SIGNING_SECRET`, and
+exclude manual staging and shared Secrets Store entries. Before any Worker
+code can become reachable, verify two Worker-level Access applications with
+exclusive `Service Auth` policies for **this stack token's ID**, not “any
+service token,” and exact Core/Operator destinations; no public route may be
+enabled while policy state is uncertain. Anonymous, cross-stack-token, and
+alternate URL probes must fail closed. Only then may the matching token reach
+each HTTPS origin; verify Identity remains private and every service/D1 target
+belongs to the run. The synthetic root, browser WebAuthn passkey flow, and
+read-only cross-Worker capability handshake precede release to tests. The
+approved lifecycle revision must specify how to prove these checks before
+Worker mutations are enabled.
 
 [Cloudflare Worker Access](https://developers.cloudflare.com/workers/configuration/cloudflare-access/) supports Worker-level protection across a Worker's domains, and [service tokens](https://developers.cloudflare.com/cloudflare-one/access-controls/service-credentials/service-tokens/) are accepted through a `Service Auth` policy. Whether this account's Access permissions, API lifecycle, route publication sequence, and service-token headers work with Playwright's top-level navigation, assets, redirects, and WebAuthn must be proven in a **disposable-stack feasibility pilot** before automatic per-PR deployment is enabled. The pilot must demonstrate no public reachability before protection, anonymous denial afterward, passkey registration/sign-in, and token isolation using two temporary stacks. If the account cannot create per-Worker Access apps or service tokens without broader Access administration than the owner accepts, or cannot keep routes disabled until protection is active, this design is blocked; do not silently switch to public Workers or reuse a broad token. The Access token may require broad `Access: Apps and Policies Write` and `Access: Service Tokens Write` permissions; that is an acknowledged controller risk, not a proven per-stack Cloudflare permission boundary.
 
