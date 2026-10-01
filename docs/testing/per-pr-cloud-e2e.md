@@ -127,7 +127,11 @@ and changed IDs refuse. The protocol accepts only fixed, fresh synthetic mock
 envelopes correlated to account/run/role: an empty pre-create GET must be
 durably checkpointed in `creating` phase, then a single exact ID GET must also
 be checkpointed. Opaque receipts from those successful writes—not raw inventory
-or caller-supplied flags—are the only planner inputs.
+or caller-supplied flags—are the only planner inputs. The intent receipt is
+single-use for the create plan; an exact synthetic POST create-result and later
+same-ID GET readback must agree before the ID checkpoint. Both Access
+attachments are separately checkpointed before their later readbacks, and each
+prepared planning context expires after five minutes and is single-use.
 
 The pure planners emit the documented create `POST /accounts/{accountId}/workers/workers`,
 the ID-only Worker GET/PATCH/DELETE paths, and a version `POST` whose
@@ -142,7 +146,7 @@ claim that Beta Worker GET proves no outgoing bindings or versions; a complete
 version-observation adapter and live provider schema proof remain gates.
 Service-name binding replacement/remapping returns unsupported, and assets/JWT
 remain unsupported. `references.workers` is not used as evidence of an outgoing
-binding graph. `node --test scripts/cloud-e2e/*.test.mjs` passed **42/42**;
+binding graph. `node --test scripts/cloud-e2e/*.test.mjs` passed **46/46**;
 this proves request/validation behavior and existing zero-call guards only.
 Its connected in-memory protocol enforces receipt ordering for request planning;
 it is not a transport controller and does not establish provider behavior or

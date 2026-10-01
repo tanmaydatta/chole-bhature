@@ -3,7 +3,7 @@ import test from 'node:test';
 
 import { assertOwnedResource, checkpoint, checkpointBetaWorkerCreateIntent, checkpointBetaWorkerObservation, discoverRun, InventoryQuarantineError } from './inventory.mjs';
 import { resourceNames } from './key.mjs';
-import { createCloudflareClient } from './cloudflare.mjs';
+import { createCloudflareClient, planBetaWorkerCreate } from './cloudflare.mjs';
 
 const key = {
   repository_id: 987654321,
@@ -31,9 +31,14 @@ test('durably checkpoints only provenance-correlated Beta intent and exact immut
   const intent = await checkpointBetaWorkerCreateIntent(creating, 'api', {
     kind: 'beta-worker-precreate-list', run: key, role: 'api', observedAt: now(), request: { method: 'GET', path: '/accounts/account-1/workers/workers' }, response: { success: true, result: [] },
   }, { async put(value, options) { writes.push({ value, options }); } }, now);
+  planBetaWorkerCreate(intent, now);
+  const beta = { id: 'e8f70fdbc8b1fb0b8ddb1af166186758', name: names.api, routes: [], subdomain: { enabled: false, previews_enabled: false }, deployed_on: null, bindings: [{ name: 'DB', type: 'd1', database_id: inventory.cloudflare.d1Ids.product }] };
   await checkpointBetaWorkerObservation(intent, {
+    kind: 'beta-worker-create-result', run: key, role: 'api', observedAt: now(), request: { method: 'POST', path: '/accounts/account-1/workers/workers' },
+    response: { success: true, result: beta },
+  }, {
     kind: 'beta-worker-readback', run: key, role: 'api', observedAt: now(), request: { method: 'GET', path: '/accounts/account-1/workers/workers/e8f70fdbc8b1fb0b8ddb1af166186758' },
-    response: { success: true, result: { id: 'e8f70fdbc8b1fb0b8ddb1af166186758', name: names.api, routes: [], subdomain: { enabled: false, previews_enabled: false }, deployed_on: null, bindings: [{ name: 'DB', type: 'd1', database_id: inventory.cloudflare.d1Ids.product }] } },
+    response: { success: true, result: beta },
   }, { async put(value, options) { writes.push({ value, options }); } }, now);
   assert.equal(writes.length, 2);
   assert.equal(writes[1].value.betaWorkerIds.api, 'e8f70fdbc8b1fb0b8ddb1af166186758');

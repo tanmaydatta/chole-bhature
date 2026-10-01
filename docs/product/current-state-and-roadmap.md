@@ -11,7 +11,7 @@ or D1 migration is part of that cutover.
 The approved per-PR Cloud E2E design is now being implemented on
 `feat/per-pr-cloud-e2e`, based on `origin/dev` commit
 `f189f5a0a527e8f350b1e77f4dcb29e96020d778`. Tasks 1–4 are locally verified
-through `7f74de3`; the approved 2026-10-01 Task 5a amendment adds 42 local
+through `7f74de3`; the approved 2026-10-01 Task 5a amendment adds 46 local
 cloud-script request/validation tests for a mock-only Beta immutable-ID
 lifecycle. Public Worker writes still deliberately refuse with zero transport
 calls. No Cloudflare stack has been deployed or tested: automatic per-PR
@@ -43,7 +43,7 @@ deferred issue remains in the
 | Current activity | GAP-030/031 merged as PR #13; E2E platform PR #14 merged at `b524c32b98652cfcadb75c7af2f234cf33495f6b`; Secrets Store PR #15 merged at `0c5e5f1a068d942af8f091ab0fc4b7ff8bf44e9d` after staging validation from source head `df05d8d`; per-PR Cloud E2E Tasks 1–4 plus mock-only Task 5a are locally verified, with Worker writes still blocked |
 | Current repository baseline | `origin/dev` at `f189f5a0a527e8f350b1e77f4dcb29e96020d778`; the per-PR Cloud E2E worktree starts at `407cb3a6c8f9b66078c69f7621b8100956f8629f` and is locally reviewed through `7f74de3` |
 | Current product-code baseline | PR #15 merge commit `0c5e5f1a068d942af8f091ab0fc4b7ff8bf44e9d` |
-| Local feature state | Authoritative merchandise pricing and the E2E platform are merged; the E2E platform passed 5 local Playwright tests and 4 applicable staging tests. Per-PR Cloud E2E Tasks 1–3 passed local baseline, run-identity, and artifact-boundary verification; Task 4 plus mock-only Task 5a passed 42 local cloud-script tests, while public Worker writes still refuse before transport |
+| Local feature state | Authoritative merchandise pricing and the E2E platform are merged; the E2E platform passed 5 local Playwright tests and 4 applicable staging tests. Per-PR Cloud E2E Tasks 1–3 passed local baseline, run-identity, and artifact-boundary verification; Task 4 plus mock-only Task 5a passed 46 local cloud-script tests, while public Worker writes still refuse before transport |
 | Current deployment state | The 2026-09-28 Product/Auth/API/Identity/Operator rollout remains in staging. On 2026-09-29, existing-store Secrets Store bindings deployed to Identity and Operator only; no API/Core/D1 migration occurred |
 | Current release decision | PR #15 merged into `dev` at `0c5e5f1a068d942af8f091ab0fc4b7ff8bf44e9d` after staging validation from source head `df05d8d`; old per-Worker secrets are retained |
 | Gate C finish line | Complete — all mandatory clean-break selection, redemption, tenant-isolation, concurrency, and observability cases passed |
@@ -278,7 +278,7 @@ locally: the 5-test Playwright baseline ran in 24.4 seconds, the trusted
 run-identity boundary rejects forks and stale heads, and the controller-side
 artifact boundary verifies only a bounded untrusted bundle. Task 4 added
 reviewed exact-identity inventory and fail-closed client guards. The approved
-mock-only Task 5a amendment brings the local cloud-script total to 42 and
+mock-only Task 5a amendment brings the local cloud-script total to 46 and
 keeps Worker create/update/delete/subdomain calls disabled before transport.
 It records separate Beta IDs, fixed request plans, disabled/readback and
 token-exclusive Access gates; it does not execute them. The

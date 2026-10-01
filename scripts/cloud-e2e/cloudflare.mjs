@@ -1,4 +1,4 @@
-import { assertOwnedResource, betaWorkerReceipt, checkpoint, InventoryQuarantineError, validateInventory } from './inventory.mjs';
+import { assertOwnedResource, betaWorkerAttachmentReceipt, betaWorkerReceipt, checkpoint, consumeBetaWorkerCreatePlan, InventoryQuarantineError, validateInventory } from './inventory.mjs';
 
 export class MutationQuarantinedError extends InventoryQuarantineError {
   constructor(message) {
@@ -82,12 +82,12 @@ function betaWorkerPath(inventory, role) {
   return `/accounts/${inventory.cloudflare.accountId}/workers/workers/${betaWorkerId(inventory, role)}`;
 }
 
-function receipt(receipt, kind) {
-  return betaWorkerReceipt(receipt, kind);
+function receipt(receipt, kind, now) {
+  return betaWorkerReceipt(receipt, kind, now);
 }
 
-export function planBetaWorkerCreate(intentReceipt) {
-  const { inventory, role } = receipt(intentReceipt, 'intent');
+export function planBetaWorkerCreate(intentReceipt, now = () => new Date().toISOString()) {
+  const { inventory, role } = consumeBetaWorkerCreatePlan(intentReceipt, now);
   if (!workerName(inventory, role) || inventory.betaWorkerIds?.[role]) throw new InventoryQuarantineError('Beta Worker create receipt is not a new certified role.');
   return {
     method: 'POST',
@@ -96,8 +96,8 @@ export function planBetaWorkerCreate(intentReceipt) {
   };
 }
 
-export function planBetaWorkerRead(idReceipt) {
-  const { inventory, role } = receipt(idReceipt, 'id');
+export function planBetaWorkerRead(idReceipt, now = () => new Date().toISOString()) {
+  const { inventory, role } = receipt(idReceipt, 'id', now);
   return { method: 'GET', path: betaWorkerPath(inventory, role) };
 }
 
@@ -116,8 +116,8 @@ function observationEnvelope(inventory, role, envelope, kind, path, now, after) 
     || !envelope.response || Object.keys(envelope.response).length !== 2 || envelope.response.success !== true) {
     throw new InventoryQuarantineError('Beta Worker observation provenance is invalid.');
   }
-  const observed = Date.parse(envelope.observedAt); const current = Date.parse(now());
-  if (observed > current || current - observed > 5 * 60 * 1000 || observed < after) throw new InventoryQuarantineError('Beta Worker observation is stale or out of order.');
+  const observed = Date.parse(envelope.observedAt); const clock = now(); const current = Date.parse(clock);
+  if (!Number.isFinite(observed) || new Date(observed).toISOString() !== envelope.observedAt || typeof clock !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u.test(clock) || !Number.isFinite(current) || new Date(current).toISOString() !== clock || observed > current || current - observed > 5 * 60 * 1000 || observed < after) throw new InventoryQuarantineError('Beta Worker observation is stale or out of order.');
   return envelope.response.result;
 }
 
@@ -126,6 +126,7 @@ function exactAccessGate(inventory, role, envelope, now, after) {
   const expectedId = inventory.cloudflare.accessAppIds[role];
   const expectedWorkerId = betaWorkerId(inventory, role);
   const app = observationEnvelope(inventory, role, envelope, 'beta-access-readback', `/accounts/${inventory.cloudflare.accountId}/access/apps/${expectedId}`, now, after);
+  if (Date.parse(envelope.observedAt) <= after) throw new InventoryQuarantineError('Beta Worker Access readback did not follow attachment.');
   if (!app || typeof app !== 'object' || Object.keys(app).length !== 4) throw new InventoryQuarantineError('Beta Worker Access readback is not exact.');
   const destinations = Array.isArray(app.destinations) && app.destinations.length === 1 ? app.destinations[0] : null;
   const policy = Array.isArray(app.policies) && app.policies.length === 1 ? app.policies[0] : null;
@@ -139,33 +140,41 @@ function exactAccessGate(inventory, role, envelope, now, after) {
 }
 
 export function prepareBetaWorkerEvidence(idReceipt, observations, now = () => new Date().toISOString()) {
-  const { inventory, role, observedAt, observation } = receipt(idReceipt, 'id');
+  const { inventory, role, observedAt, observation, generation, expiresAt } = receipt(idReceipt, 'id', now);
   if (role === 'operator') return { status: 'unsupported', reason: 'service-binding-remapping-unresolved' };
-  if (!observations || typeof observations !== 'object' || Object.keys(observations).length !== 3 || !observations.access || Object.keys(observations.access).length !== 2) throw new InventoryQuarantineError('Beta Worker evidence is incomplete.');
+  if (!observations || typeof observations !== 'object' || Object.keys(observations).length !== 4 || !observations.access || Object.keys(observations.access).length !== 2 || !observations.attachments || Object.keys(observations.attachments).length !== 2) throw new InventoryQuarantineError('Beta Worker evidence is incomplete.');
+  const apiAttachment = betaWorkerAttachmentReceipt(observations.attachments.api, 'api', idReceipt, now);
+  const operatorAttachment = betaWorkerAttachmentReceipt(observations.attachments.operator, 'operator', idReceipt, now);
   const path = betaWorkerPath(inventory, role);
   const worker = observationEnvelope(inventory, role, observations.worker, 'beta-worker-readback', path, now, observedAt);
   if (JSON.stringify(worker) !== JSON.stringify(observation) || worker.deployed_on !== null || !exactD1Bindings(inventory, role, worker.bindings)) throw new InventoryQuarantineError('Beta Worker inert graph is unsupported or changed.');
   const versions = observationEnvelope(inventory, role, observations.versions, 'beta-version-list', `${path}/versions`, now, observedAt);
   if (!Array.isArray(versions) || versions.length !== 0) throw new InventoryQuarantineError('Beta Worker version state is unknown or non-inert.');
-  exactAccessGate(inventory, 'api', observations.access.api, now, observedAt);
-  exactAccessGate(inventory, 'operator', observations.access.operator, now, observedAt);
-  const evidence = {}; betaEvidence.set(evidence, { inventory, role });
+  exactAccessGate(inventory, 'api', observations.access.api, now, apiAttachment.observedAt);
+  exactAccessGate(inventory, 'operator', observations.access.operator, now, operatorAttachment.observedAt);
+  const preparedAt = Date.parse(now());
+  const evidence = {}; betaEvidence.set(evidence, { inventory, role, idReceipt, generation, preparedAt, expiresAt: Math.min(expiresAt, apiAttachment.observedAt + 5 * 60 * 1000, operatorAttachment.observedAt + 5 * 60 * 1000) });
   return evidence;
 }
 
-function evidence(receipt) {
+function evidence(receipt, now) {
   const state = betaEvidence.get(receipt);
-  if (!state) throw new InventoryQuarantineError('Beta Worker evidence receipt is invalid or incomplete.');
+  if (!state || state.used) throw new InventoryQuarantineError('Beta Worker evidence receipt is invalid, incomplete, or already consumed.');
+  const clock = now(); const current = Date.parse(clock);
+  if (typeof clock !== 'string' || !Number.isFinite(current) || new Date(current).toISOString() !== clock || current < state.preparedAt || current > state.expiresAt) throw new InventoryQuarantineError('Beta Worker evidence receipt expired.');
+  const id = betaWorkerReceipt(state.idReceipt, 'id', now);
+  if (id.generation !== state.generation) throw new InventoryQuarantineError('Beta Worker evidence receipt was revoked by a phase transition.');
+  state.used = true;
   return state;
 }
 
-export function planBetaWorkerDisable(evidenceReceipt) {
-  const { inventory, role } = evidence(evidenceReceipt);
+export function planBetaWorkerDisable(evidenceReceipt, now = () => new Date().toISOString()) {
+  const { inventory, role } = evidence(evidenceReceipt, now);
   return { method: 'PATCH', path: betaWorkerPath(inventory, role), body: { subdomain: { enabled: false, previews_enabled: false } } };
 }
 
-export function planBetaWorkerDelete(evidenceReceipt) {
-  const { inventory, role } = evidence(evidenceReceipt);
+export function planBetaWorkerDelete(evidenceReceipt, now = () => new Date().toISOString()) {
+  const { inventory, role } = evidence(evidenceReceipt, now);
   return { method: 'DELETE', path: betaWorkerPath(inventory, role) };
 }
 
@@ -187,8 +196,8 @@ function safeBindings(inventory, role, bindings) {
   throw new InventoryQuarantineError('Beta Worker bindings are not the allowlisted exact graph.');
 }
 
-export function planBetaWorkerVersion(evidenceReceipt, { module, bindings = [] }, requestedRole) {
-  const { inventory, role } = evidence(evidenceReceipt);
+export function planBetaWorkerVersion(evidenceReceipt, { module, bindings = [] }, requestedRole, now = () => new Date().toISOString()) {
+  const { inventory, role } = evidence(evidenceReceipt, now);
   if (requestedRole && requestedRole !== role) throw new InventoryQuarantineError('Beta Worker role cannot change after evidence validation.');
   const unsupported = safeBindings(inventory, role, bindings);
   if (unsupported) return unsupported;

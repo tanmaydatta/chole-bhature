@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { createCloudflareClient, MutationQuarantinedError, planBetaWorkerCreate, planBetaWorkerDelete, planBetaWorkerDisable, planBetaWorkerRead, planBetaWorkerVersion, prepareBetaWorkerEvidence } from './cloudflare.mjs';
-import { checkpointBetaWorkerCreateIntent, checkpointBetaWorkerObservation, InventoryQuarantineError } from './inventory.mjs';
+import { checkpointBetaWorkerAccessAttachment, checkpointBetaWorkerCreateIntent, checkpointBetaWorkerObservation, InventoryQuarantineError } from './inventory.mjs';
 import { resourceNames } from './key.mjs';
 
 const key = { repository_id: 987654321, repository: 'trusted-owner/incentives-platform', pr: 42, head_sha: 'a'.repeat(40), run_id: 123456789, attempt: 2 };
@@ -14,6 +14,8 @@ const inventory = {
   stage: 'creating', createdAt: '2026-09-30T10:00:00.000Z', updatedAt: '2026-09-30T10:00:00.000Z',
 };
 const NOW = '2026-10-01T09:00:00.000Z';
+const ACCESS_AT = '2026-10-01T09:00:01.000Z';
+const PREP_AT = '2026-10-01T09:00:02.000Z';
 const API_ID = 'e8f70fdbc8b1fb0b8ddb1af166186758';
 const OPERATOR_ID = 'f8f70fdbc8b1fb0b8ddb1af166186758';
 
@@ -22,8 +24,8 @@ function mockTransport(responses) {
   return { calls, async request(request) { calls.push(request); const next = responses.shift(); if (next instanceof Error) throw next; if (!next) return next; return { status: 200, success: true, ...(Array.isArray(next.result) ? { result_info: { total_count: next.result.length } } : {}), ...next }; } };
 }
 
-function envelope(kind, role, path, result, observedAt = NOW) {
-  return { kind, run: key, role, observedAt, request: { method: 'GET', path }, response: { success: true, result } };
+function envelope(kind, role, path, result, observedAt = NOW, method = 'GET') {
+  return { kind, run: key, role, observedAt, request: { method, path }, response: { success: true, result } };
 }
 
 function pending() {
@@ -46,30 +48,77 @@ function access(role, result = {}, observedAt = NOW) {
   }, observedAt);
 }
 
-async function established() {
+function createResult() {
+  return envelope('beta-worker-create-result', 'api', '/accounts/account-1/workers/workers', worker().response.result, NOW, 'POST');
+}
+
+function attachment(role) {
+  const appId = role === 'api' ? 'access-app-1' : 'access-app-2';
+  const workerId = role === 'api' ? API_ID : OPERATOR_ID;
+  return envelope('beta-access-attachment', role, `/accounts/account-1/access/apps/${appId}`, { id: appId, worker_id: workerId, token_id: 'token-1' }, NOW, 'POST');
+}
+
+async function established(withAttachments = true) {
   const writes = [];
   const state = pending();
   const intent = await checkpointBetaWorkerCreateIntent(state, 'api', envelope('beta-worker-precreate-list', 'api', '/accounts/account-1/workers/workers', []), { async put(value) { writes.push(value); } }, () => NOW);
-  const id = await checkpointBetaWorkerObservation(intent, worker(), { async put(value) { writes.push(value); } }, () => NOW);
-  return { writes, intent, id };
+  const create = planBetaWorkerCreate(intent, () => NOW);
+  const id = await checkpointBetaWorkerObservation(intent, createResult(), worker(), { async put(value) { writes.push(value); } }, () => NOW);
+  if (!withAttachments) return { writes, intent, create, id, attachments: {} };
+  const apiAttachment = await checkpointBetaWorkerAccessAttachment(id, 'api', attachment('api'), { async put(value) { writes.push(value); } }, () => NOW);
+  const operatorAttachment = await checkpointBetaWorkerAccessAttachment(id, 'operator', attachment('operator'), { async put(value) { writes.push(value); } }, () => NOW);
+  return { writes, intent, create, id, attachments: { api: apiAttachment, operator: operatorAttachment } };
 }
 
 test('requires opaque durable intent and immutable-ID receipts for create and reads', async () => {
-  const { intent, id, writes } = await established();
-  assert.deepEqual(planBetaWorkerCreate(intent), { method: 'POST', path: '/accounts/account-1/workers/workers', body: { name: names.api, subdomain: { enabled: false, previews_enabled: false } } });
+  const { create, id, writes } = await established();
+  assert.deepEqual(create, { method: 'POST', path: '/accounts/account-1/workers/workers', body: { name: names.api, subdomain: { enabled: false, previews_enabled: false } } });
   assert.deepEqual(planBetaWorkerRead(id), { method: 'GET', path: `/accounts/account-1/workers/workers/${API_ID}` });
-  assert.equal(writes.length, 2);
+  assert.equal(writes.length, 4);
   assert.throws(() => planBetaWorkerCreate(pending(), 'api'), /receipt/u);
   assert.throws(() => planBetaWorkerRead({}), /receipt/u);
 });
 
+test('enforces single create-plan before correlated create-result and immutable-ID checkpoint', async () => {
+  const writes = [];
+  const intent = await checkpointBetaWorkerCreateIntent(pending(), 'api', envelope('beta-worker-precreate-list', 'api', '/accounts/account-1/workers/workers', []), { async put(value) { writes.push(value); } }, () => NOW);
+  await assert.rejects(checkpointBetaWorkerObservation(intent, createResult(), worker(), { async put() {} }, () => NOW), /receipt/u);
+  planBetaWorkerCreate(intent, () => NOW);
+  assert.throws(() => planBetaWorkerCreate(intent, () => NOW), /receipt/u);
+  await assert.rejects(checkpointBetaWorkerObservation(intent, envelope('beta-worker-create-result', 'api', '/accounts/account-1/workers/workers', { ...worker().response.result, id: OPERATOR_ID }, NOW, 'POST'), worker(), { async put() {} }, () => NOW), /match/u);
+});
+
+test('rejects invalid dates and evidence capability expiry or attachment-phase revocation', async () => {
+  await assert.rejects(checkpointBetaWorkerCreateIntent(pending(), 'api', envelope('beta-worker-precreate-list', 'api', '/accounts/account-1/workers/workers', [], '2026-13-01T09:00:00.000Z'), { async put() {} }, () => NOW), /time/u);
+  const { id, attachments } = await established();
+  const observations = { worker: worker(), versions: envelope('beta-version-list', 'api', `/accounts/account-1/workers/workers/${API_ID}/versions`, []), access: { api: access('api', {}, ACCESS_AT), operator: access('operator', {}, ACCESS_AT) }, attachments };
+  const evidence = prepareBetaWorkerEvidence(id, observations, () => PREP_AT);
+  assert.throws(() => planBetaWorkerDelete(evidence, () => '2026-10-01T09:05:00.001Z'), /expired/u);
+  assert.throws(() => planBetaWorkerDelete(evidence, () => '2026-13-01T09:00:00.000Z'), /expired/u);
+});
+
+test('requires durable Access attachments before later same-run Access readbacks', async () => {
+  const { id, attachments } = await established();
+  const observations = { worker: worker(), versions: envelope('beta-version-list', 'api', `/accounts/account-1/workers/workers/${API_ID}/versions`, []), access: { api: access('api', {}, ACCESS_AT), operator: access('operator', {}, ACCESS_AT) }, attachments: {} };
+  assert.throws(() => prepareBetaWorkerEvidence(id, observations, () => PREP_AT), /incomplete/u);
+  assert.throws(() => prepareBetaWorkerEvidence(id, { ...observations, access: { api: access('api'), operator: access('operator') }, attachments }, () => PREP_AT), /follow attachment/u);
+});
+
+test('does not issue an Access attachment receipt when its durable checkpoint fails', async () => {
+  const { id } = await established(false);
+  await assert.rejects(checkpointBetaWorkerAccessAttachment(id, 'api', attachment('api'), { async put() { throw new Error('attachment lost'); } }, () => NOW), /attachment lost/u);
+  assert.throws(() => prepareBetaWorkerEvidence(id, { worker: worker(), versions: envelope('beta-version-list', 'api', `/accounts/account-1/workers/workers/${API_ID}/versions`, []), access: { api: access('api', {}, ACCESS_AT), operator: access('operator', {}, ACCESS_AT) }, attachments: {} }, () => PREP_AT), /incomplete/u);
+});
+
 test('plans version, patch, and delete only from fresh complete local evidence', async () => {
-  const { id } = await established();
-  const evidence = prepareBetaWorkerEvidence(id, { worker: worker(), versions: envelope('beta-version-list', 'api', `/accounts/account-1/workers/workers/${API_ID}/versions`, []), access: { api: access('api'), operator: access('operator') } }, () => NOW);
+  const { id, attachments } = await established();
+  const observations = { worker: worker(), versions: envelope('beta-version-list', 'api', `/accounts/account-1/workers/workers/${API_ID}/versions`, []), access: { api: access('api', {}, ACCESS_AT), operator: access('operator', {}, ACCESS_AT) }, attachments };
+  const evidence = prepareBetaWorkerEvidence(id, observations, () => PREP_AT);
   const bindings = [{ name: 'DB', type: 'd1', database_id: inventory.cloudflare.d1Ids.product }];
-  assert.equal(planBetaWorkerVersion(evidence, { module: { name: 'index.js', contentType: 'application/javascript+module', contentBase64: 'ZXhwb3J0IGRlZmF1bHQge307' }, bindings }).path, `/accounts/account-1/workers/workers/${API_ID}/versions`);
-  assert.equal(planBetaWorkerDisable(evidence).method, 'PATCH');
-  assert.equal(planBetaWorkerDelete(evidence).method, 'DELETE');
+  assert.equal(planBetaWorkerVersion(evidence, { module: { name: 'index.js', contentType: 'application/javascript+module', contentBase64: 'ZXhwb3J0IGRlZmF1bHQge307' }, bindings }, undefined, () => PREP_AT).path, `/accounts/account-1/workers/workers/${API_ID}/versions`);
+  assert.throws(() => planBetaWorkerDelete(evidence, () => PREP_AT), /consumed/u);
+  assert.equal(planBetaWorkerDisable(prepareBetaWorkerEvidence(id, observations, () => PREP_AT), () => PREP_AT).method, 'PATCH');
+  assert.equal(planBetaWorkerDelete(prepareBetaWorkerEvidence(id, observations, () => PREP_AT), () => PREP_AT).method, 'DELETE');
 });
 
 test('quarantines skipped checkpoints, bad provenance, stale or duplicate envelopes, and non-inert graph state', async () => {
@@ -77,9 +126,9 @@ test('quarantines skipped checkpoints, bad provenance, stale or duplicate envelo
   await assert.rejects(checkpointBetaWorkerCreateIntent(pending(), 'api', envelope('beta-worker-precreate-list', 'api', '/accounts/account-1/workers/workers', [{}]), { async put() {} }, () => NOW), /ambiguous/u);
   const { intent } = await established();
   await assert.rejects(checkpointBetaWorkerObservation(intent, envelope('beta-worker-readback', 'api', `/accounts/account-1/workers/workers/${API_ID}`, [worker().response.result]), { async put() {} }, () => NOW), /invalid/u);
-  const { id } = await established();
+  const { id, attachments } = await established();
   const versions = envelope('beta-version-list', 'api', `/accounts/account-1/workers/workers/${API_ID}/versions`, []);
-  const base = { worker: worker(), versions, access: { api: access('api'), operator: access('operator') } };
+  const base = { worker: worker(), versions, access: { api: access('api', {}, ACCESS_AT), operator: access('operator', {}, ACCESS_AT) }, attachments };
   for (const bad of [
     { ...base, worker: worker({ deployed_on: 'production' }) },
     { ...base, worker: worker({ bindings: [] }) },
@@ -87,7 +136,7 @@ test('quarantines skipped checkpoints, bad provenance, stale or duplicate envelo
     { ...base, access: { api: access('api', { public_override: true }), operator: access('operator') } },
     { ...base, access: { api: access('api', {}, '2026-10-01T08:00:00.000Z'), operator: access('operator') } },
     { ...base, versions: envelope('beta-version-list', 'api', `/accounts/account-1/workers/workers/${API_ID}/versions`, [{ id: 'v1' }]) },
-  ]) assert.throws(() => prepareBetaWorkerEvidence(id, bad, () => NOW), InventoryQuarantineError);
+  ]) assert.throws(() => prepareBetaWorkerEvidence(id, bad, () => PREP_AT), InventoryQuarantineError);
 });
 
 test('refuses deleted phase, lost checkpoint, and unresolved Operator service graph', async () => {
@@ -96,9 +145,11 @@ test('refuses deleted phase, lost checkpoint, and unresolved Operator service gr
   await assert.rejects(checkpointBetaWorkerCreateIntent(pending(), 'api', envelope('beta-worker-precreate-list', 'api', '/accounts/account-1/workers/workers', []), { async put() { throw new Error('lost'); } }, () => NOW), /lost/u);
   const writes = [];
   const intent = await checkpointBetaWorkerCreateIntent(inventory, 'operator', envelope('beta-worker-precreate-list', 'operator', '/accounts/account-1/workers/workers', []), { async put(value) { writes.push(value); } }, () => NOW);
-  const operator = await checkpointBetaWorkerObservation(intent, envelope('beta-worker-readback', 'operator', `/accounts/account-1/workers/workers/${OPERATOR_ID}`, {
+  planBetaWorkerCreate(intent, () => NOW);
+  const operatorResult = {
     id: OPERATOR_ID, name: names.operator, routes: [], subdomain: { enabled: false, previews_enabled: false }, deployed_on: null, bindings: [],
-  }), { async put(value) { writes.push(value); } }, () => NOW);
+  };
+  const operator = await checkpointBetaWorkerObservation(intent, envelope('beta-worker-create-result', 'operator', '/accounts/account-1/workers/workers', operatorResult, NOW, 'POST'), envelope('beta-worker-readback', 'operator', `/accounts/account-1/workers/workers/${OPERATOR_ID}`, operatorResult), { async put(value) { writes.push(value); } }, () => NOW);
   assert.deepEqual(prepareBetaWorkerEvidence(operator, {}), { status: 'unsupported', reason: 'service-binding-remapping-unresolved' });
 });
 

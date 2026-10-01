@@ -94,10 +94,12 @@ create/get/edit/delete](https://developers.cloudflare.com/api/resources/workers/
 The approved local scope uses opaque local receipts, not caller-provided
 inventory/boolean/version sentinels. In `creating` phase, a fixed synthetic
 mock GET pre-create envelope must prove an empty result and be durably
-checkpointed; only that receipt can create the fixed disabled request. A later
-fixed ID-addressed synthetic mock GET with the same run/role/account, bounded
-freshness, and a single exact result can be durably checkpointed into the ID
-receipt. Legacy `workerIds` remain legacy tags and cannot enter any Beta path.
+checkpointed; only that single-use receipt can create the fixed disabled
+request. Its matching synthetic POST create-result and later fixed ID-addressed
+GET readback, with the same run/role/account, bounded freshness, and one exact
+result, can be durably checkpointed into the ID receipt. Both Access
+attachments then require their own durable synthetic receipts before later
+readbacks. Legacy `workerIds` remain legacy tags and cannot enter any Beta path.
 A complete fresh local context additionally requires the exact inert Worker
 graph, empty-version-list observation, and exact API/Operator Access
 observations. Only that context may produce PATCH/DELETE/version plans.
@@ -105,7 +107,9 @@ Unknown fields, duplicate/malformed/stale/wrong-run envelopes,
 deleted/quarantined phase, deployment, public override, unknown version/binding
 graph, assets, and service remapping refuse; Operator upload reports
 unsupported. These synthetic envelopes are local correlation evidence only,
-not authenticated provider proof or Cloudflare authorization.
+not authenticated provider proof or Cloudflare authorization. Evidence contexts
+are expiry- and phase-generation-bound, checked at every planning action, and
+consumed after one plan.
 
 ## Cloud-CI application mode and suite behavior
 
