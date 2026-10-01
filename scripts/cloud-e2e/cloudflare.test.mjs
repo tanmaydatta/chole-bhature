@@ -124,6 +124,26 @@ test('reserves each local run-role transition before an awaited durable write', 
   await assert.rejects(checkpointBetaWorkerCreateIntent(pending(), 'api', envelope('beta-worker-precreate-list', 'api', '/accounts/account-1/workers/workers', []), failedStore, () => NOW), /reserved|ambiguous/u);
 });
 
+test('treats reordered fields of one trusted run as one local create lifecycle', async () => {
+  const reorderedKey = { attempt: key.attempt, run_id: key.run_id, head_sha: key.head_sha, pr: key.pr, repository: key.repository, repository_id: key.repository_id };
+  const reordered = { ...pending(), key: reorderedKey };
+  const discovery = { ...envelope('beta-worker-precreate-list', 'api', '/accounts/account-1/workers/workers', []), run: reorderedKey };
+  const firstWrite = deferred();
+  const writes = [];
+  const store = { async put(value) { writes.push(value); if (writes.length === 1) await firstWrite.promise; } };
+  const first = checkpointBetaWorkerCreateIntent(pending(), 'api', envelope('beta-worker-precreate-list', 'api', '/accounts/account-1/workers/workers', []), store, () => NOW);
+  while (writes.length === 0) await Promise.resolve();
+  try {
+    await assert.rejects(checkpointBetaWorkerCreateIntent(reordered, 'api', discovery, store, () => NOW), /reserved|ambiguous/u);
+  } finally {
+    firstWrite.release();
+  }
+  const intent = await first;
+  await assert.rejects(checkpointBetaWorkerCreateIntent(reordered, 'api', discovery, store, () => NOW), /reserved|ambiguous/u);
+  assert.deepEqual(planBetaWorkerCreate(intent, () => NOW), { method: 'POST', path: '/accounts/account-1/workers/workers', body: { name: names.api, subdomain: { enabled: false, previews_enabled: false } } });
+  assert.equal(writes.length, 1);
+});
+
 test('keeps two distinct trusted runs independent within one local evidence store', async () => {
   const otherKey = { ...key, run_id: key.run_id + 1 };
   const other = { ...pending(), key: otherKey, names: resourceNames(otherKey) };

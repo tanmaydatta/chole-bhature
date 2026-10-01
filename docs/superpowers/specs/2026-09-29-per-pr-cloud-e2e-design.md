@@ -110,8 +110,9 @@ unsupported. These synthetic envelopes are local correlation evidence only,
 not authenticated provider proof or Cloudflare authorization. Evidence contexts
 are expiry- and phase-generation-bound, checked at every planning action, and
 consumed after one plan. A local registry scoped to the injected evidence store
-and trusted run/role reserves an in-progress transition before its await and
-does not retry a failed reservation. It is deliberate mock-process state, not
+and canonical trusted run/role treats reordered fields of the same StackKey as
+one identity and reserves an in-progress transition before its await. It
+does not retry a failed reservation. This is deliberate mock-process state, not
 store CAS, cross-process coordination, provider proof, or authorization.
 
 ## Cloud-CI application mode and suite behavior

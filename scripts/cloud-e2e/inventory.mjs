@@ -111,7 +111,7 @@ const BETA_EVIDENCE_MAX_AGE_MS = 5 * 60 * 1000;
 function lifecycleFor(store, inventory, role) {
   let entries = betaLifecyclesByStore.get(store);
   if (!entries) { entries = new Map(); betaLifecyclesByStore.set(store, entries); }
-  const key = `${JSON.stringify(inventory.key)}:${role}`;
+  const key = `${JSON.stringify(parseStackKey(inventory.key))}:${role}`;
   let lifecycle = entries.get(key);
   if (!lifecycle) { lifecycle = { phase: 'new', attachments: {} }; entries.set(key, lifecycle); }
   return lifecycle;
