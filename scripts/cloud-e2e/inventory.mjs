@@ -209,7 +209,8 @@ function currentReceipt(receipt, kind, now, { allowGraphPhase = false } = {}) {
   if (kind === 'id' && state.lifecycle.currentId !== receipt) quarantine('Beta Worker ID receipt was superseded.');
   if (kind === 'id' && state.graph && state.graph.phase !== 'ready' && !allowGraphPhase) quarantine('Beta Worker ID receipt phase is ambiguous or revoked.');
   const current = betaTime(now(), 'Beta Worker evidence clock is invalid.');
-  if (!Number.isFinite(state.expiresAt) || current > state.expiresAt || current < state.observedAt) quarantine('Beta Worker evidence receipt expired or out of order.');
+  if (!Number.isFinite(state.expiresAt) || current > state.expiresAt || current < state.observedAt
+    || kind === 'id' && state.graph && current > state.graph.expiresAt) quarantine('Beta Worker evidence receipt expired or out of order.');
   return state;
 }
 
@@ -261,7 +262,7 @@ function rotateGraph(receipts, inventory, observedAt, certifiedAccessIds) {
     const receipt = receipts[role];
     next[role] = successorId(betaReceipts.get(receipt), inventory, observedAt);
   }
-  const graph = { phase: 'ready', receipts: next, accessPlans: {} };
+  const graph = { phase: 'ready', receipts: next, accessPlans: {}, expiresAt: Math.min(...roles.worker.map(role => betaReceipts.get(next[role]).expiresAt)) };
   for (const role of roles.worker) {
     const state = betaReceipts.get(next[role]);
     state.graph = graph;
@@ -294,8 +295,11 @@ export async function checkpointBetaTokenCreateIntent(idReceipt, workerReceipts,
     ids[role] = betaWorkerIdFor(sibling.inventory, role);
   }
   if (workerReceipts[state.role] !== idReceipt || new Set(Object.values(ids)).size !== roles.worker.length) quarantine('Beta Worker sibling identity graph is ambiguous.');
-  for (const [role, id] of Object.entries(state.inventory.betaWorkerIds ?? {})) {
-    if (ids[role] !== id) quarantine('Beta Worker immutable ID changed after checkpoint.');
+  for (const role of roles.worker) {
+    const sibling = betaReceipts.get(workerReceipts[role]);
+    for (const [priorRole, id] of Object.entries(sibling.inventory.betaWorkerIds ?? {})) {
+      if (ids[priorRole] !== id) quarantine('Beta Worker immutable ID changed after checkpoint.');
+    }
   }
   const path = `/accounts/${state.inventory.cloudflare.accountId}/access/service_tokens`;
   const discovered = betaEnvelope(state.inventory, discovery, { kind: 'beta-token-precreate-list', role: state.role, path, now: clock, after: state.observedAt });

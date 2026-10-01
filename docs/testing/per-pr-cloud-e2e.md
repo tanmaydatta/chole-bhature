@@ -176,13 +176,16 @@ names, and the run token with one `non_identity` policy and one service-token
 include. A correlated POST result and exact-app-ID GET must match that whole
 graph before its ID enters a durable inventory checkpoint. Each checkpoint
 rotates all three role receipts and revokes older attachments and prepared
-evidence. Both app IDs, both durable attachment receipts, and later fresh
-exact-policy readbacks remain mandatory before a supported Worker code plan.
+evidence. Conflicting prior Beta IDs in any sibling checkpoint refuse the
+token transition; the earliest sibling expiry bounds every Access graph
+transition and code preparation. Both app IDs, both durable attachment
+receipts, and later fresh exact-policy readbacks remain mandatory before a
+supported Worker code plan.
 The legacy Access client's `workerIds` continue to mean legacy script tags;
 the Beta planner makes no transport call and accepts no name fallback.
 
 The 2026-10-01 local `node --test scripts/cloud-e2e/*.test.mjs` result is
-**62/62**. Tests cover ordered empty-inventory progression, intent and ID
+**65/65**. Tests cover ordered empty-inventory progression, intent and ID
 checkpoint failure, same-run overlap, distinct-run independence, forged
 account/run/role/path/ID/token/policy/time evidence, expiry and superseded
 receipts, both Access gates, and the unchanged zero-transport public Worker

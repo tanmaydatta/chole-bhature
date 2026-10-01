@@ -66,17 +66,19 @@ function deferred() {
   return { promise, release };
 }
 
-async function workerReceipts(store, runKey = key, runIds = { api: API_ID, identity: IDENTITY_ID, operator: OPERATOR_ID }, overrides = {}) {
+async function workerReceipts(store, runKey = key, runIds = { api: API_ID, identity: IDENTITY_ID, operator: OPERATOR_ID }, overrides = {}, times = {}, priorByRole = {}) {
   const runNames = resourceNames(runKey);
   const state = { ...inventory, key: runKey, names: runNames, cloudflare: { ...inventory.cloudflare, workerIds: {}, accessAppIds: {}, tokenId: null }, betaWorkerIds: {} };
   const ids = {};
   let intent; let create;
   for (const [role, databaseId] of [['api', inventory.cloudflare.d1Ids.product], ['identity', inventory.cloudflare.d1Ids.auth], ['operator', null]]) {
+    const at = times[role] ?? NOW;
+    const roleState = { ...state, betaWorkerIds: priorByRole[role] ?? {} };
     const betaId = runIds[role];
     const result = { id: betaId, name: runNames[role], routes: [], subdomain: { enabled: false, previews_enabled: false }, deployed_on: null, bindings: databaseId ? [{ name: 'DB', type: 'd1', database_id: databaseId }] : [], ...overrides[role] };
-    const roleIntent = await checkpointBetaWorkerCreateIntent(state, role, { ...envelope('beta-worker-precreate-list', role, '/accounts/account-1/workers/workers', []), run: runKey }, store, () => NOW);
-    const roleCreate = planBetaWorkerCreate(roleIntent, () => NOW);
-    ids[role] = await checkpointBetaWorkerObservation(roleIntent, { ...envelope('beta-worker-create-result', role, '/accounts/account-1/workers/workers', result, NOW, 'POST'), run: runKey }, { ...envelope('beta-worker-readback', role, `/accounts/account-1/workers/workers/${betaId}`, result), run: runKey }, store, () => NOW);
+    const roleIntent = await checkpointBetaWorkerCreateIntent(roleState, role, { ...envelope('beta-worker-precreate-list', role, '/accounts/account-1/workers/workers', [], at), run: runKey }, store, () => at);
+    const roleCreate = planBetaWorkerCreate(roleIntent, () => at);
+    ids[role] = await checkpointBetaWorkerObservation(roleIntent, { ...envelope('beta-worker-create-result', role, '/accounts/account-1/workers/workers', result, at, 'POST'), run: runKey }, { ...envelope('beta-worker-readback', role, `/accounts/account-1/workers/workers/${betaId}`, result, at), run: runKey }, store, () => at);
     if (role === 'api') { intent = roleIntent; create = roleCreate; }
   }
   return { ids, intent, create, runNames };
@@ -343,6 +345,68 @@ test('a sibling ID with an unresolved Worker graph cannot authorize the token in
   const store = { async put() {} };
   const { ids } = await workerReceipts(store, key, { api: API_ID, identity: IDENTITY_ID, operator: OPERATOR_ID }, { operator: { deployed_on: 'production' } });
   await assert.rejects(checkpointBetaTokenCreateIntent(ids.api, ids, envelope('beta-token-precreate-list', 'api', '/accounts/account-1/access/service_tokens', []), store, () => NOW), /graph|inert/u);
+});
+
+test('a conflicting prior Beta ID in a non-anchor sibling refuses durable token intent', async () => {
+  const writes = []; const store = { async put(value) { writes.push(value); } };
+  const { ids } = await workerReceipts(store, key, { api: API_ID, identity: IDENTITY_ID, operator: OPERATOR_ID }, {}, {}, { operator: { api: 'a8f70fdbc8b1fb0b8ddb1af166186758' } });
+  assert.equal(writes.length, 6);
+  await assert.rejects(checkpointBetaTokenCreateIntent(ids.api, ids, envelope('beta-token-precreate-list', 'api', '/accounts/account-1/access/service_tokens', []), store, () => NOW), /immutable ID/u);
+  assert.equal(writes.length, 6, 'conflicting sibling evidence cannot produce durable token intent');
+});
+
+const STAGGERED = { api: '2026-10-01T09:03:00.000Z', identity: NOW, operator: '2026-10-01T09:04:00.000Z' };
+const GRAPH_AT = '2026-10-01T09:04:00.000Z';
+const GRAPH_EXPIRED_AT = '2026-10-01T09:05:00.001Z';
+
+async function staggeredDependencies(store) {
+  const { ids } = await workerReceipts(store, key, { api: API_ID, identity: IDENTITY_ID, operator: OPERATOR_ID }, {}, STAGGERED);
+  const token = { id: 'token-1', name: names.token };
+  const intent = await checkpointBetaTokenCreateIntent(ids.api, ids, envelope('beta-token-precreate-list', 'api', '/accounts/account-1/access/service_tokens', [], GRAPH_AT), store, () => GRAPH_AT);
+  cloudflareProtocol.planBetaTokenCreate(intent, () => GRAPH_AT);
+  return checkpointBetaWorkerDependencies(intent, ids,
+    envelope('beta-token-create-result', 'api', '/accounts/account-1/access/service_tokens', token, GRAPH_AT, 'POST'),
+    envelope('beta-token-readback', 'api', '/accounts/account-1/access/service_tokens/token-1', token, GRAPH_AT), store, () => GRAPH_AT);
+}
+
+async function staggeredAccess(receipts, role, store) {
+  const intent = await checkpointBetaAccessCreateIntent(receipts.api, role, envelope('beta-access-precreate-list', role, '/accounts/account-1/access/apps', [], GRAPH_AT), store, () => GRAPH_AT);
+  cloudflareProtocol.planBetaAccessCreate(intent, () => GRAPH_AT);
+  const app = access(role).response.result;
+  return checkpointBetaAccessIdentity(receipts.api, role,
+    envelope('beta-access-create-result', role, '/accounts/account-1/access/apps', app, GRAPH_AT, 'POST'),
+    envelope('beta-access-readback', role, `/accounts/account-1/access/apps/${app.id}`, app, GRAPH_AT), store, () => GRAPH_AT);
+}
+
+test('expired non-anchor Identity receipt cannot authorize Access intent, plan, or checkpoint', async () => {
+  const store = { async put() {} };
+  const forIntent = await staggeredDependencies(store);
+  await assert.rejects(checkpointBetaAccessCreateIntent(forIntent.api, 'api', envelope('beta-access-precreate-list', 'api', '/accounts/account-1/access/apps', [], GRAPH_EXPIRED_AT), store, () => GRAPH_EXPIRED_AT), /expired/u);
+
+  const planStore = { async put() {} };
+  const forPlan = await staggeredDependencies(planStore);
+  const planIntent = await checkpointBetaAccessCreateIntent(forPlan.api, 'api', envelope('beta-access-precreate-list', 'api', '/accounts/account-1/access/apps', [], GRAPH_AT), planStore, () => GRAPH_AT);
+  assert.throws(() => cloudflareProtocol.planBetaAccessCreate(planIntent, () => GRAPH_EXPIRED_AT), /expired/u);
+
+  const checkpointStore = { async put() {} };
+  const forCheckpoint = await staggeredDependencies(checkpointStore);
+  const checkpointIntent = await checkpointBetaAccessCreateIntent(forCheckpoint.api, 'api', envelope('beta-access-precreate-list', 'api', '/accounts/account-1/access/apps', [], GRAPH_AT), checkpointStore, () => GRAPH_AT);
+  cloudflareProtocol.planBetaAccessCreate(checkpointIntent, () => GRAPH_AT);
+  const app = access('api').response.result;
+  await assert.rejects(checkpointBetaAccessIdentity(forCheckpoint.api, 'api', envelope('beta-access-create-result', 'api', '/accounts/account-1/access/apps', app, GRAPH_EXPIRED_AT, 'POST'), envelope('beta-access-readback', 'api', '/accounts/account-1/access/apps/access-app-1', app, GRAPH_EXPIRED_AT), checkpointStore, () => GRAPH_EXPIRED_AT), /expired/u);
+});
+
+test('expired non-anchor Identity receipt cannot authorize Access attachment or code preparation', async () => {
+  const store = { async put() {} };
+  let receipts = await staggeredDependencies(store);
+  receipts = await staggeredAccess(receipts, 'api', store);
+  receipts = await staggeredAccess(receipts, 'operator', store);
+  await assert.rejects(checkpointBetaWorkerAccessAttachment(receipts.api, 'api', envelope('beta-access-attachment', 'api', '/accounts/account-1/access/apps/access-app-1', { id: 'access-app-1', worker_id: API_ID, token_id: 'token-1' }, GRAPH_EXPIRED_AT, 'POST'), store, () => GRAPH_EXPIRED_AT), /expired/u);
+  const attachments = {};
+  for (const role of ['api', 'operator']) attachments[role] = await checkpointBetaWorkerAccessAttachment(receipts.api, role,
+    envelope('beta-access-attachment', role, `/accounts/account-1/access/apps/${access(role).response.result.id}`, { id: access(role).response.result.id, worker_id: role === 'api' ? API_ID : OPERATOR_ID, token_id: 'token-1' }, GRAPH_AT, 'POST'), store, () => GRAPH_AT);
+  const observations = { worker: envelope('beta-worker-readback', 'api', `/accounts/account-1/workers/workers/${API_ID}`, worker().response.result, GRAPH_EXPIRED_AT), versions: envelope('beta-version-list', 'api', `/accounts/account-1/workers/workers/${API_ID}/versions`, [], GRAPH_EXPIRED_AT), access: { api: access('api', {}, GRAPH_EXPIRED_AT), operator: access('operator', {}, GRAPH_EXPIRED_AT) }, attachments };
+  assert.throws(() => prepareBetaWorkerEvidence(receipts.api, observations, () => GRAPH_EXPIRED_AT), /expired/u);
 });
 
 test('dependency and Access checkpoints revoke every prior role receipt without extending its lifetime', async () => {
