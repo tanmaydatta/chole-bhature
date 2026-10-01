@@ -277,7 +277,7 @@ export function createCloudflareClient({ accountId, inventory: rawInventory, tra
     if (listed.some(database => database?.name === name)) quarantine('D1 already exists; create is ambiguous.', alert);
     await intent(`d1:${role}`, name);
     const created = (await call('POST', `${root}/d1/database`, { name })).result;
-    if (!created || created.name !== name || typeof created.uuid !== 'string') quarantine('D1 create response is not an exact identity.', alert);
+    if (!created || created.name !== name || typeof created.uuid !== 'string' || listed.some(database => database.uuid === created.uuid)) quarantine('D1 create response is reused or ambiguous.', alert);
     try { await check(cloneWith(inventory, 'd1Ids', role, created.uuid, now)); } catch (error) { poisoned = true; quarantine(error.message, alert); }
     return created;
   }

@@ -2,7 +2,7 @@
 
 **Status:** Approved design under local implementation. On 2026-10-01, the
 Beta lifecycle amendments 5a/5b were approved for bounded mock-only planning,
-identity transitions, and validation; they are not approval for a live API call, pilot, deployment, or
+identity transitions, controller orchestration, and validation; they are not approval for a live API call, pilot, deployment, or
 workflow.
 
 **Date:** 2026-09-29
@@ -129,6 +129,21 @@ and canonical trusted run/role treats reordered fields of the same StackKey as
 one identity and reserves an in-progress transition before its await. It
 does not retry a failed reservation. This is deliberate mock-process state, not
 store CAS, cross-process coordination, provider proof, or authorization.
+
+The bounded 2026-10-01 Task 5b mock controller composes those receipts after
+the real `bundle-v1` verification boundary. It locally orders exact D1
+creation/readback and verified SQL migration data before the disabled empty
+Worker sequence, then token, Access, attachment, and fresh readback gates. A
+pure API version plan is reached, but no version is uploaded or deployed;
+Operator service-binding remapping and assets remain unsupported. Local
+teardown can remove mock-proven D1s before Workers exist, after exact-ID reads
+and observed absence, but keeps any unresolved Worker/Access dependency graph
+in its remaining inventory. Same-run overlap is refused within one process;
+distinct runs can progress in one mock store. The local suite passes 79/79
+cloud-script tests. This does not establish provider schemas, authenticated
+ownership, live readiness, complete teardown, HTTPS/passkey behavior, or a
+production controller adapter. The later Task 5b repository state has not
+been exported to the Notion mirror.
 
 ## Cloud-CI application mode and suite behavior
 

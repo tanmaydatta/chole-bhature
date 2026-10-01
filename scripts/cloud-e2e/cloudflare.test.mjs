@@ -582,6 +582,19 @@ test('checkpoints durable intent before create and returned D1 UUID immediately 
   assert.equal(checkpoints.every(entry => entry.options.retentionDays === 7), true);
 });
 
+test('a create response cannot substitute a preexisting staging D1 UUID', async () => {
+  const reused = '33333333-3333-4333-8333-333333333333';
+  const transport = mockTransport([
+    { result: [{ name: 'manual-staging-auth', uuid: reused }] },
+    { result: { name: inventory.names.product, uuid: reused } },
+  ]);
+  const writes = [];
+  const creating = { ...inventory, cloudflare: { ...inventory.cloudflare, d1Ids: { auth: inventory.cloudflare.d1Ids.auth } } };
+  const client = createCloudflareClient({ accountId: 'account-1', inventory: creating, transport, store: { async put(value) { writes.push(value); } }, now: () => NOW });
+  await assert.rejects(client.createD1('product'), /D1|ambiguous|reused/u);
+  assert.deepEqual(writes.map(value => value.type), ['create-intent']);
+});
+
 test('reports Worker creation unavailable until an immutable-ID write mechanism is proven', async () => {
   const withoutApiWorker = { ...inventory, cloudflare: { ...inventory.cloudflare, workerIds: {} } };
   const transport = mockTransport([]);

@@ -2,8 +2,8 @@
 
 **Baseline recorded:** 2026-09-30
 **Status:** Local baseline, Tasks 1–4 guard foundation, and the approved
-2026-10-01 Task 5a/5b mock-only Beta protocol slices are complete. Public Worker
-mutations remain disabled; the local evidence is not an approved Cloudflare
+2026-10-01 Task 5a/5b mock-only Beta protocol and controller slices are
+complete. Public Worker mutations remain disabled; the local evidence is not an approved Cloudflare
 pilot, deployment, credential change, or every-push workflow.
 
 ## Local verification baseline
@@ -184,17 +184,54 @@ supported Worker code plan.
 The legacy Access client's `workerIds` continue to mean legacy script tags;
 the Beta planner makes no transport call and accepts no name fallback.
 
-The 2026-10-01 local `node --test scripts/cloud-e2e/*.test.mjs` result is
-**65/65**. Tests cover ordered empty-inventory progression, intent and ID
+At the Task 5b protocol prerequisite checkpoint, the 2026-10-01 local
+`node --test scripts/cloud-e2e/*.test.mjs` result was **65/65**. Tests cover ordered empty-inventory progression, intent and ID
 checkpoint failure, same-run overlap, distinct-run independence, forged
 account/run/role/path/ID/token/policy/time evidence, expiry and superseded
 receipts, both Access gates, and the unchanged zero-transport public Worker
 refusal. Synthetic envelopes and a local store/process registry are correlation
 fixtures, not authenticated Cloudflare provider proof, distributed CAS,
-recovery, a controller, live readiness, or complete cleanup. Operator service
+recovery, live readiness, or complete cleanup. Operator service
 binding remapping, assets/JWT, and the other live gates above remain unsupported.
 
+### Task 5b mock provisioning and teardown controller (2026-10-01)
+
+`provisionMockStack` runs the actual `bundle-v1` verifier before any provider
+request. With an injected mock provider and restricted evidence store, it
+checkpoints a controller-derived inventory, creates and reads back two exact
+D1 UUIDs, applies the verified SQL files as data, then drives all three empty
+disabled Beta Worker intent/create/readback checkpoints. It composes the
+opaque token and both Access identity transitions, durable attachment receipts,
+fresh exact policy/Worker/version observations, and a pure API version plan.
+It does not send the Worker code plan to a provider. Operator planning returns
+`service-binding-remapping-unresolved`, so the result is `unsupported`, never
+`VerifiedStack` or HTTPS readiness.
+
+`teardownMockStack` accepts only the same process-local registered run/account.
+Before any Worker is created, it can remove proven D1s in reverse order after
+exact-ID/name GETs and observed absence after DELETE. Changed ownership,
+ambiguous creates, failed checkpoints, or any remaining Worker/Access graph
+leave resources in the reported inventory and stop dependent deletion. Its
+`local-cleanup-observed` outcome records a mock D1 cleanup, with
+`complete:false`; it is not a completed Cloudflare teardown. Original failure
+and cleanup failure have separate sanitized codes. Same-run overlap/replay is
+reserved locally, while different trusted runs can progress in one store.
+There is no distributed lock, store CAS, audit recovery, live adapter, CLI,
+or provider proof.
+
+The current local cloud-script result is **79/79** on 2026-10-01. The new
+controller tests cover ordered progression, a single ambiguous create attempt,
+migration and cleanup failures, stale/changed evidence, ID checkpoint failure,
+same-run overlap, distinct-run progress, bounded transient reads, timeout,
+and staging/other-run refusals. The D1 guard also now rejects a returned UUID
+already present in pre-create discovery, preventing substitution of an
+existing staging database. This is mock-boundary evidence only; full Task 5,
+live Cloudflare lifecycle, alternate-URL/HTTPS checks, real cleanup, the
+Playwright suite, and the every-push workflow remain incomplete. The Notion
+mirrors still reflect the earlier Task 5a 50-test state; this local update has
+not been exported.
+
 **NO-GO for a live pilot:** Beta recovery/audit evidence, provider response
-completeness, assets/JWT, service-name remapping, D1 migrations, version/preview
+completeness, assets/JWT, service-name remapping, live D1 migrations, version/preview
 exposure, Access behavior, and two-stack acceptance require separate approval
 and disposable-account proof. No authenticated Cloudflare request was made.
