@@ -80,7 +80,7 @@ async function established(withAttachments = true) {
 test('requires opaque durable intent and immutable-ID receipts for create and reads', async () => {
   const { create, id, writes } = await established();
   assert.deepEqual(create, { method: 'POST', path: '/accounts/account-1/workers/workers', body: { name: names.api, subdomain: { enabled: false, previews_enabled: false } } });
-  assert.deepEqual(planBetaWorkerRead(id), { method: 'GET', path: `/accounts/account-1/workers/workers/${API_ID}` });
+  assert.deepEqual(planBetaWorkerRead(id, () => NOW), { method: 'GET', path: `/accounts/account-1/workers/workers/${API_ID}` });
   assert.equal(writes.length, 4);
   assert.throws(() => planBetaWorkerCreate(pending(), 'api'), /receipt/u);
   assert.throws(() => planBetaWorkerRead({}), /receipt/u);
@@ -227,7 +227,7 @@ test('refuses deleted phase, lost checkpoint, and unresolved Operator service gr
     id: OPERATOR_ID, name: names.operator, routes: [], subdomain: { enabled: false, previews_enabled: false }, deployed_on: null, bindings: [],
   };
   const operator = await checkpointBetaWorkerObservation(intent, envelope('beta-worker-create-result', 'operator', '/accounts/account-1/workers/workers', operatorResult, NOW, 'POST'), envelope('beta-worker-readback', 'operator', `/accounts/account-1/workers/workers/${OPERATOR_ID}`, operatorResult), store, () => NOW);
-  assert.deepEqual(prepareBetaWorkerEvidence(operator, {}), { status: 'unsupported', reason: 'service-binding-remapping-unresolved' });
+  assert.deepEqual(prepareBetaWorkerEvidence(operator, {}, () => NOW), { status: 'unsupported', reason: 'service-binding-remapping-unresolved' });
 });
 
 test('checkpoints durable intent before create and returned D1 UUID immediately after response', async () => {
