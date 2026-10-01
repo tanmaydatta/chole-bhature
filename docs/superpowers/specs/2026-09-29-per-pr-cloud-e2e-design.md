@@ -1,7 +1,9 @@
 # Per-PR Cloud E2E — Design Spec
 
-**Status:** Approved design under local implementation; Worker API lifecycle
-revision below is PROPOSED and awaits written review before code or live use.
+**Status:** Approved design under local implementation. On 2026-10-01, the
+Beta lifecycle amendment was approved for bounded mock-only planning and
+validation; it is not approval for a live API call, pilot, deployment, or
+workflow.
 
 **Date:** 2026-09-29
 
@@ -86,8 +88,31 @@ Worker mutations are enabled.
 
 [Cloudflare Worker Access](https://developers.cloudflare.com/workers/configuration/cloudflare-access/) supports Worker-level protection across a Worker's domains, and [service tokens](https://developers.cloudflare.com/cloudflare-one/access-controls/service-credentials/service-tokens/) are accepted through a `Service Auth` policy. Whether this account's Access permissions, API lifecycle, route publication sequence, and service-token headers work with Playwright's top-level navigation, assets, redirects, and WebAuthn must be proven in a **disposable-stack feasibility pilot** before automatic per-PR deployment is enabled. The pilot must demonstrate no public reachability before protection, anonymous denial afterward, passkey registration/sign-in, and token isolation using two temporary stacks. If the account cannot create per-Worker Access apps or service tokens without broader Access administration than the owner accepts, or cannot keep routes disabled until protection is active, this design is blocked; do not silently switch to public Workers or reuse a broad token. The Access token may require broad `Access: Apps and Policies Write` and `Access: Service Tokens Write` permissions; that is an acknowledged controller risk, not a proven per-stack Cloudflare permission boundary.
 
-**PROPOSED Worker lifecycle revision (not adopted):** Public [Beta Worker
+**Approved mock-only Beta lifecycle amendment (2026-10-01; not live):** Public [Beta Worker
 create/get/edit/delete](https://developers.cloudflare.com/api/resources/workers/subresources/beta/) and [ID-addressed version creation](https://developers.cloudflare.com/api/resources/workers/subresources/beta/subresources/workers/subresources/versions/methods/create/) suggest creating an empty Worker with `subdomain.enabled:false` and `previews_enabled:false` in its initial JSON request, checkpointing its returned immutable Beta `id`, attaching and reading back Worker-level Access, and only then uploading/deploying code by that certified ID. The current name-based script upload followed by a disable call is not a proven safe first-publication sequence; Task 4 correctly refuses all Worker writes. The Beta `{worker_id}` path also accepts names, so the controller must never use a name fallback. Legacy script-list `tag` is documented as an immutable script ID, but its equivalence to Beta Worker `id` is not established. Service bindings still name target Workers, so exact-ID caller operations alone do not settle target replacement/remapping. Keep the same isolation, credential separation, checkpoints, audit recovery, route and alternate-URL denial, and fail-closed requirements. The [feasibility ledger](../../testing/per-pr-cloud-e2e.md#worker-api-feasibility-public-documentation-2026-09-30) lists the unresolved API and live-proof gates; none authorizes an implementation change or live Cloudflare call.
+
+The approved local scope records a separate `betaWorkerIds` map only after an
+exact mock readback has the controller-derived name, a 32-lowercase-hex fixture
+ID, explicit empty `routes`, and both disabled subdomain flags. This strict
+fixture normalizer deliberately refuses absent/unknown routes or malformed
+IDs; it is not a claim that it exhausts the provider schema. Legacy `workerIds`
+remain legacy tags and cannot enter a Beta path. The local planners produce
+fixed request descriptions only: initial create, ID-only GET/PATCH/DELETE, and
+an inert non-deploying version request after exact API and Operator Access
+readbacks. PATCH/DELETE additionally require the local mock protocol's exact
+Worker observation and explicit `version:null` inert-state proof; this is not
+claimed to come from Beta Worker GET, which does not prove outgoing bindings or
+version absence. A separately complete version-observation adapter and live
+schema proof remain gates. Changed routes, identity, deployment, or binding
+state refuses. They never execute a transport. Incoming `references.workers` is
+not inferred to prove outgoing D1/service bindings. Assets/JWT, service-name
+remapping, Beta crash recovery/audit proof, version/preview reachability and
+all live acceptance remain unresolved.
+
+The connected local fixture harness records pre-create intent, then a disabled
+create plan, immutable-ID checkpoint, Access gates, and inert version plan in
+that order. It demonstrates the planner/observation interfaces only; no Task
+5a controller orchestration enforces that ordering against a provider.
 
 ## Cloud-CI application mode and suite behavior
 

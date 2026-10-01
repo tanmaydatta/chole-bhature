@@ -1,10 +1,10 @@
 # Per-PR Cloud E2E pilot ledger
 
 **Baseline recorded:** 2026-09-30
-**Status:** Local baseline and Tasks 1–4 guard foundation complete. Worker
-mutations remain disabled; the public-API feasibility findings below are a
-PROPOSED design change, not an implemented or approved Cloudflare pilot,
-deployment, credential change, or every-push workflow.
+**Status:** Local baseline, Tasks 1–4 guard foundation, and the approved
+2026-10-01 Task 5a mock-only Beta planning slice are complete. Public Worker
+mutations remain disabled; the local evidence is not an approved Cloudflare
+pilot, deployment, credential change, or every-push workflow.
 
 ## Local verification baseline
 
@@ -115,14 +115,37 @@ targeting or no transient public route. It must not be used for a live pilot.
 | Delete | [Beta delete](https://developers.cloudflare.com/api/resources/workers/subresources/beta/subresources/workers/methods/delete/) `DELETE /accounts/{id}/workers/workers/{worker_id}` accepts ID or name; `force=true` can break references. | Documented ID-addressable endpoint. Propose certified-ID GET/readback immediately before delete, `force` omitted/false, dependency teardown, mismatch quarantine. ID targeting removes the old name-replacement window for the target; service-binding names, concurrent graph changes and live error behavior remain unresolved. |
 | Recover ownership | [Account audit V2](https://developers.cloudflare.com/api/resources/accounts/subresources/logs/subresources/audit/methods/list/) exposes actor token, raw method/URI/status and resource ID fields. | Documented fields; **unproven** that Beta create emits timely entries tying returned Worker ID to the pre-create intent. No checkpoint recovery from a matching name alone. |
 
-**Recommendation:** Conditional GO for a *separately reviewed, mock-only* next
-code step that proposes a Beta-ID inventory/client migration and tests the
-create-disabled → Access-verified → ID-addressed version upload/deploy → route
-publication → exact-ID teardown transitions. This architecture/interface
-change is **PROPOSED and awaiting written approval**; Task 4's refusal remains
-in force until then. **NO-GO for the separately approved live pilot today**:
-first-route behavior, Beta/legacy ID mapping or a Beta-only recovery path,
-service-name replacement race, Access policy readback, assets/artifact upload,
-audit recovery and alternate URL isolation need disposable-account proof. A
-public-doc gap is not proof that Cloudflare cannot support the design. No
-authenticated Cloudflare request was made for this assessment.
+### Task 5a mock-only evidence (2026-10-01)
+
+The approved local amendment adds no transport and retains every public Worker
+mutation as a zero-call refusal. `InventoryV1` may now carry a separate
+`betaWorkerIds` map; a value is accepted only from a mock observation with the
+controller-derived name, a 32-lowercase-hex fixture ID, explicit `routes: []`,
+and `subdomain.enabled:false` plus `previews_enabled:false`. Missing/unknown
+routes, malformed/duplicate IDs, legacy tags, wrong names, public overrides,
+and changed IDs refuse. A controller-derived pre-create intent and the returned
+inventory must each pass the existing restricted seven-day checkpoint before a
+dependent planner consumes it.
+
+The pure planners emit the documented create `POST /accounts/{accountId}/workers/workers`,
+the ID-only Worker GET/PATCH/DELETE paths, and a version `POST` whose
+`deploy:false` is a query field, never body data. The local inert version form
+allows only a controller-selected JavaScript module and exact `DB` D1 binding;
+it requires both exact token-exclusive API and Operator Access readbacks.
+PATCH/DELETE require the local mock protocol's exact Worker observation plus
+explicit `version:null` inert proof, so a changed route/identity/deployment or
+binding state refuses. This is synthetic transition evidence, not a claim that
+Beta Worker GET proves no outgoing bindings or versions; a complete
+version-observation adapter and live provider schema proof remain gates.
+Service-name binding replacement/remapping returns unsupported, and assets/JWT
+remain unsupported. `references.workers` is not used as evidence of an outgoing
+binding graph. `node --test scripts/cloud-e2e/*.test.mjs` passed **45/45**;
+this proves request/validation behavior and existing zero-call guards only.
+Its connected in-memory harness orders pre-create intent, disabled create plan,
+ID checkpoint, Access readbacks, and inert version plan; it is not a controller
+orchestrator and therefore does not establish provider-enforced transition order.
+
+**NO-GO for a live pilot:** Beta recovery/audit evidence, provider response
+completeness, assets/JWT, service-name remapping, D1 migrations, version/preview
+exposure, Access behavior, and two-stack acceptance require separate approval
+and disposable-account proof. No authenticated Cloudflare request was made.

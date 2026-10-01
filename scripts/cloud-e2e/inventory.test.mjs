@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { assertOwnedResource, checkpoint, discoverRun, InventoryQuarantineError } from './inventory.mjs';
+import { assertOwnedResource, checkpoint, checkpointBetaWorkerObservation, discoverRun, InventoryQuarantineError, recordBetaWorkerObservation } from './inventory.mjs';
 import { resourceNames } from './key.mjs';
 import { createCloudflareClient } from './cloudflare.mjs';
 
@@ -23,6 +23,40 @@ const inventory = {
   createdAt: '2026-09-30T10:00:00.000Z',
   updatedAt: '2026-09-30T10:00:00.000Z',
 };
+
+test('records only a readback-certified Beta immutable Worker ID, never a legacy tag', () => {
+  const observed = recordBetaWorkerObservation(inventory, 'api', {
+    id: 'e8f70fdbc8b1fb0b8ddb1af166186758',
+    name: names.api,
+    routes: [],
+    subdomain: { enabled: false, previews_enabled: false },
+  });
+  assert.equal(observed.betaWorkerIds.api, 'e8f70fdbc8b1fb0b8ddb1af166186758');
+  for (const id of ['worker-tag-1', names.api, '../other-worker', 'e8f70fdbc8b1fb0b8ddb1af16618675/']) {
+    assert.throws(() => recordBetaWorkerObservation(inventory, 'api', { id, name: names.api, routes: [], subdomain: { enabled: false, previews_enabled: false } }), InventoryQuarantineError);
+  }
+});
+
+test('rejects a Beta checkpoint that assigns one immutable ID to multiple roles', () => {
+  assert.throws(() => recordBetaWorkerObservation({
+    ...inventory,
+    betaWorkerIds: {
+      api: 'e8f70fdbc8b1fb0b8ddb1af166186758',
+      identity: 'e8f70fdbc8b1fb0b8ddb1af166186758',
+    },
+  }, 'api', { id: 'e8f70fdbc8b1fb0b8ddb1af166186758', name: names.api, routes: [], subdomain: { enabled: false, previews_enabled: false } }), InventoryQuarantineError);
+});
+
+test('durably checkpoints the exact Beta readback before dependent planning can consume it', async () => {
+  const writes = [];
+  const checkpointed = await checkpointBetaWorkerObservation(inventory, 'api', {
+    id: 'e8f70fdbc8b1fb0b8ddb1af166186758', name: names.api, routes: [], subdomain: { enabled: false, previews_enabled: false },
+  }, { async put(value, options) { writes.push({ value, options }); } });
+  assert.equal(checkpointed.betaWorkerIds.api, 'e8f70fdbc8b1fb0b8ddb1af166186758');
+  assert.equal(writes.length, 1);
+  assert.equal(writes[0].value.betaWorkerIds.api, 'e8f70fdbc8b1fb0b8ddb1af166186758');
+  assert.deepEqual(writes[0].options, { classification: 'controller-evidence', retentionDays: 7, restricted: true });
+});
 
 test('checkpoints only seven-day restricted controller evidence and never credentials', async () => {
   const writes = [];

@@ -2,6 +2,7 @@ import { parseStackKey, resourceNames } from './key.mjs';
 
 const ISO_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
+const BETA_WORKER_ID = /^[0-9a-f]{32}$/u;
 const roles = {
   worker: ['api', 'identity', 'operator'],
   d1: ['product', 'auth'],
@@ -76,7 +77,9 @@ function parseKind(value) {
 
 export function validateInventory(value) {
   object(value, 'InventoryV1 is invalid.');
-  exactKeys(value, ['key', 'names', 'cloudflare', 'stage', 'createdAt', 'updatedAt'], 'InventoryV1 is invalid.');
+  const inventoryKeys = ['key', 'names', 'cloudflare', 'stage', 'createdAt', 'updatedAt'];
+  if (Object.hasOwn(value, 'betaWorkerIds')) inventoryKeys.push('betaWorkerIds');
+  exactKeys(value, inventoryKeys, 'InventoryV1 is invalid.');
   let key;
   try { key = parseStackKey(value.key); } catch { quarantine('InventoryV1 key is invalid.'); }
   const names = resourceNames(key);
@@ -91,7 +94,46 @@ export function validateInventory(value) {
   if (!['creating', 'active', 'quarantined', 'deleted'].includes(value.stage) || !ISO_TIME.test(value.createdAt) || !ISO_TIME.test(value.updatedAt)) {
     quarantine('InventoryV1 lifecycle state is invalid.');
   }
+  if (value.betaWorkerIds !== undefined) checkedIdMap(value.betaWorkerIds, roles.worker);
+  if (value.betaWorkerIds !== undefined && Object.values(value.betaWorkerIds).some(id => !BETA_WORKER_ID.test(id))) {
+    quarantine('InventoryV1 Beta Worker IDs are invalid.');
+  }
+  if (value.betaWorkerIds !== undefined && new Set(Object.values(value.betaWorkerIds)).size !== Object.keys(value.betaWorkerIds).length) {
+    quarantine('InventoryV1 Beta Worker IDs are ambiguous.');
+  }
   return structuredClone(value);
+}
+
+export function recordBetaWorkerObservation(rawInventory, role, observation) {
+  const inventory = validateInventory(rawInventory);
+  if (!roles.worker.includes(role)) quarantine('Beta Worker role is invalid.');
+  object(observation, 'Beta Worker observation is invalid.');
+  if (!BETA_WORKER_ID.test(observation.id) || observation.name !== inventory.names[role]
+    || !Array.isArray(observation.routes) || observation.routes.length !== 0
+    || !observation.subdomain || observation.subdomain.enabled !== false || observation.subdomain.previews_enabled !== false) {
+    quarantine('Beta Worker observation is not a disabled exact immutable identity.');
+  }
+  const prior = inventory.betaWorkerIds?.[role];
+  if (prior && prior !== observation.id) quarantine('Beta Worker immutable ID changed after checkpoint.');
+  return validateInventory({ ...inventory, betaWorkerIds: { ...inventory.betaWorkerIds, [role]: observation.id } });
+}
+
+export async function checkpointBetaWorkerCreateIntent(rawInventory, role, store, now = () => new Date().toISOString()) {
+  const inventory = validateInventory(rawInventory);
+  if (!roles.worker.includes(role)) quarantine('Beta Worker role is invalid.');
+  if (inventory.betaWorkerIds?.[role]) quarantine('Beta Worker already has a certified immutable ID.');
+  if (!store || typeof store.put !== 'function') throw new TypeError('Expected a restricted evidence store with put().');
+  const startedAt = now();
+  if (!ISO_TIME.test(startedAt)) quarantine('Beta Worker creation intent time is invalid.');
+  await store.put({
+    type: 'beta-worker-create-intent', key: inventory.key, role, exactName: inventory.names[role], startedAt, noPreexistingMatch: true,
+  }, { classification: 'controller-evidence', retentionDays: 7, restricted: true });
+}
+
+export async function checkpointBetaWorkerObservation(rawInventory, role, observation, store) {
+  const inventory = recordBetaWorkerObservation(rawInventory, role, observation);
+  await checkpoint(inventory, store);
+  return inventory;
 }
 
 function validBindings(inventory, role, bindings) {

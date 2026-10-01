@@ -1,4 +1,4 @@
-import { assertOwnedResource, checkpoint, InventoryQuarantineError, validateInventory } from './inventory.mjs';
+import { assertOwnedResource, checkpoint, InventoryQuarantineError, recordBetaWorkerObservation, validateInventory } from './inventory.mjs';
 
 export class MutationQuarantinedError extends InventoryQuarantineError {
   constructor(message) {
@@ -68,6 +68,104 @@ function normalizeWorkerBindings(rawBindings, workerTags) {
     throw new TypeError('Cloudflare Worker settings contain an unsupported binding.');
   }
   return { d1, services };
+}
+
+function betaWorkerId(inventory, role) {
+  const id = inventory.betaWorkerIds?.[role];
+  if (typeof id !== 'string' || !/^[0-9a-f]{32}$/u.test(id)) throw new InventoryQuarantineError('Beta Worker has no certified immutable ID.');
+  return id;
+}
+
+function betaWorkerPath(inventory, role) {
+  return `/accounts/${inventory.cloudflare.accountId}/workers/workers/${betaWorkerId(inventory, role)}`;
+}
+
+export function planBetaWorkerCreate(rawInventory, role) {
+  const inventory = validateInventory(rawInventory);
+  if (!workerName(inventory, role) || inventory.betaWorkerIds?.[role]) throw new InventoryQuarantineError('Beta Worker create is not a new certified role.');
+  return {
+    method: 'POST',
+    path: `/accounts/${inventory.cloudflare.accountId}/workers/workers`,
+    body: { name: inventory.names[role], subdomain: { enabled: false, previews_enabled: false } },
+  };
+}
+
+export function certifyBetaWorkerReadback(rawInventory, role, observation) {
+  return recordBetaWorkerObservation(rawInventory, role, observation);
+}
+
+export function planBetaWorkerRead(rawInventory, role) {
+  const inventory = validateInventory(rawInventory);
+  return { method: 'GET', path: betaWorkerPath(inventory, role) };
+}
+
+function inertBetaMutationInventory(rawInventory, role, proof) {
+  if (!proof || typeof proof !== 'object' || Object.keys(proof).length !== 2 || !Object.hasOwn(proof, 'worker') || !Object.hasOwn(proof, 'version')) {
+    throw new InventoryQuarantineError('Beta Worker mutation observation is incomplete.');
+  }
+  if (proof.worker?.deployed_on !== null || proof.version !== null) {
+    throw new InventoryQuarantineError('Beta Worker mutation is supported only for an inert Worker.');
+  }
+  return certifyBetaWorkerReadback(rawInventory, role, proof.worker);
+}
+
+export function planBetaWorkerDisable(rawInventory, role, proof) {
+  const inventory = inertBetaMutationInventory(rawInventory, role, proof);
+  return { method: 'PATCH', path: betaWorkerPath(inventory, role), body: { subdomain: { enabled: false, previews_enabled: false } } };
+}
+
+export function planBetaWorkerDelete(rawInventory, role, proof) {
+  const inventory = inertBetaMutationInventory(rawInventory, role, proof);
+  return { method: 'DELETE', path: betaWorkerPath(inventory, role) };
+}
+
+function exactAccessGate(inventory, role, app) {
+  const expectedName = role === 'api' ? inventory.names.accessApi : inventory.names.accessOperator;
+  const expectedId = inventory.cloudflare.accessAppIds[role];
+  const expectedWorkerId = betaWorkerId(inventory, role);
+  const destinations = Array.isArray(app?.destinations) && app.destinations.length === 1 ? app.destinations[0] : null;
+  const policy = Array.isArray(app?.policies) && app.policies.length === 1 ? app.policies[0] : null;
+  const include = Array.isArray(policy?.include) && policy.include.length === 1 ? policy.include[0] : null;
+  if (!expectedId || app?.id !== expectedId || app?.name !== expectedName || !destinations
+    || Object.keys(destinations).length !== 3 || destinations.type !== 'worker' || destinations.worker_id !== expectedWorkerId
+    || !Array.isArray(destinations.overrides) || destinations.overrides.length !== 0 || !policy
+    || Object.keys(policy).length !== 2 || policy.decision !== 'non_identity' || !include
+    || Object.keys(include).length !== 1 || !include.service_token || Object.keys(include.service_token).length !== 1
+    || include.service_token.token_id !== inventory.cloudflare.tokenId) {
+    throw new InventoryQuarantineError('Beta Worker Access readback is not the exact token-exclusive policy.');
+  }
+}
+
+function safeModule(module) {
+  if (!module || typeof module !== 'object' || Object.keys(module).length !== 3 || module.contentType !== 'application/javascript+module'
+    || typeof module.name !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._/-]*$/u.test(module.name) || module.name.includes('..') || module.name.includes('//')
+    || typeof module.contentBase64 !== 'string' || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u.test(module.contentBase64)) {
+    throw new InventoryQuarantineError('Beta Worker module is unsupported or unsafe.');
+  }
+}
+
+function safeBindings(inventory, role, bindings) {
+  if (!Array.isArray(bindings)) throw new InventoryQuarantineError('Beta Worker bindings are invalid.');
+  const expected = role === 'api' ? inventory.cloudflare.d1Ids.product : role === 'identity' ? inventory.cloudflare.d1Ids.auth : null;
+  if (!expected && bindings.some(binding => binding?.type === 'service')) return { status: 'unsupported', reason: 'service-binding-remapping-unresolved' };
+  if (expected && bindings.length === 1 && bindings[0]?.type === 'd1' && bindings[0]?.name === 'DB' && bindings[0]?.database_id === expected && Object.keys(bindings[0]).length === 3) return null;
+  if (!expected && bindings.length === 0) return null;
+  throw new InventoryQuarantineError('Beta Worker bindings are not the allowlisted exact graph.');
+}
+
+export function planBetaWorkerVersion(rawInventory, role, { observation, accessApps, module, bindings = [] }) {
+  let inventory = certifyBetaWorkerReadback(rawInventory, role, observation);
+  exactAccessGate(inventory, 'api', accessApps?.api);
+  exactAccessGate(inventory, 'operator', accessApps?.operator);
+  const unsupported = safeBindings(inventory, role, bindings);
+  if (unsupported) return unsupported;
+  safeModule(module);
+  return {
+    method: 'POST',
+    path: `${betaWorkerPath(inventory, role)}/versions`,
+    query: { deploy: false },
+    body: { main_module: module.name, modules: [{ name: module.name, content_type: module.contentType, content_base64: module.contentBase64 }], bindings },
+  };
 }
 
 export function createCloudflareClient({ accountId, inventory: rawInventory, transport, store, alert, now = () => new Date().toISOString(), accessAppCreate, serviceTokenCreate }) {
