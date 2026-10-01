@@ -11,15 +11,18 @@ or D1 migration is part of that cutover.
 The approved per-PR Cloud E2E design is now being implemented on
 `feat/per-pr-cloud-e2e`, based on `origin/dev` commit
 `f189f5a0a527e8f350b1e77f4dcb29e96020d778`. Tasks 1–3 are locally verified
-through `09e6e2b`; they establish the local test baseline, trusted PR run
-identity, and untrusted-artifact verification. This does not deploy or test a
-Cloudflare stack: automatic per-PR Cloudflare writes are disabled, and no live
-pilot has run.
+through `09e6e2b`; Task 4 is independently reviewed at `7f74de3` as a guarded
+inventory/client foundation (37/37 local cloud-script tests). Worker writes
+deliberately refuse with zero transport calls. A public-API feasibility review
+found a **PROPOSED** exact-ID Beta Worker lifecycle; it awaits written design
+approval and live account proof. No Cloudflare stack has been deployed or
+tested: automatic per-PR Cloudflare writes are disabled, and no live pilot has
+run.
 
 **Notion mirror:** https://app.notion.com/p/Product-Current-State-and-Roadmap-3a6e5c7c2b8e81f6b412c45a2bc7b344
 
 **Mirror state:** Repository and Notion synchronized for the 2026-09-30
-per-PR Cloud E2E design and Tasks 1–3 progress record, while retaining the
+per-PR Cloud E2E design, Tasks 1–4 local progress, and proposed API gate, while retaining the
 2026-09-29 PR #15 merge evidence.
 
 This is the canonical operational answer to:
@@ -39,14 +42,14 @@ deferred issue remains in the
 | Question | Current answer |
 |---|---|
 | Overall phase | Post-Gate-C client-readiness corrections; per-PR Cloud E2E foundations in progress |
-| Current activity | GAP-030/031 merged as PR #13; E2E platform PR #14 merged at `b524c32b98652cfcadb75c7af2f234cf33495f6b`; Secrets Store PR #15 merged at `0c5e5f1a068d942af8f091ab0fc4b7ff8bf44e9d` after staging validation from source head `df05d8d`; per-PR Cloud E2E Tasks 1–3 are locally verified on `feat/per-pr-cloud-e2e` through `09e6e2b` |
-| Current repository baseline | `origin/dev` at `f189f5a0a527e8f350b1e77f4dcb29e96020d778`; the per-PR Cloud E2E worktree starts at `407cb3a6c8f9b66078c69f7621b8100956f8629f` and is locally verified through `09e6e2b` |
+| Current activity | GAP-030/031 merged as PR #13; E2E platform PR #14 merged at `b524c32b98652cfcadb75c7af2f234cf33495f6b`; Secrets Store PR #15 merged at `0c5e5f1a068d942af8f091ab0fc4b7ff8bf44e9d` after staging validation from source head `df05d8d`; per-PR Cloud E2E Tasks 1–4 are locally reviewed on `feat/per-pr-cloud-e2e` through `7f74de3`, with Worker writes still blocked |
+| Current repository baseline | `origin/dev` at `f189f5a0a527e8f350b1e77f4dcb29e96020d778`; the per-PR Cloud E2E worktree starts at `407cb3a6c8f9b66078c69f7621b8100956f8629f` and is locally reviewed through `7f74de3` |
 | Current product-code baseline | PR #15 merge commit `0c5e5f1a068d942af8f091ab0fc4b7ff8bf44e9d` |
-| Local feature state | Authoritative merchandise pricing and the E2E platform are merged; the E2E platform passed 5 local Playwright tests and 4 applicable staging tests. Per-PR Cloud E2E Tasks 1–3 passed local baseline, run-identity, and artifact-boundary verification; the baseline records 5 local Playwright tests in 24.4 seconds |
+| Local feature state | Authoritative merchandise pricing and the E2E platform are merged; the E2E platform passed 5 local Playwright tests and 4 applicable staging tests. Per-PR Cloud E2E Tasks 1–3 passed local baseline, run-identity, and artifact-boundary verification; Task 4's inventory/client guards passed 37 local cloud-script tests but refuse all Worker writes |
 | Current deployment state | The 2026-09-28 Product/Auth/API/Identity/Operator rollout remains in staging. On 2026-09-29, existing-store Secrets Store bindings deployed to Identity and Operator only; no API/Core/D1 migration occurred |
 | Current release decision | PR #15 merged into `dev` at `0c5e5f1a068d942af8f091ab0fc4b7ff8bf44e9d` after staging validation from source head `df05d8d`; old per-Worker secrets are retained |
 | Gate C finish line | Complete — all mandatory clean-break selection, redemption, tenant-isolation, concurrency, and observability cases passed |
-| Next plan work | Implement exact-ID inventory, then—with separate approval—run the protected two-stack infrastructure pilot; automatic every-push Cloudflare execution remains gated on the full pilot security matrix |
+| Next plan work | Review the PROPOSED Beta-ID lifecycle and first-route safety change; after written approval, mock-test the revised controller. A separately approved disposable pilot must prove live schemas, no pre-Access exposure and two-stack isolation before automatic every-push execution |
 
 ## Source-of-truth map
 
@@ -275,10 +278,15 @@ and [implementation plan](../superpowers/plans/2026-09-30-per-pr-cloud-e2e.md)
 preserve manual staging and exclude fork pull requests. Tasks 1–3 are verified
 locally: the 5-test Playwright baseline ran in 24.4 seconds, the trusted
 run-identity boundary rejects forks and stale heads, and the controller-side
-artifact boundary verifies only a bounded untrusted bundle. `pnpm build`,
-`pnpm lint`, and unit tests passed for this increment. No Cloudflare resource
-was created, no disposable-stack feasibility pilot has run, and no deployment,
-full cloud suite, or automatic per-PR Cloudflare write is claimed.
+artifact boundary verifies only a bounded untrusted bundle. Task 4 added
+reviewed exact-identity inventory and fail-closed client guards; 37 cloud-script
+tests pass, while Worker create/update/delete/subdomain calls remain disabled
+before transport. The [public-API feasibility ledger](../testing/per-pr-cloud-e2e.md#worker-api-feasibility-public-documentation-2026-09-30)
+records a proposed Beta immutable-ID path and the unresolved first-route,
+service-binding, Access, assets and audit requirements. The proposal is not an
+approved controller change. No Cloudflare resource was created, no
+disposable-stack pilot has run, and no deployment, full cloud suite, or
+automatic per-PR Cloudflare write is claimed.
 
 ## What happens after Gate C
 
@@ -334,13 +342,15 @@ of truth and old per-Worker secrets remain retained.
 
 The approved design uses a trusted controller and isolated, disposable
 Cloudflare resources for same-repository pull requests; it does not repurpose
-manual staging. Tasks 1–3 are complete locally, but the design is not deployed
-and cannot yet run automatically.
+manual staging. Tasks 1–4 are complete as local foundations, but Worker writes
+remain blocked and the design is not deployed or automatic.
 
 The remaining milestones are, in order:
 
-1. exact-ID inventory and mutation guards;
-2. a separately approved protected two-stack infrastructure pilot;
+1. written review of the PROPOSED Beta-ID lifecycle and first-route protection,
+   then mock-only controller adaptation with Worker writes still gated;
+2. a separately approved protected two-stack infrastructure pilot proving
+   exact-ID operations and no code exposure before Access;
 3. `cloud-ci` runtime guards and exact-D1 root bootstrap;
 4. a real HTTPS passkey/full-suite pilot;
 5. failure and cancellation cleanup, including independent reconciliation and

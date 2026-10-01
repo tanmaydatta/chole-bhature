@@ -1,8 +1,10 @@
 # Per-PR Cloud E2E pilot ledger
 
 **Baseline recorded:** 2026-09-30
-**Status:** Local baseline complete. This is not approval for a Cloudflare
-pilot, deployment, credential change, or every-push workflow.
+**Status:** Local baseline and Tasks 1–4 guard foundation complete. Worker
+mutations remain disabled; the public-API feasibility findings below are a
+PROPOSED design change, not an implemented or approved Cloudflare pilot,
+deployment, credential change, or every-push workflow.
 
 ## Local verification baseline
 
@@ -58,12 +60,11 @@ The current E2E suite does **not** test real email delivery. The planned
 `cloud-ci` target therefore uses per-stack local capture/suppression rather
 than claiming a Resend or inbox-delivery result.
 
-## Current build payload and artifact-limit check
+## Task 1 build payload and completed Task 3 artifact check
 
-`pnpm build` currently produces TypeScript Worker entry outputs, not the
-future `bundle-v1` artifact. The following measurements are therefore the
-Task 1 baseline that Task 3 must recompute after it creates the actual
-controller-consumable bundle.
+The following `pnpm build` measurements were the Task 1 baseline before the
+Task 3 `bundle-v1` artifact existed. They are retained as historical build
+evidence; the completed artifact measurement follows the table.
 
 | Payload component | Files / measurement |
 |---|---:|
@@ -79,9 +80,11 @@ The largest present candidate file is well below the proposed **20 MiB per
 file** limit, the largest migration is well below the separate **1 MiB
 migration** limit, and the 863,401-byte candidate payload is well below the
 proposed **64 MiB total unpacked** limit. No cap change is proposed. Task 3
-must still measure and validate the actual `bundle-v1` output, including any
-bundler-added modules or assets, before treating these limits as accepted for
-controller use.
+subsequently built and verified an actual local `bundle-v1`: 22 extracted
+files totaling **5,896,852 bytes** in a **5,918,720-byte** `bundle.tar`. Its
+round trip and size caps passed the strict local verifier. This validates the
+artifact boundary, not Beta version JSON/assets upload compatibility or a
+remote deployment.
 
 ## Evidence boundary
 
@@ -89,3 +92,37 @@ This ledger contains only local counts, durations, source-derived assertions,
 and non-sensitive file sizes. It deliberately contains no credentials, browser
 state, run proof, cookie, token, customer payload, raw trace, Worker version,
 or Cloudflare resource identifier.
+
+## Worker API feasibility (public documentation, 2026-09-30)
+
+Task 4's reviewed controller and inventory are a guarded foundation. Its
+name-addressed Worker create, update, delete, and subdomain methods return
+`immutable-worker-mutation-unproven`, alert, and make **zero transport calls**.
+The 37 passing local `scripts/cloud-e2e/*.test.mjs` tests prove this refusal
+and mock recovery behavior, not that Cloudflare accepts an upload or deletion.
+The currently planned `PUT /workers/scripts/{script}` followed by a first
+`POST .../subdomain` disable call cannot establish either immutable-ID
+targeting or no transient public route. It must not be used for a live pilot.
+
+| Operation | Public API contract / identity | Status and impact |
+|---|---|---|
+| Discover | [Legacy script list](https://developers.cloudflare.com/api/resources/workers/subresources/scripts/methods/list/) `GET /accounts/{id}/workers/scripts` calls `id` the script *name* and `tag` an immutable script ID. [Beta Worker list](https://developers.cloudflare.com/api/resources/workers/subresources/beta/subresources/workers/methods/list/) lists Worker objects with an immutable `id`. | Documented separately. **No documented equivalence of legacy `tag` and Beta `id` was found**; current `workerIds`/discovery must not be silently reused as Beta IDs. |
+| Create | [Beta create](https://developers.cloudflare.com/api/resources/workers/subresources/beta/subresources/workers/methods/create/) `POST /accounts/{id}/workers/workers` accepts JSON `name` and `subdomain:{enabled:false,previews_enabled:false}` and returns immutable `result.id`. | Documented candidate for creating an empty Worker with both URL controls false in the *initial* request. Defaults and actual first-response state need disposable live proof. Persist create intent and returned Beta ID; a lost response needs Beta list/get plus matching audit evidence, else quarantine. |
+| Read / configure | [Beta get](https://developers.cloudflare.com/api/resources/workers/subresources/beta/subresources/workers/methods/get/) `GET /accounts/{id}/workers/workers/{worker_id}` returns the immutable ID, name, subdomain settings and references. [Beta edit](https://developers.cloudflare.com/api/resources/workers/subresources/beta/subresources/workers/methods/edit/) `PATCH` changes supplied fields; [Beta update](https://developers.cloudflare.com/api/resources/workers/subresources/beta/subresources/workers/methods/update/) `PUT` is full replacement. `{worker_id}` accepts **ID or name**. | Documented API shape; controller must supply a certified immutable ID and verify response ID. A missing ID refuses; it never falls back to name. Partial PATCH is the proposed route toggle; exact account behavior needs proof. |
+| Upload / activate | [Beta create version](https://developers.cloudflare.com/api/resources/workers/subresources/beta/subresources/workers/subresources/versions/methods/create/) `POST /accounts/{id}/workers/workers/{worker_id}/versions` accepts JSON `main_module`, base64 `modules`, bindings, and `assets.jwt`; query `deploy=true` creates a 100% deployment, while omission/false is the staged candidate. Returns a **version UUID**, distinct from Worker ID, and version URLs. | Documented format and `deploy` semantics. Proposed: first create/read back the disabled empty Worker, attach and verify Access, then upload/deploy code by its Beta ID. Never treat a version UUID as a Worker ID. Whether version URLs are reachable before deployment or bypass protection is a live gate. |
+| Assets / bindings | [Assets upload](https://developers.cloudflare.com/api/resources/workers/subresources/assets/subresources/upload/methods/create/) is a separate multipart `POST /accounts/{id}/workers/assets/upload` producing a completion JWT for the version. Beta version JSON uses `database_id` for D1 and `secret_text` for direct secrets; its `service` binding names the target Worker. | Documented schema, **unproven** compatibility with this repo's `bundle-v1` Operator SPA and pinned Wrangler 4.112.0 dry-run output. Name-addressed service bindings retain replacement/remapping risk even if the caller is addressed by ID; prove a safe graph/readback or stop. No PR code/config is executed by the controller. |
+| Protect / publish | [Worker Access](https://developers.cloudflare.com/workers/configuration/cloudflare-access/) uses a `worker` destination with `worker_id` to cover production and preview URLs, subject to more-specific hostname/path policies. [workers.dev](https://developers.cloudflare.com/workers/configuration/routing/workers-dev/) warns a deployment can re-enable its public route and that disabling `workers.dev` alone leaves version/preview/deployment URLs. | Documented protection scope, but the exclusive Service Auth policy request/GET shape, overrides, account permissions, initial route defaults, propagation and all URL probes need live proof. Attach and verify Access before **any code upload** is the proposed stronger ordering; route enablement only after both apps pass. |
+| Delete | [Beta delete](https://developers.cloudflare.com/api/resources/workers/subresources/beta/subresources/workers/methods/delete/) `DELETE /accounts/{id}/workers/workers/{worker_id}` accepts ID or name; `force=true` can break references. | Documented ID-addressable endpoint. Propose certified-ID GET/readback immediately before delete, `force` omitted/false, dependency teardown, mismatch quarantine. ID targeting removes the old name-replacement window for the target; service-binding names, concurrent graph changes and live error behavior remain unresolved. |
+| Recover ownership | [Account audit V2](https://developers.cloudflare.com/api/resources/accounts/subresources/logs/subresources/audit/methods/list/) exposes actor token, raw method/URI/status and resource ID fields. | Documented fields; **unproven** that Beta create emits timely entries tying returned Worker ID to the pre-create intent. No checkpoint recovery from a matching name alone. |
+
+**Recommendation:** Conditional GO for a *separately reviewed, mock-only* next
+code step that proposes a Beta-ID inventory/client migration and tests the
+create-disabled → Access-verified → ID-addressed version upload/deploy → route
+publication → exact-ID teardown transitions. This architecture/interface
+change is **PROPOSED and awaiting written approval**; Task 4's refusal remains
+in force until then. **NO-GO for the separately approved live pilot today**:
+first-route behavior, Beta/legacy ID mapping or a Beta-only recovery path,
+service-name replacement race, Access policy readback, assets/artifact upload,
+audit recovery and alternate URL isolation need disposable-account proof. A
+public-doc gap is not proof that Cloudflare cannot support the design. No
+authenticated Cloudflare request was made for this assessment.
