@@ -1,6 +1,6 @@
 # Product Current State and Roadmap
 
-**Updated:** 2026-10-01
+**Updated:** 2026-10-02
 
 **Status:** Active — Gate C complete; GAP-030/031 and the E2E platform are
 merged on `dev`. The separate Secrets Store cutover is deployed and verified
@@ -12,7 +12,7 @@ The approved per-PR Cloud E2E design is now being implemented on
 `feat/per-pr-cloud-e2e`, based on `origin/dev` commit
 `f189f5a0a527e8f350b1e77f4dcb29e96020d778`. Tasks 1–4 are locally verified
 through `7f74de3`; the approved 2026-10-01 Task 5a/5b amendments and bounded
-mock controller bring the local cloud-script suite to 79 passing tests. The
+mock controller bring the local cloud-script suite to 80 passing tests. The
 controller orders mock D1, empty Worker, token, and Access transitions through
 a pure API code plan, then reports Operator unsupported. Public Worker writes
 still deliberately refuse with zero transport calls. No Cloudflare stack has
@@ -25,7 +25,7 @@ Cloudflare writes are disabled, and no live pilot has run.
 progress, proposed API gate, and 2026-09-29 PR #15 merge evidence were
 synchronized, including the final Task 5a mock-only amendment and its 50-test
 status. The subsequent Task 5b protocol and controller updates await Notion
-export; the 79-test status is local to this repository.
+export; the 80-test status is local to this repository.
 
 This is the canonical operational answer to:
 
@@ -47,7 +47,7 @@ deferred issue remains in the
 | Current activity | GAP-030/031 merged as PR #13; E2E platform PR #14 merged at `b524c32b98652cfcadb75c7af2f234cf33495f6b`; Secrets Store PR #15 merged at `0c5e5f1a068d942af8f091ab0fc4b7ff8bf44e9d` after staging validation from source head `df05d8d`; per-PR Cloud E2E Tasks 1–4 plus mock-only Task 5a/5b controller are locally verified, with Worker writes still blocked |
 | Current repository baseline | `origin/dev` at `f189f5a0a527e8f350b1e77f4dcb29e96020d778`; the per-PR Cloud E2E worktree starts at `407cb3a6c8f9b66078c69f7621b8100956f8629f` and is locally reviewed through `7f74de3` |
 | Current product-code baseline | PR #15 merge commit `0c5e5f1a068d942af8f091ab0fc4b7ff8bf44e9d` |
-| Local feature state | Authoritative merchandise pricing and the E2E platform are merged; the E2E platform passed 5 local Playwright tests and 4 applicable staging tests. Per-PR Cloud E2E Tasks 1–3 passed local baseline, run-identity, and artifact-boundary verification; Task 4 plus mock-only Task 5a/5b controller passed 79 local cloud-script tests, while public Worker writes still refuse before transport |
+| Local feature state | Authoritative merchandise pricing and the E2E platform are merged; the E2E platform passed 5 local Playwright tests and 4 applicable staging tests. Per-PR Cloud E2E Tasks 1–3 passed local baseline, run-identity, and artifact-boundary verification; Task 4 plus mock-only Task 5a/5b controller passed 80 local cloud-script tests, while public Worker writes still refuse before transport |
 | Current deployment state | The 2026-09-28 Product/Auth/API/Identity/Operator rollout remains in staging. On 2026-09-29, existing-store Secrets Store bindings deployed to Identity and Operator only; no API/Core/D1 migration occurred |
 | Current release decision | PR #15 merged into `dev` at `0c5e5f1a068d942af8f091ab0fc4b7ff8bf44e9d` after staging validation from source head `df05d8d`; old per-Worker secrets are retained |
 | Gate C finish line | Complete — all mandatory clean-break selection, redemption, tenant-isolation, concurrency, and observability cases passed |
@@ -283,7 +283,7 @@ run-identity boundary rejects forks and stale heads, and the controller-side
 artifact boundary verifies only a bounded untrusted bundle. Task 4 added
 reviewed exact-identity inventory and fail-closed client guards. The approved
 mock-only Task 5a/5b amendments and controller bring the local cloud-script
-total to 79 and keep public Worker create/update/delete/subdomain calls
+total to 80 and keep public Worker create/update/delete/subdomain calls
 disabled before transport. The mock controller drives separate Beta IDs,
 fixed request plans, disabled/readback and token-exclusive Access gates; it
 stops after a pure API code plan at the unresolved Operator gate. Durable mock
@@ -293,6 +293,8 @@ checkpoint. Their run/role reservation canonicalizes the trusted key within
 one local evidence-store object and
 process; it is not store CAS or cross-process coordination. Mock D1 cleanup
 is observed only before a Worker exists; unresolved graphs remain inventoried.
+The controller keeps session registration and raw cleanup private, so forged
+or copied session objects cannot authorize provider calls.
 The [public-API feasibility ledger](../testing/per-pr-cloud-e2e.md#worker-api-feasibility-public-documentation-2026-09-30)
 records unresolved first-route, service-binding, Access, assets and audit
 requirements. No Cloudflare resource was created, no

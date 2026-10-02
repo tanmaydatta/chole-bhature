@@ -138,8 +138,10 @@ pure API version plan is reached, but no version is uploaded or deployed;
 Operator service-binding remapping and assets remain unsupported. Local
 teardown can remove mock-proven D1s before Workers exist, after exact-ID reads
 and observed absence, but keeps any unresolved Worker/Access dependency graph
-in its remaining inventory. Same-run overlap is refused within one process;
-distinct runs can progress in one mock store. The local suite passes 79/79
+in its remaining inventory. Teardown resolves only a verifier-established
+private controller session; raw or copied session objects cannot mint cleanup
+authority. Same-run overlap is refused within one process; distinct runs can
+progress in one mock store. The 2026-10-02 local suite passes 80/80
 cloud-script tests. This does not establish provider schemas, authenticated
 ownership, live readiness, complete teardown, HTTPS/passkey behavior, or a
 production controller adapter. The later Task 5b repository state has not

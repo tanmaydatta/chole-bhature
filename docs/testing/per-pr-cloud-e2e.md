@@ -207,7 +207,9 @@ It does not send the Worker code plan to a provider. Operator planning returns
 `service-binding-remapping-unresolved`, so the result is `unsupported`, never
 `VerifiedStack` or HTTPS readiness.
 
-`teardownMockStack` accepts only the same process-local registered run/account.
+`teardownMockStack` accepts only the same process-local, verifier-established
+run/account. Registration and raw-session cleanup remain private to the
+controller; a forged or copied session cannot authorize provider calls.
 Before any Worker is created, it can remove proven D1s in reverse order after
 exact-ID/name GETs and observed absence after DELETE. Changed ownership,
 ambiguous creates, failed checkpoints, or any remaining Worker/Access graph
@@ -219,13 +221,14 @@ reserved locally, while different trusted runs can progress in one store.
 There is no distributed lock, store CAS, audit recovery, live adapter, CLI,
 or provider proof.
 
-The current local cloud-script result is **79/79** on 2026-10-01. The new
+The current local cloud-script result is **80/80** on 2026-10-02. The new
 controller tests cover ordered progression, a single ambiguous create attempt,
 migration and cleanup failures, stale/changed evidence, ID checkpoint failure,
 same-run overlap, distinct-run progress, bounded transient reads, timeout,
-and staging/other-run refusals. The D1 guard also now rejects a returned UUID
-already present in pre-create discovery, preventing substitution of an
-existing staging database. This is mock-boundary evidence only; full Task 5,
+staging/other-run refusals, and forged-session cleanup refusal. The D1 guard
+also rejects a returned UUID already present in pre-create discovery,
+preventing substitution of an existing staging database. This is mock-boundary
+evidence only; full Task 5,
 live Cloudflare lifecycle, alternate-URL/HTTPS checks, real cleanup, the
 Playwright suite, and the every-push workflow remain incomplete. The Notion
 mirrors still reflect the earlier Task 5a 50-test state; this local update has
