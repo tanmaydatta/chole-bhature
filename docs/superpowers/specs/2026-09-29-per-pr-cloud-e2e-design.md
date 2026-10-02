@@ -154,7 +154,10 @@ cloud-script tests. This does not establish provider schemas, authenticated
 ownership, live readiness, complete teardown, HTTPS/passkey behavior, or a
 production controller adapter. The reviewed Task 5b 83-test mock-only status
 was synchronized to the existing Notion mirrors on 2026-10-02 in `65854ca`.
-The new Operator feasibility findings below have not yet been synchronized.
+After independent review, the Operator feasibility summary and unadopted
+packaging-first proposal below were synchronized to the existing Notion design
+and plan on 2026-10-02. Roadmap/index next-step summaries were updated without
+changing historical evidence or adopting implementation; full readbacks passed.
 
 ### Proposed Operator packaging and candidate boundary (2026-10-02; unadopted)
 

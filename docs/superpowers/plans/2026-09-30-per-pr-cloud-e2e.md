@@ -16,6 +16,11 @@
 status is synchronized: 83 local cloud-script tests pass, public Worker writes
 remain zero-transport refusals, and the separately approved live-pilot gates
 remain incomplete.
+After independent review on 2026-10-02, the Operator feasibility summary and
+unadopted packaging-first proposal were also synchronized to the existing
+design/plan mirrors, with narrow roadmap/index next-step updates. Complete
+readbacks passed; all 17 index child links were preserved and resolved. This
+does not adopt the proposal or add implementation/live evidence.
 
 **Verified local status (2026-10-02):** Tasks 1–3 are complete on
 `feat/per-pr-cloud-e2e` after scoped review: the baseline records 5 local

@@ -251,6 +251,10 @@ module-format mismatch. A proposed mock-only packaging/candidate-validation
 slice is specified in the [implementation plan](../superpowers/plans/2026-09-30-per-pr-cloud-e2e.md#proposed-next-mock-only-operator-slice-2026-10-02).
 It is unadopted and does not change the reviewed Task 5a/5b implementation or
 its historical **83/83** evidence. No new code tests or live proof are claimed.
+After independent review, this feasibility summary and the unadopted
+packaging-first proposal were synchronized to the existing Notion design/plan
+on 2026-10-02, with narrow roadmap/index next-step updates. Fresh complete
+readbacks passed, and all 17 index child links were preserved and resolved.
 
 ### Exact service graph and identity contracts
 
