@@ -12,6 +12,9 @@ const SHA256 = /^[a-f0-9]{64}$/u;
 const BUILD_SHA = /^[a-f0-9]{40}$/u;
 const requiredWorkers = new Set(['workers/api.mjs', 'workers/identity.mjs', 'workers/operator.mjs']);
 const safePart = /^[A-Za-z0-9][A-Za-z0-9._-]*$/u;
+// Pinned Wrangler serializes upload FormData with this opening metadata part.
+// Inspect only the bounded envelope prefix; never parse or execute Worker source.
+const serializedWorkerPrefix = /^------formdata-undici-[0-9]{12}\r\nContent-Disposition: form-data; name="metadata"\r\n\r\n/u;
 
 export class BundleVerificationError extends Error {
   constructor(message) {
@@ -203,6 +206,9 @@ export async function verifyBundleV1({ archive, expectedKey, expectedRun, destin
     if (entry.bytes.length !== declared.size) fail(`Archive file size does not match manifest: ${entry.name}.`);
     const digest = sha256(entry.bytes);
     if (digest !== declared.sha256) fail(`Archive file SHA-256 does not match manifest: ${entry.name}.`);
+    if (requiredWorkers.has(entry.name) && serializedWorkerPrefix.test(entry.bytes.subarray(0, 128).toString('latin1'))) {
+      fail(`Worker file contains serialized multipart upload data: ${entry.name}.`);
+    }
     verified.push({ relativePath: entry.name, bytes: entry.bytes, size: declared.size, sha256: digest });
   }
   if (verified.length !== files.size) fail('Archive is missing a manifest-listed file.');

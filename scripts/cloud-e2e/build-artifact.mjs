@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -99,13 +99,26 @@ function validateSizes(entries) {
   }
 }
 
-async function bundleWorker(checkout, temporary, name, config) {
-  const output = path.join(temporary, `${name}.mjs`);
-  await execute('pnpm', [
-    '--filter', `@incentives/${name === 'operator' ? 'operator-web' : name}`,
-    'exec', 'wrangler', 'deploy', '--dry-run', '--config', path.join(checkout, config), '--outfile', output,
+export async function collectWorkerModule({ checkout, temporary, role, execute: run = execute }) {
+  const app = workerApps.find(([name]) => name === role);
+  if (!app) throw new TypeError('Worker role must be api, identity, or operator.');
+  const output = path.join(temporary, role);
+  // A fresh role directory prevents a successful no-output process from reusing stale bytes.
+  await mkdir(output, { recursive: false, mode: 0o700 });
+  await run('pnpm', [
+    '--filter', `@incentives/${role === 'operator' ? 'operator-web' : role}`,
+    'exec', 'wrangler', 'deploy', '--dry-run', '--config', path.join(checkout, app[1]), '--outdir', output,
   ], { cwd: checkout, maxBuffer: 10 * 1024 * 1024 });
-  return { path: `workers/${name}.mjs`, bytes: await readFile(output) };
+  const names = await readdir(output);
+  for (const name of names) {
+    const entry = await lstat(path.join(output, name));
+    if (!entry.isFile() || entry.isSymbolicLink()) throw new TypeError(`Worker output must be a regular file: ${name}.`);
+    if (name !== 'worker.js' && name !== 'worker.js.map' && name !== 'README.md') {
+      throw new TypeError(`Unexpected Worker output cannot be represented in bundle-v1: ${name}.`);
+    }
+  }
+  if (!names.includes('worker.js')) throw new TypeError('Worker output is missing worker.js.');
+  return { path: `workers/${role}.mjs`, bytes: await readFile(path.join(output, 'worker.js')) };
 }
 
 export async function createBundleV1({ key: inputKey, checkout, outputDir }) {
@@ -119,7 +132,7 @@ export async function createBundleV1({ key: inputKey, checkout, outputDir }) {
   try {
     await execute('pnpm', ['build'], { cwd: checkout, maxBuffer: 10 * 1024 * 1024 });
     const workers = [];
-    for (const [name, config] of workerApps) workers.push(await bundleWorker(checkout, temporary, name, config));
+    for (const [role] of workerApps) workers.push(await collectWorkerModule({ checkout, temporary, role }));
     const assets = await collectDirectory(path.join(checkout, 'apps/dashboard/dist'), 'assets');
     const migrations = [
       ...await collectMigrations(path.join(checkout, 'apps/api/migrations'), 'api'),

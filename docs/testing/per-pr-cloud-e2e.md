@@ -3,7 +3,9 @@
 **Baseline recorded:** 2026-09-30
 **Status:** Local baseline, Tasks 1–4 guard foundation, and the approved
 2026-10-01 Task 5a/5b mock-only Beta protocol and controller slices are
-complete. Public Worker mutations remain disabled; the local evidence is not an approved Cloudflare
+complete. The separately approved 2026-10-02 raw-module packaging correction
+is validated locally and awaits independent review. Public Worker mutations
+remain disabled; the local evidence is not an approved Cloudflare
 pilot, deployment, credential change, or every-push workflow.
 
 ## Local verification baseline
@@ -223,7 +225,7 @@ reserved locally, while different trusted runs can progress in one store.
 There is no distributed lock, store CAS, audit recovery, live adapter, CLI,
 or provider proof.
 
-The current local cloud-script result is **83/83** on 2026-10-02. The new
+The reviewed Task 5b local cloud-script result was **83/83** on 2026-10-02. The
 controller tests cover ordered progression, a single ambiguous create attempt,
 migration and cleanup failures, stale/changed evidence, ID checkpoint failure,
 same-run overlap, distinct-run progress, bounded transient reads, timeout,
@@ -234,8 +236,64 @@ preventing substitution of an existing staging database. This is mock-boundary
 evidence only; full Task 5,
 live Cloudflare lifecycle, alternate-URL/HTTPS checks, real cleanup, the
 Playwright suite, and the every-push workflow remain incomplete. The Notion
-mirrors record this current Task 5a/5b 83-test mock-only state; they do not
+mirrors record this reviewed Task 5a/5b 83-test mock-only state; they do not
 claim live-provider behavior or pilot readiness.
+
+### Raw-module packaging correction (2026-10-02)
+
+The approved producer correction uses fixed API, Identity and Operator
+configs with pinned Wrangler `deploy --dry-run --outdir`, selecting regular
+`worker.js` bytes as `workers/{role}.mjs`. Fresh output directories reject
+stale files, and missing/nonregular/symlink/extra runtime outputs stop bundle
+creation. Only regular `worker.js.map` and Wrangler README sidecars are
+excluded. The verifier rejects the pinned serialized multipart metadata
+envelope through a bounded byte-prefix check before extraction, retaining
+all provenance, hash, path and size checks. It does not compile or import
+PR JavaScript or interpret upload metadata.
+
+The focused producer/verifier tests pass **29/29** (1,690.528 ms); the final
+local cloud-script regression passes **106/106** (2,434.416 ms), with zero
+failures or skips. Checksum-valid multipart fixtures for all three roles stop
+the actual mock controller before provider transport or extraction; legitimate
+source containing multipart-related strings remains accepted. Producer tests
+use real files, archives and byte comparisons with only the external process
+substituted.
+
+The actual unprivileged producer built and archived all three pinned Wrangler
+4.112.0 outputs in **18,127.263 ms**. Each archived module exactly matched the
+retained output from that same dry run and passed Node 22 `--check` without
+importing or evaluating it. Each output directory contained only `worker.js`,
+`worker.js.map` and README; neither sidecar entered the archive.
+
+**Table — Actual raw Worker modules**
+
+| Role | Module bytes | Local validation |
+|---|---:|---|
+| API | 1,268,353 | Exact selected/archive bytes; compile-only check passed |
+| Identity | 3,128,667 | Exact selected/archive bytes; compile-only check passed |
+| Operator | 691,078 | Exact selected/archive bytes; compile-only check passed |
+
+The archive contains exactly **22 files**, totaling **5,892,349 payload
+bytes**, in a **5,914,112-byte** tar. Independent source-path enumeration and
+byte comparisons preserve all **5 SPA assets (753,670 bytes)** and **14 SQL
+migrations (50,581 bytes)**. Focused lint of the four producer/verifier/test
+scripts passes. Local dependency recovery used the unchanged frozen lockfile
+with lifecycle scripts disabled; the initial offline cache miss and sandbox
+network failure did not establish packaging success. The measured round trip
+followed successful approved recovery and local binary checks.
+
+The final project `pnpm test` passes **97 Vitest files / 1,395 tests**, plus
+**9 Node tests**. Its initial sandbox attempt stopped before Worker assertions
+at Identity's loopback `listen EPERM`; the same local-only run passed with
+approved loopback/log access. Independent review remains pending, and the
+subsequent narrow Notion mirror update follows review. These local byte/syntax
+results do not establish arbitrary-JavaScript or provider compatibility, and
+no authenticated Cloudflare request or deployment was made.
+
+Code references:
+
+- Producer and refusal coverage: [build-artifact.mjs](../../scripts/cloud-e2e/build-artifact.mjs), [build-artifact.test.mjs](../../scripts/cloud-e2e/build-artifact.test.mjs).
+- Format/integrity and real consuming boundary: [artifact.mjs](../../scripts/cloud-e2e/artifact.mjs), [artifact.test.mjs](../../scripts/cloud-e2e/artifact.test.mjs).
 
 **NO-GO for a live pilot:** Beta recovery/audit evidence, provider response
 completeness, assets/JWT, service-name remapping, live D1 migrations, version/preview
@@ -246,15 +304,20 @@ and disposable-account proof. No authenticated Cloudflare request was made.
 
 **Conclusion: NO-GO for live Operator upload.** The documented service graph
 and asset-session requests select target names; no atomic immutable-target
-constraint was established for either. Local packaging also exposes a concrete
-module-format mismatch. A proposed mock-only packaging/candidate-validation
+constraint was established for either. The historical packaging investigation
+exposed a module-format mismatch, corrected by the approved
+[local packaging deliverable](#raw-module-packaging-correction-2026-10-02).
+The mock-only packaging/candidate-validation
 slice is specified in the [implementation plan](../superpowers/plans/2026-09-30-per-pr-cloud-e2e.md#proposed-next-mock-only-operator-slice-2026-10-02).
-It is unadopted and does not change the reviewed Task 5a/5b implementation or
-its historical **83/83** evidence. No new code tests or live proof are claimed.
+Its first packaging deliverable was approved on 2026-10-02 and implemented
+locally; the optional candidate diagnostics remain unadopted. The historical
+Task 5a/5b **83/83** evidence and live NO-GO remain unchanged.
 After independent review, this feasibility summary and the unadopted
 packaging-first proposal were synchronized to the existing Notion design/plan
 on 2026-10-02, with narrow roadmap/index next-step updates. Fresh complete
 readbacks passed, and all 17 index child links were preserved and resolved.
+The new packaging result has not yet been synchronized to those mirrors;
+independent review precedes that separate update.
 
 ### Exact service graph and identity contracts
 
@@ -324,8 +387,8 @@ endpoints, compatibility settings, routes or secrets.
 
 | Boundary | Observed/documented contract | Remaining gate |
 |---|---|---|
-| Worker bytes | [Artifact producer](../../scripts/cloud-e2e/build-artifact.mjs) lines 102–108 stores `wrangler deploy --dry-run --outfile` output directly as `workers/{role}.mjs`. Installed `wrangler-dist/cli.js:144218–144224` serializes the upload FormData. On 2026-10-02 the Operator output was **692,443 bytes**, beginning with a multipart boundary, metadata and `worker.js` part; `node --check` rejected it. | This is not a JavaScript module merely because its suffix is `.mjs`. All three roles use the same producer; only Operator was locally reproduced. The historical verifier round trip establishes integrity, not module format. |
-| Module alternative | The same unprivileged Operator dry run with `--outdir` emitted `worker.js` (**691,078 bytes**), plus a map and README; `node --check worker.js` passed without evaluating the module. | Proposed producer selects actual module bytes, refuses unexpected module graphs, and excludes maps/metadata/config. Privileged verification stays data-only; syntax checks belong in the unprivileged build. No packaging result proves provider acceptance. |
+| Historical Worker bytes | Before the packaging correction, the [artifact producer](../../scripts/cloud-e2e/build-artifact.mjs) stored `wrangler deploy --dry-run --outfile` output directly as `workers/{role}.mjs`. Installed `wrangler-dist/cli.js:144218–144224` serializes the upload FormData. On 2026-10-02 the Operator output was **692,443 bytes**, beginning with a multipart boundary, metadata and `worker.js` part; `node --check` rejected it. | This was not a JavaScript module merely because its suffix was `.mjs`. All three roles used the same producer; only Operator was reproduced in that historical investigation. The historical verifier round trip established integrity, not module format. |
+| Historical module alternative | The same unprivileged Operator dry run with `--outdir` emitted `worker.js` (**691,078 bytes**), plus a map and README; `node --check worker.js` passed without evaluating the module. | The approved correction now selects actual module bytes and refuses unexpected additional runtime files. Privileged verification stays data-only; syntax checks belong in the unprivileged build. No packaging result proves provider acceptance. |
 | Asset manifest | [Verifier](../../scripts/cloud-e2e/artifact.mjs) requires `assets/index.html` and exact path/size/SHA-256. Strip the one `assets/` prefix: `assets/index.html` becomes `/index.html`, and `assets/assets/x.js` becomes `/assets/x.js`. Pinned `cli.js:150019–150024,150309–150311` computes BLAKE3 of base64 bytes plus extension, truncated to 32 hex characters. | The [direct-upload example](https://developers.cloudflare.com/workers/static-assets/direct-upload/) instead computes truncated SHA-256 over base64 plus extension. Neither equals the bundle's SHA-256 over raw bytes. Keep integrity hashes separate; accepted upload-hash semantics require provider clarification/proof. |
 | Session | [Session create](https://developers.cloudflare.com/api/resources/workers/subresources/scripts/subresources/assets/subresources/upload/methods/create/) is `POST /accounts/{account_id}/workers/scripts/{script_name}/assets-upload-session`, body `{manifest:{"/path":{hash,size}}}`, returning `buckets` and `jwt`. | `script_name` is documented as a **name**. No ID-addressed/conditional session primitive was established; do not insert a Beta ID into this legacy parameter by inference. |
 | Asset upload | [Upload API](https://developers.cloudflare.com/api/resources/workers/subresources/assets/subresources/upload/methods/create/) uses the account-scoped `/workers/assets/upload?base64=true` with multipart hash-keyed base64 file parts. Pinned `cli.js:150165–150181` authenticates with the session JWT, preserving MIME per part. The response's JWT is used for completion. | Validate requested bucket hashes against the exact byte snapshot; no caller-provided URL or headers. MIME selection belongs to the fixed trusted profile. The endpoint has no Worker/version ID parameter. |

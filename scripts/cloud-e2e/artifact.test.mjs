@@ -6,6 +6,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { verifyBundleV1 } from './artifact.mjs';
+import { provisionMockStack } from './provision.mjs';
 
 const key = Object.freeze({
   repository_id: 42,
@@ -136,6 +137,34 @@ test('rejects altered bytes before extracting or making a Cloudflare call', asyn
   t.after(() => rm(input.root, { recursive: true, force: true }));
 
   await expectRejected(input, /hash|SHA-256/i);
+});
+
+for (const worker of ['workers/api.mjs', 'workers/identity.mjs', 'workers/operator.mjs']) {
+  test(`rejects checksum-valid serialized multipart ${worker} before extraction or controller transport`, async t => {
+    const multipart = '------formdata-undici-012345678901\r\nContent-Disposition: form-data; name="metadata"\r\n\r\n{"main_module":"worker.js","bindings":[]}\r\n------formdata-undici-012345678901\r\nContent-Disposition: form-data; name="worker.js"; filename="worker.js"\r\nContent-Type: application/javascript+module\r\n\r\nexport default {};\r\n------formdata-undici-012345678901--';
+    const input = await fixture({ files: { ...requiredFiles, [worker]: multipart } });
+    t.after(() => rm(input.root, { recursive: true, force: true }));
+    await assert.rejects(verifyBundleV1({ ...input, expectedKey: key, expectedRun: { run_id: 99, attempt: 3 } }), /multipart|serialized/i);
+    await assert.rejects(lstat(input.destination), error => error?.code === 'ENOENT');
+    const calls = [];
+    const result = await provisionMockStack({ key, accountId: 'account-1', ...input, provider: {
+      async request(value) { calls.push(value); throw new Error('unexpected transport'); },
+      async observe(value) { calls.push(value); throw new Error('unexpected observation'); },
+    }, store: { async put(value) { calls.push(value); } }, now: () => '2026-10-02T09:00:00.000Z' });
+    assert.equal(result.status, 'quarantined');
+    assert.equal(result.cleanup.status, 'not-started');
+    assert.deepEqual(calls, []);
+    await assert.rejects(lstat(input.destination), error => error?.code === 'ENOENT');
+  });
+}
+
+test('accepts legitimate modules containing multipart-related strings as data', async t => {
+  const source = 'const boundary = "------formdata-undici-012345678901";\nconst type = "multipart/form-data";\nconst header = \'Content-Disposition: form-data; name="metadata"\';\nexport default {};\n';
+  const files = { ...requiredFiles, 'workers/operator.mjs': source };
+  const input = await fixture({ files });
+  t.after(() => rm(input.root, { recursive: true, force: true }));
+  await verifyBundleV1({ ...input, expectedKey: key, expectedRun: { run_id: 99, attempt: 3 } });
+  assert.deepEqual(await readFile(path.join(input.destination, 'workers/operator.mjs')), Buffer.from(source));
 });
 
 test('rejects stale build SHA and producing run identity', async (t) => {

@@ -13,6 +13,8 @@ workflow.
 status is synchronized: 83 local cloud-script tests pass, public Worker writes
 remain zero-transport refusals, and no live provider behavior, pilot,
 deployment, or workflow is claimed.
+The separately approved 2026-10-02 raw-module packaging correction is local
+implementation evidence pending independent review and a subsequent mirror update.
 
 ## Goal and success criteria
 
@@ -149,7 +151,7 @@ dependent D1 deletion and remains in inventory. Teardown resolves only a
 verifier-established private controller session; raw or copied session objects
 cannot mint cleanup authority. Same-run overlap is refused within one process;
 distinct runs can
-progress in one mock store. The 2026-10-02 local suite passes 83/83
+progress in one mock store. The reviewed Task 5b 2026-10-02 suite passed 83/83
 cloud-script tests. This does not establish provider schemas, authenticated
 ownership, live readiness, complete teardown, HTTPS/passkey behavior, or a
 production controller adapter. The reviewed Task 5b 83-test mock-only status
@@ -159,7 +161,7 @@ packaging-first proposal below were synchronized to the existing Notion design
 and plan on 2026-10-02. Roadmap/index next-step summaries were updated without
 changing historical evidence or adopting implementation; full readbacks passed.
 
-### Proposed Operator packaging and candidate boundary (2026-10-02; unadopted)
+### Operator packaging and proposed candidate boundary (2026-10-02)
 
 Live Operator upload remains **NO-GO**. The [dated evidence](../../testing/per-pr-cloud-e2e.md#operator-upload-feasibility-2026-10-02)
 establishes name-addressed service bindings and asset sessions, without an
@@ -168,14 +170,35 @@ name/ID readbacks cannot exclude replacement after validation. HTTP version
 overrides cannot pin the named RPC entrypoints. This investigation does not
 amend the approved isolation model, enable transport, or authorize live proof.
 
-The smallest useful proposal first corrects the module byte contract:
-Wrangler 4.112.0 `--outfile` produces multipart upload data, currently stored
-under the bundle's module paths. Its observed `--outdir` alternative emits
-actual module bytes. The future unprivileged producer should select only those
-bytes; the controller should verify/re-read them as data and construct its own
-fixed configuration. Artifact checksum success remains necessary but does not
-prove module compatibility. No PR module, config or script runs in the
-privileged controller.
+The separately approved packaging deliverable corrects the module byte
+contract. Wrangler 4.112.0 `--outfile` produced multipart upload data that the
+historical producer stored under module paths. The unprivileged producer now
+uses fixed role/config/output selection with `--outdir`, taking only regular
+`worker.js` bytes for each role. Missing, stale, nonregular or extra runtime
+outputs refuse; regular `worker.js.map` and Wrangler README are excluded
+sidecars. The verifier rejects the recognized pinned multipart metadata
+envelope before extraction through a bounded byte-prefix check. It remains
+an archive/JSON/byte reader, without importing or compiling PR source.
+Artifact checksum success and this format rejection do not prove arbitrary
+JavaScript validity or provider compatibility; compile-only checks belong in
+the unprivileged build.
+
+The [packaging evidence](../../testing/per-pr-cloud-e2e.md#raw-module-packaging-correction-2026-10-02)
+records 29/29 focused and 106/106 cloud-script tests, focused script lint and
+an actual three-role pinned-Wrangler build/archive round trip. Selected and
+archived modules match byte for byte and pass unprivileged compile-only checks;
+all five SPA assets and fourteen SQL migrations match their exact source path
+sets and bytes, with no Worker sidecars archived. The final project test run
+passes 97 Vitest files / 1,395 tests plus nine Node tests; independent review
+remains pending. This resolves the bounded local
+packaging mismatch, without proving provider acceptance or enabling upload.
+
+Code references:
+
+- Producer: [build-artifact.mjs](../../../scripts/cloud-e2e/build-artifact.mjs).
+- Verifier: [artifact.mjs](../../../scripts/cloud-e2e/artifact.mjs).
+- Selection/refusal tests: [build-artifact.test.mjs](../../../scripts/cloud-e2e/build-artifact.test.mjs).
+- Checksum-valid format/consumer regressions: [artifact.test.mjs](../../../scripts/cloud-e2e/artifact.test.mjs).
 
 A subsequent bounded mock diagnostic can compare the exact four service edges,
 certified run/account/role IDs and observed versions, and asset path/length/hash
@@ -183,7 +206,9 @@ snapshots. Synthetic session/bucket/completion records can test correlation,
 ordering and expiry, but cannot certify undocumented provider JWT scope or
 replacement behavior. Even its valid positive case must return unsupported
 with explicit live blockers and zero mutation calls. The [next-slice plan](../plans/2026-09-30-per-pr-cloud-e2e.md#proposed-next-mock-only-operator-slice-2026-10-02)
-defines substantive tests and files; neither proposal has been implemented.
+defines substantive tests and files; only its approved packaging deliverable
+has been implemented, pending independent review. Optional diagnostics remain
+unadopted and provide no upload authority.
 An ID-constrained provider primitive or explicitly approved enforceable writer
 boundary, then narrow inert account proof of session/JWT/hash/routing behavior,
 is required before revisiting upload support. A same-account lock or a passing
