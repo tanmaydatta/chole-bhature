@@ -22,7 +22,8 @@ design/plan mirrors, with narrow roadmap/index next-step updates. Complete
 readbacks passed; all 17 index child links were preserved and resolved. This
 did not adopt the proposal or add implementation/live evidence. The first
 packaging deliverable was separately approved on 2026-10-02 and is now
-implemented locally, pending independent review and a subsequent mirror update.
+implemented locally; its approved metadata-based review fix awaits independent
+re-review and a subsequent mirror update.
 
 **Verified local status (2026-10-02):** Tasks 1–3 are complete on
 `feat/per-pr-cloud-e2e` after scoped review: the baseline records 5 local
@@ -41,11 +42,13 @@ client or pilot. Public-documentation
 feasibility found the Beta Worker lifecycle,
 recorded as a separately bounded local amendment in the
 [ledger](../../testing/per-pr-cloud-e2e.md#worker-api-feasibility-public-documentation-2026-09-30).
-The separately approved raw-module packaging correction now has 29/29 focused
-and 106/106 cloud-script tests, focused script lint and an actual three-role
-archive/raw-byte/syntax/SPA/SQL round trip. The final project test passes
-97 Vitest files / 1,395 tests plus nine Node tests; independent review remains
-pending. The
+The separately approved raw-module packaging correction initially passed
+29/29 focused and 106/106 cloud-script tests at `66c0298`. Its approved
+metadata-based review fix passes 62/62 focused and 139/139 cloud-script tests,
+focused producer/test lint and an actual amended three-role archive/raw-byte/
+syntax/SPA/SQL round trip. The dated 2026-10-02 project test at `66c0298`
+passed 97 Vitest files / 1,395 tests plus nine Node tests; it was not repeated
+for the isolated producer fix. Independent re-review remains pending. The
 [packaging ledger](../../testing/per-pr-cloud-e2e.md#raw-module-packaging-correction-2026-10-02)
 records measured module/archive sizes and unchanged live gates.
 No Cloudflare resource has been created, no live pilot has run, and automatic
@@ -154,8 +157,8 @@ The Operator SPA's separate assets upload/completion JWT, Beta version JSON (`ma
 ### Proposed next mock-only Operator slice (2026-10-02)
 
 **Status:** Feasibility/documentation complete. The first raw-module packaging
-deliverable was approved on 2026-10-02 and is implemented locally, pending
-independent review. The optional second diagnostic deliverable remains
+deliverable and its metadata-based review fix were approved on 2026-10-02 and
+are implemented locally, pending independent re-review. The optional second diagnostic deliverable remains
 **unadopted and requires its own plan approval/dispatch**. The
 [evidence ledger](../../testing/per-pr-cloud-e2e.md#operator-upload-feasibility-2026-10-02)
 records the historical multipart mismatch, corrected by this first deliverable,
@@ -178,15 +181,24 @@ unprivileged producer's packaging unit as
 where `execute(command,args,options)` is the existing execFile-compatible seam.
 Use pinned `deploy --dry-run --outdir <role-directory>` and select `worker.js`
 as `workers/<role>.mjs`; require a regular file and reject unexpected additional
-runtime modules, rather than silently dropping imports. Maps and Wrangler's
-README are build sidecars only. The trusted verifier remains a JSON/archive/byte
+runtime modules, rather than silently dropping imports. The review fix adds
+`--metafile <fresh-role-metadata-directory>/build.json` outside the runtime
+outdir. Require regular nonsymlink JSON metadata, selected output/input/entry-point
+association and exact byte counts; resolve output keys against the fixed config's
+project root. Only selected worker/map outputs are allowed, and the generated
+map must match file size with no entry point/imports/exports/input contributions.
+Reject incomplete metadata and external runtime files even when named README
+or `worker.js.map`. Accept only the exact observed external platform imports
+`cloudflare:workers`, `node:crypto` and dynamic `node:async_hooks`, not namespace
+wildcards. Metadata stays outside the archive. The trusted verifier remains a JSON/archive/byte
 reader and rejects recognized serialized multipart worker payloads before
 extraction. This rejection is a format guard, not a proof that arbitrary PR
 JavaScript is valid; compile-only checks remain in the unprivileged build.
 
 - [x] **RED:** `node --test scripts/cloud-e2e/build-artifact.test.mjs scripts/cloud-e2e/artifact.test.mjs` produced 7 passes and 22 failures before production changes. Separate missing-export failures were recorded for the new seam. Semantic failures demonstrated wrong archived bytes, archive emission despite invalid/failed outputs, and checksum-valid multipart acceptance for all three roles. Literal byte expectations, real filesystem/tar/manifest checks, and the actual mock-controller consuming boundary cover the break; the external pnpm process alone is substituted in producer tests.
-- [x] **GREEN:** Output selection and the bounded data-format guard are implemented; focused tests pass 29/29 and the final cloud-script regression passes 106/106, preserving existing provenance/path/cap refusals. After approved frozen-lockfile recovery with lifecycle scripts disabled, the actual producer's three-role round trip passed in 18,127.263 ms: exact selected/archive module bytes and unprivileged compile-only checks, exact source-path sets and bytes for five SPA assets and fourteen SQL migrations, and no Worker maps/README in the 22-file bundle. Focused script lint passes. The [ledger](../../testing/per-pr-cloud-e2e.md#raw-module-packaging-correction-2026-10-02) records measured sizes; this is neither API compatibility nor live proof.
-- [ ] **Acceptance/review:** Existing verifier negatives and the real three-role bundle's exact SPA/migration byte checks pass; format refusals stop the actual mock controller before transport. Focused script lint, final 106/106 cloud-script regression and final project `pnpm test` (97 Vitest files / 1,395 tests plus nine Node tests) pass. The project's sandbox attempt stopped at Identity loopback EPERM before assertions; its approved local-only retry passed. Independent review remains pending and precedes any next slice. Commit only approved packaging/tests and matching documentation; no browser E2E run is required for this packaging deliverable.
+- [x] **Initial GREEN (`66c0298`):** Output selection and the bounded data-format guard were implemented; focused tests passed 29/29 and the cloud-script regression passed 106/106, preserving existing provenance/path/cap refusals. After approved frozen-lockfile recovery with lifecycle scripts disabled, the actual producer's three-role round trip passed in 18,127.263 ms: exact selected/archive module bytes and unprivileged compile-only checks, exact source-path sets and bytes for five SPA assets and fourteen SQL migrations, and no Worker maps/README in the 22-file bundle. Focused script lint passed. The [ledger](../../testing/per-pr-cloud-e2e.md#raw-module-packaging-correction-2026-10-02) records measured sizes; this is neither API compatibility nor live proof.
+- [x] **Review fix RED/GREEN:** Review found runtime Text modules hidden under generated-sidecar names. The approved metadata fix recorded semantic RED for both collisions and real bundle archive emission, then 62/62 focused and 139/139 cloud-script GREEN. Missing/nonregular/malformed/misassociated metadata, unexpected outputs/imports and mismatched module/map byte counts refuse. Exact platform imports pass, including the observed Identity dynamic builtin. The amended actual three-role round trip passes in 16,342.042 ms with unchanged raw modules, five SPA assets, fourteen SQL migrations and no sidecar/metadata leakage; focused producer/test lint passes. Fix-round tracked scope is only producer, producer tests and the same three matching docs.
+- [ ] **Acceptance/re-review:** Existing verifier negatives and the real three-role bundle's exact SPA/migration byte checks pass; format refusals stop the actual mock controller before transport. Final 139/139 cloud-script regression and focused lint pass. The dated 2026-10-02 full project `pnpm test` at `66c0298` passed 97 Vitest files / 1,395 tests plus nine Node tests; it was not repeated for the isolated producer metadata fix. The project's sandbox attempt stopped at Identity loopback EPERM before assertions; its approved local-only retry passed. Independent review identified the collision; the approved fix requires independent re-review before any next slice or Notion sync. Commit only approved packaging/tests and matching documentation; no browser E2E run is required for this packaging deliverable.
 
 **Second deliverable — optional candidate diagnostics, separately reviewable:**
 

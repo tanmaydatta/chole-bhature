@@ -14,7 +14,8 @@ status is synchronized: 83 local cloud-script tests pass, public Worker writes
 remain zero-transport refusals, and no live provider behavior, pilot,
 deployment, or workflow is claimed.
 The separately approved 2026-10-02 raw-module packaging correction is local
-implementation evidence pending independent review and a subsequent mirror update.
+implementation evidence; its approved metadata-based review fix awaits
+independent re-review and a subsequent mirror update.
 
 ## Goal and success criteria
 
@@ -175,8 +176,15 @@ contract. Wrangler 4.112.0 `--outfile` produced multipart upload data that the
 historical producer stored under module paths. The unprivileged producer now
 uses fixed role/config/output selection with `--outdir`, taking only regular
 `worker.js` bytes for each role. Missing, stale, nonregular or extra runtime
-outputs refuse; regular `worker.js.map` and Wrangler README are excluded
-sidecars. The verifier rejects the recognized pinned multipart metadata
+outputs refuse. After review exposed runtime Text modules hidden under README
+and map names, the approved producer fix requires explicit fresh build metadata
+outside the outdir. Selected output paths resolve against the fixed config's
+project root, with entry-point/input association and exact byte counts. Only
+the main module and a proven generated map are represented; missing, malformed
+or mismatched metadata refuses. Runtime file imports refuse even when named
+like sidecars. Exact observed external platform imports (`cloudflare:workers`,
+`node:crypto`, and Identity's dynamic `node:async_hooks`) remain supported;
+namespace prefixes alone are not accepted. The verifier rejects the recognized pinned multipart metadata
 envelope before extraction through a bounded byte-prefix check. It remains
 an archive/JSON/byte reader, without importing or compiling PR source.
 Artifact checksum success and this format rejection do not prove arbitrary
@@ -184,13 +192,16 @@ JavaScript validity or provider compatibility; compile-only checks belong in
 the unprivileged build.
 
 The [packaging evidence](../../testing/per-pr-cloud-e2e.md#raw-module-packaging-correction-2026-10-02)
-records 29/29 focused and 106/106 cloud-script tests, focused script lint and
-an actual three-role pinned-Wrangler build/archive round trip. Selected and
+retains the initial `66c0298` result (29/29 focused, 106/106 cloud-script) and
+records the metadata correction's 62/62 focused and 139/139 cloud-script tests,
+focused producer/test lint and an actual amended three-role pinned-Wrangler
+build/archive round trip. Selected and
 archived modules match byte for byte and pass unprivileged compile-only checks;
 all five SPA assets and fourteen SQL migrations match their exact source path
-sets and bytes, with no Worker sidecars archived. The final project test run
-passes 97 Vitest files / 1,395 tests plus nine Node tests; independent review
-remains pending. This resolves the bounded local
+sets and bytes, with no Worker sidecars or build metadata archived. The dated
+2026-10-02 project test at `66c0298` passed 97 Vitest files / 1,395 tests plus
+nine Node tests; it was not repeated for the isolated producer metadata fix.
+Independent re-review remains pending. This resolves the bounded local
 packaging mismatch, without proving provider acceptance or enabling upload.
 
 Code references:
@@ -207,7 +218,8 @@ ordering and expiry, but cannot certify undocumented provider JWT scope or
 replacement behavior. Even its valid positive case must return unsupported
 with explicit live blockers and zero mutation calls. The [next-slice plan](../plans/2026-09-30-per-pr-cloud-e2e.md#proposed-next-mock-only-operator-slice-2026-10-02)
 defines substantive tests and files; only its approved packaging deliverable
-has been implemented, pending independent review. Optional diagnostics remain
+has been implemented, with the approved metadata fix pending independent
+re-review. Optional diagnostics remain
 unadopted and provide no upload authority.
 An ID-constrained provider primitive or explicitly approved enforceable writer
 boundary, then narrow inert account proof of session/JWT/hash/routing behavior,
