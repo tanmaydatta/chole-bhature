@@ -14,8 +14,13 @@ status is synchronized: 83 local cloud-script tests pass, public Worker writes
 remain zero-transport refusals, and no live provider behavior, pilot,
 deployment, or workflow is claimed.
 The separately approved 2026-10-02 raw-module packaging correction is local
-implementation evidence; its approved metadata-based review fix awaits
-independent re-review and a subsequent mirror update.
+implementation evidence; its approved `8aa2d8c` metadata fix passed scoped
+independent re-review with no open findings. The existing design/plan mirrors
+and roadmap/Plans-index summaries were narrowly synchronized on 2026-10-02:
+62 focused/139 cloud-script tests and real three-role byte/syntax/SPA/SQL proof,
+with historical 83 and prior `66c0298` full-project provenance retained.
+Fresh complete readbacks passed; all 17 index child links/order were preserved
+and resolved. This synchronization closes no provider/live gate.
 
 ## Goal and success criteria
 
@@ -201,7 +206,7 @@ all five SPA assets and fourteen SQL migrations match their exact source path
 sets and bytes, with no Worker sidecars or build metadata archived. The dated
 2026-10-02 project test at `66c0298` passed 97 Vitest files / 1,395 tests plus
 nine Node tests; it was not repeated for the isolated producer metadata fix.
-Independent re-review remains pending. This resolves the bounded local
+Independent scoped re-review passed with no open findings. This resolves the bounded local
 packaging mismatch, without proving provider acceptance or enabling upload.
 
 Code references:
@@ -218,8 +223,8 @@ ordering and expiry, but cannot certify undocumented provider JWT scope or
 replacement behavior. Even its valid positive case must return unsupported
 with explicit live blockers and zero mutation calls. The [next-slice plan](../plans/2026-09-30-per-pr-cloud-e2e.md#proposed-next-mock-only-operator-slice-2026-10-02)
 defines substantive tests and files; only its approved packaging deliverable
-has been implemented, with the approved metadata fix pending independent
-re-review. Optional diagnostics remain
+has been implemented and independently reviewed, including the approved
+metadata fix. Optional diagnostics remain
 unadopted and provide no upload authority.
 An ID-constrained provider primitive or explicitly approved enforceable writer
 boundary, then narrow inert account proof of session/JWT/hash/routing behavior,

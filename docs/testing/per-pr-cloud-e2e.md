@@ -4,8 +4,9 @@
 **Status:** Local baseline, Tasks 1–4 guard foundation, and the approved
 2026-10-01 Task 5a/5b mock-only Beta protocol and controller slices are
 complete. The separately approved 2026-10-02 raw-module packaging correction
-and its metadata-based review fix are validated locally and await independent
-re-review. Public Worker mutations
+and its metadata-based review fix are validated locally and independently
+reviewed. The existing Notion mirrors were narrowly synchronized on 2026-10-02.
+Public Worker mutations
 remain disabled; the local evidence is not an approved Cloudflare
 pilot, deployment, credential change, or every-push workflow.
 
@@ -309,8 +310,8 @@ tests**, plus **9 Node tests**; that full suite was not repeated for the isolate
 producer metadata correction. Its initial sandbox attempt stopped before Worker assertions
 at Identity's loopback `listen EPERM`; the same local-only run passed with
 approved loopback/log access. Independent review found the sidecar collision;
-the approved fix awaits independent re-review, and the
-subsequent narrow Notion mirror update follows review. These local byte/syntax
+the approved `8aa2d8c` fix passed scoped re-review with no open findings, then
+the approved narrow Notion mirror synchronization completed. These local byte/syntax
 results do not establish arbitrary-JavaScript or provider compatibility, and
 no authenticated Cloudflare request or deployment was made.
 
@@ -340,8 +341,12 @@ After independent review, this feasibility summary and the unadopted
 packaging-first proposal were synchronized to the existing Notion design/plan
 on 2026-10-02, with narrow roadmap/index next-step updates. Fresh complete
 readbacks passed, and all 17 index child links were preserved and resolved.
-The new packaging result has not yet been synchronized to those mirrors;
-independent review precedes that separate update.
+After clean scoped re-review, the packaging/metadata result and 62/139 local
+test counts were narrowly synchronized on 2026-10-02 to the existing design,
+plan, roadmap and Plans index. Fresh complete readbacks matched only the
+targeted substitutions; all 17 index child URLs/titles/order were preserved
+and resolved read-only. Historical 83-test evidence and the prior `66c0298`
+full-project test provenance remain unchanged; no live gate was closed.
 
 ### Exact service graph and identity contracts
 
