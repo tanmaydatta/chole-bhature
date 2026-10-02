@@ -234,8 +234,8 @@ preventing substitution of an existing staging database. This is mock-boundary
 evidence only; full Task 5,
 live Cloudflare lifecycle, alternate-URL/HTTPS checks, real cleanup, the
 Playwright suite, and the every-push workflow remain incomplete. The Notion
-mirrors still reflect the earlier Task 5a 50-test state; this local update has
-not been exported.
+mirrors record this current Task 5a/5b 83-test mock-only state; they do not
+claim live-provider behavior or pilot readiness.
 
 **NO-GO for a live pilot:** Beta recovery/audit evidence, provider response
 completeness, assets/JWT, service-name remapping, live D1 migrations, version/preview

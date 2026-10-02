@@ -22,10 +22,10 @@ Cloudflare writes are disabled, and no live pilot has run.
 **Notion mirror:** https://app.notion.com/p/Product-Current-State-and-Roadmap-3a6e5c7c2b8e81f6b412c45a2bc7b344
 
 **Mirror state:** The 2026-09-30 per-PR Cloud E2E design, Tasks 1–4 local
-progress, proposed API gate, and 2026-09-29 PR #15 merge evidence were
-synchronized, including the final Task 5a mock-only amendment and its 50-test
-status. The subsequent Task 5b protocol and controller updates await Notion
-export; the 83-test status is local to this repository.
+progress, proposed API gate, and 2026-09-29 PR #15 merge evidence are
+synchronized, including the final Task 5a/5b mock-only protocol and controller
+status: 83 local cloud-script tests pass, public Worker writes make zero
+transport calls, and the live-pilot gates remain unresolved.
 
 This is the canonical operational answer to:
 

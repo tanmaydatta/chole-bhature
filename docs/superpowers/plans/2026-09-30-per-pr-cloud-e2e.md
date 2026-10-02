@@ -12,6 +12,11 @@
 
 **Notion mirror:** https://app.notion.com/p/Per-PR-Cloud-E2E-Implementation-Plan-3ebe5c7c2b8e81229ee0d8a0acb2d309
 
+**Mirror state:** The approved Task 5a/5b mock-only protocol and controller
+status is synchronized: 83 local cloud-script tests pass, public Worker writes
+remain zero-transport refusals, and the separately approved live-pilot gates
+remain incomplete.
+
 **Verified local status (2026-10-02):** Tasks 1–3 are complete on
 `feat/per-pr-cloud-e2e` after scoped review: the baseline records 5 local
 Playwright tests in 24.4 seconds, trusted run identity rejects ineligible or
@@ -23,8 +28,8 @@ zero transport calls. The bounded Task 5b prerequisite adds durable token and
 Access create intents and ordered opaque identity transitions. The bounded
 mock controller now composes them with verified artifacts, mock D1 migrations,
 and fail-closed local cleanup (83/83 local cloud-script tests). Task 5a's
-50-test status was already synchronized to the Notion mirror; the later Task
-5b updates remain unexported. The bounded implementation is not a live API
+50-test status was already synchronized to the Notion mirror; the current Task
+5b 83-test status is synchronized as well. The bounded implementation is not a live API
 client or pilot. Public-documentation
 feasibility found the Beta Worker lifecycle,
 recorded as a separately bounded local amendment in the

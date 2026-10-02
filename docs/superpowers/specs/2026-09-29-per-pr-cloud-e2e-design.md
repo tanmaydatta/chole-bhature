@@ -9,6 +9,11 @@ workflow.
 
 **Notion mirror:** https://app.notion.com/p/Per-PR-Cloud-E2E-Design-Spec-3ebe5c7c2b8e8186866ef1e158bfd880
 
+**Mirror state:** The approved Task 5a/5b mock-only protocol and controller
+status is synchronized: 83 local cloud-script tests pass, public Worker writes
+remain zero-transport refusals, and no live provider behavior, pilot,
+deployment, or workflow is claimed.
+
 ## Goal and success criteria
 
 Run the existing staging-class Core/API, Identity, and Operator Playwright suite on **every new push to a same-repository pull request**, against that push's own temporary Cloudflare stack. A newer push cancels the older run for that PR. Different PRs may run together without sharing Workers, databases, root sessions, Access credentials, fixtures, or cleanup ownership. Fork PRs do not receive cloud E2E. The manually operated staging stack and static demo remain untouched.
