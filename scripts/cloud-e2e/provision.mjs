@@ -40,11 +40,13 @@ function cleanupD1Client(session) {
 async function cleanup(session) {
   const removed = [];
   const failures = [];
-  const workerPresent = Object.keys(session.inventory.betaWorkerIds ?? {}).length > 0 || session.pending.size > 0;
+  const ambiguousD1 = [...session.pending].filter(value => value === 'd1:product' || value === 'd1:auth');
+  const workerPresent = Object.keys(session.inventory.betaWorkerIds ?? {}).length > 0 || [...session.pending].some(value => !ambiguousD1.includes(value));
   // A local receipt cannot prove that an Operator service graph or alternate
   // URL remains safe after Access removal. Preserve the entire dependency tree.
   if (workerPresent) return { status: 'unsupported', reason: 'worker-graph-unresolved', removed, remaining: [...session.pending].map(value => `ambiguous:${value}`).concat(remaining(session.inventory)) };
   for (const role of ['auth', 'product']) {
+    if (session.pending.has(`d1:${role}`)) continue;
     const id = session.inventory.cloudflare.d1Ids[role];
     if (!id) continue;
     try {
@@ -64,8 +66,9 @@ async function cleanup(session) {
       break;
     }
   }
-  const left = remaining(session.inventory);
+  const left = ambiguousD1.map(value => `ambiguous:${value}`).concat(remaining(session.inventory));
   if (failures.length) return { status: 'failed', reason: 'mock-cleanup-failed', removed, remaining: left, failed: failures };
+  if (ambiguousD1.length) return { status: 'unsupported', reason: 'ambiguous-d1-create', removed, remaining: left };
   return { status: 'local-cleanup-observed', complete: false, removed, remaining: left };
 }
 
@@ -126,12 +129,15 @@ function reason(error) {
   return 'mock-operation-failed';
 }
 
-function d1Client(session) {
-  const request = request => request.method === 'GET' ? read(async () => {
-    const response = await session.provider.request(request);
-    if (response?.status === 429 || response?.status >= 500 && response.status <= 599) throw Object.assign(new Error('Transient mock D1 read.'), { status: response.status });
-    return response;
-  }, session.now, session.started, session.d1Started, session.wait) : session.provider.request(request);
+function d1Client(session, createRole) {
+  const request = request => {
+    if (createRole && request.method === 'POST' && request.path === `/accounts/${session.accountId}/d1/database`) session.pending.add(`d1:${createRole}`);
+    return request.method === 'GET' ? read(async () => {
+      const response = await session.provider.request(request);
+      if (response?.status === 429 || response?.status >= 500 && response.status <= 599) throw Object.assign(new Error('Transient mock D1 read.'), { status: response.status });
+      return response;
+    }, session.now, session.started, session.d1Started, session.wait) : session.provider.request(request);
+  };
   return createCloudflareClient({ accountId: session.accountId, inventory: session.inventory, transport: { request }, store: session.store, now: session.now });
 }
 
@@ -153,8 +159,7 @@ async function d1Stage(session, verified, start, wait) {
   session.wait = wait;
   for (const role of ['product', 'auth']) {
     deadline(session.now, start, stage);
-    session.pending.add(`d1:${role}`);
-    const created = await d1Client(session).createD1(role);
+    const created = await d1Client(session, role).createD1(role);
     session.inventory = validateInventory({ ...session.inventory, cloudflare: { ...session.inventory.cloudflare, d1Ids: { ...session.inventory.cloudflare.d1Ids, [role]: created.uuid } }, updatedAt: clock(session.now).value });
     session.pending.delete(`d1:${role}`);
     const exact = await d1Client(session).getD1(created.uuid);

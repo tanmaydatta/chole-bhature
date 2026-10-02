@@ -211,9 +211,11 @@ It does not send the Worker code plan to a provider. Operator planning returns
 run/account. Registration and raw-session cleanup remain private to the
 controller; a forged or copied session cannot authorize provider calls.
 Before any Worker is created, it can remove proven D1s in reverse order after
-exact-ID/name GETs and observed absence after DELETE. Changed ownership,
-ambiguous creates, failed checkpoints, or any remaining Worker/Access graph
-leave resources in the reported inventory and stop dependent deletion. Its
+exact-ID/name GETs and observed absence after DELETE. Failed pre-create reads
+or intent writes do not imply a create attempt; an ambiguous Auth POST retains
+Auth as unresolved but can still permit independently proven Product cleanup.
+Changed ownership or failed deletion leaves that D1 recorded. Any remaining
+Worker/Access graph blocks dependent D1 deletion. Its
 `local-cleanup-observed` outcome records a mock D1 cleanup, with
 `complete:false`; it is not a completed Cloudflare teardown. Original failure
 and cleanup failure have separate sanitized codes. Same-run overlap/replay is
@@ -221,11 +223,12 @@ reserved locally, while different trusted runs can progress in one store.
 There is no distributed lock, store CAS, audit recovery, live adapter, CLI,
 or provider proof.
 
-The current local cloud-script result is **80/80** on 2026-10-02. The new
+The current local cloud-script result is **83/83** on 2026-10-02. The new
 controller tests cover ordered progression, a single ambiguous create attempt,
 migration and cleanup failures, stale/changed evidence, ID checkpoint failure,
 same-run overlap, distinct-run progress, bounded transient reads, timeout,
-staging/other-run refusals, and forged-session cleanup refusal. The D1 guard
+staging/other-run refusals, forged-session cleanup refusal, and scoped D1
+cleanup after Auth pre-create or ambiguous-POST failure. The D1 guard
 also rejects a returned UUID already present in pre-create discovery,
 preventing substitution of an existing staging database. This is mock-boundary
 evidence only; full Task 5,

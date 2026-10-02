@@ -145,6 +145,65 @@ ownTests('failed D1 migration cleans only its exact observed databases in revers
   assert.equal(mock.calls.some(call => call[0] === 'beta-worker-precreate-list'), false);
 });
 
+ownTests('failed Auth pre-create discovery or intent leaves Product independently cleanable', async t => {
+  for (const failure of ['discovery', 'intent']) {
+    const input = await fixture(t);
+    const mock = mockBoundary();
+    let authReads = 0;
+    const request = mock.provider.request;
+    mock.provider.request = async operation => {
+      if (failure === 'discovery' && operation.method === 'GET' && operation.path === '/accounts/account-1/d1/database' && mock.databases.has('11111111-1111-4111-8111-111111111111')) {
+        authReads += 1;
+        mock.calls.push(['GET', operation.path]);
+        return { status: 503 };
+      }
+      return request(operation);
+    };
+    if (failure === 'intent') {
+      const put = mock.store.put;
+      mock.store.put = async value => {
+        if (value.type === 'create-intent' && value.kind === 'd1:auth') throw new Error('Auth intent store unavailable');
+        return put(value);
+      };
+    }
+    const outcome = await provisionMockStack({ key, accountId: 'account-1', ...input, ...mock });
+    assert.equal(outcome.status, 'quarantined');
+    assert.equal(outcome.cleanup.status, 'local-cleanup-observed');
+    assert.deepEqual(outcome.cleanup.removed, ['d1:product']);
+    assert.deepEqual(outcome.cleanup.remaining, []);
+    assert.equal(authReads, failure === 'discovery' ? 3 : 0);
+    assert.deepEqual(mock.calls.filter(call => call[0] === 'POST' && call[1] === '/accounts/account-1/d1/database').map(call => call[1]), ['/accounts/account-1/d1/database']);
+    const productPath = '/accounts/account-1/d1/database/11111111-1111-4111-8111-111111111111';
+    const deletion = mock.calls.findIndex(call => call[0] === 'DELETE');
+    assert.deepEqual(mock.calls.slice(deletion - 1, deletion + 2), [['GET', productPath], ['DELETE', productPath], ['GET', productPath]]);
+    assert.equal(mock.databases.has('11111111-1111-4111-8111-111111111111'), false);
+    assert.equal(mock.calls.some(call => call[0] === 'beta-worker-precreate-list'), false);
+  }
+});
+
+ownTests('ambiguous Auth create retains only that unknown target while cleaning proven Product', async t => {
+  const input = await fixture(t);
+  const mock = mockBoundary();
+  const request = mock.provider.request;
+  mock.provider.request = async operation => {
+    if (operation.method === 'POST' && operation.path === '/accounts/account-1/d1/database' && operation.body?.name === names.auth) {
+      mock.calls.push(['POST', operation.path]);
+      throw new Error('Auth create response lost');
+    }
+    return request(operation);
+  };
+  const outcome = await provisionMockStack({ key, accountId: 'account-1', ...input, ...mock });
+  assert.equal(outcome.status, 'quarantined');
+  assert.equal(outcome.cleanup.status, 'unsupported');
+  assert.equal(outcome.cleanup.reason, 'ambiguous-d1-create');
+  assert.deepEqual(outcome.cleanup.removed, ['d1:product']);
+  assert.deepEqual(outcome.cleanup.remaining, ['ambiguous:d1:auth']);
+  assert.equal(mock.calls.filter(call => call[0] === 'POST' && call[1] === '/accounts/account-1/d1/database').length, 2);
+  assert.deepEqual(mock.calls.filter(call => call[0] === 'DELETE'), [['DELETE', '/accounts/account-1/d1/database/11111111-1111-4111-8111-111111111111']]);
+  assert.equal(mock.databases.has('11111111-1111-4111-8111-111111111111'), false);
+  assert.equal(mock.calls.some(call => call[0] === 'beta-worker-precreate-list'), false);
+});
+
 ownTests('real protocol progresses through exact Worker and Access gates, then stops at Operator unsupported', async t => {
   const input = await fixture(t);
   const mock = mockBoundary();

@@ -82,6 +82,32 @@ test('cleanup failure is preserved separately from the migration failure', async
   assert.equal(JSON.stringify(outcome).includes('sensitive text'), false);
 });
 
+test('Auth pre-create failure never turns altered Product identity or delete failure into cleanup success', async t => {
+  for (const alteredId of [true, false]) {
+    const input = await fixture(t);
+    const mock = mockBoundary({ failDelete: !alteredId });
+    const put = mock.store.put;
+    mock.store.put = async value => {
+      if (value.type === 'create-intent' && value.kind === 'd1:auth') {
+        if (alteredId) mock.databases.set('11111111-1111-4111-8111-111111111111', { uuid: '99999999-9999-4999-8999-999999999999', name: resourceNames(key).product });
+        throw new Error('Auth intent unavailable with sensitive text');
+      }
+      return put(value);
+    };
+    const outcome = await provisionMockStack({ key, accountId: 'account-1', ...input, ...mock });
+    assert.equal(outcome.status, 'quarantined');
+    assert.equal(outcome.cleanup.status, 'failed');
+    assert.deepEqual(outcome.cleanup.failed, ['d1:product']);
+    assert.deepEqual(outcome.cleanup.remaining, ['d1:product']);
+    assert.equal(mock.calls.filter(call => call[0] === 'POST' && call[1] === '/accounts/account-1/d1/database').length, 1);
+    assert.deepEqual(mock.calls.filter(call => call[0] === 'DELETE'), alteredId ? [] : [['DELETE', '/accounts/account-1/d1/database/11111111-1111-4111-8111-111111111111']]);
+    assert.equal(JSON.stringify(outcome).includes('sensitive text'), false);
+    const callCount = mock.calls.length;
+    assert.deepEqual(await teardownMockStack({ key, accountId: 'account-1', store: mock.store }), outcome.cleanup);
+    assert.equal(mock.calls.length, callCount);
+  }
+});
+
 test('changed D1 ownership refuses deletion even when the exact UUID was checkpointed', async t => {
   const input = await fixture(t);
   const mock = mockBoundary({ failMigration: true, changeD1OnDelete: true });

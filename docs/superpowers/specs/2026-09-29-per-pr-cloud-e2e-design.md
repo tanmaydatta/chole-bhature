@@ -137,11 +137,14 @@ Worker sequence, then token, Access, attachment, and fresh readback gates. A
 pure API version plan is reached, but no version is uploaded or deployed;
 Operator service-binding remapping and assets remain unsupported. Local
 teardown can remove mock-proven D1s before Workers exist, after exact-ID reads
-and observed absence, but keeps any unresolved Worker/Access dependency graph
-in its remaining inventory. Teardown resolves only a verifier-established
-private controller session; raw or copied session objects cannot mint cleanup
-authority. Same-run overlap is refused within one process; distinct runs can
-progress in one mock store. The 2026-10-02 local suite passes 80/80
+and observed absence. A failed D1 pre-create read or intent is not an attempted
+create; an ambiguous Auth POST retains Auth while independently proven Product
+can still be cleaned. An unresolved Worker/Access dependency graph still blocks
+dependent D1 deletion and remains in inventory. Teardown resolves only a
+verifier-established private controller session; raw or copied session objects
+cannot mint cleanup authority. Same-run overlap is refused within one process;
+distinct runs can
+progress in one mock store. The 2026-10-02 local suite passes 83/83
 cloud-script tests. This does not establish provider schemas, authenticated
 ownership, live readiness, complete teardown, HTTPS/passkey behavior, or a
 production controller adapter. The later Task 5b repository state has not
