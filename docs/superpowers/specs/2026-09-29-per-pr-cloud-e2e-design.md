@@ -152,8 +152,40 @@ distinct runs can
 progress in one mock store. The 2026-10-02 local suite passes 83/83
 cloud-script tests. This does not establish provider schemas, authenticated
 ownership, live readiness, complete teardown, HTTPS/passkey behavior, or a
-production controller adapter. The later Task 5b repository state has not
-been exported to the Notion mirror.
+production controller adapter. The reviewed Task 5b 83-test mock-only status
+was synchronized to the existing Notion mirrors on 2026-10-02 in `65854ca`.
+The new Operator feasibility findings below have not yet been synchronized.
+
+### Proposed Operator packaging and candidate boundary (2026-10-02; unadopted)
+
+Live Operator upload remains **NO-GO**. The [dated evidence](../../testing/per-pr-cloud-e2e.md#operator-upload-feasibility-2026-10-02)
+establishes name-addressed service bindings and asset sessions, without an
+atomic immutable-target constraint or proved account writer boundary. Fresh
+name/ID readbacks cannot exclude replacement after validation. HTTP version
+overrides cannot pin the named RPC entrypoints. This investigation does not
+amend the approved isolation model, enable transport, or authorize live proof.
+
+The smallest useful proposal first corrects the module byte contract:
+Wrangler 4.112.0 `--outfile` produces multipart upload data, currently stored
+under the bundle's module paths. Its observed `--outdir` alternative emits
+actual module bytes. The future unprivileged producer should select only those
+bytes; the controller should verify/re-read them as data and construct its own
+fixed configuration. Artifact checksum success remains necessary but does not
+prove module compatibility. No PR module, config or script runs in the
+privileged controller.
+
+A subsequent bounded mock diagnostic can compare the exact four service edges,
+certified run/account/role IDs and observed versions, and asset path/length/hash
+snapshots. Synthetic session/bucket/completion records can test correlation,
+ordering and expiry, but cannot certify undocumented provider JWT scope or
+replacement behavior. Even its valid positive case must return unsupported
+with explicit live blockers and zero mutation calls. The [next-slice plan](../plans/2026-09-30-per-pr-cloud-e2e.md#proposed-next-mock-only-operator-slice-2026-10-02)
+defines substantive tests and files; neither proposal has been implemented.
+An ID-constrained provider primitive or explicitly approved enforceable writer
+boundary, then narrow inert account proof of session/JWT/hash/routing behavior,
+is required before revisiting upload support. A same-account lock or a passing
+mock is not that boundary. Existing full Task 5, Task 6 `ci` configuration,
+HTTPS/passkey, teardown and rollout gates remain incomplete.
 
 ## Cloud-CI application mode and suite behavior
 

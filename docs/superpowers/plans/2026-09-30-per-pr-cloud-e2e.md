@@ -137,6 +137,114 @@ The Operator SPA's separate assets upload/completion JWT, Beta version JSON (`ma
 - [ ] After separate approval to perform live Cloudflare writes, use trusted inert probe modules (no PR code or `ci` app mode dependency) in the same-account disposable infrastructure pilot, first one stack, then two with distinct tokens. Check no public route before Access, anonymous denied afterward, own token allowed, other token denied on both API/Operator, preview/version URL denied, private Identity, exact binding/D1 IDs, HTTPS readiness, and exact-ID teardown inventory empty. Task 7 completes the pilot with real `ci` Workers, passkey and full suite before rollout. If any gate fails, stop here: no every-push workflow. This is an explicit future approval gate, not an action in this plan-writing task.
 - [ ] Commit pilot code and evidence only after redaction: `git add scripts/cloud-e2e/provision* scripts/cloud-e2e/pilot.mjs scripts/cloud-e2e/teardown* docs/testing/per-pr-cloud-e2e.md && git commit -m "feat: probe protected disposable cloud stacks"`.
 
+### Proposed next mock-only Operator slice (2026-10-02)
+
+**Status:** Feasibility/documentation complete; implementation below is
+**unadopted and requires its own plan approval/dispatch**. The
+[evidence ledger](../../testing/per-pr-cloud-e2e.md#operator-upload-feasibility-2026-10-02)
+records three blockers: multipart bytes under module paths, name-addressed
+service/session targets, and unproved asset hash/JWT scope. Preserve the
+historical Task 5a/5b 83/83 result and all full Task 5/live gates. Do not add an
+Operator upload executor, safety receipt, recovery, teardown or workflow here.
+
+**First deliverable — correct packaging, independently reviewable:**
+
+**Files:** Modify `scripts/cloud-e2e/build-artifact.mjs`, `artifact.mjs`,
+`artifact.test.mjs`; create `scripts/cloud-e2e/build-artifact.test.mjs`.
+Update this plan, the spec and the ledger with the resulting bounded evidence.
+Keep `bundle-v1` paths, run provenance, hashes and current size caps; no config,
+dependency or application change is proposed.
+
+**Interfaces:** Preserve `createBundleV1` and `verifyBundleV1`. Refactor the
+unprivileged producer's packaging unit as
+`collectWorkerModule({checkout, temporary, role, execute}) -> Promise<{path,bytes}>`,
+where `execute(command,args,options)` is the existing execFile-compatible seam.
+Use pinned `deploy --dry-run --outdir <role-directory>` and select `worker.js`
+as `workers/<role>.mjs`; require a regular file and reject unexpected additional
+runtime modules, rather than silently dropping imports. Maps and Wrangler's
+README are build sidecars only. The trusted verifier remains a JSON/archive/byte
+reader and rejects recognized serialized multipart worker payloads before
+extraction. This rejection is a format guard, not a proof that arbitrary PR
+JavaScript is valid; compile-only checks remain in the unprivileged build.
+
+- [ ] **RED:** Add `collects raw module bytes for every role, never upload FormData` with an injected executor writing known module bytes to each output directory. Assert exact command arguments, exact selected byte equality and output paths for API, Identity and Operator; maps/README never enter module bytes or the bundle. Add `rejects absent, symlink, and extra runtime module outputs`; assert no archive is emitted on any refusal. Add `rejects checksum-valid multipart worker payload before extraction` to the real tar verifier fixture: recompute its manifest hash/length, then assert rejection, absent destination and zero mock provider calls. Run `node --test scripts/cloud-e2e/build-artifact.test.mjs scripts/cloud-e2e/artifact.test.mjs`; the new cases must fail against the old behavior.
+- [ ] **GREEN:** Implement only output selection and the bounded data-format guard, keeping existing provenance/path/cap refusals. Run those focused tests, then one unprivileged packaging round trip using the actual project pinned outputs. Compile-check each raw module without evaluating/importing it in the unprivileged job, verify the resulting archive, and compare the three archive module bytes with the selected outputs. Record commands/counts only after they run; this is neither API compatibility nor live proof.
+- [ ] **Acceptance/review:** Existing verifier negatives still pass, a correctly packaged bundle preserves exact SPA and migration bytes, and all provider spies stay empty. Independent review precedes any next slice. Commit only approved packaging/tests and matching documentation; do not rerun browser/full-workspace suites for this data-only slice unless failures or changed scope justify them.
+
+**Second deliverable — optional candidate diagnostics, separately reviewable:**
+
+**Files:** Create `scripts/cloud-e2e/operator-candidate.mjs` and
+`operator-candidate.test.mjs`; modify `provision.test.mjs` only to pin the
+existing controller's refusal. No change to production client/inventory/receipt
+authority or controller progression is proposed. Update the same three docs.
+
+**Proposed interfaces (ordinary diagnostic data, never authority):**
+
+```js
+prepareOperatorCandidate({ verifiedBundle, expectedKey, readBytes })
+  // Promise<{ key, module: { name, contentType, contentBase64, size, sha256 },
+  //   assets: [{ path, size, sha256, contentBase64 }], assetProfile }>
+assessOperatorMockUpload({ candidate, expectedInventory, expectedVersions, graph, assetsLifecycle, now })
+  // { status: 'unsupported', blockers: [...], graphMatches: true,
+  //   assetPaths: [...], moduleSha256 } for an exact synthetic candidate;
+  // malformed/mismatched evidence throws; no method/path/headers/body/JWT output.
+```
+
+The candidate rechecks StackKey/build/run provenance and re-reads only listed
+files through `readBytes(path) -> Promise<Buffer>`, comparing length/SHA-256
+before constructing snapshots. `module.name` is controller-selected
+`operator.mjs`, `contentType` is `application/javascript+module`, and
+`assetProfile` is the fixed SPA/ASSETS configuration in the ledger. Raw bundle
+objects remain untrusted inputs; no `VerifiedBundle` boolean grants authority.
+Asset paths are normalized once from the verified `assets/` prefix, with no
+directory scan, inferred omission or PR config execution. Reject `_headers`,
+`_redirects` and `.assetsignore` until separately designed. Do not compute or
+label a provider upload hash in this slice: the pinned BLAKE3/documented-example
+SHA-256 discrepancy remains a blocker, distinct from raw-byte integrity.
+
+`graph` is a strict **synthetic test schema**, not an asserted provider response:
+`{key,accountId,observedAt,complete,workers:[{role,workerId,name,versionId,bindings}]}`.
+Require exactly the three roles with certified distinct IDs, derived names,
+version UUIDs supplied by controller-owned `expectedVersions` (exact
+`{api,identity,operator}` map, separate from InventoryV1) and the four exact
+service edges/entrypoints from the ledger; reject extra bindings/environments
+or an absent version/complete field. This hypothetical observed-version graph
+is not the current controller's empty-version state and cannot advance it.
+Retain exact Product/Auth D1 associations. A future provider adapter must prove
+complete outgoing version/deployment observations; `references.workers` cannot
+populate this outgoing graph. `complete:true` is only a synthetic fixture
+requirement, never provider assurance or upload permission.
+
+`assetsLifecycle` is also synthetic local correlation data:
+`{key,accountId,role,workerId,workerName,manifestDigest,sessionId,startedAt,
+expiresAt,uploadManifest,buckets,completedBuckets,completion}`. `uploadManifest`
+is an explicitly synthetic `{"/path":{hash,size}}` fixture map with the exact
+candidate paths/lengths and non-colliding test hash labels; every requested
+bucket hash must belong to that map. It does not establish real provider hash
+acceptance or integrity. Each completion contains its
+originating `sessionId`, `manifestDigest`, `observedAt`, `expiresAt` and an
+opaque `jwt`; these are test-record fields, **not invented JWT claims**.
+The diagnostic requires ordered completed bucket records (or the documented
+empty-bucket session completion), exact snapshot correlation, nonempty token,
+and freshness bounded by the local five-minute context and recorded expiry.
+No raw token is returned/logged. Expected version IDs are graph observations;
+the future Operator version UUID does not exist yet and must not be preseeded
+or claimed as a JWT binding.
+
+- [ ] **RED:** In `operator-candidate.test.mjs`, add `maps exact SPA bytes and four service edges while retaining all live blockers`. Assert decoded module/assets byte equality, both asset path examples from the ledger, exact fixed routing/profile and every edge, not just status. The valid fixture must still list `service-binding-remapping-unresolved`, `asset-session-name-target-unproven`, `asset-upload-hash-contract-unproven` and `asset-completion-scope-unproven`, with no request/token fields. Add table-driven `rejects wrong run/account/role/ID/name/version/entrypoint and changed graph`: change each identity independently, replace Identity's ID while retaining its name, alter its version or Core edge, add staging/sibling targets, and assert rejection with zero transport calls. Add `rejects stale, unknown, and incomplete observations` including wrong clock, missing pages/completeness, duplicate role and unknown environment/binding. Add `rejects tampered, missing, extra, and length/hash-mismatched assets`, including a post-verification byte change, wrong key and checksum-valid multipart module. Add `rejects wrong, expired, or unbound synthetic completion` for other run/account/Worker/session/manifest, missing/empty JWT, future observation and expired local/provider-record expiry. Add `requires session before buckets and all bucket completions before assessment`; reject unknown/duplicate hashes, missing bucket and completion-before-start. No synthetic test claims to reject cryptographically valid wrong-target provider JWTs; that remains impossible without an evidenced contract.
+- [ ] Run `node --test scripts/cloud-e2e/operator-candidate.test.mjs scripts/cloud-e2e/provision.test.mjs`; expect RED for missing diagnostic exports. Implement only the byte preparation and exact synthetic validation above. Repeat the focused command for GREEN. Add `independent runs retain independent byte/graph/completion records` with two valid fixtures and deep-equal per-run expected bytes/edges; swapping any record must reject. Assert existing `provisionMockStack` still refuses Operator and sends zero Worker version/session/asset-upload calls after both Access gates; failed Access evidence must stop even earlier. No supported-upload positive case is possible with present evidence.
+- [ ] **Acceptance/review:** Diagnostics provide useful exact comparisons, cannot mint receipts or a transport request, and preserve public Worker zero-call refusals and the original substantive E2E inventory. Independent review precedes completion. Keep transport, deployed bindings, JWT signature/scope, atomic replacement behavior and URL protection explicitly unproved.
+
+**Next provider decision, not current execution:** Obtain a documented
+ID-constrained/stable target contract or propose an enforceable writer-boundary
+amendment for approval. Only then propose a narrow trusted-inert disposable
+account proof of replacement/rename timing, exact outgoing/version readbacks,
+asset session scope, wrong-target/expired completion rejection, upload-hash
+compatibility, byte-serving integrity and initial/alternate URL protection.
+Without that prerequisite, continue NO-GO; mocks and preflight GETs cannot
+substitute. The existing full pilot, `ci` mode, passkey suite and cleanup gates
+remain separate future work.
+
 ## Task 6: Isolated `ci` app mode and exact-D1 root bootstrap
 
 **Files:** Modify the `ci` application files in the file map plus `apps/identity/src/cli/bootstrap-root-runner.mjs`; Create: `scripts/cloud-e2e/root-bootstrap.mjs`, `root-bootstrap.test.mjs`; Test: existing `apps/api/test/e2e-lifecycle.test.ts`, `apps/identity/test/{auth,e2e-fixtures,e2e-lifecycle}.test.ts`, `apps/identity/test-node/bootstrap-root-runner.test.ts`, `apps/operator-web/test/{bff,staging-secrets}.test.ts`.

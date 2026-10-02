@@ -241,3 +241,120 @@ claim live-provider behavior or pilot readiness.
 completeness, assets/JWT, service-name remapping, live D1 migrations, version/preview
 exposure, Access behavior, and two-stack acceptance require separate approval
 and disposable-account proof. No authenticated Cloudflare request was made.
+
+## Operator upload feasibility (2026-10-02)
+
+**Conclusion: NO-GO for live Operator upload.** The documented service graph
+and asset-session requests select target names; no atomic immutable-target
+constraint was established for either. Local packaging also exposes a concrete
+module-format mismatch. A proposed mock-only packaging/candidate-validation
+slice is specified in the [implementation plan](../superpowers/plans/2026-09-30-per-pr-cloud-e2e.md#proposed-next-mock-only-operator-slice-2026-10-02).
+It is unadopted and does not change the reviewed Task 5a/5b implementation or
+its historical **83/83** evidence. No new code tests or live proof are claimed.
+
+### Exact service graph and identity contracts
+
+The application graph has four service edges, including the default Identity
+HTTP entrypoint used for authentication. The Core role is `api` in inventory.
+Every target name below must be derived from the same trusted StackKey.
+
+| Caller | Binding | Target role | Entrypoint |
+|---|---|---|---|
+| Operator | `IDENTITY_AUTH` | Identity | Default HTTP `fetch`; omit `entrypoint` |
+| Operator | `IDENTITY` | Identity | `IdentityOperatorService` |
+| Operator | `CORE` | Core/API | `CoreOperatorService` |
+| Identity | `CORE` | Core/API | `CoreOperatorService` |
+
+Local references: [Operator config](../../apps/operator-web/wrangler.toml),
+[Identity config](../../apps/identity/wrangler.toml), exported classes in
+[Identity](../../apps/identity/src/worker.ts) and [Core](../../apps/api/src/worker.ts),
+and the [Operator HTTP/RPC consumer](../../apps/operator-web/src/worker.ts).
+The installed Wrangler **4.112.0** schema describes `service` as a name and
+`entrypoint` as an optional named export (`wrangler/config-schema.json:930–970`).
+The [Beta version schema](https://developers.cloudflare.com/api/resources/workers/subresources/beta/subresources/workers/subresources/versions/methods/create/)
+likewise offers `service`, optional `entrypoint` and `environment`, with no
+target Worker-ID/version condition in that binding shape. Worker immutable ID,
+controller-derived name, and version UUID remain separate identities.
+
+The [service-binding guide](https://developers.cloudflare.com/workers/runtime-apis/bindings/service-bindings/)
+allows independently deployed Workers. [Version overrides](https://developers.cloudflare.com/workers/versions-and-deployments/version-overrides/)
+apply to HTTP fetch calls, require the requested version in the current
+deployment, can fall back to its traffic split, and do not support RPC calls.
+They do not pin this graph. Native Previews retain the already-rejected
+[production service-target limitation](https://developers.cloudflare.com/workers/previews/resources/).
+These findings do not assert how Cloudflare internally resolves or retains a
+binding after rename/delete/recreate; that behavior remains unproved.
+
+The [Beta Worker GET](https://developers.cloudflare.com/api/resources/workers/subresources/beta/subresources/workers/methods/get/)
+returns `references.workers` for **incoming** dependents, not the caller's
+outgoing bindings. [Version GET](https://developers.cloudflare.com/api/resources/workers/subresources/beta/subresources/workers/subresources/versions/methods/get/)
+exposes version bindings/config and optional `include=modules`. A complete
+future observation needs paginated version/deployment enumeration, each
+relevant version's outgoing bindings, exact target ID/name/version association,
+route/Access state, and unknown-field/completeness handling; a Worker GET or
+empty incoming-reference list alone cannot certify it. Even complete fresh
+observations leave a validation-to-upload/use race if another writer can replace
+a target or change its deployment. A local lock, fresh name GET, shortened
+expiry, or same-run marker does not establish a provider transaction.
+
+The live gate needs a documented atomic target-ID constraint/stable binding
+resolution contract, or an explicitly approved design amendment with an
+enforceable account writer boundary for the entire create/upload/use/teardown
+interval. No such control is established for the current same-account design;
+names must still reject manual staging and sibling runs. A narrowly approved
+disposable-account probe could measure rename/delete/recreate before and after
+caller upload, concurrent target changes, and RPC target/version markers using
+trusted inert modules. Observations alone cannot guarantee all future races.
+Teardown follows Operator, then Identity, then Core, before dependent D1s;
+foreign or incomplete incoming references quarantine the dependency. The
+[delete contract](https://developers.cloudflare.com/api/resources/workers/subresources/beta/subresources/workers/methods/delete/)
+warns that `force=true` may break service bindings; it is not a safe remedy.
+No cleanup implementation is added by this investigation.
+
+### Bundle, assets, and JWT mapping
+
+The trusted controller must use verified bytes and its own binding/routing
+profile. PR manifests supply file paths, lengths and SHA-256 only; embedded
+Wrangler metadata is untrusted data and cannot supply bindings, account,
+endpoints, compatibility settings, routes or secrets.
+
+| Boundary | Observed/documented contract | Remaining gate |
+|---|---|---|
+| Worker bytes | [Artifact producer](../../scripts/cloud-e2e/build-artifact.mjs) lines 102–108 stores `wrangler deploy --dry-run --outfile` output directly as `workers/{role}.mjs`. Installed `wrangler-dist/cli.js:144218–144224` serializes the upload FormData. On 2026-10-02 the Operator output was **692,443 bytes**, beginning with a multipart boundary, metadata and `worker.js` part; `node --check` rejected it. | This is not a JavaScript module merely because its suffix is `.mjs`. All three roles use the same producer; only Operator was locally reproduced. The historical verifier round trip establishes integrity, not module format. |
+| Module alternative | The same unprivileged Operator dry run with `--outdir` emitted `worker.js` (**691,078 bytes**), plus a map and README; `node --check worker.js` passed without evaluating the module. | Proposed producer selects actual module bytes, refuses unexpected module graphs, and excludes maps/metadata/config. Privileged verification stays data-only; syntax checks belong in the unprivileged build. No packaging result proves provider acceptance. |
+| Asset manifest | [Verifier](../../scripts/cloud-e2e/artifact.mjs) requires `assets/index.html` and exact path/size/SHA-256. Strip the one `assets/` prefix: `assets/index.html` becomes `/index.html`, and `assets/assets/x.js` becomes `/assets/x.js`. Pinned `cli.js:150019–150024,150309–150311` computes BLAKE3 of base64 bytes plus extension, truncated to 32 hex characters. | The [direct-upload example](https://developers.cloudflare.com/workers/static-assets/direct-upload/) instead computes truncated SHA-256 over base64 plus extension. Neither equals the bundle's SHA-256 over raw bytes. Keep integrity hashes separate; accepted upload-hash semantics require provider clarification/proof. |
+| Session | [Session create](https://developers.cloudflare.com/api/resources/workers/subresources/scripts/subresources/assets/subresources/upload/methods/create/) is `POST /accounts/{account_id}/workers/scripts/{script_name}/assets-upload-session`, body `{manifest:{"/path":{hash,size}}}`, returning `buckets` and `jwt`. | `script_name` is documented as a **name**. No ID-addressed/conditional session primitive was established; do not insert a Beta ID into this legacy parameter by inference. |
+| Asset upload | [Upload API](https://developers.cloudflare.com/api/resources/workers/subresources/assets/subresources/upload/methods/create/) uses the account-scoped `/workers/assets/upload?base64=true` with multipart hash-keyed base64 file parts. Pinned `cli.js:150165–150181` authenticates with the session JWT, preserving MIME per part. The response's JWT is used for completion. | Validate requested bucket hashes against the exact byte snapshot; no caller-provided URL or headers. MIME selection belongs to the fixed trusted profile. The endpoint has no Worker/version ID parameter. |
+| Completion and version | Direct-upload documentation states upload and completion tokens last one hour; the initial JWT is already a completion token when buckets are empty. Beta version JSON carries `assets.jwt`, `assets.config`, `bindings:[{name:"ASSETS",type:"assets"}, …]`, base64 JavaScript modules, and query `deploy:false`. | The cited contracts do not specify JWT claims, a verifiable binding to StackKey/immutable Worker ID/future version UUID, or whether wrong-target redemption is rejected. Treat tokens as opaque sensitive values; correlated local records/expiry cannot prove provider scope. Missing/expired/unbound evidence refuses. |
+
+The proposed trusted Operator asset profile preserves
+`not_found_handling:"single-page-application"` and
+`run_worker_first:["/auth/*","/internal/*","/operator/v1/*"]` plus `ASSETS`.
+Do not import PR `_headers`, `_redirects`, `.assetsignore`, config, or multipart
+metadata into that profile; a future slice must reject unsupported special
+files rather than quietly omit verified assets. Fixed compatibility settings
+and role bindings also remain controller-owned. The current inert `DB` mock
+profile is not the application profile (`AUTH_DB` and Identity's Core edge);
+full `ci` application configuration remains Task 6.
+
+Required ordering remains disabled empty Workers, durable IDs, both Access
+attachments and fresh exact readbacks, then any asset session or code upload;
+Core must be available before Identity and Identity before Operator use.
+Routes stay disabled until protection/graph checks and live URL probes pass.
+Asset-first routing makes anonymous asset, SPA fallback, redirects, preview
+and version URLs part of the protection proof, not just the document URL.
+Provider hash/JWT/session compatibility and Beta version acceptance need a
+separately approved inert disposable-account probe, including expired token,
+other Worker/account token redemption, empty-bucket completion, and served
+asset byte/length checks. This probe does not resolve target replacement by
+itself or authorize PR-code deployment.
+
+Local packaging commands used `WRANGLER_SEND_METRICS=false` and temporary
+`WRANGLER_LOG_PATH`, then `pnpm --filter @incentives/operator-web exec wrangler
+deploy --dry-run --config wrangler.toml --outfile
+/private/tmp/cb-task5c-operator.mjs`, followed by the same command with
+`--outdir /private/tmp/cb-task5c-operator-outdir`. Both exited zero and made no
+authenticated Cloudflare request. Existing dashboard build output was used;
+no full build or code suite rerun was needed. Documentation and primary API
+contracts above were checked on **2026-10-02**; pinned source references use
+`apps/operator-web/node_modules/wrangler/` as their local root.
