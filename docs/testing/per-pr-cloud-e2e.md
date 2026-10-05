@@ -6,6 +6,9 @@
 complete. The separately approved 2026-10-02 raw-module packaging correction
 and its metadata-based review fix are validated locally and independently
 reviewed. The existing Notion mirrors were narrowly synchronized on 2026-10-02.
+The separately approved 2026-10-05 Task 5e candidate diagnostics are implemented
+and validated locally; independent review and narrow mirror synchronization
+remain pending.
 Public Worker mutations
 remain disabled; the local evidence is not an approved Cloudflare
 pilot, deployment, credential change, or every-push workflow.
@@ -335,7 +338,9 @@ exposed a module-format mismatch, corrected by the approved
 The mock-only packaging/candidate-validation
 slice is specified in the [implementation plan](../superpowers/plans/2026-09-30-per-pr-cloud-e2e.md#proposed-next-mock-only-operator-slice-2026-10-02).
 Its first packaging deliverable was approved on 2026-10-02 and implemented
-locally; the optional candidate diagnostics remain unadopted. The historical
+locally; the second candidate diagnostic deliverable was separately approved
+on 2026-10-05 and is now implemented with local verification. Independent
+review and its narrow mirror synchronization remain pending. The historical
 Task 5a/5b **83/83** evidence and live NO-GO remain unchanged.
 After independent review, this feasibility summary and the unadopted
 packaging-first proposal were synchronized to the existing Notion design/plan
@@ -423,12 +428,12 @@ endpoints, compatibility settings, routes or secrets.
 | Asset upload | [Upload API](https://developers.cloudflare.com/api/resources/workers/subresources/assets/subresources/upload/methods/create/) uses the account-scoped `/workers/assets/upload?base64=true` with multipart hash-keyed base64 file parts. Pinned `cli.js:150165–150181` authenticates with the session JWT, preserving MIME per part. The response's JWT is used for completion. | Validate requested bucket hashes against the exact byte snapshot; no caller-provided URL or headers. MIME selection belongs to the fixed trusted profile. The endpoint has no Worker/version ID parameter. |
 | Completion and version | Direct-upload documentation states upload and completion tokens last one hour; the initial JWT is already a completion token when buckets are empty. Beta version JSON carries `assets.jwt`, `assets.config`, `bindings:[{name:"ASSETS",type:"assets"}, …]`, base64 JavaScript modules, and query `deploy:false`. | The cited contracts do not specify JWT claims, a verifiable binding to StackKey/immutable Worker ID/future version UUID, or whether wrong-target redemption is rejected. Treat tokens as opaque sensitive values; correlated local records/expiry cannot prove provider scope. Missing/expired/unbound evidence refuses. |
 
-The proposed trusted Operator asset profile preserves
+The fixed local diagnostic Operator asset profile preserves
 `not_found_handling:"single-page-application"` and
 `run_worker_first:["/auth/*","/internal/*","/operator/v1/*"]` plus `ASSETS`.
 Do not import PR `_headers`, `_redirects`, `.assetsignore`, config, or multipart
-metadata into that profile; a future slice must reject unsupported special
-files rather than quietly omit verified assets. Fixed compatibility settings
+metadata into that profile; the diagnostic rejects unsupported special files
+rather than quietly omitting verified assets. Fixed compatibility settings
 and role bindings also remain controller-owned. The current inert `DB` mock
 profile is not the application profile (`AUTH_DB` and Identity's Core edge);
 full `ci` application configuration remains Task 6.
@@ -454,3 +459,124 @@ authenticated Cloudflare request. Existing dashboard build output was used;
 no full build or code suite rerun was needed. Documentation and primary API
 contracts above were checked on **2026-10-02**; pinned source references use
 `apps/operator-web/node_modules/wrangler/` as their local root.
+
+## Operator candidate diagnostics (2026-10-05)
+
+Exact local byte and synthetic-record comparisons now return only
+`unsupported`, retaining all four live blockers. Task 5e was separately
+approved for this six-file diagnostic slice. Independent review and the
+existing-page mirror synchronization remain pending; the reviewed historical
+83/83 controller and 139/139 packaging results retain their dated provenance.
+
+The preparation input is the unchanged verifier result
+`{key,buildSha,run:{run_id,attempt},files:[{path,size,sha256}]}`, with absolute
+paths. Its StackKey, build/run provenance, one common extraction root, fixed
+three Worker paths, mandatory SPA index, path schemas and existing
+20 MiB/1 MiB/64 MiB caps are rechecked before reads. Only listed paths are read,
+with exact raw byte length and SHA-256 comparison and recognized multipart
+refusal. The returned snapshots contain only the Operator module and listed
+assets, with one `assets/` prefix removed: `/index.html` and `/assets/x.js` are
+the two tested examples. No directory scan, PR configuration or source
+execution is involved. Raw copied bundle/candidate objects remain untrusted;
+they cannot mint an opaque receipt or authorize any transport.
+
+The fixed profile is plain data
+`{binding:"ASSETS",not_found_handling:"single-page-application",run_worker_first:["/auth/*","/internal/*","/operator/v1/*"]}`.
+The module is named `operator.mjs`, with content type
+`application/javascript+module`. Assessment rechecks candidate shapes,
+canonical base64, lengths, integrity hashes, unique safe paths and profile.
+`_headers`, `_redirects` and `.assetsignore` are rejected.
+
+The strict synthetic graph is
+`{key,accountId,observedAt,complete,workers:[{role,workerId,name,versionId,bindings}]}`.
+It requires precisely three distinct certified `InventoryV1.betaWorkerIds`;
+absent/incomplete Beta IDs cannot fall back to legacy `cloudflare.workerIds`.
+Controller-owned expected version UUIDs form a separate exact
+`{api,identity,operator}` map. Each observed Worker and every service target
+must match its same-run ID, derived name and expected version. The four
+[application service edges](#exact-service-graph-and-identity-contracts) remain
+exact. This local graph uses these binding records:
+
+- Service: `{name,type:"service",workerId,service,versionId,entrypoint?}`;
+  `IDENTITY_AUTH` omits `entrypoint`.
+- D1: `{name,type:"d1",databaseId}`; API `DB` associates Product and Identity
+  `AUTH_DB` associates Auth, with distinct exact database UUIDs.
+- Assets: `{name:"ASSETS",type:"assets"}`; Operator has no D1 binding.
+
+Unknown fields, roles, environments, bindings, duplicates, missing completeness
+or versions, stale/future observations and invalid clocks refuse. This is the
+application diagnostic graph, distinct from the unchanged controller's inert
+Identity `DB`/no-Core graph and empty-version state. `complete:true` is a local
+fixture requirement, not provider completeness or upload permission.
+`references.workers` describes incoming references and cannot fill this
+outgoing graph. A future adapter must prove complete version/deployment
+observations.
+
+The strict synthetic asset lifecycle is
+`{key,accountId,role,workerId,workerName,manifestDigest,sessionId,startedAt,expiresAt,uploadManifest,buckets,completedBuckets,completion}`.
+`manifestDigest` is SHA-256 of UTF-8 `JSON.stringify` over `[path,size,sha256]`
+tuples sorted by normalized path in code-unit order. It is local snapshot
+correlation, not a provider upload hash. `uploadManifest` maps every exact
+candidate path to `{hash,size}`, with noncolliding opaque fixture hash labels;
+no provider hash is computed or claimed. Provider BLAKE3 versus documented
+example SHA-256 semantics remain unproved.
+
+Each bucket request is `{hashes,requestedAt}`. It contains nonempty, known,
+nonrepeated fixture labels. Requested labels may be a subset of the manifest,
+as a synthetic session may require no upload for some cached assets. A dense
+ordered completion array contains exactly one record per zero-based bucket
+index: `{bucketIndex,sessionId,manifestDigest,observedAt,expiresAt,jwt}`.
+Each final session completion is
+`{sessionId,manifestDigest,observedAt,expiresAt,jwt}`. The empty-bucket case
+requires empty request/completion arrays and this final completion.
+Requests follow session start and remain ordered; bucket completions follow
+their requests with strictly increasing completion times; final completion
+follows every bucket completion. All observations use canonical finite UTC
+clocks, cannot be in the future, and stay within the local five-minute bound
+and recorded session/completion expiries. Exact run/account/Operator/session/
+snapshot association and a nonempty opaque test token are required. These
+fields are local test records, not invented provider JWT claims. No JWT is
+parsed, returned or logged; expected graph versions do not preseed a future
+Operator upload version or bind a token to it.
+
+For an exact fixture, assessment returns only
+`{status:"unsupported",blockers,graphMatches:true,assetPaths,moduleSha256}`.
+The blockers are `service-binding-remapping-unresolved`,
+`asset-session-name-target-unproven`, `asset-upload-hash-contract-unproven` and
+`asset-completion-scope-unproven`. There is no transport parameter, request,
+method, URL, headers, body, token or safety receipt output.
+
+Task 5e local evidence: missing exports produced 11 passes/one failed test
+file; semantic RED produced 11 passes/95 expected assertion failures.
+Sparse bucket records then produced 146 passes/one semantic failure before
+dense-record validation. Focused GREEN passed **147/147** in **162.489708 ms**;
+final cloud-script regression passed **275/275**, zero failures/skips, in
+**4,371.334125 ms**, and focused three-script lint passed. Both independent
+runs preserve exact bytes, graph and completion records; swapping records
+refuses. The actual mock controller still refuses Operator after both Access
+gates with zero Worker-version/session/asset-upload transport. Either initial
+or final API/Operator Access failure stops earlier. The original substantive
+E2E assertion inventory remains unchanged.
+The cloud run preceded only the final per-run four-edge assertion and
+documentation edits; the final focused rerun passed 147/147 in 239.948875 ms,
+with focused lint passing again. No production code changed after the cloud run.
+
+The single final 2026-10-05 project `pnpm test` passed **97 Vitest files /
+1,395 tests plus nine Node tests**, with zero failures/skips. Its log-write
+span was **54,843.716309 ms**; Identity's Worker suite reported **23.87 s**,
+and the final nine-test Node suite **1,072.940875 ms**. Node 22.18.0 and cached
+pnpm 11.14.0 were used with `pnpm_config_verify_deps_before_run=error` to refuse
+implicit installs. Approved local-only loopback/Wrangler-log permission was
+used directly; there was no failed sandbox attempt or tooling restoration.
+This is Task 5e project evidence, separate from the dated `66c0298` result.
+
+Transport, real deployed bindings, JWT signature/scope, atomic replacement,
+URL protection and provider hash acceptance remain unproved. No packaging
+rebuild, browser E2E rerun, account operation, credential access, deployment,
+workflow or mirror write belongs to this slice.
+
+Code references:
+
+- Candidate comparisons: [operator-candidate.mjs](../../scripts/cloud-e2e/operator-candidate.mjs).
+- Byte/graph/completion/isolation cases: [operator-candidate.test.mjs](../../scripts/cloud-e2e/operator-candidate.test.mjs).
+- Real consumer refusal: [provision.test.mjs](../../scripts/cloud-e2e/provision.test.mjs).

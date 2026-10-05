@@ -21,6 +21,9 @@ and roadmap/Plans-index summaries were narrowly synchronized on 2026-10-02:
 with historical 83 and prior `66c0298` full-project provenance retained.
 Fresh complete readbacks passed; all 17 index child links/order were preserved
 and resolved. This synchronization closes no provider/live gate.
+Task 5e's second candidate diagnostic deliverable was separately approved on
+2026-10-05 and is implemented with local verification. Independent review and
+its narrow mirror synchronization remain pending.
 
 ## Goal and success criteria
 
@@ -216,16 +219,42 @@ Code references:
 - Selection/refusal tests: [build-artifact.test.mjs](../../../scripts/cloud-e2e/build-artifact.test.mjs).
 - Checksum-valid format/consumer regressions: [artifact.test.mjs](../../../scripts/cloud-e2e/artifact.test.mjs).
 
-A subsequent bounded mock diagnostic can compare the exact four service edges,
-certified run/account/role IDs and observed versions, and asset path/length/hash
-snapshots. Synthetic session/bucket/completion records can test correlation,
-ordering and expiry, but cannot certify undocumented provider JWT scope or
-replacement behavior. Even its valid positive case must return unsupported
-with explicit live blockers and zero mutation calls. The [next-slice plan](../plans/2026-09-30-per-pr-cloud-e2e.md#proposed-next-mock-only-operator-slice-2026-10-02)
-defines substantive tests and files; only its approved packaging deliverable
-has been implemented and independently reviewed, including the approved
-metadata fix. Optional diagnostics remain
-unadopted and provide no upload authority.
+The separately approved 2026-10-05 Task 5e mock diagnostic now compares exact
+Operator/SPA byte snapshots, the fixed SPA/ASSETS profile, four service edges
+and certified run/account/role IDs against a distinct hypothetical observed
+version graph. It requires complete distinct `betaWorkerIds` without legacy
+tag fallback, a separate exact expected version UUID map, API `DB`/Product,
+Identity `AUTH_DB`/Auth plus Core, and Operator ASSETS with no D1. It does not
+change the controller's inert Identity `DB`/no-Core graph or empty versions.
+The synthetic `complete:true` flag grants no provider assurance or upload
+permission, and incoming `references.workers` cannot populate outgoing edges.
+
+Strict synthetic session/bucket/completion records compare exact snapshot
+digest and fixture upload labels, run/account/Operator/session correlation,
+ordered dense buckets and completions, opaque nonempty tokens, recorded
+expiry and finite fresh clocks within five minutes. The local digest uses
+sorted normalized `[path,size,rawSha256]` tuples; it is not a provider upload
+hash. Tokens are not parsed, logged or returned, and no future Operator version
+UUID is preseeded or claimed as a JWT binding. The [diagnostic contract](../../testing/per-pr-cloud-e2e.md#operator-candidate-diagnostics-2026-10-05)
+defines the precise local schemas and fixed routing profile. Every valid case
+still returns `unsupported` with the four unresolved service-remapping,
+name-addressed asset-session, provider upload-hash and completion-scope
+blockers, never a request or receipt. No transport is injected into these
+diagnostics; actual controller tests retain zero Worker-version/session/asset
+upload calls after both Access gates and earlier refusal on either failed gate.
+
+Task 5e focused GREEN is 147/147; the final cloud-script regression is 275/275
+with zero failures/skips and focused lint passing. These new counts are
+separate from the historical 83/139 results and dated `66c0298` project test.
+Only final per-run edge assertions/docs changed after the cloud run; final
+focused tests passed 147/147 in 239.948875 ms and focused lint passed again.
+The single guarded 2026-10-05 project test passed 97 Vitest files / 1,395 tests
+plus nine Node tests with zero failures/skips, using approved local-only
+loopback/log permission and no dependency restoration or implicit install.
+Independent review and narrow mirror synchronization remain pending. The
+[bounded plan](../plans/2026-09-30-per-pr-cloud-e2e.md#proposed-next-mock-only-operator-slice-2026-10-02)
+still grants no upload authority. Transport, deployed bindings, JWT
+signature/scope, atomic replacement behavior and URL protection remain unproved.
 An ID-constrained provider primitive or explicitly approved enforceable writer
 boundary, then narrow inert account proof of session/JWT/hash/routing behavior,
 is required before revisiting upload support. A same-account lock or a passing

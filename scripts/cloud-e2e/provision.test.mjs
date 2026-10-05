@@ -225,7 +225,42 @@ ownTests('real protocol progresses through exact Worker and Access gates, then s
     { name: names.accessOperator, destinations: [{ type: 'worker', worker_id: workerIds.operator, overrides: [] }], policies: [{ decision: 'non_identity', include: [{ service_token: { token_id: 'token-99' } }] }] },
   ]);
   assert.equal(mock.calls.some(call => call[0] === 'beta-version-create-result'), false);
+  assert.deepEqual(mock.calls.filter(call => call[0] === 'beta-access-attachment').map(call => call[1]), ['api', 'operator']);
+  assert.deepEqual(mock.calls.filter(call => call[0] === 'beta-access-readback').map(call => call[1]), ['api', 'operator', 'api', 'operator']);
+  assertNoCodeOrAssetsTransport(mock.calls);
   assert.equal(mock.calls.some(call => call[0] === 'DELETE'), false);
+});
+
+function assertNoCodeOrAssetsTransport(calls) {
+  const forbidden = calls.filter(call => {
+    const method = ['GET', 'POST', 'DELETE'].includes(call[0]) ? call[0] : call[2];
+    const target = ['GET', 'POST', 'DELETE'].includes(call[0]) ? call[1] : call[3];
+    return /(?:version.*(?:create|upload)|asset.*(?:session|upload))/u.test(call[0])
+      || typeof target === 'string' && (/assets(?:-upload-session|\/upload)/u.test(target) || method === 'POST' && target.includes('/versions'));
+  });
+  assert.deepEqual(forbidden, []);
+}
+
+ownTests('either failed Access identity or final policy gate stops before Worker code or asset transport', async t => {
+  for (const role of ['api', 'operator']) for (const occurrence of [1, 2]) {
+    const input = await fixture(t);
+    const mock = mockBoundary();
+    const observe = mock.provider.observe;
+    let seen = 0;
+    mock.provider.observe = async operation => {
+      const envelope = await observe(operation);
+      if (operation.kind === 'beta-access-readback' && operation.role === role && ++seen === occurrence) {
+        envelope.response.result.policies = [{ decision: 'non_identity', include: [{ service_token: { token_id: 'other-run-token' } }] }];
+      }
+      return envelope;
+    };
+    const outcome = await provisionMockStack({ key, accountId: 'account-1', ...input, ...mock });
+    assert.equal(outcome.status, 'quarantined');
+    assert.equal(outcome.apiVersionPlanned, undefined);
+    assert.equal(mock.calls.filter(call => call[0] === 'beta-access-attachment').length, occurrence === 1 ? 0 : 2);
+    assert.equal(mock.calls.filter(call => call[0] === 'beta-version-list').length, occurrence === 1 ? 0 : 1);
+    assertNoCodeOrAssetsTransport(mock.calls);
+  }
 });
 
 ownTests('changed immutable Worker readback quarantines and leaves unresolved resource in inventory', async t => {
@@ -246,6 +281,7 @@ ownTests('changed Access token policy blocks attachment and code plan without de
   assert.equal(outcome.status, 'quarantined');
   assert.equal(outcome.cleanup.status, 'unsupported');
   assert.equal(mock.calls.some(call => call[0] === 'beta-access-attachment'), false);
+  assertNoCodeOrAssetsTransport(mock.calls);
   assert.equal(mock.calls.some(call => call[0] === 'DELETE'), false);
 });
 

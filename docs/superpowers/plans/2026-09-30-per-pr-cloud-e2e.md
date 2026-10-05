@@ -29,6 +29,9 @@ and roadmap/Plans-index summaries were narrowly synchronized on 2026-10-02:
 retaining historical 83 and prior `66c0298` full-project provenance. Fresh
 complete readbacks passed; all 17 index child links/order were preserved and
 resolved. No provider/live gate was closed.
+The second candidate diagnostic deliverable was separately approved on
+2026-10-05 and is implemented with local Task 5e verification. Independent
+review and narrow mirror synchronization remain pending.
 
 **Verified local status (2026-10-02):** Tasks 1–3 are complete on
 `feat/per-pr-cloud-e2e` after scoped review: the baseline records 5 local
@@ -164,8 +167,10 @@ The Operator SPA's separate assets upload/completion JWT, Beta version JSON (`ma
 **Status:** Feasibility/documentation complete. The first raw-module packaging
 deliverable and its metadata-based review fix were approved on 2026-10-02 and
 are implemented locally and independently reviewed; their narrow mirror sync
-is complete. The optional second diagnostic deliverable remains
-**unadopted and requires its own plan approval/dispatch**. The
+is complete. The second diagnostic deliverable received its own bounded
+six-file approval/dispatch on 2026-10-05 and is now implemented with local
+verification; **independent review and narrow mirror synchronization remain
+pending**. The
 [evidence ledger](../../testing/per-pr-cloud-e2e.md#operator-upload-feasibility-2026-10-02)
 records the historical multipart mismatch, corrected by this first deliverable,
 and remaining live blockers: name-addressed service/session targets and
@@ -206,14 +211,14 @@ JavaScript is valid; compile-only checks remain in the unprivileged build.
 - [x] **Review fix RED/GREEN:** Review found runtime Text modules hidden under generated-sidecar names. The approved metadata fix recorded semantic RED for both collisions and real bundle archive emission, then 62/62 focused and 139/139 cloud-script GREEN. Missing/nonregular/malformed/misassociated metadata, unexpected outputs/imports and mismatched module/map byte counts refuse. Exact platform imports pass, including the observed Identity dynamic builtin. The amended actual three-role round trip passes in 16,342.042 ms with unchanged raw modules, five SPA assets, fourteen SQL migrations and no sidecar/metadata leakage; focused producer/test lint passes. Fix-round tracked scope is only producer, producer tests and the same three matching docs.
 - [x] **Packaging acceptance/re-review:** Existing verifier negatives and the real three-role bundle's exact SPA/migration byte checks pass; format refusals stop the actual mock controller before transport. Final 139/139 cloud-script regression and focused lint pass. The dated 2026-10-02 full project `pnpm test` at `66c0298` passed 97 Vitest files / 1,395 tests plus nine Node tests; it was not repeated for the isolated producer metadata fix. The project's sandbox attempt stopped at Identity loopback EPERM before assertions; its approved local-only retry passed. Independent review identified the collision; approved fix `8aa2d8c` passed scoped re-review with no open findings, followed by narrow existing-page Notion sync with complete readbacks and all 17 index children preserved/resolved. Only the bounded packaging deliverable is accepted; optional diagnostics and provider/live gates require separate approval. Commit only approved packaging/tests and matching documentation; no browser E2E run is required for this packaging deliverable.
 
-**Second deliverable — optional candidate diagnostics, separately reviewable:**
+**Second deliverable — approved Task 5e candidate diagnostics, separately reviewable:**
 
 **Files:** Create `scripts/cloud-e2e/operator-candidate.mjs` and
 `operator-candidate.test.mjs`; modify `provision.test.mjs` only to pin the
 existing controller's refusal. No change to production client/inventory/receipt
 authority or controller progression is proposed. Update the same three docs.
 
-**Proposed interfaces (ordinary diagnostic data, never authority):**
+**Implemented interfaces (ordinary diagnostic data, never authority):**
 
 ```js
 prepareOperatorCandidate({ verifiedBundle, expectedKey, readBytes })
@@ -229,7 +234,11 @@ The candidate rechecks StackKey/build/run provenance and re-reads only listed
 files through `readBytes(path) -> Promise<Buffer>`, comparing length/SHA-256
 before constructing snapshots. `module.name` is controller-selected
 `operator.mjs`, `contentType` is `application/javascript+module`, and
-`assetProfile` is the fixed SPA/ASSETS configuration in the ledger. Raw bundle
+`assetProfile` is the fixed plain-data
+`{binding:"ASSETS",not_found_handling:"single-page-application",run_worker_first:["/auth/*","/internal/*","/operator/v1/*"]}`.
+The verifier returns absolute `{path,size,sha256}` records; preparation derives
+one fixed extraction root and rechecks the full unchanged file/path/cap schema
+before any listed-byte read. Raw bundle
 objects remain untrusted inputs; no `VerifiedBundle` boolean grants authority.
 Asset paths are normalized once from the verified `assets/` prefix, with no
 directory scan, inferred omission or PR config execution. Reject `_headers`,
@@ -240,6 +249,7 @@ SHA-256 discrepancy remains a blocker, distinct from raw-byte integrity.
 `graph` is a strict **synthetic test schema**, not an asserted provider response:
 `{key,accountId,observedAt,complete,workers:[{role,workerId,name,versionId,bindings}]}`.
 Require exactly the three roles with certified distinct IDs, derived names,
+using a complete `InventoryV1.betaWorkerIds` map, never legacy tag fallback,
 version UUIDs supplied by controller-owned `expectedVersions` (exact
 `{api,identity,operator}` map, separate from InventoryV1) and the four exact
 service edges/entrypoints from the ledger; reject extra bindings/environments
@@ -266,9 +276,26 @@ No raw token is returned/logged. Expected version IDs are graph observations;
 the future Operator version UUID does not exist yet and must not be preseeded
 or claimed as a JWT binding.
 
-- [ ] **RED:** In `operator-candidate.test.mjs`, add `maps exact SPA bytes and four service edges while retaining all live blockers`. Assert decoded module/assets byte equality, both asset path examples from the ledger, exact fixed routing/profile and every edge, not just status. The valid fixture must still list `service-binding-remapping-unresolved`, `asset-session-name-target-unproven`, `asset-upload-hash-contract-unproven` and `asset-completion-scope-unproven`, with no request/token fields. Add table-driven `rejects wrong run/account/role/ID/name/version/entrypoint and changed graph`: change each identity independently, replace Identity's ID while retaining its name, alter its version or Core edge, add staging/sibling targets, and assert rejection with zero transport calls. Add `rejects stale, unknown, and incomplete observations` including wrong clock, missing pages/completeness, duplicate role and unknown environment/binding. Add `rejects tampered, missing, extra, and length/hash-mismatched assets`, including a post-verification byte change, wrong key and checksum-valid multipart module. Add `rejects wrong, expired, or unbound synthetic completion` for other run/account/Worker/session/manifest, missing/empty JWT, future observation and expired local/provider-record expiry. Add `requires session before buckets and all bucket completions before assessment`; reject unknown/duplicate hashes, missing bucket and completion-before-start. No synthetic test claims to reject cryptographically valid wrong-target provider JWTs; that remains impossible without an evidenced contract.
-- [ ] Run `node --test scripts/cloud-e2e/operator-candidate.test.mjs scripts/cloud-e2e/provision.test.mjs`; expect RED for missing diagnostic exports. Implement only the byte preparation and exact synthetic validation above. Repeat the focused command for GREEN. Add `independent runs retain independent byte/graph/completion records` with two valid fixtures and deep-equal per-run expected bytes/edges; swapping any record must reject. Assert existing `provisionMockStack` still refuses Operator and sends zero Worker version/session/asset-upload calls after both Access gates; failed Access evidence must stop even earlier. No supported-upload positive case is possible with present evidence.
-- [ ] **Acceptance/review:** Diagnostics provide useful exact comparisons, cannot mint receipts or a transport request, and preserve public Worker zero-call refusals and the original substantive E2E inventory. Independent review precedes completion. Keep transport, deployed bindings, JWT signature/scope, atomic replacement behavior and URL protection explicitly unproved.
+Concrete local record schemas and ordering are recorded in the
+[diagnostic ledger](../../testing/per-pr-cloud-e2e.md#operator-candidate-diagnostics-2026-10-05):
+service bindings use `{name,type:"service",workerId,service,versionId,entrypoint?}`;
+D1 uses `{name,type:"d1",databaseId}`; assets uses
+`{name:"ASSETS",type:"assets"}`. Bucket requests are `{hashes,requestedAt}`;
+their dense ordered completions add `bucketIndex` to the final-session
+`{sessionId,manifestDigest,observedAt,expiresAt,jwt}` shape. The local digest is
+SHA-256 over JSON-serialized `[normalizedPath,size,rawSha256]` tuples sorted by
+path in code-unit order. Fixture upload hash labels are opaque and distinct;
+they do not prove the provider hash contract. All records use strict known
+fields, finite canonical fresh UTC clocks, session-before-request and
+request-before-completion ordering, exact zero-based indices, strictly
+increasing bucket completion times and final completion after all buckets.
+Empty buckets still require the matching final completion. These local
+schemas establish no provider response or JWT-claim contract.
+
+- [x] **RED (2026-10-05):** The focused command recorded missing diagnostic exports separately (11 passes/one failed file), then semantic RED (11 passes/95 assertion failures) for exact byte/profile/graph output and malformed or mismatched evidence. Table-driven cases cover run/account/role/ID/name/version/entrypoint and every service edge, staging/sibling/unknown targets, missing completeness/version/Beta IDs and legacy fallback, clock/expiry/order, post-verification and post-preparation byte/path/hash changes, checksum-valid multipart modules, opaque token presence, session/manifest correlation and missing/duplicate/unknown bucket records. Sparse arrays produced an additional 146-pass/one-failure semantic RED before dense-record validation. No test claims cryptographic rejection of a valid wrong-target provider JWT.
+- [x] **GREEN (2026-10-05):** Only byte preparation and strict local synthetic validation were implemented. `node --test scripts/cloud-e2e/operator-candidate.test.mjs scripts/cloud-e2e/provision.test.mjs` passed 147/147 in 162.489708 ms; final `node --test scripts/cloud-e2e/*.test.mjs` passed 275/275, zero failures/skips, in 4,371.334125 ms, and focused three-script lint passed. Independent runs preserve exact byte/graph/completion records and reject swaps. The real `provisionMockStack` consumer still refuses Operator after both Access gates with zero Worker-version/session/asset-upload calls; either initial or final API/Operator Access failure stops earlier. Every valid diagnostic returns unsupported; there is no upload-positive case.
+- [x] **Final project verification (2026-10-05):** One guarded `pnpm test` passed 97 Vitest files / 1,395 tests plus nine Node tests, zero failures/skips, with Node 22.18.0/cached pnpm 11.14.0 and `pnpm_config_verify_deps_before_run=error`. Approved local-only loopback/Wrangler-log permission was used directly, with no failed sandbox attempt, dependency restoration or implicit install. The log-write span was 54,843.716309 ms. Only final per-run four-edge assertions/docs changed after the cloud regression; final focused tests passed 147/147 in 239.948875 ms and focused lint passed again, with no later production change. This is separate Task 5e evidence; no build/actual packaging/browser E2E rerun was required for the unchanged producer/apps.
+- [ ] **Acceptance/review:** Local self-review, diffcheck, document consistency/internal-link checks and the six-file scope are complete. Diagnostics provide useful exact comparisons, cannot mint receipts or a transport request, and preserve public Worker zero-call refusals and the original substantive E2E inventory. Independent review and narrow mirror synchronization remain pending. Keep transport, deployed bindings, JWT signature/scope, atomic replacement behavior and URL protection explicitly unproved.
 
 **Next provider decision, not current execution:** Obtain a documented
 ID-constrained/stable target contract or propose an enforceable writer-boundary
