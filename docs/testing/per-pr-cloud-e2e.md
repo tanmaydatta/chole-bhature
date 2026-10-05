@@ -8,8 +8,11 @@ and its metadata-based review fix are validated locally and independently
 reviewed. The existing Notion mirrors were narrowly synchronized on 2026-10-02.
 The separately approved 2026-10-05 Task 5e candidate diagnostics are implemented
 and validated locally. Initial review found shared D1 IDs in the isolation
-fixture; its test-only correction is verified locally, with independent scoped
-re-review and narrow mirror synchronization pending.
+fixture; its test-only correction `e0ce221` passed independent scoped re-review
+with no open findings. The four existing Notion destinations were narrowly
+synchronized on 2026-10-05, with complete readbacks and all 17 index child
+URLs/titles/order and active metadata preserved. Full Task 5/live gates remain
+incomplete.
 Public Worker mutations
 remain disabled; the local evidence is not an approved Cloudflare
 pilot, deployment, credential change, or every-push workflow.
@@ -341,8 +344,8 @@ slice is specified in the [implementation plan](../superpowers/plans/2026-09-30-
 Its first packaging deliverable was approved on 2026-10-02 and implemented
 locally; the second candidate diagnostic deliverable was separately approved
 on 2026-10-05 and is now implemented with local verification. Independent scoped
-re-review after the isolation-fixture correction and its narrow mirror
-synchronization remain pending. The historical
+re-review after the isolation-fixture correction and narrow existing-page
+mirror synchronization are complete. The historical
 Task 5a/5b **83/83** evidence and live NO-GO remain unchanged.
 After independent review, this feasibility summary and the unadopted
 packaging-first proposal were synchronized to the existing Notion design/plan
@@ -467,7 +470,7 @@ contracts above were checked on **2026-10-02**; pinned source references use
 Exact local byte and synthetic-record comparisons now return only
 `unsupported`, retaining all four live blockers. Task 5e was separately
 approved for this six-file diagnostic slice. Independent scoped re-review and
-the existing-page mirror synchronization remain pending; the reviewed historical
+the existing-page mirror synchronization are complete; the reviewed historical
 83/83 controller and 139/139 packaging results retain their dated provenance.
 
 The preparation input is the unchanged verifier result
@@ -574,9 +577,16 @@ still return unsupported with all four blockers. Semantic RED was 146 passes /
 16 assertion failures in 198.988917 ms before fixture correction; focused GREEN
 is **162/162**, zero failures/skips, in **186.830125 ms**, with focused lint and
 diffcheck passing. Production and consumer-controller code are unchanged.
-The 275-test cloud result and full-project run below remain pre-fix evidence;
-fresh cloud regression, independent scoped re-review and mirror synchronization
-remain pending.
+The 275-test cloud result and full-project run below remain pre-fix evidence.
+Root's fresh regression at `e0ce221` passed **290/290**, zero failures/skips,
+in **4,651.59 ms**; independent scoped re-review found the isolation issue
+addressed, with no open findings. On 2026-10-05, the approved nonsecret status
+was narrowly synchronized to the four existing design/plan/roadmap/index
+destinations. Fresh complete whole-page readbacks matched the authorized
+substitutions, allowing only the explicitly reviewed single-newline design
+rendering; all 17 native index child URLs/titles/order and active metadata were
+preserved. Root independently verified all four pages and all 17 destinations.
+This synchronization adopts no next provider task and closes no live gate.
 
 The single final 2026-10-05 project `pnpm test` passed **97 Vitest files /
 1,395 tests plus nine Node tests**, with zero failures/skips. Its log-write
@@ -585,12 +595,14 @@ and the final nine-test Node suite **1,072.940875 ms**. Node 22.18.0 and cached
 pnpm 11.14.0 were used with `pnpm_config_verify_deps_before_run=error` to refuse
 implicit installs. Approved local-only loopback/Wrangler-log permission was
 used directly; there was no failed sandbox attempt or tooling restoration.
-This is Task 5e project evidence, separate from the dated `66c0298` result.
+This is Task 5e project evidence at original `50cbfa1`, separate from the dated
+`66c0298` result and not a repeated full suite at the test-only `e0ce221` fix.
 
 Transport, real deployed bindings, JWT signature/scope, atomic replacement,
 URL protection and provider hash acceptance remain unproved. No packaging
 rebuild, browser E2E rerun, account operation, credential access, deployment,
-workflow or mirror write belongs to this slice.
+or workflow was part of the diagnostic implementation. The separate post-review
+mirror/status-note completion changed no code/tests and reran no suite.
 
 Code references:
 

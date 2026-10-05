@@ -23,8 +23,11 @@ Fresh complete readbacks passed; all 17 index child links/order were preserved
 and resolved. This synchronization closes no provider/live gate.
 Task 5e's second candidate diagnostic deliverable was separately approved on
 2026-10-05 and is implemented with local verification. Initial review found
-shared D1 isolation-fixture IDs; the test-only correction is locally verified,
-with independent scoped re-review and narrow mirror synchronization pending.
+shared D1 isolation-fixture IDs; the test-only correction `e0ce221` passed
+independent scoped re-review with no open findings. The four existing Notion
+destinations were narrowly synchronized on 2026-10-05 with complete readbacks
+and all 17 index child URLs/titles/order and active metadata preserved. No
+provider/live gate was closed.
 
 ## Goal and success criteria
 
@@ -244,7 +247,7 @@ blockers, never a request or receipt. No transport is injected into these
 diagnostics; actual controller tests retain zero Worker-version/session/asset
 upload calls after both Access gates and earlier refusal on either failed gate.
 
-Task 5e focused GREEN is 147/147; the final cloud-script regression is 275/275
+Initial Task 5e focused GREEN at `50cbfa1` was 147/147; the cloud-script regression was 275/275
 with zero failures/skips and focused lint passing. These new counts are
 separate from the historical 83/139 results and dated `66c0298` project test.
 Only final per-run edge assertions/docs changed after the cloud run; final
@@ -256,12 +259,19 @@ and version-map swaps with recipient keys/observations retained. Both valid
 fixtures remain unsupported with all four blockers. Semantic RED was 146 pass /
 16 assertion failures; focused GREEN is 162/162 (186.830125 ms), with lint and
 diffcheck passing. Production is unchanged; the 275-test cloud/full-project
-results retain their pre-fix provenance. Fresh cloud regression and independent
-scoped re-review remain pending, with mirror synchronization held.
+results retain their pre-fix provenance. Root's fresh `e0ce221` cloud regression
+passed 290/290, zero failures/skips, in 4,651.59 ms; independent scoped re-review
+found the isolation issue addressed with no open findings.
 The single guarded 2026-10-05 project test passed 97 Vitest files / 1,395 tests
 plus nine Node tests with zero failures/skips, using approved local-only
 loopback/log permission and no dependency restoration or implicit install.
-Independent scoped re-review and narrow mirror synchronization remain pending. The
+This original `50cbfa1` project result is not a repeated full suite at `e0ce221`.
+The approved nonsecret status was narrowly synchronized on 2026-10-05 to the
+four existing Notion destinations. Fresh whole-page readbacks matched only
+authorized substitutions (with one explicitly reviewed design newline
+rendering); all 17 native child URLs/titles/order and active metadata were
+preserved, with root independently verifying all four pages and 17 destinations.
+No next provider task was adopted. The
 [bounded plan](../plans/2026-09-30-per-pr-cloud-e2e.md#proposed-next-mock-only-operator-slice-2026-10-02)
 still grants no upload authority. Transport, deployed bindings, JWT
 signature/scope, atomic replacement behavior and URL protection remain unproved.
