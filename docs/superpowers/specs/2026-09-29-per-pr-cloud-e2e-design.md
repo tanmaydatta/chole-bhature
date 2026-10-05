@@ -29,10 +29,15 @@ destinations were narrowly synchronized on 2026-10-05 with complete readbacks
 and all 17 index child URLs/titles/order and active metadata preserved. No
 provider/live gate was closed.
 
-The bounded provider-contract investigation on 2026-10-05 found no supported
-race-safe Operator upload path. Its new conclusions are local and await
-independent review; synchronization of those findings is held. The prior Task
-5e mirror/status-note review at `c42088f` is complete with no findings.
+The bounded provider-contract investigation at `ea8620f` passed independent
+review on 2026-10-05 (0 Critical/Important, one nonblocking retained-version
+clarification incorporated in the closing proposal). Reviewed nonsecret
+findings were narrowly synchronized to the four existing Notion destinations:
+exact complete readbacks passed with all 17 ordered native children and active
+metadata preserved, no formatting exception. Root independently verified all
+four pages and 17 destinations. No supported race-safe Operator upload path or
+adopted prerequisite follows; closing status-note review is pending. The prior
+Task 5e review at `c42088f` is complete with no findings.
 
 ## Goal and success criteria
 

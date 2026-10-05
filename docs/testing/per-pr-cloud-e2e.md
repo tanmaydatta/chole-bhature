@@ -12,10 +12,15 @@ fixture; its test-only correction `e0ce221` passed independent scoped re-review
 with no open findings. The four existing Notion destinations were narrowly
 synchronized on 2026-10-05, with complete readbacks and all 17 index child
 URLs/titles/order and active metadata preserved. Full Task 5/live gates remain
-incomplete. The bounded 2026-10-05 provider-contract investigation is complete
-locally; no supported race-safe Operator upload path was established. Its
-conditional writer-boundary proposal and separate provider/account-proof
-gates below await independent review and any later approval.
+incomplete. The bounded 2026-10-05 provider-contract investigation at `ea8620f`
+passed independent review; its nonblocking retained-version clarification is
+incorporated in the closing proposal. Reviewed nonsecret conclusions were
+narrowly synchronized to the four existing Notion destinations, with exact
+complete readbacks and all 17 ordered native child links/active metadata
+preserved and independently verified by root. No supported race-safe Operator
+upload path was established; the conditional writer-boundary proposal and
+provider/account-proof gates remain unadopted and require later approval.
+Closing status-note review is pending.
 Public Worker mutations
 remain disabled; the local evidence is not an approved Cloudflare
 pilot, deployment, credential change, or every-push workflow.
@@ -736,5 +741,13 @@ The scoped investigation changes docs only and creates no new suite result:
 current **162/162** focused and **290/290** cloud evidence retain `e0ce221`
 provenance, with original `50cbfa1` full-project evidence unchanged. Public
 Worker writes stay zero-transport refusals, and diagnostics keep all four
-blockers. Notion synchronization of these new findings is held for independent
-local review.
+blockers. Independent local review of `ea8620f` is spec compliant / quality
+Approved (0 Critical, 0 Important, 1 Minor); the plan clarifies allowed retained
+bootstrap/application versions versus sole active current-phase selection at
+100%, with an append-only investigation-report correction. Narrow synchronization
+to the four existing Notion destinations completed on 2026-10-05. PATCH and
+fresh complete GETs match exact original-plus-substitution whole pages, with
+no formatting exception; all 17 native child URLs/titles/order and active page
+metadata are preserved. Root independently verified all four pages and 17
+destinations. Closing status-note review remains pending. No new policy,
+executor, provider proof or live gate is adopted.

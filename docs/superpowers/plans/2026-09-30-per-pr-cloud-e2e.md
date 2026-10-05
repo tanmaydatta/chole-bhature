@@ -37,10 +37,14 @@ existing Notion destinations completed on 2026-10-05, with complete readbacks
 and all 17 index child URLs/titles/order and active metadata preserved. Root
 independently verified those pages/destinations; no provider/live gate was closed.
 
-The separately approved 2026-10-05 bounded provider-contract investigation is
-complete locally, with no supported race-safe upload path established. Its
-conditional proposal awaits independent review; no provider executor or
-permission amendment is adopted, and new findings are not yet mirrored.
+The separately approved 2026-10-05 provider-contract investigation at `ea8620f`
+passed independent review (0 Critical/Important, one nonblocking retained-version
+clarification incorporated below). Reviewed nonsecret findings were narrowly
+synchronized to the four existing Notion destinations, with exact complete
+readbacks and all 17 native child URLs/titles/order and active metadata
+preserved, no formatting exception. Root independently verified all four pages
+and 17 destinations. No supported race-safe upload path, executor or permission
+amendment is established/adopted. Closing status-note review is pending.
 
 **Verified local status (2026-10-02):** Tasks 1–3 are complete on
 `feat/per-pr-cloud-e2e` after scoped review: the baseline records 5 local
@@ -309,8 +313,9 @@ schemas establish no provider response or JWT-claim contract.
 
 ### Bounded provider-contract investigation (2026-10-05)
 
-**Status:** Approved research/documentation slice complete locally, pending
-independent review. No supported race-safe Operator upload path was established;
+**Status:** Approved research/documentation slice complete; independent review
+of `ea8620f` is spec compliant / quality Approved (0 Critical, 0 Important,
+1 Minor, clarified below). No supported race-safe Operator upload path was established;
 NO-GO and all four diagnostic blockers remain. The [evidence matrix](../../testing/per-pr-cloud-e2e.md#provider-target-and-assets-contracts-2026-10-05)
 separates documented shapes, pinned Wrangler 4.112.0 behavior, ten credential-free
 synthetic hash vectors, inference and account-only proof. No source/test/config,
@@ -353,12 +358,15 @@ resource/data/secret or same-account requirement is weakened.
    Contract: normalize documented complete outgoing/version/deployment and
    asset-lifecycle observations into ordinary data, never a receipt, token
    output or transport request. Focused semantic tests must reject partial/
-   changing pagination, named-ID swaps, unknown/inactive versions, wrong
-   entrypoints/D1/ASSETS, cross-run records, expired/wrong-target completions
+   changing pagination, named-ID swaps, unknown/unapproved versions or profiles,
+   wrong entrypoints/D1/ASSETS, cross-run records, expired/wrong-target completions
    according to actual documented outcomes, and leaked tokens; distinguish
    final completion from bucket acknowledgement and verify approved hash
-   vectors/aliases. Keep valid cases unsupported and zero-transport. This is a
-   conditional proposal, not work in this investigation; exact inputs depend
+   vectors/aliases. Retained known bootstrap/application versions are allowed
+   only with exact inventory-approved bindings/config; independently require
+   solely the intended active current-phase version at 100%. Keep valid cases
+   unsupported and zero-transport. This is a conditional proposal, not work
+   in this investigation; exact inputs depend
    on provider clarification, and local negatives cannot prove provider scope.
 3. Separately approve a bounded trusted-inert same-account proof/harness and
    authenticated authority only after independent prerequisite/implementation
@@ -369,9 +377,14 @@ resource/data/secret or same-account requirement is weakened.
    manual staging change or automatic workflow belongs in that proof. Sampled
    outcomes supplement the contract and enforcement, never replace them.
 
-Independent local review precedes narrow nonsecret synchronization to the four
-existing Notion destinations, with historical text and all 17 ordered native
-child links preserved and freshly verified. That phase is held. The full
+After independent local review, narrow nonsecret synchronization to the four
+existing Notion destinations completed on 2026-10-05. PATCH and fresh complete
+GETs match exact original-plus-substitution whole pages, with no formatting
+exception; historical text and all 17 native child URLs/titles/order and active
+metadata are preserved. Root independently verified all four pages and 17
+destinations. The M1 retained-version clarification is incorporated in this
+proposal and appended to the investigation report; final closing status-note
+review is pending. No provider task or policy is adopted. The full
 pilot, `ci` mode, real HTTPS passkey/GAP suite, row disposal, cleanup and rollout
 retain their own future approvals and acceptance gates.
 
