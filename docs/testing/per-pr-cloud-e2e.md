@@ -20,7 +20,11 @@ complete readbacks and all 17 ordered native child links/active metadata
 preserved and independently verified by root. No supported race-safe Operator
 upload path was established; the conditional writer-boundary proposal and
 provider/account-proof gates remain unadopted and require later approval.
-Closing status-note review is pending.
+Closing status-note review of `eb72ae5` is complete: spec compliant / quality
+Approved, with no findings (`task-5f-notion-sync-review.md`). The
+[clarification request](#cloudflare-clarification-request-draft-2026-10-05)
+is a local unsent draft; no ticket or channel is selected, and no provider
+response is pending. This draft has not been synchronized to Notion.
 Public Worker mutations
 remain disabled; the local evidence is not an approved Cloudflare
 pilot, deployment, credential change, or every-push workflow.
@@ -749,5 +753,74 @@ to the four existing Notion destinations completed on 2026-10-05. PATCH and
 fresh complete GETs match exact original-plus-substitution whole pages, with
 no formatting exception; all 17 native child URLs/titles/order and active page
 metadata are preserved. Root independently verified all four pages and 17
-destinations. Closing status-note review remains pending. No new policy,
+destinations. Closing status-note review of `eb72ae5` is complete: spec
+compliant / quality Approved, with no findings (`task-5f-notion-sync-review.md`). No new policy,
 executor, provider proof or live gate is adopted.
+
+## Cloudflare clarification request draft (2026-10-05)
+
+**Status: Draft / not sent.** No support ticket or channel is selected; no
+provider response is pending. The copyable request below derives solely from
+the [accepted contract evidence](#provider-target-and-assets-contracts-2026-10-05)
+at `ea8620f` and its reviewed closing notes at `eb72ae5`. It has not been
+synchronized to Notion. Selecting a destination and approving the exact final
+message and sending require separate explicit approval. Any eventual reply
+needs independent interpretation and an approved prerequisite decision;
+clarification alone supplies no safety receipt or live proof. NO-GO, all four
+diagnostic blockers and public Worker zero-transport refusals remain.
+
+```text
+Subject: Clarification of Workers target identity, permissions and asset upload contracts
+
+We are evaluating temporary isolated stacks of three Workers and two D1
+databases per PR run in one Cloudflare account. Independent manual staging
+must remain in that account. Operator calls Identity through default HTTP and
+named RPC, and Core through RPC; Identity also calls Core through RPC. We need
+documented enforceable contracts before an executor or separately authorized
+inert pilot. No live account proof has been run.
+
+1. Target identity and observations: What supported API constrains each callee
+   service and named asset-session target to an immutable Worker identity
+   through rename, deletion/recreation, upload, use and teardown? Is there an
+   immutable-ID selector or atomic compare-and-swap/identity precondition?
+   Please specify default HTTP versus named RPC entrypoint/version resolution,
+   including version-override fallback, and how to observe the complete outgoing
+   graph, every retained version and active deployment percentages. Can those
+   observations form an atomic snapshot or detect concurrent changes?
+
+2. Permissions: What exact resource keys implement selected-Worker scopes, and
+   does scope identity survive rename or exclude a replacement with the same
+   name? Which Beta, legacy, assets-session, upload and redemption endpoints
+   enforce them? Editor permits rename, creation needs broad product authority,
+   and caller deploy rights do not themselves constrain bound resources. What
+   enforceable model excludes or mediates every alternate writer, automation,
+   legacy credential and administrator able to regrant access throughout the
+   lifecycle while preserving independent same-account manual staging?
+
+3. Asset hashes: Which upload-hash algorithm(s) are supported? Pinned Wrangler
+   4.112.0 uses BLAKE3 while the direct-upload guide uses SHA-256 over standard
+   padded base64 plus the final extension without its dot, retaining 32 hex
+   characters. For UTF-8 abc at index.html, the measured prefixes are
+   BLAKE3 81d5c47c184c7b210b5e633746d23ac2 and guide SHA-256
+   4e5fcedb4b913f68d70b401270be56e5. Neither is raw-byte SHA-256. Please specify
+   content verification, deduplication and same-hash/different-path alias
+   semantics; these local vectors establish no provider acceptance.
+
+4. Token lifecycle: How are the session bearer and final completion JWT scoped
+   to account, immutable Worker and asset manifest? Please specify documented
+   expiry, replay and revocation semantics, wrong-target/expired outcomes, and
+   cached, empty and concurrent-bucket completion behavior. Is final completion
+   distinct from intermediate acknowledgements without assuming a JWT per
+   bucket, single use or a future version pin?
+
+Please provide exact official documentation and API/precondition semantics for
+each answer. Clarification will guide a separately authorized inert pilot;
+it will not constitute proof of account enforcement or safe concurrent use.
+```
+
+Source references retained from the accepted 2026-10-05 investigation:
+
+- [Service bindings](https://developers.cloudflare.com/workers/runtime-apis/bindings/service-bindings/) and [HTTP version overrides](https://developers.cloudflare.com/workers/versions-and-deployments/version-overrides/).
+- [Beta version create](https://developers.cloudflare.com/api/resources/workers/subresources/beta/subresources/workers/subresources/versions/methods/create/), [version GET](https://developers.cloudflare.com/api/resources/workers/subresources/beta/subresources/workers/subresources/versions/methods/get/), [versions list](https://developers.cloudflare.com/api/resources/workers/subresources/beta/subresources/workers/subresources/versions/methods/list/) and [deployments list](https://developers.cloudflare.com/api/resources/workers/subresources/scripts/subresources/deployments/methods/list/).
+- [Workers roles](https://developers.cloudflare.com/workers/authorization/workers/), [authorization guidance](https://developers.cloudflare.com/workers/authorization/) and [account-token schema](https://developers.cloudflare.com/api/resources/accounts/subresources/tokens/methods/create/).
+- [Asset-session create](https://developers.cloudflare.com/api/resources/workers/subresources/scripts/subresources/assets/subresources/upload/methods/create/), [direct-upload guide](https://developers.cloudflare.com/workers/static-assets/direct-upload/) and [upload schema](https://developers.cloudflare.com/api/typescript/resources/workers/subresources/assets/subresources/upload/methods/create/).

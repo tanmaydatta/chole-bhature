@@ -36,7 +36,9 @@ findings were narrowly synchronized to the four existing Notion destinations:
 exact complete readbacks passed with all 17 ordered native children and active
 metadata preserved, no formatting exception. Root independently verified all
 four pages and 17 destinations. No supported race-safe Operator upload path or
-adopted prerequisite follows; closing status-note review is pending. The prior
+adopted prerequisite follows; closing status-note review of `eb72ae5` is complete
+(spec compliant / quality Approved, no findings;
+`task-5f-notion-sync-review.md`). The prior
 Task 5e review at `c42088f` is complete with no findings.
 
 ## Goal and success criteria
@@ -314,6 +316,13 @@ rename, create needs product Admin, legacy broad writers remain valid, and
 deploy permissions do not isolate bound resources. Scope identity durability,
 concrete policy syntax and all Beta/assets/JWT endpoint coverage need provider
 clarification and separate account proof.
+
+The [canonical clarification request](../../testing/per-pr-cloud-e2e.md#cloudflare-clarification-request-draft-2026-10-05)
+is a local draft dated 2026-10-05, not sent or synchronized to Notion. No ticket
+or channel is selected, and no provider response is pending. Selecting a
+destination, the exact final message and sending need separate explicit
+approval; interpreting any reply and adopting a prerequisite remain separate
+gates. The draft supplies no target, permission, hash or token guarantee.
 
 All dashboard/token/OAuth/build-hook/IaC/CI/cleanup/admin writers must be
 restricted or mediated, including ability to regrant access. Scoped deploy

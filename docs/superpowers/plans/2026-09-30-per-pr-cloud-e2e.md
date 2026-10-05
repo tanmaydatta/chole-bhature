@@ -44,7 +44,9 @@ synchronized to the four existing Notion destinations, with exact complete
 readbacks and all 17 native child URLs/titles/order and active metadata
 preserved, no formatting exception. Root independently verified all four pages
 and 17 destinations. No supported race-safe upload path, executor or permission
-amendment is established/adopted. Closing status-note review is pending.
+amendment is established/adopted. Closing status-note review of `eb72ae5` is
+complete: spec compliant / quality Approved, no findings
+(`task-5f-notion-sync-review.md`).
 
 **Verified local status (2026-10-02):** Tasks 1–3 are complete on
 `feat/per-pr-cloud-e2e` after scoped review: the baseline records 5 local
@@ -384,9 +386,31 @@ exception; historical text and all 17 native child URLs/titles/order and active
 metadata are preserved. Root independently verified all four pages and 17
 destinations. The M1 retained-version clarification is incorporated in this
 proposal and appended to the investigation report; final closing status-note
-review is pending. No provider task or policy is adopted. The full
+review of `eb72ae5` is complete: spec compliant / quality Approved, no findings
+(`task-5f-notion-sync-review.md`). No provider task or policy is adopted. The full
 pilot, `ci` mode, real HTTPS passkey/GAP suite, row disposal, cleanup and rollout
 retain their own future approvals and acceptance gates.
+
+### Cloudflare clarification draft and approval gates (2026-10-05)
+
+**Status: Draft / not sent.** The approved documentation-only slice prepares
+one [canonical request](../../testing/per-pr-cloud-e2e.md#cloudflare-clarification-request-draft-2026-10-05)
+from accepted Task 5f evidence. No ticket or channel is selected; no provider
+response is pending. This local draft has not been synchronized to Notion.
+It implements no future task, reordering, executor or permission amendment;
+NO-GO, all four blockers, zero-transport refusal and full Task 5/live gates remain.
+
+- [ ] **Destination and sending approval:** Select an exact channel/destination
+  and obtain separate explicit approval of the exact final message and sending
+  before any provider contact. Draft preparation authorizes neither discovery
+  nor sending.
+- [ ] **Provider reply and prerequisite approval:** Independently interpret any
+  eventual reply against official API/documentation semantics, record remaining
+  uncertainty, and obtain approval of the exact prerequisite decision and local
+  contract plan. A reply is clarification, not a safety receipt or account proof.
+- [ ] **Inert pilot approval:** Preserve the existing independent review and
+  separately authorized same-account two-stack pilot/security matrix gates.
+  No account action or implementation follows from this draft.
 
 ## Task 6: Isolated `ci` app mode and exact-D1 root bootstrap
 
