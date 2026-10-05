@@ -37,6 +37,11 @@ existing Notion destinations completed on 2026-10-05, with complete readbacks
 and all 17 index child URLs/titles/order and active metadata preserved. Root
 independently verified those pages/destinations; no provider/live gate was closed.
 
+The separately approved 2026-10-05 bounded provider-contract investigation is
+complete locally, with no supported race-safe upload path established. Its
+conditional proposal awaits independent review; no provider executor or
+permission amendment is adopted, and new findings are not yet mirrored.
+
 **Verified local status (2026-10-02):** Tasks 1–3 are complete on
 `feat/per-pr-cloud-e2e` after scoped review: the baseline records 5 local
 Playwright tests in 24.4 seconds, trusted run identity rejects ineligible or
@@ -300,17 +305,75 @@ schemas establish no provider response or JWT-claim contract.
 - [x] **GREEN (2026-10-05):** Only byte preparation and strict local synthetic validation were implemented. `node --test scripts/cloud-e2e/operator-candidate.test.mjs scripts/cloud-e2e/provision.test.mjs` passed 147/147 in 162.489708 ms; final `node --test scripts/cloud-e2e/*.test.mjs` passed 275/275, zero failures/skips, in 4,371.334125 ms, and focused three-script lint passed. Independent runs preserve exact byte/graph/completion records and reject swaps. The real `provisionMockStack` consumer still refuses Operator after both Access gates with zero Worker-version/session/asset-upload calls; either initial or final API/Operator Access failure stops earlier. Every valid diagnostic returns unsupported; there is no upload-positive case.
 - [x] **Final project verification (2026-10-05):** One guarded `pnpm test` passed 97 Vitest files / 1,395 tests plus nine Node tests, zero failures/skips, with Node 22.18.0/cached pnpm 11.14.0 and `pnpm_config_verify_deps_before_run=error`. Approved local-only loopback/Wrangler-log permission was used directly, with no failed sandbox attempt, dependency restoration or implicit install. The log-write span was 54,843.716309 ms. Only final per-run four-edge assertions/docs changed after the cloud regression; final focused tests passed 147/147 in 239.948875 ms and focused lint passed again, with no later production change. This is separate Task 5e evidence; no build/actual packaging/browser E2E rerun was required for the unchanged producer/apps.
 - [x] **Isolation review fix (2026-10-05):** Independent review found shared Product/Auth UUIDs in the two-run fixture. A test-only correction uses distinct literal D1 pairs and expected version maps; exact per-run D1/service/version associations and disjoint Worker/D1 sets are asserted. Individual inventory D1 ID, graph D1 ID/association-record and expected-version-map swaps reject in both directions with recipient keys/Worker observations retained. Both valid fixtures remain unsupported with all four blockers. Semantic RED was 146 pass / 16 assertion failures in 198.988917 ms before fixture correction; focused GREEN passed 162/162, zero failures/skips, in 186.830125 ms, with focused lint/diffcheck passing. Only candidate tests and matching docs changed; production/consumer-controller code is unchanged. Root's fresh cloud regression at `e0ce221` passed 290/290, zero failures/skips, in 4,651.59 ms; independent scoped re-review found the isolation issue addressed with no open findings. The earlier 275 cloud and original `50cbfa1` full-project results remain pre-fix evidence, with no repeated project/build/actual-packaging/browser run.
-- [x] **Diagnostic implementation acceptance:** Local self-review, diffcheck, document consistency/internal-link checks and the approved scope are complete. Diagnostics provide useful exact comparisons, cannot mint receipts or a transport request, and preserve public Worker zero-call refusals and the original substantive E2E inventory. Independent scoped re-review after the isolation fix and narrow synchronization to the four existing Notion destinations completed on 2026-10-05. Fresh complete whole-page readbacks matched only the authorized substitutions, allowing one explicitly reviewed single-newline design rendering; all 17 native index child URLs/titles/order and active metadata were preserved. Root independently verified all four pages and 17 destinations. No next provider task was adopted and no live gate was closed. Keep transport, deployed bindings, JWT signature/scope, atomic replacement behavior and URL protection explicitly unproved. The separate local status-note review remains pending; full Task 5/live acceptance is incomplete.
+- [x] **Diagnostic implementation acceptance:** Local self-review, diffcheck, document consistency/internal-link checks and the approved scope are complete. Diagnostics provide useful exact comparisons, cannot mint receipts or a transport request, and preserve public Worker zero-call refusals and the original substantive E2E inventory. Independent scoped re-review after the isolation fix and narrow synchronization to the four existing Notion destinations completed on 2026-10-05. Fresh complete whole-page readbacks matched only the authorized substitutions, allowing one explicitly reviewed single-newline design rendering; all 17 native index child URLs/titles/order and active metadata were preserved. Root independently verified all four pages and 17 destinations. No next provider task was adopted and no live gate was closed. Keep transport, deployed bindings, JWT signature/scope, atomic replacement behavior and URL protection explicitly unproved. The separate local status-note review of `c42088f` is complete with no findings; full Task 5/live acceptance is incomplete.
 
-**Next provider decision, not current execution:** Obtain a documented
-ID-constrained/stable target contract or propose an enforceable writer-boundary
-amendment for approval. Only then propose a narrow trusted-inert disposable
-account proof of replacement/rename timing, exact outgoing/version readbacks,
-asset session scope, wrong-target/expired completion rejection, upload-hash
-compatibility, byte-serving integrity and initial/alternate URL protection.
-Without that prerequisite, continue NO-GO; mocks and preflight GETs cannot
-substitute. The existing full pilot, `ci` mode, passkey suite and cleanup gates
-remain separate future work.
+### Bounded provider-contract investigation (2026-10-05)
+
+**Status:** Approved research/documentation slice complete locally, pending
+independent review. No supported race-safe Operator upload path was established;
+NO-GO and all four diagnostic blockers remain. The [evidence matrix](../../testing/per-pr-cloud-e2e.md#provider-target-and-assets-contracts-2026-10-05)
+separates documented shapes, pinned Wrangler 4.112.0 behavior, ten credential-free
+synthetic hash vectors, inference and account-only proof. No source/test/config,
+executor, build, authenticated call or new suite result was added. Current
+`e0ce221` 162 focused/290 cloud and original `50cbfa1` full-project provenance
+remain unchanged. This completes neither full Task 5 nor any live gate.
+
+The new prerequisite evidence is [per-Worker authorization](https://developers.cloudflare.com/workers/authorization/workers/):
+selected-existing-Worker scopes apply to people/groups/tokens, but Editor also
+renames, creation needs product Admin, and legacy broad permissions still work.
+The [account-token schema](https://developers.cloudflare.com/api/resources/accounts/subresources/tokens/methods/create/)
+does not establish concrete Worker resource keys, scope identity across rename/
+recreation or every Beta/assets endpoint's enforcement. [Binding deployment](https://developers.cloudflare.com/workers/authorization/#bindings)
+needs no separate permissions on bound resources. These facts support only
+the conditional [same-account broker proposal](../../testing/per-pr-cloud-e2e.md#conditional-same-account-writer-boundary),
+not automatic adoption or isolation. Existing manual staging writers and
+owner/admin bypass must be addressed; all create/rename/delete/recreate,
+version/deploy, legacy API, session/upload/redemption, automation and policy
+writers must be excluded or mediated throughout the lifecycle. No staging
+resource/data/secret or same-account requirement is weakened.
+
+**Next proposed files/change/test plan — requires a new approval:**
+
+1. Modify only this plan, the matching design spec and testing ledger to record
+   provider clarification and an explicit prerequisite decision. Obtain exact
+   supported target/precondition semantics, permission resource syntax/identity
+   durability and complete endpoint coverage; hash verification/dedup semantics;
+   session/final token target, expiry, replay and wrong-target/expired behavior;
+   and complete outgoing/version/deployment observation semantics. If choosing
+   a broker amendment, specify principal coverage, exclusive credential custody,
+   durable fenced serialization, failure/cancellation/failover and delayed name
+   release, plus preservation of manual staging and restricted break-glass.
+   Verify primary evidence, full-page consistency/internal links and diffcheck;
+   unchanged code requires no new suite. No provider contact or IAM change is
+   authorized by this proposal.
+2. Only after that documented decision is approved, propose creating
+   `scripts/cloud-e2e/provider-observations.mjs` and
+   `provider-observations.test.mjs`, with consuming refusal assertions in
+   `operator-candidate.test.mjs`/`provision.test.mjs` and these three docs.
+   Contract: normalize documented complete outgoing/version/deployment and
+   asset-lifecycle observations into ordinary data, never a receipt, token
+   output or transport request. Focused semantic tests must reject partial/
+   changing pagination, named-ID swaps, unknown/inactive versions, wrong
+   entrypoints/D1/ASSETS, cross-run records, expired/wrong-target completions
+   according to actual documented outcomes, and leaked tokens; distinguish
+   final completion from bucket acknowledgement and verify approved hash
+   vectors/aliases. Keep valid cases unsupported and zero-transport. This is a
+   conditional proposal, not work in this investigation; exact inputs depend
+   on provider clarification, and local negatives cannot prove provider scope.
+3. Separately approve a bounded trusted-inert same-account proof/harness and
+   authenticated authority only after independent prerequisite/implementation
+   review. Exercise both isolated stacks, denied alternate writers and admin
+   boundary, rename/replacement timing, exact outgoing/version readbacks,
+   hash/served bytes, cache/empty/multiple buckets, JWT swaps/expiry/replay and
+   Access-before-session/code with initial/alternate URL denial. No PR code,
+   manual staging change or automatic workflow belongs in that proof. Sampled
+   outcomes supplement the contract and enforcement, never replace them.
+
+Independent local review precedes narrow nonsecret synchronization to the four
+existing Notion destinations, with historical text and all 17 ordered native
+child links preserved and freshly verified. That phase is held. The full
+pilot, `ci` mode, real HTTPS passkey/GAP suite, row disposal, cleanup and rollout
+retain their own future approvals and acceptance gates.
 
 ## Task 6: Isolated `ci` app mode and exact-D1 root bootstrap
 

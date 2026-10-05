@@ -29,6 +29,11 @@ destinations were narrowly synchronized on 2026-10-05 with complete readbacks
 and all 17 index child URLs/titles/order and active metadata preserved. No
 provider/live gate was closed.
 
+The bounded provider-contract investigation on 2026-10-05 found no supported
+race-safe Operator upload path. Its new conclusions are local and await
+independent review; synchronization of those findings is held. The prior Task
+5e mirror/status-note review at `c42088f` is complete with no findings.
+
 ## Goal and success criteria
 
 Run the existing staging-class Core/API, Identity, and Operator Playwright suite on **every new push to a same-repository pull request**, against that push's own temporary Cloudflare stack. A newer push cancels the older run for that PR. Different PRs may run together without sharing Workers, databases, root sessions, Access credentials, fixtures, or cleanup ownership. Fork PRs do not receive cloud E2E. The manually operated staging stack and static demo remain untouched.
@@ -280,6 +285,47 @@ boundary, then narrow inert account proof of session/JWT/hash/routing behavior,
 is required before revisiting upload support. A same-account lock or a passing
 mock is not that boundary. Existing full Task 5, Task 6 `ci` configuration,
 HTTPS/passkey, teardown and rollout gates remain incomplete.
+
+### Provider prerequisite conclusion (2026-10-05)
+
+The [dated provider-contract findings](../../testing/per-pr-cloud-e2e.md#provider-target-and-assets-contracts-2026-10-05)
+retain all four blockers. Service binding names/entrypoints do not pin callee
+IDs or versions, RPC cannot use HTTP version overrides, complete version GETs
+and paginated deployment observations are state checks rather than atomic
+constraints, and asset sessions have no established stable-ID precondition.
+Pinned BLAKE3 and the documented SHA-256 example disagree; local vectors prove
+that difference only. The documented session bearer/final completion lifecycle
+does not guarantee a JWT per bucket or prove immutable target scope and
+wrong-target/expired redemption. No future Operator version UUID may be preseeded.
+
+Recommendation is provider clarification before an executor. A documented
+ID-constrained target/precondition remains preferable. Alternatively, an
+explicitly proposed same-account writer-boundary amendment would require a
+protected broker with exclusive effective CI lifecycle authority and durable
+fencing over create/upload/use/teardown, including rename/recreate and target
+deployment. Cloudflare's [new per-Worker scopes](https://developers.cloudflare.com/workers/authorization/workers/)
+are a possible enforcement component, not an adopted boundary: Editor permits
+rename, create needs product Admin, legacy broad writers remain valid, and
+deploy permissions do not isolate bound resources. Scope identity durability,
+concrete policy syntax and all Beta/assets/JWT endpoint coverage need provider
+clarification and separate account proof.
+
+All dashboard/token/OAuth/build-hook/IaC/CI/cleanup/admin writers must be
+restricted or mediated, including ability to regrant access. Scoped deploy
+tokens do not remove owner/admin bypass. The [conditional boundary](../../testing/per-pr-cloud-e2e.md#conditional-same-account-writer-boundary)
+preserves manual staging/demo in the same account; changing their operating
+permissions or routing manual operations through a broker needs explicit
+amendment approval. If bypass exclusion cannot coexist with that preservation,
+retain NO-GO. Naming conventions and account locks are insufficient.
+
+After a prerequisite is independently reviewed and approved, narrow trusted-inert
+two-stack account proof must separately check enforcement, outgoing graph,
+replacement/rename, hash/JWT compatibility, served bytes and all initial/alternate
+URL protection. Sampled results cannot prove universal race freedom. No
+account operation, source/test change, new suite count, transport authority or
+live acceptance follows from this documentation. Current `e0ce221` 162/290 and
+original `50cbfa1` project evidence retain their provenance. Full Task 5 and
+the later `ci`, HTTPS/passkey, full GAP, disposal and rollout gates remain open.
 
 ## Cloud-CI application mode and suite behavior
 

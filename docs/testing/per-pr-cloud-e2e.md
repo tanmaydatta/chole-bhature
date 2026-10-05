@@ -12,7 +12,10 @@ fixture; its test-only correction `e0ce221` passed independent scoped re-review
 with no open findings. The four existing Notion destinations were narrowly
 synchronized on 2026-10-05, with complete readbacks and all 17 index child
 URLs/titles/order and active metadata preserved. Full Task 5/live gates remain
-incomplete.
+incomplete. The bounded 2026-10-05 provider-contract investigation is complete
+locally; no supported race-safe Operator upload path was established. Its
+conditional writer-boundary proposal and separate provider/account-proof
+gates below await independent review and any later approval.
 Public Worker mutations
 remain disabled; the local evidence is not an approved Cloudflare
 pilot, deployment, credential change, or every-push workflow.
@@ -609,3 +612,129 @@ Code references:
 - Candidate comparisons: [operator-candidate.mjs](../../scripts/cloud-e2e/operator-candidate.mjs).
 - Byte/graph/completion/isolation cases: [operator-candidate.test.mjs](../../scripts/cloud-e2e/operator-candidate.test.mjs).
 - Real consumer refusal: [provision.test.mjs](../../scripts/cloud-e2e/provision.test.mjs).
+
+## Provider target and assets contracts (2026-10-05)
+
+**Conclusion: NO-GO remains.** Bounded public-contract research established no
+documented immutable service-target selection or stable asset-session
+precondition covering creation, upload, use and teardown. The new evidence is
+Cloudflare's [2026-09-15 per-Worker permission release](https://developers.cloudflare.com/changelog/post/2026-09-15-granular-worker-permissions/),
+which makes a conditional same-account writer-boundary proposal worth reviewing;
+it does not make named targets immutable. Recommendation: resolve the provider
+questions below before proposing any executor or account proof. No amendment
+or permission change is adopted. Task 5e's separate status-note review at
+`c42088f` is complete with no findings; full Task 5 remains incomplete.
+
+**Table — Dated provider evidence and remaining blockers**
+
+| Contract | Evidence checked 2026-10-05 | Finding and prerequisite |
+|---|---|---|
+| Service identity, entrypoint and version | Installed Wrangler 4.112.0 schema `services` and upload metadata use names/entrypoints. [Beta version create](https://developers.cloudflare.com/api/resources/workers/subresources/beta/subresources/workers/subresources/versions/methods/create/) exposes `service`, optional `entrypoint`/`environment`, without target ID/version preconditions. [Version overrides](https://developers.cloudflare.com/workers/versions-and-deployments/version-overrides/) apply to HTTP fetch only and can fall back to deployment percentages. | No immutable four-edge constraint established. ID-addressing the caller does not certify the named callee; copying an inherited binding from a caller version does not pin its target version. Provider clarification must cover resolution and rename/delete/recreate semantics. |
+| Outgoing graph completeness | [Beta versions list](https://developers.cloudflare.com/api/resources/workers/subresources/beta/subresources/workers/subresources/versions/methods/list/) paginates by page/per-page; [version GET](https://developers.cloudflare.com/api/resources/workers/subresources/beta/subresources/workers/subresources/versions/methods/get/) exposes outgoing bindings/config and optionally modules. [Deployment list](https://developers.cloudflare.com/api/resources/workers/subresources/scripts/subresources/deployments/methods/list/) is name-addressed; its first item is the active deployment and its entries carry version UUIDs/percentages. [Worker GET](https://developers.cloudflare.com/api/resources/workers/subresources/beta/subresources/workers/methods/get/) references are incoming dependents. | Proposed observations: exhaust unfiltered version/deployment pagination, reconcile totals/IDs and every exact full-version GET against the expected phase profile, then verify the active deployment selects the intended version at 100%. Missing bindings, extra/unknown versions, partial/changing pages or unresolved name/ID mapping refuse. No transactional snapshot or resolved callee-ID/version observation was established. |
+| Asset-session target | [Session create](https://developers.cloudflare.com/api/resources/workers/subresources/scripts/subresources/assets/subresources/upload/methods/create/) takes a script name and manifest, returns optional buckets/JWT; no Worker-ID field or identity precondition is documented. Pinned session request sends that name and manifest. | Beta ID substitution into `script_name`, a fresh GET, CLI `--strict`, or an advisory account lock cannot establish stable targeting. Clarify a documented primitive, or approve and prove an enforceable writer boundary for the whole lifecycle. |
+| Upload hash | Pinned implementation uses BLAKE3; the [direct-upload example](https://developers.cloudflare.com/workers/static-assets/direct-upload/) uses SHA-256. Both hash base64 text followed immediately by the last extension without its dot, then take the first 32 hex characters. The session schema calls the field a hash without choosing an algorithm. | Exact local vectors demonstrate different results, not provider acceptance. Clarify accepted algorithm(s), verification/deduplication and same-hash alias semantics; retain independent full raw-byte SHA-256 for artifact integrity. |
+| Completion scope and expiry | Direct-upload documentation describes a one-hour upload token, bucket requests using that bearer, a final token after all manifest files upload, and one-hour final validity; an empty bucket list returns completion directly. [Upload API schema](https://developers.cloudflare.com/api/typescript/resources/workers/subresources/assets/subresources/upload/methods/create/) returns optional `jwt`; Beta version JSON accepts `assets.jwt`. | No public claim schema, per-bucket completion/expiry guarantee, single-use rule, immutable Worker/account/manifest scope, or wrong-target/expired redemption status was established. Clarify these separately, then prove accepted/rejected outcomes with trusted inert assets. No future version UUID exists before version creation. |
+| Permission enforcement | [Workers roles](https://developers.cloudflare.com/workers/authorization/workers/) now cover members, groups and tokens at product or selected-existing-Worker scope. Editor includes rename; creation needs product Admin; legacy broad permissions still work. [Authorization guidance](https://developers.cloudflare.com/workers/authorization/) says deploying bindings does not require separate bound-resource permissions. [Account-token create schema](https://developers.cloudflare.com/api/resources/accounts/subresources/tokens/methods/create/) has policy effects, permission groups and resource maps, but no concrete Worker resource-key/rename/recreation contract. | Scoped deploy authority can reduce exposure, not constrain outgoing resources or exclude independent broad writers/admins. Clarify identity durability and coverage of Beta lifecycle/version/deployment, legacy/session and JWT upload/redemption endpoints; prove the actual account policy set separately. |
+
+The expected application graph is still Operator `IDENTITY_AUTH` to Identity's
+default HTTP fetch (entrypoint omitted), Operator `IDENTITY` to
+`IdentityOperatorService`, and Operator/Identity `CORE` to API
+`CoreOperatorService`. API `DB` targets Product D1, Identity `AUTH_DB` targets
+the distinct Auth D1, and Operator's resource graph has `ASSETS` and these
+services, no D1. Named RPC entrypoints cannot use HTTP overrides. A future complete
+observation must distinguish the inert bootstrap profile from the application
+profile, certify every allowed version and reject unexpected bindings; the
+current synthetic `complete:true` record is not such an adapter.
+
+Pinned hash semantics are UTF-8 bytes of standard padded base64 text plus the
+case-sensitive final extension; there is no separator, path, MIME type or
+lowercasing in that input. The 32-character lowercase hex prefix is 16 bytes,
+not the full digest or a raw-byte checksum. Local measurement using only the
+exact trusted installed function and `blake3-wasm` 2.1.5 gives, for UTF-8 `abc`
+at `index.html`, BLAKE3 `81d5c47c184c7b210b5e633746d23ac2` versus the documented
+SHA-256 example `4e5fcedb4b913f68d70b401270be56e5`; full raw-byte SHA-256 is
+`ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad`.
+Ten synthetic vectors also cover case, final extension, no extension, trailing
+dot, empty and binary bytes. Identical bytes/extensions produce identical
+labels even at different paths; path uniqueness is separate from hash
+uniqueness. No real Operator build or provider upload was repeated.
+
+The provider lifecycle has one session/upload bearer and final completion,
+not a guaranteed distinct JWT for every bucket. Intermediate uploads may lack
+a JWT; pinned Wrangler uploads buckets concurrently and retains a returned
+completion token after all requests finish. Its optional single-file mode
+reads undocumented routing hints from the token; those implementation details
+are not a public claim/scope contract. The five-minute local context and
+synthetic session IDs, snapshot digests, ordered completion records and expiry
+fields remain diagnostic policy only. No token was acquired, parsed or logged.
+
+### Conditional same-account writer boundary
+
+Two prerequisites remain alternatives: a provider-documented immutable target
+or atomic identity precondition, or a separately approved writer-boundary
+amendment. The former would preserve independent account writers if it covers
+all four services and the asset lifecycle; no such primitive was established.
+The latter could use a protected credential broker with exclusive effective
+authority over CI Worker names/IDs and their versions/deployments for the
+entire run. It would require provider-enforced removal/restriction of every
+other effective writer, plus broker-side durable reservations and serialized
+checked operations. Neither a process lock nor a convention provides that
+enforcement.
+
+The proposed boundary must cover dashboard members/groups, legacy/global keys,
+OAuth/user/account tokens, Wrangler and direct legacy/Beta APIs, Workers Builds,
+deploy hooks, Terraform/other CI, cleanup/janitor and administrative permission
+or credential changes. The broker alone would create/delete CI Workers,
+reject rename/recreate and independent target deployments while live, keep
+names reserved until outstanding asset tokens expire or are verifiably
+revoked, and fence/drain in-flight work before failover or teardown. No new
+per-Worker grant can cover the pre-create interval; broad create authority
+still needs containment. All target versions stay fixed during use. Unknown
+writers, changed policy, foreign references or lost exclusivity quarantine the
+run; no force deletion.
+
+Manual staging/demo remain in this same account with their resources, data,
+secrets and independent manual purpose preserved. Narrow permissions could
+retain ordinary manual staging deployment, but Editor also allows rename;
+its name-collision and permission-scope behavior needs a documented guarantee
+or mediation of the affecting paths. Requiring staging operations to pass
+through a broker would itself be an unapproved operational amendment. Existing
+broad owners/admins who can bypass the broker or regrant access are not excluded
+by scoped CI tokens. Any proposed restricted/offline break-glass authority must
+stop/drain CI before activation; a promise to coordinate is insufficient. If
+enforcement cannot be achieved while preserving manual staging, this option
+fails. Broker compromise, permission propagation, provider consistency,
+credential leakage and same-account quotas remain residual risks even after
+approval; no move to another account is proposed.
+
+### Separate next gates
+
+Recommendation is provider clarification first, covering immutable target or
+scope identity across rename/recreation, service version resolution, complete
+outgoing/deployment observations, all relevant endpoint authorization, hash
+acceptance and JWT wrong-target/expiry/replay behavior. Then obtain approval of
+the exact prerequisite/amendment and its local focused contract plan. Only
+after independent review and separate authority may a narrow same-account
+trusted-inert two-stack proof exercise replacements/renames, denied alternate
+writers, exact bindings/versions, token swaps/expiry, cached/empty/multiple
+buckets, both hash candidates and served bytes. Access must precede all code
+or sessions; initial/subsequent route and alternate-URL denial remain gates.
+Sampling those outcomes cannot establish universal race freedom by itself.
+The later `ci` application, real HTTPS passkey/full GAP suite, zero-row disposal,
+cleanup and every-push rollout remain separate and incomplete.
+
+Evidence references: installed `apps/operator-web/node_modules/wrangler/`
+`package.json:3`, `config-schema.json:930–970`,
+`wrangler-dist/cli.js:140360–140382` (service metadata), `143454–143468` and
+`143662–143747` (`--strict` confirmation/preflight, not provider CAS),
+`150019–150024` (hash), `139352–139368` (optional routing hints),
+`150047–150081` (session/empty buckets), `150120–150181` (upload),
+`150233–150257` (completion), `150309–150311` (manifest).
+Public pages above were checked on 2026-10-05; direct-upload, version-overrides
+and roles pages date their updates 2026-08-10, 2026-07-03 and 2026-09-15.
+The scoped investigation changes docs only and creates no new suite result:
+current **162/162** focused and **290/290** cloud evidence retain `e0ce221`
+provenance, with original `50cbfa1` full-project evidence unchanged. Public
+Worker writes stay zero-transport refusals, and diagnostics keep all four
+blockers. Notion synchronization of these new findings is held for independent
+local review.
