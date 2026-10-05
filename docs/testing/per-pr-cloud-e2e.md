@@ -7,8 +7,9 @@ complete. The separately approved 2026-10-02 raw-module packaging correction
 and its metadata-based review fix are validated locally and independently
 reviewed. The existing Notion mirrors were narrowly synchronized on 2026-10-02.
 The separately approved 2026-10-05 Task 5e candidate diagnostics are implemented
-and validated locally; independent review and narrow mirror synchronization
-remain pending.
+and validated locally. Initial review found shared D1 IDs in the isolation
+fixture; its test-only correction is verified locally, with independent scoped
+re-review and narrow mirror synchronization pending.
 Public Worker mutations
 remain disabled; the local evidence is not an approved Cloudflare
 pilot, deployment, credential change, or every-push workflow.
@@ -339,8 +340,9 @@ The mock-only packaging/candidate-validation
 slice is specified in the [implementation plan](../superpowers/plans/2026-09-30-per-pr-cloud-e2e.md#proposed-next-mock-only-operator-slice-2026-10-02).
 Its first packaging deliverable was approved on 2026-10-02 and implemented
 locally; the second candidate diagnostic deliverable was separately approved
-on 2026-10-05 and is now implemented with local verification. Independent
-review and its narrow mirror synchronization remain pending. The historical
+on 2026-10-05 and is now implemented with local verification. Independent scoped
+re-review after the isolation-fixture correction and its narrow mirror
+synchronization remain pending. The historical
 Task 5a/5b **83/83** evidence and live NO-GO remain unchanged.
 After independent review, this feasibility summary and the unadopted
 packaging-first proposal were synchronized to the existing Notion design/plan
@@ -464,8 +466,8 @@ contracts above were checked on **2026-10-02**; pinned source references use
 
 Exact local byte and synthetic-record comparisons now return only
 `unsupported`, retaining all four live blockers. Task 5e was separately
-approved for this six-file diagnostic slice. Independent review and the
-existing-page mirror synchronization remain pending; the reviewed historical
+approved for this six-file diagnostic slice. Independent scoped re-review and
+the existing-page mirror synchronization remain pending; the reviewed historical
 83/83 controller and 139/139 packaging results retain their dated provenance.
 
 The preparation input is the unchanged verifier result
@@ -560,6 +562,21 @@ E2E assertion inventory remains unchanged.
 The cloud run preceded only the final per-run four-edge assertion and
 documentation edits; the final focused rerun passed 147/147 in 239.948875 ms,
 with focused lint passing again. No production code changed after the cloud run.
+
+Task 5e review fix (2026-10-05): independent review found that the two-run
+acceptance fixture reused Product/Auth D1 UUIDs. The test-only correction now
+uses disjoint literal Product/Auth pairs and distinct expected version maps,
+asserts each run's exact D1/service/version associations and disjoint Worker/D1
+sets, and rejects individual inventory D1 IDs, graph D1 IDs/association records
+and expected-version maps from the other run in both directions while retaining
+the recipient's keys and Worker observations. Both corrected valid fixtures
+still return unsupported with all four blockers. Semantic RED was 146 passes /
+16 assertion failures in 198.988917 ms before fixture correction; focused GREEN
+is **162/162**, zero failures/skips, in **186.830125 ms**, with focused lint and
+diffcheck passing. Production and consumer-controller code are unchanged.
+The 275-test cloud result and full-project run below remain pre-fix evidence;
+fresh cloud regression, independent scoped re-review and mirror synchronization
+remain pending.
 
 The single final 2026-10-05 project `pnpm test` passed **97 Vitest files /
 1,395 tests plus nine Node tests**, with zero failures/skips. Its log-write

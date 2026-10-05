@@ -22,8 +22,9 @@ with historical 83 and prior `66c0298` full-project provenance retained.
 Fresh complete readbacks passed; all 17 index child links/order were preserved
 and resolved. This synchronization closes no provider/live gate.
 Task 5e's second candidate diagnostic deliverable was separately approved on
-2026-10-05 and is implemented with local verification. Independent review and
-its narrow mirror synchronization remain pending.
+2026-10-05 and is implemented with local verification. Initial review found
+shared D1 isolation-fixture IDs; the test-only correction is locally verified,
+with independent scoped re-review and narrow mirror synchronization pending.
 
 ## Goal and success criteria
 
@@ -248,10 +249,19 @@ with zero failures/skips and focused lint passing. These new counts are
 separate from the historical 83/139 results and dated `66c0298` project test.
 Only final per-run edge assertions/docs changed after the cloud run; final
 focused tests passed 147/147 in 239.948875 ms and focused lint passed again.
+The subsequent 2026-10-05 review fix gives the two-run fixture distinct literal
+Product/Auth D1 pairs and expected version maps, asserts exact per-run
+associations/disjoint Worker and D1 IDs, and rejects individual D1 record/ID
+and version-map swaps with recipient keys/observations retained. Both valid
+fixtures remain unsupported with all four blockers. Semantic RED was 146 pass /
+16 assertion failures; focused GREEN is 162/162 (186.830125 ms), with lint and
+diffcheck passing. Production is unchanged; the 275-test cloud/full-project
+results retain their pre-fix provenance. Fresh cloud regression and independent
+scoped re-review remain pending, with mirror synchronization held.
 The single guarded 2026-10-05 project test passed 97 Vitest files / 1,395 tests
 plus nine Node tests with zero failures/skips, using approved local-only
 loopback/log permission and no dependency restoration or implicit install.
-Independent review and narrow mirror synchronization remain pending. The
+Independent scoped re-review and narrow mirror synchronization remain pending. The
 [bounded plan](../plans/2026-09-30-per-pr-cloud-e2e.md#proposed-next-mock-only-operator-slice-2026-10-02)
 still grants no upload authority. Transport, deployed bindings, JWT
 signature/scope, atomic replacement behavior and URL protection remain unproved.

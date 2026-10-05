@@ -27,9 +27,13 @@ function fixture(runKey = key, suffix = '') {
   }).map(([name, value]) => [`/synthetic/run-${runKey.run_id}/${name}`, value]));
   const verifiedBundle = { key: runKey, buildSha: runKey.head_sha, run: { run_id: runKey.run_id, attempt: runKey.attempt }, files: [...bytes].map(([path, value]) => ({ path, size: value.length, sha256: sha(value) })) };
   const ids = runKey.run_id === 99 ? { api: 'a'.repeat(32), identity: 'b'.repeat(32), operator: 'c'.repeat(32) } : { api: 'd'.repeat(32), identity: 'e'.repeat(32), operator: 'f'.repeat(32) };
-  const d1 = { product: '11111111-1111-4111-8111-111111111111', auth: '22222222-2222-4222-8222-222222222222' };
+  const d1 = runKey.run_id === 99
+    ? { product: '11111111-1111-4111-8111-111111111111', auth: '22222222-2222-4222-8222-222222222222' }
+    : { product: '66666666-6666-4666-8666-666666666666', auth: '77777777-7777-4777-8777-777777777777' };
   const expectedInventory = { key: runKey, names, cloudflare: { accountId: 'account-1', workerIds: {}, d1Ids: d1, accessAppIds: {}, tokenId: null }, betaWorkerIds: ids, stage: 'creating', createdAt: startedAt, updatedAt: startedAt };
-  const expectedVersions = { api: '33333333-3333-4333-8333-333333333333', identity: '44444444-4444-4444-8444-444444444444', operator: '55555555-5555-4555-8555-555555555555' };
+  const expectedVersions = runKey.run_id === 99
+    ? { api: '33333333-3333-4333-8333-333333333333', identity: '44444444-4444-4444-8444-444444444444', operator: '55555555-5555-4555-8555-555555555555' }
+    : { api: '88888888-8888-4888-8888-888888888888', identity: '99999999-9999-4999-8999-999999999999', operator: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' };
   const core = { name: 'CORE', type: 'service', workerId: ids.api, service: names.api, versionId: expectedVersions.api, entrypoint: 'CoreOperatorService' };
   const bindings = {
     api: [{ name: 'DB', type: 'd1', databaseId: d1.product }],
@@ -185,16 +189,65 @@ test('independent runs retain independent byte/graph/completion records', async 
     assert.deepEqual(f.graph.workers.map(worker => [worker.role, worker.name, worker.workerId]), ['api', 'identity', 'operator'].map(role => [role, resourceNames(f.expectedKey)[role], f.expectedInventory.betaWorkerIds[role]]));
     const names = resourceNames(f.expectedKey);
     const [apiId, identityId] = suffix === 'first' ? ['a'.repeat(32), 'b'.repeat(32)] : ['d'.repeat(32), 'e'.repeat(32)];
+    const [apiVersion, identityVersion] = suffix === 'first'
+      ? ['33333333-3333-4333-8333-333333333333', '44444444-4444-4444-8444-444444444444']
+      : ['88888888-8888-4888-8888-888888888888', '99999999-9999-4999-8999-999999999999'];
     assert.deepEqual(f.graph.workers.flatMap(worker => worker.bindings.filter(binding => binding.type === 'service').map(binding => [worker.role, binding.name, binding.service, binding.workerId, binding.versionId, binding.entrypoint])), [
-      ['identity', 'CORE', names.api, apiId, '33333333-3333-4333-8333-333333333333', 'CoreOperatorService'],
-      ['operator', 'IDENTITY_AUTH', names.identity, identityId, '44444444-4444-4444-8444-444444444444', undefined],
-      ['operator', 'IDENTITY', names.identity, identityId, '44444444-4444-4444-8444-444444444444', 'IdentityOperatorService'],
-      ['operator', 'CORE', names.api, apiId, '33333333-3333-4333-8333-333333333333', 'CoreOperatorService'],
+      ['identity', 'CORE', names.api, apiId, apiVersion, 'CoreOperatorService'],
+      ['operator', 'IDENTITY_AUTH', names.identity, identityId, identityVersion, undefined],
+      ['operator', 'IDENTITY', names.identity, identityId, identityVersion, 'IdentityOperatorService'],
+      ['operator', 'CORE', names.api, apiId, apiVersion, 'CoreOperatorService'],
     ]);
-    assert.deepEqual(assessOperatorMockUpload(f).assetPaths, ['/assets/x.js', '/index.html']);
+    assert.deepEqual(assessOperatorMockUpload(f), { status: 'unsupported', blockers, graphMatches: true, assetPaths: ['/assets/x.js', '/index.html'], moduleSha256: sha(Buffer.from(`export default {fetch(){return new Response("${suffix}")}};\n`)) });
   }
   for (const field of ['candidate', 'expectedInventory', 'graph', 'assetsLifecycle']) {
     assert.throws(() => assessOperatorMockUpload({ ...a, [field]: b[field] }), /Operator diagnostic/);
     assert.throws(() => assessOperatorMockUpload({ ...b, [field]: a[field] }), /Operator diagnostic/);
   }
 });
+
+test('independent runs have exact disjoint Worker/D1 identities and version observations', async () => {
+  const a = await prepared(fixture(key, 'first'));
+  const b = await prepared(fixture({ ...key, run_id: 100 }, 'second'));
+  assert.deepEqual(a.expectedInventory.cloudflare.d1Ids, { product: '11111111-1111-4111-8111-111111111111', auth: '22222222-2222-4222-8222-222222222222' });
+  assert.deepEqual(b.expectedInventory.cloudflare.d1Ids, { product: '66666666-6666-4666-8666-666666666666', auth: '77777777-7777-4777-8777-777777777777' });
+  assert.deepEqual(a.graph.workers.flatMap(worker => worker.bindings.filter(binding => binding.type === 'd1').map(binding => [worker.role, binding.name, binding.databaseId])), [
+    ['api', 'DB', '11111111-1111-4111-8111-111111111111'], ['identity', 'AUTH_DB', '22222222-2222-4222-8222-222222222222'],
+  ]);
+  assert.deepEqual(b.graph.workers.flatMap(worker => worker.bindings.filter(binding => binding.type === 'd1').map(binding => [worker.role, binding.name, binding.databaseId])), [
+    ['api', 'DB', '66666666-6666-4666-8666-666666666666'], ['identity', 'AUTH_DB', '77777777-7777-4777-8777-777777777777'],
+  ]);
+  assert.deepEqual(a.expectedVersions, { api: '33333333-3333-4333-8333-333333333333', identity: '44444444-4444-4444-8444-444444444444', operator: '55555555-5555-4555-8555-555555555555' });
+  assert.deepEqual(b.expectedVersions, { api: '88888888-8888-4888-8888-888888888888', identity: '99999999-9999-4999-8999-999999999999', operator: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' });
+  assert.deepEqual(a.graph.workers.map(worker => [worker.role, worker.versionId]), [['api', '33333333-3333-4333-8333-333333333333'], ['identity', '44444444-4444-4444-8444-444444444444'], ['operator', '55555555-5555-4555-8555-555555555555']]);
+  assert.deepEqual(b.graph.workers.map(worker => [worker.role, worker.versionId]), [['api', '88888888-8888-4888-8888-888888888888'], ['identity', '99999999-9999-4999-8999-999999999999'], ['operator', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa']]);
+  for (const [left, right] of [[a.expectedInventory.betaWorkerIds, b.expectedInventory.betaWorkerIds], [a.expectedInventory.cloudflare.d1Ids, b.expectedInventory.cloudflare.d1Ids], [a.expectedVersions, b.expectedVersions]]) {
+    assert.deepEqual(Object.values(left).filter(id => Object.values(right).includes(id)), []);
+  }
+});
+
+for (const recipientRun of [99, 100]) {
+  for (const [role, workerIndex] of [['product', 0], ['auth', 1]]) for (const kind of ['inventory ID', 'graph ID', 'graph association']) {
+    test(`run ${recipientRun} rejects foreign ${role} ${kind} while retaining its key and graph identity`, () => {
+      const recipient = fixture({ ...key, run_id: recipientRun });
+      const donor = fixture({ ...key, run_id: recipientRun === 99 ? 100 : 99 });
+      const before = structuredClone({ candidate: recipient.candidate, expectedInventory: recipient.expectedInventory, graph: recipient.graph });
+      if (kind === 'inventory ID') recipient.expectedInventory.cloudflare.d1Ids[role] = donor.expectedInventory.cloudflare.d1Ids[role];
+      else if (kind === 'graph ID') recipient.graph.workers[workerIndex].bindings[0].databaseId = donor.graph.workers[workerIndex].bindings[0].databaseId;
+      else recipient.graph.workers[workerIndex].bindings[0] = structuredClone(donor.graph.workers[workerIndex].bindings[0]);
+      assert.deepEqual(recipient.candidate.key, before.candidate.key);
+      assert.deepEqual(recipient.expectedInventory.key, before.expectedInventory.key);
+      assert.deepEqual(recipient.graph.key, before.graph.key);
+      assert.deepEqual(recipient.graph.workers.map(({ bindings: _bindings, ...identity }) => identity), before.graph.workers.map(({ bindings: _bindings, ...identity }) => identity));
+      assert.throws(() => assessOperatorMockUpload(recipient), /Operator diagnostic/);
+    });
+  }
+  test(`run ${recipientRun} rejects the other run's expected version map while retaining its key and observations`, () => {
+    const recipient = fixture({ ...key, run_id: recipientRun });
+    const donor = fixture({ ...key, run_id: recipientRun === 99 ? 100 : 99 });
+    const before = structuredClone(recipient.graph);
+    recipient.expectedVersions = structuredClone(donor.expectedVersions);
+    assert.deepEqual(recipient.graph, before);
+    assert.throws(() => assessOperatorMockUpload(recipient), /Operator diagnostic/);
+  });
+}

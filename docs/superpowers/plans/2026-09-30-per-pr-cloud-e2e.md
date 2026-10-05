@@ -30,8 +30,9 @@ retaining historical 83 and prior `66c0298` full-project provenance. Fresh
 complete readbacks passed; all 17 index child links/order were preserved and
 resolved. No provider/live gate was closed.
 The second candidate diagnostic deliverable was separately approved on
-2026-10-05 and is implemented with local Task 5e verification. Independent
-review and narrow mirror synchronization remain pending.
+2026-10-05 and is implemented with local Task 5e verification. Initial review
+found shared D1 fixture IDs; its test-only correction is locally verified,
+with independent scoped re-review and narrow mirror synchronization pending.
 
 **Verified local status (2026-10-02):** Tasks 1–3 are complete on
 `feat/per-pr-cloud-e2e` after scoped review: the baseline records 5 local
@@ -169,7 +170,7 @@ deliverable and its metadata-based review fix were approved on 2026-10-02 and
 are implemented locally and independently reviewed; their narrow mirror sync
 is complete. The second diagnostic deliverable received its own bounded
 six-file approval/dispatch on 2026-10-05 and is now implemented with local
-verification; **independent review and narrow mirror synchronization remain
+verification; **independent scoped re-review and narrow mirror synchronization remain
 pending**. The
 [evidence ledger](../../testing/per-pr-cloud-e2e.md#operator-upload-feasibility-2026-10-02)
 records the historical multipart mismatch, corrected by this first deliverable,
@@ -295,7 +296,8 @@ schemas establish no provider response or JWT-claim contract.
 - [x] **RED (2026-10-05):** The focused command recorded missing diagnostic exports separately (11 passes/one failed file), then semantic RED (11 passes/95 assertion failures) for exact byte/profile/graph output and malformed or mismatched evidence. Table-driven cases cover run/account/role/ID/name/version/entrypoint and every service edge, staging/sibling/unknown targets, missing completeness/version/Beta IDs and legacy fallback, clock/expiry/order, post-verification and post-preparation byte/path/hash changes, checksum-valid multipart modules, opaque token presence, session/manifest correlation and missing/duplicate/unknown bucket records. Sparse arrays produced an additional 146-pass/one-failure semantic RED before dense-record validation. No test claims cryptographic rejection of a valid wrong-target provider JWT.
 - [x] **GREEN (2026-10-05):** Only byte preparation and strict local synthetic validation were implemented. `node --test scripts/cloud-e2e/operator-candidate.test.mjs scripts/cloud-e2e/provision.test.mjs` passed 147/147 in 162.489708 ms; final `node --test scripts/cloud-e2e/*.test.mjs` passed 275/275, zero failures/skips, in 4,371.334125 ms, and focused three-script lint passed. Independent runs preserve exact byte/graph/completion records and reject swaps. The real `provisionMockStack` consumer still refuses Operator after both Access gates with zero Worker-version/session/asset-upload calls; either initial or final API/Operator Access failure stops earlier. Every valid diagnostic returns unsupported; there is no upload-positive case.
 - [x] **Final project verification (2026-10-05):** One guarded `pnpm test` passed 97 Vitest files / 1,395 tests plus nine Node tests, zero failures/skips, with Node 22.18.0/cached pnpm 11.14.0 and `pnpm_config_verify_deps_before_run=error`. Approved local-only loopback/Wrangler-log permission was used directly, with no failed sandbox attempt, dependency restoration or implicit install. The log-write span was 54,843.716309 ms. Only final per-run four-edge assertions/docs changed after the cloud regression; final focused tests passed 147/147 in 239.948875 ms and focused lint passed again, with no later production change. This is separate Task 5e evidence; no build/actual packaging/browser E2E rerun was required for the unchanged producer/apps.
-- [ ] **Acceptance/review:** Local self-review, diffcheck, document consistency/internal-link checks and the six-file scope are complete. Diagnostics provide useful exact comparisons, cannot mint receipts or a transport request, and preserve public Worker zero-call refusals and the original substantive E2E inventory. Independent review and narrow mirror synchronization remain pending. Keep transport, deployed bindings, JWT signature/scope, atomic replacement behavior and URL protection explicitly unproved.
+- [x] **Isolation review fix (2026-10-05):** Independent review found shared Product/Auth UUIDs in the two-run fixture. A test-only correction uses distinct literal D1 pairs and expected version maps; exact per-run D1/service/version associations and disjoint Worker/D1 sets are asserted. Individual inventory D1 ID, graph D1 ID/association-record and expected-version-map swaps reject in both directions with recipient keys/Worker observations retained. Both valid fixtures remain unsupported with all four blockers. Semantic RED was 146 pass / 16 assertion failures in 198.988917 ms before fixture correction; focused GREEN passed 162/162, zero failures/skips, in 186.830125 ms, with focused lint/diffcheck passing. Only candidate tests and matching docs changed; production/consumer-controller code is unchanged. Fresh cloud regression and scoped re-review remain pending; the earlier 275 cloud and full-project results remain pre-fix evidence, with no repeated project/build/actual-packaging/browser run.
+- [ ] **Acceptance/review:** Local self-review, diffcheck, document consistency/internal-link checks and the approved scope are complete. Diagnostics provide useful exact comparisons, cannot mint receipts or a transport request, and preserve public Worker zero-call refusals and the original substantive E2E inventory. Independent scoped re-review after the isolation fix and narrow mirror synchronization remain pending. Keep transport, deployed bindings, JWT signature/scope, atomic replacement behavior and URL protection explicitly unproved.
 
 **Next provider decision, not current execution:** Obtain a documented
 ID-constrained/stable target contract or propose an enforceable writer-boundary
