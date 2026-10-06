@@ -33,7 +33,9 @@ pilot, deployment, credential change, or every-push workflow.
 
 **Status:** Task 6a is implemented and locally verified. Initial independent
 review required CI selection-cookie parity and shared Identity service
-admission; the approved bounded fix is locally implemented, awaiting re-review.
+admission; the approved bounded fix at `736e213` passed independent fix-only
+re-review with all findings addressed and no new Critical/Important breakage
+(`task-6a-fix1-review.md`).
 The bounded change admits trusted controller-generated CI
 application configuration. Task 6b exact-D1 bootstrap/deployed-graph
 certification, full Task 5, cloud browser/passkey acceptance and Tasks 7–10
@@ -129,7 +131,9 @@ service-association guard was duplicated across three services. The approved
 fix gives CI and staging identical browser cookie restrictions while retaining
 local behavior, and consolidates Identity's contract without caching admission
 or changing each operation's local/staging/CI rules. Independent fix-only
-re-review is pending; current changes are not synchronized to Notion.
+re-review of `736e213` is complete: I1/I2/M1 addressed, M2 documented/deferred,
+no new breakage (`task-6a-fix1-review.md`). Current changes are not synchronized
+to Notion; exact-content/destination authorization remains pending.
 
 The CI BFF regression performs root merchant selection, asserts the literal
 cookie name/attributes and uses the signed returned cookie on a protected

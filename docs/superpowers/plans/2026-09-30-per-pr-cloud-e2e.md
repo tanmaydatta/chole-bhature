@@ -425,7 +425,9 @@ requirements remain below, divided by responsibility.
 
 **Status:** Implemented locally. Initial independent review required CI
 selection-cookie parity and shared Identity service admission; the separately
-approved bounded fix is locally implemented, awaiting fix-only re-review.
+approved bounded fix at `736e213` passed independent fix-only re-review with
+all findings addressed and no new Critical/Important breakage
+(`task-6a-fix1-review.md`). Existing warnings remain documented/deferred.
 Current changes have not been synchronized to Notion; the clarification draft
 remains unsent. Verification and limitations are recorded in the
 [application admission ledger](../../testing/per-pr-cloud-e2e.md#guarded-application-ci-admission-2026-10-06).
@@ -465,7 +467,8 @@ retains all original failure/retry evidence and the unchanged deferred gates.
 - [x] Implement the three validators and guarded CI fixture/session/provisioning/capability/inspection/disposal admission. Preserve root/proof/tenant authority, run ownership, immutable 900000 ms fixture expiry and the Product-then-Auth cleanup saga.
 - [x] Exercise real local Worker/D1 persistence, signed sessions, proof rejection, owned-member authorization, local email capture, disposal audit/zero rows, retained concurrent fixtures and idempotent retry. Separate Core/runtime bindings use a hand-checked interface fake only where the local cross-app binding is unavailable.
 - [x] Run focused iteration, three package suites, one final root `pnpm test`, build, lint and local Chromium Playwright; record actual final counts, warnings and limitations in the ledger before committing explicit approved paths.
-- [ ] Complete independent fix-only re-review after the bounded cookie/shared-guard correction; separately authorize exact-content/destination synchronization. Neither step closes provider or live acceptance gates.
+- [x] Complete independent fix-only re-review after the bounded cookie/shared-guard correction at `736e213` (`task-6a-fix1-review.md`); all findings addressed, no new Critical/Important breakage. This closes no provider or live acceptance gate.
+- [ ] Separately authorize exact-content/destination Notion synchronization; current changes remain unsynchronized. Publication closes no provider or live acceptance gate.
 
 ### Task 6b: Deferred exact-D1 bootstrap and controller certification
 

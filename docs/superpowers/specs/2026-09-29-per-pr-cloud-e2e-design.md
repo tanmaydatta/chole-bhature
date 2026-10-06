@@ -361,8 +361,12 @@ Task 6 completion. Task 6b retains exact-D1 root bootstrap and controller
 configuration/deployed-graph verification; Tasks 5 and 7–10 retain their
 provider, HTTPS browser, teardown and rollout gates. Independent root review
 initially required CI selection-cookie parity and shared Identity admission.
-The approved bounded fix is locally implemented, awaiting fix-only re-review;
-these changes remain local only and the clarification draft remains unsent.
+The approved bounded fix at `736e213` passed independent fix-only re-review:
+all findings addressed, no new Critical/Important breakage
+(`task-6a-fix1-review.md`). Existing warnings remain documented/deferred.
+These changes remain local only and unsynchronized to Notion;
+exact-content/destination authorization remains pending and the clarification
+draft remains unsent.
 
 CI root merchant selection now uses the staging HTTPS cookie restrictions:
 Secure, HttpOnly, SameSite=Strict, root path and a host-only cookie prefix,
