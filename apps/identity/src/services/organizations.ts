@@ -1,3 +1,6 @@
+import { assertCiStack } from '../ci-stack.js';
+import type { IdentityWorkerEnv } from '../staging-secrets.js';
+
 import {
   CoreMerchantActivationResultSchema,
   CoreMerchantProvisionResultSchema,
@@ -27,6 +30,7 @@ export interface CoreMerchantProvisioningClient {
 
 export interface OrganizationServiceOptions {
   database: D1Database;
+  ciEnv?: IdentityWorkerEnv | undefined;
   core?: CoreMerchantProvisioningClient;
   appEnv?: string | undefined;
   localTestMode?: string | undefined;
@@ -224,6 +228,19 @@ function membershipView(target: MembershipTarget, role = target.role, status = t
   } satisfies MembershipView;
 }
 
+function assertEnvironment(options: OrganizationServiceOptions): void {
+  if (options.ciEnv) {
+    assertCiStack(options.ciEnv);
+    if (options.ciEnv.APP_ENV !== options.appEnv
+      || options.ciEnv.AUTH_DB !== options.database
+      || options.ciEnv.E2E_LOCAL_TEST_MODE !== options.localTestMode) {
+      throw new Error('Invalid CI stack: service configuration mismatch');
+    }
+  } else if (options.appEnv === 'ci') {
+    throw new Error('Invalid CI stack: full service environment is required');
+  }
+}
+
 export function createOrganizationService(options: OrganizationServiceOptions) {
   const database = options.database;
 
@@ -232,6 +249,7 @@ export function createOrganizationService(options: OrganizationServiceOptions) {
       sessionId: string,
       selectedMerchantId?: string,
     ): Promise<OperatorPrincipal | null> {
+      assertEnvironment(options);
       const now = Date.now();
       const root = await database.prepare(`
         SELECT session.id AS sessionId, session.userId AS userId,
@@ -294,7 +312,7 @@ export function createOrganizationService(options: OrganizationServiceOptions) {
             (session.authenticationMethod = 'magic-link'
               AND auth_profile.email_login_enabled = 1)
             OR (session.authenticationMethod = 'e2e-fixture'
-              AND ?3 = 'staging' AND auth_profile.email_login_enabled = 0
+              AND ?3 IN ('staging', 'ci') AND auth_profile.email_login_enabled = 0
               AND EXISTS (
                 SELECT 1 FROM e2e_run_claims
                 JOIN e2e_fixture_sessions
@@ -340,6 +358,7 @@ export function createOrganizationService(options: OrganizationServiceOptions) {
       principal: OperatorPrincipal,
       rawInput: ProvisionClientInput,
     ): Promise<ClientProvisioningView> {
+      assertEnvironment(options);
       if (principal.platformRole !== 'root') {
         throw new OrganizationOperationError('Root authority is required');
       }
@@ -350,7 +369,7 @@ export function createOrganizationService(options: OrganizationServiceOptions) {
         correlationId: requiredText(rawInput.correlationId, 'correlationId'),
         ...(rawInput.e2eRun ? { e2eRun: E2eRunProofSchema.parse(rawInput.e2eRun) } : {}),
       };
-      if (input.e2eRun && options.appEnv !== 'staging'
+      if (input.e2eRun && options.appEnv !== 'ci' && options.appEnv !== 'staging'
         && !(options.appEnv === 'local' && options.localTestMode === '1')) {
         throw new OrganizationOperationError('E2E provisioning requires staging');
       }

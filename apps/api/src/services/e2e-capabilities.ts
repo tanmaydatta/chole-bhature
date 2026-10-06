@@ -1,9 +1,11 @@
 import { ProductE2eCapabilitiesSchema } from '@incentives/contracts';
 
 import type { Env } from '../env.js';
+import { assertCiStack } from '../ci-stack.js';
 
 export async function productE2eCapabilities(env: Env) {
-  if (env.APP_ENV !== 'staging'
+  assertCiStack(env);
+  if (env.APP_ENV !== 'ci' && env.APP_ENV !== 'staging'
     && !(env.APP_ENV === 'local' && env.E2E_LOCAL_TEST_MODE === '1')) {
     throw new Error('E2E capabilities are unavailable outside staging or isolated local mode');
   }

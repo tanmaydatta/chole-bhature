@@ -3,6 +3,8 @@ import { createExecutionContext } from 'cloudflare:test';
 import { beforeEach, describe, expect, test } from 'vitest';
 
 import { createIdentityE2eLifecycle } from '../src/services/e2e-lifecycle.js';
+import { createIdentityAuth } from '../src/auth.js';
+import { createIdentityE2eFixtures } from '../src/services/e2e-fixtures.js';
 import { createOrganizationService } from '../src/services/organizations.js';
 import { IdentityOperatorService, type Env } from '../src/worker.js';
 
@@ -66,8 +68,105 @@ async function seed(input: typeof first, email = `e2e+${input.runId}_admin@examp
 }
 
 describe('staging E2E tenant disposal in Auth D1', () => {
+  test('CI root provisions a proof-bound tenant, creates fixtures and disposes only that run', async () => {
+    await seedRoot();
+    const hash = '0f007385b6f9d4b7eeb2748605afe1a984a0a3bfa3f014d09e2a784ce9e5cd1a';
+    const expected = { ...first, proofHash: hash };
+    const disposed = new Set<string>();
+    const provisioned = new Map<string, { name: string; provisioningId: string }>();
+    const now = new Date().toISOString();
+    const core: Env['CORE'] = {
+      async provisionMerchant(context, input) {
+        expect(context.actorKind).toBe('root');
+        expect(input.e2eRun).toEqual({ runId: first.runId, proofHash: hash });
+        provisioned.set(input.id, { name: input.name, provisioningId: input.provisioningId });
+        return { ok: true, value: { id: input.id, name: input.name,
+          provisioningId: input.provisioningId, status: 'provisioning',
+          createdAt: now, updatedAt: now } };
+      },
+      async activateMerchant(context, input) {
+        expect(context.actorKind).toBe('root');
+        const row = provisioned.get(input.id);
+        if (!row || row.provisioningId !== input.provisioningId) throw new Error('wrong activation');
+        return { ok: true, value: { id: input.id, name: row.name,
+          provisioningId: input.provisioningId, status: 'active',
+          createdAt: now, updatedAt: now } };
+      },
+      async getE2eCapabilities(context) {
+        expect(context).toEqual({ actorUserId: 'e2e-root', actorKind: 'root', correlationId: 'ci-capability' });
+        return { version: 1, migrations: ['0008_e2e_tenant_lifecycle.sql'], inspection: true, disposal: true };
+      },
+      async inspectE2eRun() { throw new Error('unexpected inspection'); },
+      async previewE2eRun(context, input) {
+        expect(context.actorKind).toBe('root');
+        expect(input).toEqual(expected);
+        return { status: disposed.has(input.runId) ? 'disposed' : 'active',
+          counts: { merchants: disposed.has(input.runId) ? 0 : 1 } };
+      },
+      async disposeE2eRun(context, input) {
+        expect(context).toMatchObject({ actorKind: 'root', actorUserId: 'e2e-root', merchantId: first.merchantId });
+        expect(input).toEqual(expected);
+        disposed.add(input.runId);
+        return { status: 'disposed', counts: { merchants: 0 } };
+      },
+    };
+    const origin = 'https://cb-e2e-0123456789abcdef0123-operator.trusted.workers.dev';
+    const ci: Env = { ...env, APP_ENV: 'ci', CI_STACK_KEY: '0123456789abcdef0123',
+      PUBLIC_APP_ORIGIN: origin, PASSKEY_RP_ID: new URL(origin).hostname,
+      EMAIL_MODE: 'local-capture', STAGING_ALLOWED_RECIPIENTS: '[]', CORE: core };
+    const service = new IdentityOperatorService(createExecutionContext(), ci);
+    expect(await service.getE2eCapabilities({ sessionId: 'missing', correlationId: 'ci-capability' }))
+      .toMatchObject({ error: { code: 'UNAUTHORIZED' } });
+    expect(await service.getE2eCapabilities({ sessionId: 'e2e-root-session', correlationId: 'ci-capability' }))
+      .toMatchObject({ version: 1, product: { disposal: true } });
+    const created = await service.provisionClient({ sessionId: 'e2e-root-session', selectedMerchantId: first.merchantId, input: {
+      provisioningId: first.provisioningId, merchantId: first.merchantId,
+      name: first.runId + '_merchant', correlationId: 'ci-provision', e2eRun: { runId: first.runId, proof },
+    } });
+    expect(created).toMatchObject({ status: 'active', merchantId: first.merchantId });
+    expect(await env.AUTH_DB.prepare('SELECT proof_hash AS proofHash, status FROM e2e_run_claims WHERE run_id = ?1')
+      .bind(first.runId).first()).toEqual({ proofHash: hash, status: 'active' });
+    await seed(second);
+    const otherAuth = createIdentityAuth(ci);
+    const other = await createIdentityE2eFixtures({ database: env.AUTH_DB, appEnv: 'ci', ciEnv: ci,
+      createSession: (userId, runId, merchantId) => otherAuth.createFixtureSession({ userId, runId, merchantId }) })
+      .createAccount({ ...second, slug: 'admin', role: 'admin' }, 'root', 'other-run');
+    const request = { sessionId: 'e2e-root-session', runId: first.runId, proof, correlationId: 'ci-fixture',
+      slug: 'viewer', role: 'viewer' };
+    expect(await service.createE2eAccount({ ...request, proof: 'B'.repeat(43) }))
+      .toMatchObject({ error: { code: 'FORBIDDEN' } });
+    const fixture = await service.createE2eAccount(request);
+    expect(fixture).toMatchObject({ role: 'viewer', merchantId: first.merchantId });
+    if (!('sessionId' in fixture)) throw new Error('expected fixture session');
+    expect(await env.AUTH_DB.prepare('SELECT role, status FROM memberships WHERE user_id = ?1')
+      .bind(fixture.userId).first()).toEqual({ role: 'viewer', status: 'active' });
+    expect(await service.getE2eCapabilities({ sessionId: fixture.sessionId, correlationId: 'ci-capability' }))
+      .toMatchObject({ error: { code: 'FORBIDDEN' } });
+    const action = { sessionId: 'e2e-root-session', runId: first.runId, proof, correlationId: 'ci-dispose' };
+    expect(await service.disposeE2eRun({ ...action, proof: 'B'.repeat(43) }))
+      .toMatchObject({ error: { code: 'FORBIDDEN' } });
+    const result = await service.disposeE2eRun(action);
+    expect(result).toMatchObject({ status: 'disposed', product: { merchants: 0 },
+      auth: { users: 0, memberships: 0, fixture_sessions: 0, organizations: 0 } });
+    expect(await service.disposeE2eRun(action)).toEqual(result);
+    expect(await env.AUTH_DB.prepare('SELECT id FROM user WHERE id = ?1').bind(fixture.userId).first()).toBeNull();
+    expect(await env.AUTH_DB.prepare('SELECT id FROM session WHERE id = ?1').bind(fixture.sessionId).first()).toBeNull();
+    expect(await env.AUTH_DB.prepare('SELECT status FROM e2e_run_claims WHERE run_id = ?1')
+      .bind(second.runId).first()).toEqual({ status: 'active' });
+    expect((await otherAuth.getSession(new Headers({ cookie: other.cookieHeader })))?.user.id).toBe(other.userId);
+    expect(await env.AUTH_DB.prepare("SELECT id FROM user WHERE id = 'e2e-root'").first()).toEqual({ id: 'e2e-root' });
+    expect(await env.AUTH_DB.prepare('SELECT actor_id, correlation_id FROM e2e_run_disposal_audit WHERE run_id = ?1')
+      .bind(first.runId).first()).toEqual({ actor_id: 'e2e-root', correlation_id: 'ci-dispose' });
+    const before = await env.AUTH_DB.prepare('SELECT COUNT(*) AS total FROM identity_audit').first();
+    ci.CI_STACK_KEY = 'ffffffffffffffffffff';
+    await expect(service.previewE2eRun(action)).rejects.toThrow(/CI/u);
+    expect(await env.AUTH_DB.prepare('SELECT COUNT(*) AS total FROM identity_audit').first()).toEqual(before);
+  });
+
   beforeEach(async () => {
     await env.AUTH_DB.batch([
+      env.AUTH_DB.prepare('DELETE FROM e2e_fixture_sessions'),
+      env.AUTH_DB.prepare("DELETE FROM user WHERE email LIKE 'e2e+%'"),
       env.AUTH_DB.prepare('DELETE FROM invitations'),
       env.AUTH_DB.prepare('DELETE FROM memberships'),
       env.AUTH_DB.prepare('DELETE FROM organizations'),

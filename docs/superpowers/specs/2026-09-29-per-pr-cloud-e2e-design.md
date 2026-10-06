@@ -343,7 +343,27 @@ the later `ci`, HTTPS/passkey, full GAP, disposal and rollout gates remain open.
 
 ## Cloud-CI application mode and suite behavior
 
-Add an explicit `cloud-ci` target instead of relaxing the existing staging origin checks. Generated Workers use a `ci` application environment tied to the controller-verified stack key. Product, Auth, Operator, fixture, capability, inspection, and disposal guards admit `ci` only with this isolated stack marker and exact D1 bindings. Production and manual staging guards retain their existing behavior. The cloud target requires HTTPS origins matching the controller manifest, and rejects the manual staging domains, stale SHA, missing Access credential, or a mismatched stack ID before fixture writes. The trusted root bootstrap operation targets the exact newly created Auth D1 ID; it does not call the existing CLI's hard-coded staging database path.
+The separately approved 2026-10-06 Task 6a implements local application
+admission for trusted controller-generated CI configuration. It preserves the
+same role, proof, run-owned fixture/session and cleanup rules while enforcing
+disposable secrets and capture email. This is a runtime misconfiguration
+guard: a nonsecret marker and callable binding shape do not establish account
+ownership, remote binding identity, route protection or cross-run secret
+uniqueness. The controller and live pilot must certify those properties
+independently.
+
+The bounded [local evidence](../../testing/per-pr-cloud-e2e.md#guarded-application-ci-admission-2026-10-06)
+covers real Worker/D1 fixture persistence, signed member sessions, immutable
+15-minute expiry, proof-bound provisioning and Product-then-Auth disposal,
+with a hand-checked Core interface fake where separate local Worker bindings
+are unavailable. It is not a deployed graph, real cloud passkey result or full
+Task 6 completion. Task 6b retains exact-D1 root bootstrap and controller
+configuration/deployed-graph verification; Tasks 5 and 7–10 retain their
+provider, HTTPS browser, teardown and rollout gates. Independent root review
+is pending, these new changes are local only, and the clarification draft
+remains unsent.
+
+Add an explicit `cloud-ci` target instead of relaxing the existing staging origin checks. Generated Workers use a `ci` application environment tied to the controller-verified stack key. Product, Auth and Operator runtime guards admit `ci` only after validating the isolated marker, origin, email/secret mode and callable bindings. Before deployed use, the controller separately certifies exact D1 identities and the service graph. Production and manual staging guards retain their existing behavior. The cloud target requires HTTPS origins matching the controller manifest, and rejects the manual staging domains, stale SHA, missing Access credential, or a mismatched stack ID before fixture writes. The trusted root bootstrap operation targets the exact newly created Auth D1 ID; it does not call the existing CLI's hard-coded staging database path.
 
 The `ci` mode uses the same deployed Workers, service-binding graph, migrations, HTTPS cookies, session logic, root authority, API contracts, business logic, and virtual-authenticator browser flow as staging. The intentional divergence is email: it uses per-stack local capture/suppression and no Resend credential or real delivery, because the current E2E suite does not test email delivery. It also resolves generated disposable secrets directly rather than binding staging Secrets Store entries. These exceptions must be explicit in environment validation and covered by negative tests; `ci` must never be a synonym for a staging deploy or a way to enable test-only behavior on a normal Worker.
 
@@ -369,4 +389,4 @@ Before enabling every-push deployment, the feasibility pilot and automated secur
 4. A rapid second push while the first is mid-fixture cancels the first, permits the new stack to finish, and cleans only the old stack. Repeat with failure or cancellation mid-deploy and mid-cleanup; verify janitor idempotence and exact-ID refusal on mismatch.
 5. The cloud suite asserts the GAP-030/031 exact calculations, published persistence, signed redemption, idempotent retry, browser edit/publish persistence, failure-path disposal, and zero run-owned rows. Manual staging Workers, domains, D1, Secrets Store entries, and static demo are unchanged before and after.
 
-The pilot is a prerequisite, not a production shortcut. After it passes, add the protected workflows, controller, `cloud-ci` mode, suite wiring, and matching CI/E2E/operations documentation in the same implementation change. The implementation plan must specify the exact Cloudflare API calls, IDs, permissions, artifact schema, name grammar, timeouts, retry bounds, and tests. This spec alone changes no deployed behavior.
+The pilot is a prerequisite for every-push deployment. Local application admission may precede it under Task 6a's separate approval; the protected workflows, production controller, cloud suite wiring and matching CI/E2E/operations documentation require their remaining implementation and live gates. The implementation plan must specify the exact Cloudflare API calls, IDs, permissions, artifact schema, name grammar, timeouts, retry bounds, and tests. This spec alone changes no deployed behavior.

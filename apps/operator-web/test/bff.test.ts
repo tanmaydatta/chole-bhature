@@ -38,7 +38,8 @@ type WorkerFactory = () => {
 type RpcMock = ReturnType<typeof vi.fn>;
 
 interface TestEnv {
-  APP_ENV: 'local' | 'staging';
+  APP_ENV: 'local' | 'staging' | 'ci';
+  CI_STACK_KEY?: string;
   PUBLIC_APP_ORIGIN: string;
   OPERATOR_SELECTION_SECRET: string;
   OPERATOR_SELECTION_SECRET_STORE?: { get(): Promise<string> };
@@ -345,6 +346,74 @@ async function selectMerchant(handler: Awaited<ReturnType<typeof worker>>, env: 
 beforeEach(() => vi.restoreAllMocks());
 
 describe('protected staging E2E lifecycle', () => {
+  test('CI retains root and origin checks for fixture, lifecycle and provisioning routes', async () => {
+    const handler = await worker();
+    const env = createEnv(root);
+    env.APP_ENV = 'ci';
+    env.CI_STACK_KEY = '0123456789abcdef0123';
+    env.PUBLIC_APP_ORIGIN = 'https://cb-e2e-0123456789abcdef0123-operator.trusted.workers.dev';
+    delete env.OPERATOR_SELECTION_SECRET_STORE;
+    const ciRequest = (path: string, body: unknown, origin = env.PUBLIC_APP_ORIGIN) =>
+      new Request(env.PUBLIC_APP_ORIGIN + path, { method: 'POST', headers: {
+        origin, cookie: sessionCookie, 'x-correlation-id': correlationId,
+        'content-type': 'application/json', 'sec-fetch-site': 'same-origin',
+      }, body: JSON.stringify(body) });
+    const accountPath = '/operator/v1/platform/e2e-runs/e2e_0123456789abcdef01234567/accounts';
+    const body = { proof: 'A'.repeat(43), slug: 'viewer', role: 'viewer' };
+    expect(await json(await handler?.fetch(ciRequest(accountPath, body), env)))
+      .toMatchObject({ userId: 'user-e2e', role: 'viewer', sessionId: 'session-e2e' });
+    expect(await json(await handler?.fetch(ciRequest(accountPath, body, 'https://operator.example.test'), env)))
+      .toMatchObject({ error: { code: 'FORBIDDEN' } });
+    env.IDENTITY.resolveBrowserPrincipal.mockResolvedValue(admin);
+    expect(await json(await handler?.fetch(ciRequest(accountPath, body), env)))
+      .toMatchObject({ error: { code: 'FORBIDDEN' } });
+    env.IDENTITY.resolveBrowserPrincipal.mockResolvedValue(root);
+    expect(await json(await handler?.fetch(ciRequest(accountPath.replace('/accounts', '/preview'),
+      { proof: 'A'.repeat(43) }), env))).toMatchObject({
+      runId: 'e2e_0123456789abcdef01234567', auth: { organizations: 1 } });
+    env.IDENTITY.provisionClient.mockImplementation(async input => {
+      expect(input).toMatchObject({ sessionId: 'session-root', input: {
+        name: 'e2e_0123456789abcdef01234567_merchant',
+        e2eRun: { runId: 'e2e_0123456789abcdef01234567', proof: 'A'.repeat(43) },
+      } });
+      return { provisioningId: input.input.provisioningId, merchantId: input.input.merchantId,
+        organizationId: 'org-generated', name: 'e2e_0123456789abcdef01234567_merchant',
+        status: 'active', failedStep: null, retryable: false };
+    });
+    expect(await json(await handler?.fetch(ciRequest('/operator/v1/platform/clients', {
+      name: 'e2e_0123456789abcdef01234567_merchant', idempotencyKey: 'ci-provision-key',
+      e2eRun: { runId: 'e2e_0123456789abcdef01234567', proof: 'A'.repeat(43) },
+    }), env))).toMatchObject({ status: 'active', name: 'e2e_0123456789abcdef01234567_merchant' });
+    env.CI_STACK_KEY = undefined;
+    env.ASSETS.fetch.mockClear();
+    env.IDENTITY_AUTH.fetch.mockClear();
+    expect(await json(await handler?.fetch(new Request(env.PUBLIC_APP_ORIGIN + '/'), env)))
+      .toMatchObject({ error: { code: 'OPERATOR_WEB_UNAVAILABLE' } });
+    expect(await json(await handler?.fetch(new Request(env.PUBLIC_APP_ORIGIN + '/auth/sign-in/magic-link'), env)))
+      .toMatchObject({ error: { code: 'OPERATOR_WEB_UNAVAILABLE' } });
+    expect(env.ASSETS.fetch).not.toHaveBeenCalled();
+    expect(env.IDENTITY_AUTH.fetch).not.toHaveBeenCalled();
+  });
+
+  test('CI capability handshake admits the matching root and rejects changed configuration before forwarding', async () => {
+    const handler = await worker();
+    const env = createEnv(root);
+    env.APP_ENV = 'ci';
+    env.CI_STACK_KEY = '0123456789abcdef0123';
+    env.PUBLIC_APP_ORIGIN = 'https://cb-e2e-0123456789abcdef0123-operator.trusted.workers.dev';
+    delete env.OPERATOR_SELECTION_SECRET_STORE;
+    const url = env.PUBLIC_APP_ORIGIN + '/operator/v1/platform/e2e-capabilities';
+    const response = await handler?.fetch(new Request(url, { headers: {
+      cookie: sessionCookie, 'x-correlation-id': correlationId } }), env);
+    expect(await json(response)).toMatchObject({ protocol: 'incentives-e2e',
+      operator: { version: 1 }, identity: { version: 1 }, product: { disposal: true } });
+    env.CI_STACK_KEY = 'ffffffffffffffffffff';
+    env.IDENTITY.getE2eCapabilities.mockClear();
+    const refused = await handler?.fetch(new Request(url), env);
+    expect(await json(refused)).toMatchObject({ error: { code: 'OPERATOR_WEB_UNAVAILABLE' } });
+    expect(env.IDENTITY.getE2eCapabilities).not.toHaveBeenCalled();
+  });
+
   const runId = 'e2e_0123456789abcdef01234567';
   const proof = 'A'.repeat(43);
   const path = `/operator/v1/platform/e2e-runs/${runId}/preview`;

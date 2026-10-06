@@ -1,4 +1,5 @@
 import type { OperatorWebEnv } from './routes/types.js';
+import { assertCiStack } from './ci-stack.js';
 
 export type OperatorWebWorkerEnv = Omit<OperatorWebEnv, 'OPERATOR_SELECTION_SECRET'> & {
   OPERATOR_SELECTION_SECRET?: string;
@@ -6,6 +7,8 @@ export type OperatorWebWorkerEnv = Omit<OperatorWebEnv, 'OPERATOR_SELECTION_SECR
 };
 
 export async function resolveOperatorSecret(env: OperatorWebWorkerEnv): Promise<OperatorWebEnv> {
+  assertCiStack(env);
+  if (env.APP_ENV === 'ci') return { ...env, OPERATOR_SELECTION_SECRET: env.OPERATOR_SELECTION_SECRET! };
   if (env.APP_ENV === 'staging') {
     const binding = env.OPERATOR_SELECTION_SECRET_STORE;
     if (!binding || typeof binding.get !== 'function') {

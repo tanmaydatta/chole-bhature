@@ -24,6 +24,7 @@ import {
   type OperatorPrincipal,
 } from '@incentives/contracts';
 
+import type { IdentityWorkerEnv } from '../staging-secrets.js';
 import { authorize } from '../authorization/authorize.js';
 import {
   createInvitationService,
@@ -39,6 +40,7 @@ import {
 
 export interface IdentityOperatorServiceOptions {
   database: D1Database;
+  ciEnv?: IdentityWorkerEnv | undefined;
   core: CoreMerchantProvisioningClient;
   email: InvitationEmailAdapter;
   publicOrigin: string;
@@ -105,6 +107,7 @@ async function auditDenial(
 export function createIdentityOperatorService(options: IdentityOperatorServiceOptions) {
   const organizations = createOrganizationService({
     database: options.database,
+    ciEnv: options.ciEnv,
     core: options.core,
     appEnv: options.appEnv,
     localTestMode: options.localTestMode,

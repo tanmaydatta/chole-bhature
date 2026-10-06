@@ -29,6 +29,95 @@ Public Worker mutations
 remain disabled; the local evidence is not an approved Cloudflare
 pilot, deployment, credential change, or every-push workflow.
 
+## Guarded application CI admission (2026-10-06)
+
+**Status:** Task 6a is implemented and locally verified; independent root
+review is pending. The bounded change admits trusted controller-generated CI
+application configuration. Task 6b exact-D1 bootstrap/deployed-graph
+certification, full Task 5, cloud browser/passkey acceptance and Tasks 7–10
+remain incomplete. Public Worker writes still refuse transport, all four
+provider blockers remain, and no deployment or every-push workflow is enabled.
+These changes have not been synchronized to Notion; the clarification draft
+remains unsent.
+
+**Table — Runtime CI configuration contract**
+
+| Configuration | Required value or behavior |
+|---|---|
+| Mode/marker | `APP_ENV='ci'`; `CI_STACK_KEY` is the existing 20-lowercase-hex resource digest. A supplied expected marker must have that format and match exactly. A marker in any non-CI mode rejects. |
+| API origin | Canonical `https://cb-e2e-${marker}-api.<account-label>.workers.dev`, with exactly one valid account label. |
+| Identity/Operator origin | Canonical `https://cb-e2e-${marker}-operator.<account-label>.workers.dev`. Identity `PASSKEY_RP_ID` equals that hostname. |
+| Origin exclusions | Reject credentials, query/fragment, trailing slash or other path, explicit port spelling, HTTP, localhost, custom/staging domains, wrong role and foreign marker. |
+| Local test switch | `E2E_LOCAL_TEST_MODE` must be absent, including values `'0'` and `'1'`. |
+| Identity email/secrets | `EMAIL_MODE='local-capture'`, `STAGING_ALLOWED_RECIPIENTS` parses as an empty array, direct `AUTH_SECRET`; no Resend values or Auth/Resend Secrets Store bindings. |
+| API/Operator secrets | Direct `DECISION_SIGNING_SECRET` and `OPERATOR_SELECTION_SECRET`; Operator's store binding must be absent. Each direct secret has at least 32 nonblank trimmed characters. |
+| Binding shape | API `DB` and Identity `AUTH_DB` expose `prepare` and `batch`. Identity `CORE`, Operator `IDENTITY`/`CORE` expose their consumed RPC methods; `IDENTITY_AUTH`/`ASSETS` expose `fetch`. Validation calls no binding method. |
+
+The digest is
+`sha256(JSON.stringify([repository_id, pr, head_sha, run_id, attempt])).slice(0,20)`.
+It is nonsecret configuration, not authentication or provider proof. Parsing
+the origin naming convention does not prove that the account label is trusted,
+that all apps share the controller's account, that a hostname is owned or
+protected, or that bindings point at the intended remote IDs. Shape validation
+cannot prove secret entropy or uniqueness. The future controller must certify
+those identities, graph and Access properties independently before deployment/use.
+
+Each app owns a small typed validator with no I/O or cached authority.
+Validation precedes affected fetch/RPC behavior, secret getters, email delivery,
+forwarding and E2E writes. Identity fixture, lifecycle and organization service
+boundaries require the full environment and matching local database/mode
+association; a bare CI mode or allow boolean grants no admission. Database
+object association is a local consistency check, not exact remote-D1 proof.
+Ordinary local/staging behavior, root/passkey/recovery rules and explicit local
+lifecycle semantics remain; ordinary local fixture creation remains prohibited.
+
+Real local Worker/D1 checks cover root-gated capabilities, proof-bound tenant
+provisioning/recorded claims, active run-scoped fixture users/roles, signed
+member sessions restricted to their owned tenant, immutable 900000 ms fixture
+expiry, local employee magic-link capture, proof refusal, Product-then-Auth
+disposal/audit/zero rows and idempotent retry. A concurrent signed fixture and
+unrelated root survive disposal. The Identity-to-Core boundary uses an exact
+hand-checked service fake where separate runtime bindings are unavailable;
+Product persistence and disposal are separately exercised in real local D1.
+This is not a full deployed graph, real HTTPS cloud passkey or email-delivery
+result.
+
+**Table — Dated local verification**
+
+| Command | Result and provenance |
+|---|---|
+| Focused semantic RED | API 7 pass/1 fail (CI capability denied); Identity 6 pass/1 fail (CI auth denied); Operator 146 pass/1 fail (direct CI secret resolution denied). New helper missing-module failure is separate scaffold evidence. |
+| Port regression RED/GREEN | Explicit `:8443` negative: Operator 71 pass/1 assertion failure before correction. Final focused API 43/43 (1.91 s), Identity 80/80 (12.28 s), Operator 228/228 (387 ms) after correction. |
+| Three package suites | API 495/495 (9.04 s); Identity 201/201 Worker (30.04 s) plus 84/84 Node (4.23 s); Operator 227/227 (455 ms). These precede the final three additional port cases; final-source whole-project result follows. |
+| `pnpm test` | Final source: 100 Vitest files, 1565 tests plus 9 Node tests passed; no failures/skips, 54.49 s shell. API 496, Identity 202 Worker plus 84 Node, Operator 228. The earlier pre-port run passed 1562 Vitest plus 9 Node tests in 59.57 s and remains separate evidence. |
+| `pnpm build`, `pnpm lint` | Both final-source commands exit 0 (11.81 s and 0.84 s shell). Build retains the existing dashboard chunk-over-500-kB warning; lint retains two existing Fast Refresh warnings in `Toast.tsx:15` and `ThemeProvider.tsx:9`. |
+| `E2E_BROWSER_CHANNEL=chromium pnpm e2e:local` | 4 pass/1 failure in 23.6 s (24.77 s shell): local-only simultaneous-stack test stopped before readiness with workerd `SENTRY_DO` SQLite `SQLITE_BUSY`. The GAP, concurrent-run, failure-cleanup and browser-authoring tests passed. |
+| Focused local-stack Playwright retry | 1/1 passed in 19.9 s (20.58 s shell; test 7.6 s), after other task tests completed, with separate evidence output and unchanged test/infra source. |
+
+The initial full Playwright run overlapped local whole-project tests/build.
+Distinct temporary stack state paths were confirmed; the successful focused
+retry establishes an intermittent runtime-startup failure, not its cause or
+a fix. The original failed run, diagnostics and retry results are retained.
+No test was deleted, skipped or weakened. Earlier iteration failures were
+also retained: fixture cleanup needed foreign-key-safe ordering, and an
+existing API source-composition assertion required the app declaration before
+the RPC class. Final corrected regressions pass.
+
+Checks use Node 22.18.0 and cached pnpm 11.14.0 with
+`pnpm_config_verify_deps_before_run=error`; no dependency/browser installation,
+staging contact or remote write occurred. Local Worker loopback/Wrangler-log
+permission was used. Full local logs live in ignored task evidence; earlier
+Task 5 test counts and historical project/packaging evidence retain their
+original provenance.
+
+Code references:
+
+- Marker derivation: [key.mjs](../../scripts/cloud-e2e/key.mjs).
+- Runtime guards: [API](../../apps/api/src/ci-stack.ts), [Identity](../../apps/identity/src/ci-stack.ts), [Operator](../../apps/operator-web/src/ci-stack.ts).
+- Runtime lifecycle/provenance: [Product tests](../../apps/api/test/e2e-lifecycle.test.ts), [Identity fixtures](../../apps/identity/test/e2e-fixtures.test.ts), [Identity lifecycle](../../apps/identity/test/e2e-lifecycle.test.ts).
+- Local email and BFF: [Identity auth tests](../../apps/identity/test/auth.test.ts), [Operator BFF tests](../../apps/operator-web/test/bff.test.ts).
+- Remaining boundary: [Task 6b](../superpowers/plans/2026-09-30-per-pr-cloud-e2e.md#task-6b-deferred-exact-d1-bootstrap-and-controller-certification).
+
 ## Local verification baseline
 
 The commands below were run from the `feat/per-pr-cloud-e2e` worktree. The
@@ -453,7 +542,7 @@ metadata into that profile; the diagnostic rejects unsupported special files
 rather than quietly omitting verified assets. Fixed compatibility settings
 and role bindings also remain controller-owned. The current inert `DB` mock
 profile is not the application profile (`AUTH_DB` and Identity's Core edge);
-full `ci` application configuration remains Task 6.
+Task 6a now supplies local runtime admission; generated configuration and deployed-graph certification remain deferred under Task 6b and the future controller.
 
 Required ordering remains disabled empty Workers, durable IDs, both Access
 attachments and fresh exact readbacks, then any asset session or code upload;

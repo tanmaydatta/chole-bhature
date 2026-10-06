@@ -86,7 +86,7 @@ to final branch review.
 - The unprivileged PR build, trusted browser bootstrap, and Playwright jobs get no Cloudflare account token, manual staging root state, owner staging/BW secret, shared privileged cache, or staging Secrets Store binding. The trusted controller executes protected-branch code only; PR JS/SQL/assets are data on disposable resources.
 - Account-level Workers, D1, and Access permissions may be broad. `cb-e2e-` naming is an application guard, not Cloudflare token isolation. Verify exact IDs, tuple, and binding graph before every mutation or deletion; ambiguous ownership fails closed.
 - Core and Operator use distinct `workers.dev` HTTPS hosts protected by Access; Identity has no public route. Disable `workers_dev` and `preview_urls` on initial deploy and every subsequent deploy; verify no preview/version bypass and publish only after both Access gates pass.
-- `cloud-ci` is an explicit suite target and `APP_ENV=ci` is valid only with a controller-verified stack marker and exact bindings. Staging origin pins, owner bootstrap, Resend/Secrets Store behavior, and production guards retain their current semantics.
+- Deployed `cloud-ci` is an explicit future suite target and requires a controller-verified stack marker and exact bindings. Task 6a supplies local runtime shape/configuration admission only. Staging origin pins, owner bootstrap, Resend/Secrets Store behavior, and production guards retain their current semantics.
 - `ci` email is local capture/suppression; the present E2E suite does not prove real email delivery. Preserve the full GAP-030/031 values, persistence, signed redemption, idempotency, browser passkey and edit/publish flow, failure disposal, and zero Product/Auth run-owned-row assertions. Keep two Playwright workers initially.
 - Keep raw traces/screenshots on ephemeral runners; publish only sanitized failure evidence, seven-day retention. Credential handoff artifacts have one-day retention and are deleted at teardown where the API permits. Never log tokens, cookies, grants, proofs, customer payloads, or raw traces.
 - Do not enable automatic every-push Cloudflare writes until the disposable two-stack feasibility pilot and security acceptance matrix pass. The user must review the implementation plan and approve each dispatch under repository AGENTS.md. Future tasks, commits, and live pilot steps below are not authorization to run them now.
@@ -105,7 +105,7 @@ to final branch review.
 |---|---|---|
 | Trusted controller protocol | `scripts/cloud-e2e/key.mjs`, `artifact.mjs`, `inventory.mjs`, `cloudflare.mjs`, `provision.mjs`, `teardown.mjs`, `cli.mjs`; corresponding `scripts/cloud-e2e/*.test.mjs` | Protected-branch input validation, artifact schema, exact-ID Cloudflare operations, checkpoints, policy gate, cleanup. These files must never be imported from a PR checkout. |
 | CI transport | `.github/workflows/cloud-e2e.yml`, `.github/workflows/cloud-e2e-cleanup.yml`, `.github/workflows/cloud-e2e-janitor.yml`; `scripts/cloud-e2e/build-artifact.mjs`, `verify-run.mjs`, `evidence.mjs` | Separate runners/jobs, no shared privileged cache, immutable run metadata and short-lived artifact transport. Existing `.github/workflows/ci.yml` remains the build/lint/unit gate. |
-| `ci` application mode | `apps/api/src/env.ts`, `apps/api/src/services/e2e-capabilities.ts`, `apps/api/src/services/e2e-lifecycle.ts`, `apps/identity/src/auth.ts`, `worker.ts`, `staging-secrets.ts`, `services/e2e-fixtures.ts`, `services/e2e-lifecycle.ts`, `apps/operator-web/src/routes/types.ts`, `worker.ts`, `staging-secrets.ts`; focused existing tests | Validate stack marker/bindings, direct disposable secrets and capture email, then admit E2E capabilities, fixtures, inspection and disposal only on marked `ci`. |
+| `ci` application mode | `apps/{api,identity,operator-web}/src/ci-stack.ts`, `apps/api/src/worker.ts`, `apps/identity/src/services/organizations.ts`, `apps/identity/src/routes/internal.ts`, `apps/api/src/env.ts`, `apps/api/src/services/e2e-capabilities.ts`, `apps/api/src/services/e2e-lifecycle.ts`, `apps/identity/src/auth.ts`, `worker.ts`, `staging-secrets.ts`, `services/e2e-fixtures.ts`, `services/e2e-lifecycle.ts`, `apps/operator-web/src/routes/types.ts`, `worker.ts`, `staging-secrets.ts`; focused existing tests | Validate stack marker/bindings, direct disposable secrets and capture email, then admit E2E capabilities, fixtures, inspection and disposal only on marked `ci`. |
 | Exact-D1 root and browser | `apps/identity/src/cli/bootstrap-root-runner.mjs`, new `scripts/cloud-e2e/root-bootstrap.mjs`, `tests/e2e/src/cloud-login.ts`, their tests | Controller reuses root bootstrap SQL/cryptography against the inventory's new Auth D1 ID to produce a grant; a separate account-token-free job registers and signs in through real HTTPS passkey UI with virtual WebAuthn. |
 | Cloud Playwright | `tests/e2e/src/config.ts`, `operator-client.ts`, `execution.ts`, `scenario-run.ts`, `manifest.ts`, `playwright.global-setup.ts`, `playwright.config.ts`, `test/playwright/promo.browser.spec.ts`, focused unit tests | Validate verified stack manifest and host-scoped Access headers; run existing API/browser scenarios and cleanup on external stack. |
 | Docs | `README.md` if it becomes tracked, `tests/e2e/README.md`, `docs/testing/gap-030-031-e2e.md`, `docs/integration/staging-operations.md`, new `docs/testing/per-pr-cloud-e2e.md` | Commands, trust/cleanup runbook, exact test coverage and email limitation, staging preservation, pilot/rollout evidence. The current untracked `README.md` is user-owned; do not add or overwrite it without separately resolving ownership. |
@@ -388,7 +388,7 @@ destinations. The M1 retained-version clarification is incorporated in this
 proposal and appended to the investigation report; final closing status-note
 review of `eb72ae5` is complete: spec compliant / quality Approved, no findings
 (`task-5f-notion-sync-review.md`). No provider task or policy is adopted. The full
-pilot, `ci` mode, real HTTPS passkey/GAP suite, row disposal, cleanup and rollout
+pilot, remaining Task 6b certification/bootstrap, real HTTPS passkey/GAP suite, row disposal, cleanup and rollout
 retain their own future approvals and acceptance gates.
 
 ### Cloudflare clarification draft and approval gates (2026-10-05)
@@ -414,13 +414,65 @@ NO-GO, all four blockers, zero-transport refusal and full Task 5/live gates rema
 
 ## Task 6: Isolated `ci` app mode and exact-D1 root bootstrap
 
-**Files:** Modify the `ci` application files in the file map plus `apps/identity/src/cli/bootstrap-root-runner.mjs`; Create: `scripts/cloud-e2e/root-bootstrap.mjs`, `root-bootstrap.test.mjs`; Test: existing `apps/api/test/e2e-lifecycle.test.ts`, `apps/identity/test/{auth,e2e-fixtures,e2e-lifecycle}.test.ts`, `apps/identity/test-node/bootstrap-root-runner.test.ts`, `apps/operator-web/test/{bff,staging-secrets}.test.ts`.
+Task 6 is split into bounded application admission (6a) and deferred
+controller graph certification/exact-D1 bootstrap (6b). Task 6a's approval on
+2026-10-06 authorizes local source/tests/docs and a local commit only. It
+authorizes no bootstrap, cloud target, generated deployment configuration,
+provider research, transport, deployment or workflow. The original Task 6
+requirements remain below, divided by responsibility.
 
-**Interfaces:** `assertCiStack(env, expectedMarker?) -> void` in each Worker validates `APP_ENV=ci`, `CI_STACK_KEY=<trusted digest>`, no local test flag, allowed origins/secret mode, and presence/types of required bindings; the controller separately validates actual D1 UUIDs and service binding targets from generated config and deployed Worker settings. `bootstrapCiRoot({authDatabaseId, key, authSecret, email, d1Client}) -> Promise<{activationGrant, expiresAt}>` accepts only inventory-verified new Auth UUID. Existing `local`/`staging` bootstrap entry points remain unchanged.
+### Task 6a: Guarded application CI admission (2026-10-06)
 
-- [ ] Add failing Worker tests for `ci` without marker or required binding, `ci` with staging domain/Secrets Store/Resend, local/staging without `ci` marker, and production cleanup path; add controller config/readback tests for wrong D1 UUID or service target, and a bootstrap test for staging Auth UUID refusal. Add positive tests for `ci` capture email, direct unique secrets, root authority, fixture sessions, cross-Worker capability/inspection/disposal, and existing staging behavior.
-- [ ] Run `pnpm --filter @incentives/api test`, `pnpm --filter @incentives/identity test`, `pnpm --filter @incentives/operator-web test`; expected new tests fail.
-- [ ] Add `ci` to the typed envs and explicit guards, including `apps/identity/src/auth.ts` fixture-session/test-utils branches and all listed E2E guards. Keep normal business/auth/service code shared. Extract bootstrap SQL/cryptography for reuse by the exact-ID D1 client; never repoint the staging CLI by environment variable. Run three package tests, `pnpm build`, `pnpm lint`; expected pass. Commit: `git add apps/api apps/identity apps/operator-web scripts/cloud-e2e/root-bootstrap* && git commit -m "feat: add isolated cloud CI app mode"`.
+**Status:** Implemented locally; independent root review remains pending.
+Current changes have not been synchronized to Notion; the clarification draft
+remains unsent. Verification and limitations are recorded in the
+[application admission ledger](../../testing/per-pr-cloud-e2e.md#guarded-application-ci-admission-2026-10-06).
+
+**Files:** New `apps/{api,identity,operator-web}/src/ci-stack.ts` and each app's
+`test/ci-stack.test.ts`; API typed environment, Worker and E2E
+capability/lifecycle services; Identity typed Worker environment, auth,
+secret resolution, fixture/lifecycle services and necessary
+`services/organizations.ts`/`routes/internal.ts` session/provisioning
+integration; Operator typed environment, Worker and secret resolution.
+Extend the existing focused lifecycle/auth/fixture/BFF/secret tests and update
+this plan, design spec and testing ledger.
+
+**Interface:** Each app owns `assertCiStack(env, expectedMarker?) -> void`,
+without I/O or cached authority. Require the existing 20-lowercase-hex resource
+digest, canonical exact marker/role workers.dev origin, required callable
+binding methods, direct secrets of at least 32 nonblank characters, and no
+local-test flag. Identity uses local capture with an empty recipient list,
+exact Operator RP host, and no Resend or staging store bindings; Operator has
+no selection-secret store binding. Identity service boundaries revalidate the
+full typed environment and its database/mode association, never a bare
+`appEnv='ci'` or allow boolean. The marker is nonsecret configuration;
+runtime shapes establish no account ownership, D1/service IDs, Access
+protection or secret entropy/uniqueness.
+
+- [x] Establish semantic RED at existing API capability/disposal, Identity signed-fixture and Operator handshake consumers; preserve the original local/staging regressions.
+- [x] Implement the three validators and guarded CI fixture/session/provisioning/capability/inspection/disposal admission. Preserve root/proof/tenant authority, run ownership, immutable 900000 ms fixture expiry and the Product-then-Auth cleanup saga.
+- [x] Exercise real local Worker/D1 persistence, signed sessions, proof rejection, owned-member authorization, local email capture, disposal audit/zero rows, retained concurrent fixtures and idempotent retry. Separate Core/runtime bindings use a hand-checked interface fake only where the local cross-app binding is unavailable.
+- [x] Run focused iteration, three package suites, one final root `pnpm test`, build, lint and local Chromium Playwright; record actual final counts, warnings and limitations in the ledger before committing explicit approved paths.
+- [ ] Complete independent root review; separately authorize exact-content/destination synchronization. Neither step closes provider or live acceptance gates.
+
+### Task 6b: Deferred exact-D1 bootstrap and controller certification
+
+**Status:** Not implemented or dispatched. Requires a separate approved plan.
+
+**Files:** Modify `apps/identity/src/cli/bootstrap-root-runner.mjs`;
+create `scripts/cloud-e2e/root-bootstrap.mjs` and `root-bootstrap.test.mjs`;
+add controller configuration/readback tests and existing bootstrap tests.
+
+**Interfaces:** `bootstrapCiRoot({authDatabaseId, key, authSecret, email, d1Client})
+-> Promise<{activationGrant, expiresAt}>` accepts only an inventory-verified
+new Auth UUID. The controller must independently certify trusted account
+subdomain, actual D1 UUIDs, exact service targets and deployed configuration
+before use. Local callable binding shapes and marker strings cannot do this.
+Existing local/staging bootstrap entry points retain their semantics.
+
+- [ ] Add controller config/readback negatives for wrong D1 UUID or service target and bootstrap refusal of the staging Auth UUID. Verify missing/reused/staging IDs refuse before writes.
+- [ ] Extract bootstrap SQL/cryptography for the exact-ID D1 client; never repoint the staging CLI by environment variable. Preserve root authority, expiry, unique disposable secrets and existing bootstrap regressions.
+- [ ] Run focused bootstrap/controller tests and required local regressions under the separately approved plan. Keep cross-Worker deployed capability/inspection/disposal and real HTTPS passkey acceptance deferred to the live graph/pilot gates in Tasks 5 and 7; local Task 6a evidence does not complete them.
 
 ## Task 7: Real passkey bootstrap and cloud Playwright target
 

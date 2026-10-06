@@ -1,3 +1,6 @@
+import { assertCiStack } from '../ci-stack.js';
+import type { IdentityWorkerEnv } from '../staging-secrets.js';
+
 import { E2eTenantIdentitySchema, FixedOperatorRoleSchema } from '@incentives/contracts';
 import { z } from 'zod';
 
@@ -10,7 +13,9 @@ type AccountInput = z.infer<typeof AccountInputSchema>;
 
 interface Options {
   database: D1Database;
+  ciEnv?: IdentityWorkerEnv | undefined;
   appEnv: string | undefined;
+  localTestMode?: string | undefined;
   createSession(userId: string, runId: string, merchantId: string): Promise<{
     sessionId: string; cookieHeader: string;
   }>;
@@ -60,11 +65,25 @@ async function assertClaim(database: D1Database, input: AccountInput): Promise<s
   return row.organizationId;
 }
 
+function assertEnvironment(options: Options): void {
+  if (options.ciEnv) {
+    assertCiStack(options.ciEnv);
+    if (options.ciEnv.APP_ENV !== options.appEnv
+      || options.ciEnv.AUTH_DB !== options.database
+      || options.ciEnv.E2E_LOCAL_TEST_MODE !== options.localTestMode) {
+      throw new Error('Invalid CI stack: service configuration mismatch');
+    }
+  } else if (options.appEnv === 'ci') {
+    throw new Error('Invalid CI stack: full service environment is required');
+  }
+}
+
 export function createIdentityE2eFixtures(options: Options) {
   const db = options.database;
   return {
     async createAccount(raw: AccountInput, actorId: string, correlationId: string) {
-      if (options.appEnv !== 'staging') throw new Error('E2E fixtures are staging-only');
+      assertEnvironment(options);
+      if (options.appEnv !== 'ci' && options.appEnv !== 'staging') throw new Error('E2E fixtures are staging-only');
       const input = AccountInputSchema.parse(raw);
       const organizationId = await assertClaim(db, input);
       // Synthetic, unverified addresses cannot receive normal sign-in email.

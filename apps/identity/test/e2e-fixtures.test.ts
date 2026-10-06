@@ -39,6 +39,47 @@ async function seed(input: typeof first) {
 }
 
 describe('staging-only E2E fixture accounts', () => {
+  test('a bare CI service mode cannot create fixtures without validated configuration', async () => {
+    await seed(first);
+    const fixtures = createIdentityE2eFixtures({ database: env.AUTH_DB, appEnv: 'ci',
+      createSession: async () => { throw new Error('must not create a session'); } });
+    await expect(fixtures.createAccount({ ...first, slug: 'viewer', role: 'viewer' }, 'root', 'ci'))
+      .rejects.toThrow(/CI/u);
+    expect(await env.AUTH_DB.prepare("SELECT COUNT(*) AS total FROM user WHERE email LIKE 'e2e+%'").first())
+      .toEqual({ total: 0 });
+  });
+
+  test('CI creates a signed fixture accepted only for its owned tenant with immutable expiry', async () => {
+    await seed(first);
+    const origin = 'https://cb-e2e-0123456789abcdef0123-operator.trusted.workers.dev';
+    const ci = { ...env, APP_ENV: 'ci', CI_STACK_KEY: '0123456789abcdef0123',
+      PUBLIC_APP_ORIGIN: origin, PASSKEY_RP_ID: new URL(origin).hostname,
+      EMAIL_MODE: 'local-capture', STAGING_ALLOWED_RECIPIENTS: '[]',
+      CORE: {
+        async provisionMerchant() { throw new Error('unexpected provision'); },
+        async activateMerchant() { throw new Error('unexpected activation'); },
+        async getE2eCapabilities() { throw new Error('unexpected capabilities'); },
+        async inspectE2eRun() { throw new Error('unexpected inspection'); },
+        async previewE2eRun() { throw new Error('unexpected preview'); },
+        async disposeE2eRun() { throw new Error('unexpected disposal'); },
+      } } as Env;
+    const auth = createIdentityAuth(ci);
+    const fixtures = createIdentityE2eFixtures({ database: env.AUTH_DB, appEnv: 'ci',
+      ciEnv: ci,
+      createSession: (userId, runId, merchantId) => auth.createFixtureSession({ userId, runId, merchantId }) });
+    const created = await fixtures.createAccount({ ...first, slug: 'viewer', role: 'viewer' }, 'root', 'ci');
+    expect(created.email).toBe('e2e+e2e_0123456789abcdef01234567_viewer@e2e.invalid');
+    const organization = createOrganizationService({ database: env.AUTH_DB, appEnv: 'ci', ciEnv: ci });
+    expect(await organization.resolvePrincipal(created.sessionId)).toMatchObject({
+      merchantId: first.merchantId, authenticationMethods: ['e2e-fixture'] });
+    expect(await organization.resolvePrincipal(created.sessionId, second.merchantId)).toBeNull();
+    expect((await auth.getSession(new Headers({ cookie: created.cookieHeader })))?.user.id).toBe(created.userId);
+    const expiry = await env.AUTH_DB.prepare('SELECT hard_expires_at - issued_at AS duration FROM e2e_fixture_sessions WHERE session_id = ?1')
+      .bind(created.sessionId).first();
+    expect(expiry).toEqual({ duration: 900000 });
+    expect(await getSessionAccess({ ...ci, APP_ENV: 'local', CI_STACK_KEY: undefined }, created.sessionId)).toBeNull();
+  });
+
   beforeEach(async () => {
     await env.AUTH_DB.batch([
       env.AUTH_DB.prepare('DELETE FROM e2e_fixture_sessions'),
