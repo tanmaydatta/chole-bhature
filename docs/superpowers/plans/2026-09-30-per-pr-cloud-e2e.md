@@ -489,6 +489,14 @@ approved local correction at `07af8ed` passed independent scoped re-review:
 I2 addressed, no new Critical/Important breakage or out-of-scope observations
 (`task-6b-fix2-review.md`). Both Important findings are addressed across
 `a07cf37`/`07af8ed`; only the bounded local slice is accepted.
+Reviewed nonsecret status was separately approved and narrowly synchronized
+to the four existing Notion destinations on 2026-10-06. Exact complete
+whole-page parity and all 17 preserved ordered native links/active children
+passed, with root independently verifying readback and metadata. The
+[bootstrap synchronization ledger](../../testing/per-pr-cloud-e2e.md#reviewed-local-bootstrap-status-synchronization-2026-10-06)
+records accepted tested source `07af8ed` and closing documentation `4d6df6a`;
+prior Task 6a publication remains historical. Only the reviewed summary was
+published, not newer local sections wholesale or the unsent clarification body.
 Full deployed controller
 certification remains deferred. This bounded slice authorizes no provider
 adapter, live query, deployment, workflow or Task 7 progression.
@@ -531,8 +539,8 @@ transactionality and the full graph/live gates are separately certified.
 `provisionMockStack` remains unchanged and never reaches root bootstrap while
 Operator service remapping/assets remain unsupported. The
 [local bootstrap ledger](../../testing/per-pr-cloud-e2e.md#local-exact-d1-root-bootstrap-2026-10-06)
-records the tests and remaining boundaries; the mirror remains prior Task 6a
-only, without Task 6b publication authorization.
+records the tests and remaining boundaries; the separately approved narrow
+Task 6b status mirror closes no provider, deployed or every-push gate.
 
 Local slice:
 
@@ -540,7 +548,8 @@ Local slice:
 - [x] Share bootstrap SQL/domain behavior without an environment override for staging; exercise actual local persistence, 600000 ms expiry, recovery exchange, race/retry, isolation and audit rollback.
 - [x] Implement the approved seven-file asynchronous target/freshness correction after deterministic semantic RED, with actual requested/foreign D1 row-integrity and expired-readback zero-row evidence; retain original `9f328ca` results separately in the [review-fix ledger](../../testing/per-pr-cloud-e2e.md#immutable-target-and-asynchronous-freshness-review-fix-2026-10-06). Same-client overlapping D1 creates refuse; later ordinary sequential creation remains usable. No sleep, dependency/configuration or controller progression change.
 - [x] Preserve the irreversible post-response clock observation after residual I2 review of `a07cf37`; deterministic consumer and actual D1 RED/GREEN prove zero bootstrap SQL/rows after checkpoint reversal and later recovery, with ordinary exact-ID creation retained. The [clock-fix ledger](../../testing/per-pr-cloud-e2e.md#irreversible-post-response-clock-observations-2026-10-06) keeps original/runtime evidence separate and records accepted source `07af8ed`: explicit Node 22 final 322 cloud, 1,592 Vitest plus nine Node, eight real D1/runner and five Playwright (22.6 s), with build/lint/typecheck passing. Closing status notes rerun no unchanged code suite.
-- [x] Complete root independent review of bounded local source `07af8ed` on 2026-10-06 (`task-6b-fix2-review.md`): both Important findings addressed, no new Critical/Important breakage. Root fresh committed Node 22 guard 70/70 and real D1/runner 8/8 pass. No full Task 6b, branch, production/staging or deployed certification follows; the prior Task 6a-only mirror remains unchanged.
+- [x] Complete root independent review of bounded local source `07af8ed` on 2026-10-06 (`task-6b-fix2-review.md`): both Important findings addressed, no new Critical/Important breakage. Root fresh committed Node 22 guard 70/70 and real D1/runner 8/8 pass. No full Task 6b, branch, production/staging or deployed certification follows; prior Task 6a-only mirror state is historical.
+- [x] Separately approve and complete narrow reviewed-status synchronization on 2026-10-06: exact four-page parity, all 17 ordered native URL/title pairs and active destination/child metadata preserved, with root independent readback. The [bootstrap synchronization ledger](../../testing/per-pr-cloud-e2e.md#reviewed-local-bootstrap-status-synchronization-2026-10-06) retains source `07af8ed`/closing prose `4d6df6a`; no unchanged suite rerun, clarification body publication or provider/live acceptance.
 
 Full deployed acceptance remains pending:
 

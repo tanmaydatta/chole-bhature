@@ -31,7 +31,10 @@ pilot, deployment, credential change, or every-push workflow. The separately
 approved 2026-10-06 [local exact-D1 bootstrap safeguards](#local-exact-d1-root-bootstrap-2026-10-06)
 are implemented, locally verified and independently accepted at `07af8ed`;
 both Important review findings are addressed. Full deployed
-Task 6b certification remains deferred. This latest local section is not mirrored.
+Task 6b certification remains deferred. The separately approved reviewed
+nonsecret summary is now mirrored, as recorded in the
+[bootstrap synchronization ledger](#reviewed-local-bootstrap-status-synchronization-2026-10-06);
+newer local sections are not reproduced wholesale.
 
 ## Guarded application CI admission (2026-10-06)
 
@@ -174,7 +177,7 @@ Code references:
 
 ### Reviewed-status mirror synchronization (2026-10-06)
 
-The approved canonical nonsecret status identifies reviewed source `736e213`
+The earlier Task 6a canonical nonsecret status identifies reviewed source `736e213`
 and closing documentation `f8f6dbf`, retains the 1,581 Vitest plus 9 Node and
 5/5 local Playwright results above, and explicitly leaves the historical
 `SQLITE_BUSY` cause, warnings and all provider/deployed/cloud gates unresolved.
@@ -193,9 +196,12 @@ and four destinations active. Existing content and history were preserved.
 
 This summary/status synchronization is not wholesale reproduction of the
 newer local implementation sections. The clarification request body remains
-local and unsent. Task 6b, provider and deployed-graph/Access proof, cloud
-passkey/browser acceptance, teardown and every-push gates remain pending;
+local and unsent. At that Task 6a publication, Task 6b, provider and deployed-
+graph/Access proof, cloud passkey/browser acceptance, teardown and every-push
+gates remained pending;
 public Worker writes still refuse transport. No push or deployment is implied.
+The later [bounded local bootstrap synchronization](#reviewed-local-bootstrap-status-synchronization-2026-10-06)
+updates current Task 6b status while preserving this Task 6a publication history.
 
 ## Local verification baseline
 
@@ -1065,8 +1071,10 @@ The mock controller is unchanged and never reaches root bootstrap while
 Operator service remapping/assets remain unresolved. Public Worker mutations
 retain zero transport. No VerifiedStack, provider account/IAM proof, live D1
 query, Access protection, HTTPS cloud passkey, disposal/teardown, pilot or
-every-push gate is completed. The reviewed-status mirror still reflects only
-prior Task 6a synchronization; Task 6b needs separate exact-publication approval.
+every-push gate is completed. At this original local implementation step, the
+reviewed-status mirror reflected only prior Task 6a synchronization. The later
+[reviewed local bootstrap status sync](#reviewed-local-bootstrap-status-synchronization-2026-10-06)
+records separately approved narrow Task 6b publication.
 
 Implementation references:
 
@@ -1129,8 +1137,8 @@ retry/skip workaround. Complete outputs and distinct browser artifacts are
 retained in ignored fix-round evidence; historical SQLITE_BUSY cause remains
 unproved. The original table retains its original `9f328ca` provenance. No live adapter,
 graph receipt, VerifiedStack, public Worker write, Task 7 progression or Notion
-publication follows; the prior Task 6a-only mirror and all provider/live gates
-remain unchanged.
+publication followed from that source correction; its mirror still reflected
+Task 6a only. The separately approved status sync below changes no provider/live gate.
 
 ### Irreversible post-response clock observations (2026-10-06)
 
@@ -1191,6 +1199,42 @@ real D1/runner 8/8 (9.39 s). The accepted source remains `07af8ed`, not the
 closing prose commit; no unchanged code suite was rerun for these status notes.
 Acceptance covers only the bounded local bootstrap safeguards, not full
 Task 6b, the branch, production/staging or any live certification.
-Prior Task 6a-only mirror status,
-zero-transport public Worker refusal and all deployed/provider/HTTPS/passkey/
-teardown/every-push gates remain unchanged; no Task 7 progression or publication.
+The prior Task 6a-only mirror was unchanged by those closing notes. The later
+separately approved narrow status sync follows; zero-transport public Worker
+refusal and all deployed/provider/HTTPS/passkey/teardown/every-push gates remain
+unchanged, with no Task 7 progression.
+
+## Reviewed local bootstrap status synchronization (2026-10-06)
+
+Reviewed nonsecret Task 6b status is now mirrored to the four existing
+[roadmap](https://app.notion.com/p/3a6e5c7c2b8e81f6b412c45a2bc7b344),
+[design](https://app.notion.com/p/3ebe5c7c2b8e8186866ef1e158bfd880),
+[plan](https://app.notion.com/p/3ebe5c7c2b8e81229ee0d8a0acb2d309) and
+[Plans index](https://app.notion.com/p/390e5c7c2b8e8165b7f7d77392eab088)
+destinations. Each narrow nondeleting replacement superseded only the prior
+current-status paragraph. PATCH and fresh complete GET strings exactly matched
+the original whole page plus the approved replacement, without normalization
+or a formatting exception. All 17 ordered native child URLs/titles and active
+destination/child metadata were preserved. Root independently verified all
+four whole pages, all 17 pairs and all active metadata/title checks.
+
+The canonical status identifies accepted tested source `07af8ed`, findings
+addressed across `a07cf37`/`07af8ed`, and closing documentation `4d6df6a`.
+Source and closing-note reviews are complete (`task-6b-fix2-review.md`,
+`task-6b-closing-notes-review.md`). It retains the explicit Node 22 results
+above: 322 controller tests, 1,592 Vitest plus nine Node tests, eight real
+local D1/runner tests and five local Playwright tests (22.6 s), with build,
+lint and affected type checks passing. These are accepted-source evidence;
+this documentation-only synchronization ran no new code suite. Persisted state,
+recovery, concurrency, isolation and zero-bootstrap-SQL/row refusal evidence
+retain their provenance. Task 6a remains locally accepted on `736e213`.
+
+This is summary publication, not wholesale reproduction of newer local
+sections. The clarification request body remains local and unsent. Existing
+dashboard chunk/Fast Refresh and Playwright colour warnings remain, and the
+earlier intermittent `SQLITE_BUSY` cause is still unproved. Acceptance is only
+for bounded local safeguards: authenticated protected configuration, remote
+query atomicity, deployed service/version/D1/Access/assets graph, cloud HTTPS/
+passkey, teardown, two-cloud-stack and every-push acceptance remain pending.
+Public Worker writes still refuse transport; no live-controller wiring, push,
+deployment or Task 7 progression follows.

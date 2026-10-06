@@ -41,6 +41,17 @@ adopted prerequisite follows; closing status-note review of `eb72ae5` is complet
 `task-5f-notion-sync-review.md`). The prior
 Task 5e review at `c42088f` is complete with no findings.
 
+Reviewed nonsecret Task 6b bounded local bootstrap status was narrowly
+synchronized on 2026-10-06 to the same four existing destinations. Complete
+whole-page PATCH/fresh-GET parity passed with no normalization or formatting
+exception; all 17 ordered native child links and active destination/child
+metadata were preserved and independently verified by root. Current mirrored
+status identifies accepted tested source `07af8ed` and closing documentation
+`4d6df6a`; the earlier Task 6a synchronization remains historical. The
+[bootstrap synchronization ledger](../../testing/per-pr-cloud-e2e.md#reviewed-local-bootstrap-status-synchronization-2026-10-06)
+records summary-only scope and evidence. Full local sections and the unsent
+clarification request body were not published. No provider/live gate is closed.
+
 ## Goal and success criteria
 
 Run the existing staging-class Core/API, Identity, and Operator Playwright suite on **every new push to a same-repository pull request**, against that push's own temporary Cloudflare stack. A newer push cancels the older run for that PR. Different PRs may run together without sharing Workers, databases, root sessions, Access credentials, fixtures, or cleanup ownership. Fork PRs do not receive cloud E2E. The manually operated staging stack and static demo remain untouched.
@@ -433,8 +444,10 @@ readback negatives; they issue no graph receipt or VerifiedStack. The
 uses two genuinely distinct Product/Auth database pairs, roots and synthetic
 secrets, actual persistence and real local Identity recovery exchange. It closes
 no provider, HTTPS cloud passkey, teardown, pilot or every-push gate. Bounded
-local source `07af8ed` is independently accepted; Task 6b documentation has not
-been synchronized to the prior Task 6a-only mirror.
+local source `07af8ed` is independently accepted; its reviewed nonsecret
+summary is now mirrored under separate 2026-10-06 publication approval, with
+closing documentation `4d6df6a` as provenance. This narrow status sync preserves
+prior Task 6a history and does not reproduce newer local sections wholesale.
 Independent review of original `9f328ca` found an asynchronous target swap and
 freshness stretching across awaits. The separately approved local correction
 has deterministic boundary and actual D1 row-integrity evidence in the
