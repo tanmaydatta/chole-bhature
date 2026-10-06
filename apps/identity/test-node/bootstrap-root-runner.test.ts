@@ -62,7 +62,15 @@ afterEach(async () => {
   ));
 });
 
-async function localRun(index: number) {
+type LocalRequest = { method: string; path: string; body?: { sql?: string; params?: unknown[]; name?: string } };
+
+function deferred() {
+  let release!: () => void;
+  const promise = new Promise<void>(resolve => { release = resolve; });
+  return { promise, release };
+}
+
+async function localRun(index: number, options: { createAuth?: boolean; beforeRequest?: (request: LocalRequest) => Promise<void>; replacementId?: string } = {}) {
   const directory = await mkdtemp(path.join(tmpdir(), 'identity-exact-d1-'));
   temporaryDirectories.push(directory);
   const persistDirectory = path.join(directory, 'state');
@@ -86,36 +94,41 @@ async function localRun(index: number) {
   const at = new Date(ms).toISOString();
   const inventory = { key, names, cloudflare: { accountId: `local-account-${index}`, workerIds: {}, d1Ids: {}, accessAppIds: {}, tokenId: null }, stage: 'creating', createdAt: at, updatedAt: at };
   const resources = new Map<string, { uuid: string; name: string }>();
-  const calls: { method: string; path: string; body?: { sql?: string; params?: unknown[]; name?: string } }[] = [];
+  const calls: LocalRequest[] = [];
+  const queryTargets = new Map([[ids.auth, database]]);
   const evidence: unknown[] = [];
   let afterQuery = () => {};
   const protectedD1Ids = { product: '55555555-5555-4555-8555-555555555555', auth: '66666666-6666-4666-8666-666666666666' };
   const d1Client = createCloudflareClient({ accountId: inventory.cloudflare.accountId, inventory, protectedD1Ids, now: () => new Date(ms).toISOString(), store: { async put(value: unknown) { evidence.push(value); } }, transport: {
     async request(request: typeof calls[number]) {
       calls.push(request);
+      await options.beforeRequest?.(request);
       const root = `/accounts/${inventory.cloudflare.accountId}/d1/database`;
       let result: unknown;
       if (request.path === root && request.method === 'GET') result = [...resources.values()];
       else if (request.path === root && request.method === 'POST') {
         const role = request.body?.name === names.auth ? 'auth' : request.body?.name === names.product ? 'product' : null;
         if (!role) throw new Error('Unknown local D1 create');
-        result = { uuid: ids[role], name: names[role] }; resources.set(ids[role], result as { uuid: string; name: string });
+        const uuid = role === 'auth' && resources.has(ids.auth) ? options.replacementId : ids[role];
+        if (!uuid) throw new Error('Unexpected repeated local D1 create');
+        result = { uuid, name: names[role] }; resources.set(uuid, result as { uuid: string; name: string });
       } else if (request.method === 'GET') {
         result = resources.get(request.path.slice(root.length + 1));
         if (!result) return { status: 404 };
-      } else if (request.path === `${root}/${ids.auth}/query` && request.method === 'POST') {
+      } else if (request.path.endsWith('/query') && request.method === 'POST' && queryTargets.has(request.path.slice(root.length + 1, -6))) {
         // Complete LOCAL protocol: SQL persists through real atomic D1.batch, never a live REST claim.
         const statements = splitSql(request.body?.sql ?? '');
-        try { result = await database.batch(statements.map((sql: string) => database.prepare(sql).bind(...(request.body?.params ?? [])))); }
+        const target = queryTargets.get(request.path.slice(root.length + 1, -6))!;
+        try { result = await target.batch(statements.map((sql: string) => target.prepare(sql).bind(...(request.body?.params ?? [])))); }
         catch { result = [{ success: false, results: [], error: 'Local transaction rolled back' }]; }
         afterQuery();
       } else throw new Error('Unknown exact-ID local protocol');
       return { status: 200, success: true, result, ...(Array.isArray(result) ? { result_info: { total_count: result.length } } : {}) };
     },
   } });
-  await d1Client.createD1('product'); await d1Client.createD1('auth');
+  await d1Client.createD1('product'); if (options.createAuth !== false) await d1Client.createD1('auth');
   const input = { authDatabaseId: ids.auth, key, authSecret: secret, email: `root-${index}@example.test`, d1Client };
-  return { input, database, product, ids, directory, persistDirectory, miniflare, calls, evidence, resources, createdAt: ms, afterSql(action: () => void) { afterQuery = action; }, advance(msDelta: number) { ms += msDelta; } };
+  return { input, database, product, ids, directory, persistDirectory, miniflare, calls, evidence, resources, queryTargets, createdAt: ms, afterSql(action: () => void) { afterQuery = action; }, advance(msDelta: number) { ms += msDelta; } };
 }
 
 async function counts(database: D1Database) {
@@ -123,6 +136,39 @@ async function counts(database: D1Database) {
 }
 
 describe('guard-owned local exact-D1 bootstrap', () => {
+  test('overlapping Auth creation keeps actual root rows on the requested database and leaves the other run empty', async () => {
+    const foreign = await localRun(2);
+    const firstList = deferred(); const entered = deferred(); const secondPost = deferred(); const secondEntered = deferred();
+    let lists = 0; let waiting = true; let second: Promise<string>;
+    const f = await localRun(1, { createAuth: false, replacementId: foreign.ids.auth, beforeRequest: async request => {
+      if (request.method === 'GET' && request.path.endsWith('/database') && ++lists === 2) { entered.release(); await firstList.promise; }
+      if (request.method === 'POST' && request.path.endsWith('/database') && request.body?.name?.endsWith('-auth') && waiting) { secondEntered.release(); await secondPost.promise; }
+      if (request.path.endsWith('/query')) { secondPost.release(); await second; }
+    } });
+    f.queryTargets.set(foreign.ids.auth, foreign.database);
+    const first = f.input.d1Client.createD1('auth'); await entered.promise;
+    second = f.input.d1Client.createD1('auth').then(() => 'accepted', () => 'rejected');
+    await Promise.race([secondEntered.promise, second]); waiting = false; firstList.release(); await first;
+    const result = await bootstrapCiRoot(f.input).then(() => 'accepted', () => 'rejected'); secondPost.release();
+    expect({ second: await second, bootstrap: result, originalRows: await counts(f.database), foreignRows: await counts(foreign.database),
+      queries: f.calls.filter(call => call.path.endsWith('/query')).map(call => call.path),
+      authResources: [...f.resources.values()].filter(resource => resource.name.endsWith('-auth')).length,
+    }).toEqual({ second: 'rejected', bootstrap: 'accepted', originalRows: [1, 1, 1, 1], foreignRows: [0, 0, 0, 0],
+      queries: Array(2).fill(`/accounts/local-account-1/d1/database/22222222-2222-4222-8222-222222222222/query`), authResources: 1 });
+    expect(await foreign.product.prepare('SELECT id FROM product_sentinel').first('id')).toBe('product-2');
+  });
+
+  test('expired final exact readback refuses with real bootstrap tables still empty', async () => {
+    let reads = 0; let f: Awaited<ReturnType<typeof localRun>>;
+    f = await localRun(1, { beforeRequest: async request => {
+      if (request.method === 'GET' && request.path.endsWith('/22222222-2222-4222-8222-222222222222') && ++reads === 3) f.advance(300001);
+    } });
+    expect(await bootstrapCiRoot(f.input).then(() => 'accepted', () => 'rejected')).toBe('rejected');
+    expect(await counts(f.database)).toEqual([0, 0, 0, 0]);
+    expect(f.calls.filter(call => call.path.endsWith('/query')).length).toBe(1);
+    expect(await f.product.prepare('SELECT id FROM product_sentinel').first('id')).toBe('product-1');
+  });
+
   test('changed exact readback between initial SELECT and batch refuses with no persisted bootstrap effects', async () => {
     const f = await localRun(1);
     f.afterSql(() => f.resources.set(f.ids.auth, { uuid: f.ids.auth, name: 'foreign-auth' }));

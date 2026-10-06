@@ -14,14 +14,15 @@ function protectedIds(value) {
 // This adapter is validated with local injected D1.batch only, never a live executor.
 export async function withBootstrapAuthDatabase(client, input, action) {
   const state = bootstrapClients.get(client);
-  if (!state || JSON.stringify(parseStackKey(input.key)) !== state.key || !CANONICAL_UUID.test(input.authDatabaseId) || input.authDatabaseId !== state.authId()) throw new InventoryQuarantineError('Local Auth bootstrap ownership is unproven.');
+  if (!state || JSON.stringify(parseStackKey(input.key)) !== state.key || !CANONICAL_UUID.test(input.authDatabaseId)) throw new InventoryQuarantineError('Local Auth bootstrap ownership is unproven.');
+  const context = state.capture(input.authDatabaseId);
   const previous = state.queue;
   let release;
   state.queue = new Promise(resolve => { release = resolve; });
   await previous;
   try {
-    const now = await state.check();
-    return await action(state.database, now);
+    const now = await state.check(context);
+    return await action(state.database(context), now);
   } finally { release(); }
 }
 
@@ -265,6 +266,11 @@ export function createCloudflareClient({ accountId, inventory: rawInventory, tra
   let poisoned = false;
   const exclusions = protectedIds(protectedD1Ids);
   let authCreation = null;
+  let authLastClock = null;
+  let d1CreationPending = false;
+  let d1Revocation = 0;
+  const bootstrapKey = JSON.stringify(parseStackKey(inventory.key));
+  const revokeAuth = () => { authCreation = null; d1Revocation += 1; };
   if (accountId !== inventory.cloudflare.accountId) quarantine('Cloudflare account is not certified by inventory.', alert);
   if (!transport || typeof transport.request !== 'function') throw new TypeError('Expected an injected Cloudflare transport with request().');
   const root = `/accounts/${accountId}`;
@@ -295,34 +301,48 @@ export function createCloudflareClient({ accountId, inventory: rawInventory, tra
     if (typeof uuid !== 'string' || uuid !== inventory.cloudflare.d1Ids.product && uuid !== inventory.cloudflare.d1Ids.auth) quarantine('D1 target is not certified by inventory.', alert);
     const response = await call('GET', `${root}/d1/database/${uuid}`);
     const role = uuid === inventory.cloudflare.d1Ids.auth ? 'auth' : 'product';
-    if (authCreation && (response.missing || response.result?.uuid !== uuid || response.result?.name !== d1Name(inventory, role)
-      || response.result?.account_id !== undefined && response.result.account_id !== accountId)) authCreation = null;
+    if (response.missing || response.result?.uuid !== uuid || response.result?.name !== d1Name(inventory, role)
+      || response.result?.account_id !== undefined && response.result.account_id !== accountId) revokeAuth();
     return response;
   }
   async function createD1(role) {
     const name = d1Name(inventory, role);
     if (!name) quarantine('D1 role is not certified by inventory.', alert);
     if (inventory.cloudflare.d1Ids[role]) quarantine('D1 role already has a recorded exact ID.', alert);
-    const listed = await listD1();
-    if (!Array.isArray(listed)) throw new TypeError('Cloudflare D1 list response is invalid.');
-    if (listed.some(database => database?.name === name)) quarantine('D1 already exists; create is ambiguous.', alert);
-    await intent(`d1:${role}`, name);
-    const created = (await call('POST', `${root}/d1/database`, { name })).result;
-    if (!created || created.name !== name || typeof created.uuid !== 'string' || listed.some(database => database.uuid.toLowerCase() === created.uuid.toLowerCase())
-      || Object.values(inventory.cloudflare.d1Ids).some(id => id.toLowerCase() === created.uuid.toLowerCase())
-      || exclusions && Object.values(exclusions).includes(created.uuid.toLowerCase())) { poisoned = true; quarantine('D1 create response is reused, protected, or ambiguous.', alert); }
-    try { await check(cloneWith(inventory, 'd1Ids', role, created.uuid, now)); } catch (error) { poisoned = true; quarantine(error.message, alert); }
-    if (role === 'auth' && exclusions && CANONICAL_UUID.test(created.uuid)) {
-      const clock = protocolClock(now);
-      authCreation = { id: created.uuid, createdAt: clock.parsed, expiresAt: clock.parsed + 5 * 60_000 };
-    }
-    return created;
+    if (d1CreationPending) quarantine('D1 creation is already in progress on this client.', alert);
+    // Reserve before discovery, intent or checkpoint awaits; concurrent creates
+    // must not create siblings or overwrite one another's inventory/context.
+    d1CreationPending = true;
+    const generation = d1Revocation;
+    try {
+      const listed = await listD1();
+      if (!Array.isArray(listed)) throw new TypeError('Cloudflare D1 list response is invalid.');
+      if (listed.some(database => database?.name === name)) quarantine('D1 already exists; create is ambiguous.', alert);
+      await intent(`d1:${role}`, name);
+      if (generation !== d1Revocation) quarantine('D1 creation was revoked by a dependency change.', alert);
+      // Conservative immutable deadline: transport and checkpoint latency consume it.
+      const createdAt = role === 'auth' && exclusions ? protocolClock(now).parsed : null;
+      const created = (await call('POST', `${root}/d1/database`, { name })).result;
+      if (!created || created.name !== name || typeof created.uuid !== 'string' || listed.some(database => database.uuid.toLowerCase() === created.uuid.toLowerCase())
+        || Object.values(inventory.cloudflare.d1Ids).some(id => id.toLowerCase() === created.uuid.toLowerCase())
+        || exclusions && Object.values(exclusions).includes(created.uuid.toLowerCase())) { poisoned = true; quarantine('D1 create response is reused, protected, or ambiguous.', alert); }
+      try { await check(cloneWith(inventory, 'd1Ids', role, created.uuid, now)); } catch (error) { poisoned = true; quarantine(error.message, alert); }
+      if (generation !== d1Revocation) { poisoned = true; quarantine('D1 creation was revoked by a dependency change.', alert); }
+      if (role === 'auth' && exclusions && CANONICAL_UUID.test(created.uuid)) {
+        authLastClock = protocolClock(now).parsed;
+        authCreation = Object.freeze({ id: created.uuid, productId: inventory.cloudflare.d1Ids.product, accountId, key: bootstrapKey, createdAt, expiresAt: createdAt + 5 * 60_000 });
+        // Ordinary creation still succeeded; an expired/reversed checkpoint may
+        // not leave any bootstrap authority, even if the clock later recovers.
+        if (authLastClock < createdAt || authLastClock >= authCreation.expiresAt) revokeAuth();
+      }
+      return created;
+    } finally { d1CreationPending = false; }
   }
   async function deleteD1(role) {
     const id = inventory.cloudflare.d1Ids[role];
     const name = d1Name(inventory, role);
     if (!id || !name) quarantine('D1 target is not certified by inventory.', alert);
-    authCreation = null;
+    revokeAuth();
     const current = await getD1(id);
     if (current.missing) return { status: 'missing' };
     const resource = current.result;
@@ -443,23 +463,35 @@ export function createCloudflareClient({ accountId, inventory: rawInventory, tra
     return { status: 'deleted' };
   }
 
-  async function bootstrapCheck() {
-    if (poisoned || !exclusions || !authCreation || inventory.stage !== 'creating'
-      || authCreation.id !== inventory.cloudflare.d1Ids.auth || !CANONICAL_UUID.test(inventory.cloudflare.d1Ids.product)
+  function bootstrapCurrent(context) {
+    if (poisoned || !exclusions || !context || context !== authCreation || inventory.stage !== 'creating'
+      || context.id !== inventory.cloudflare.d1Ids.auth || context.productId !== inventory.cloudflare.d1Ids.product
+      || context.accountId !== accountId || context.key !== bootstrapKey || !CANONICAL_UUID.test(context.productId)
       || Object.values(inventory.cloudflare.d1Ids).some(id => Object.values(exclusions).includes(id))) quarantine('Local Auth bootstrap ownership is unproven.', alert);
-    const clock = protocolClock(now);
-    if (clock.parsed < authCreation.createdAt || clock.parsed > authCreation.expiresAt) { authCreation = null; quarantine('Local Auth bootstrap creation evidence expired.', alert); }
-    const current = await call('GET', `${root}/d1/database/${authCreation.id}`, undefined, true);
-    if (current.missing || current.result?.uuid !== authCreation.id || current.result?.name !== inventory.names.auth
-      || current.result?.account_id !== undefined && current.result.account_id !== accountId) {
-      authCreation = null; poisoned = true; quarantine('Local Auth bootstrap exact readback changed.', alert);
-    }
+    let clock;
+    try { clock = protocolClock(now); } catch { revokeAuth(); quarantine('Local Auth bootstrap clock is invalid.', alert); }
+    if (clock.parsed < authLastClock || clock.parsed >= context.expiresAt) { revokeAuth(); quarantine('Local Auth bootstrap creation evidence expired or clock moved backwards.', alert); }
+    authLastClock = clock.parsed;
     return clock.parsed;
   }
 
-  async function bootstrapQuery(sql, params = []) {
-    await bootstrapCheck();
-    const response = await call('POST', `${root}/d1/database/${authCreation.id}/query`, { sql, params }, true);
+  async function bootstrapCheck(context) {
+    bootstrapCurrent(context);
+    const current = await call('GET', `${root}/d1/database/${context.id}`, undefined, true);
+    // A deletion, changed ordinary read or expiry during GET cannot be undone by
+    // its old response; never follow a replacement mutable Auth target.
+    const checkedAt = bootstrapCurrent(context);
+    if (current.missing || current.result?.uuid !== context.id || current.result?.name !== inventory.names.auth
+      || current.result?.account_id !== undefined && current.result.account_id !== accountId) {
+      revokeAuth(); poisoned = true; quarantine('Local Auth bootstrap exact readback changed.', alert);
+    }
+    return checkedAt;
+  }
+
+  async function bootstrapQuery(context, sql, params = []) {
+    await bootstrapCheck(context);
+    bootstrapCurrent(context);
+    const response = await call('POST', `${root}/d1/database/${context.id}/query`, { sql, params }, true);
     if (!Array.isArray(response.result) || !response.result.length || response.result.some(item => item?.success !== true || !Array.isArray(item.results))) throw new InventoryQuarantineError('Local Auth bootstrap SQL failed.');
     return response.result;
   }
@@ -470,11 +502,16 @@ export function createCloudflareClient({ accountId, inventory: rawInventory, tra
     listAccessApps, createAccessApp, deleteAccessApp,
     listServiceTokens, createServiceToken, deleteServiceToken,
   });
-  bootstrapClients.set(client, { key: JSON.stringify(parseStackKey(inventory.key)), authId: () => authCreation?.id, check: bootstrapCheck, queue: Promise.resolve(), database: Object.freeze({
-    first: async (sql, params = []) => (await bootstrapQuery(sql, params))[0].results[0] ?? null,
+  bootstrapClients.set(client, { key: bootstrapKey, capture: id => {
+    const context = authCreation;
+    if (!context || context.id !== id) quarantine('Local Auth bootstrap ownership is unproven.', alert);
+    bootstrapCurrent(context);
+    return context;
+  }, check: bootstrapCheck, queue: Promise.resolve(), database: context => Object.freeze({
+    first: async (sql, params = []) => (await bootstrapQuery(context, sql, params))[0].results[0] ?? null,
     // Injected LOCAL /query protocol only: the fixture must execute real atomic D1.batch.
     // Provider atomicity and deployed graph certification remain a separate future gate.
-    batch: statements => bootstrapQuery(statements.map(renderBootstrapSql).join(';\n') + ';'),
+    batch: statements => bootstrapQuery(context, statements.map(renderBootstrapSql).join(';\n') + ';'),
   }) });
   return client;
 }

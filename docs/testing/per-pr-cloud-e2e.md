@@ -1041,7 +1041,7 @@ Focused evidence before final verification:
   concurrent reissue, active-root/different-email refusal and a changed exact
   readback between SELECT and write are verified against actual D1 rows.
 
-**Table — Final local verification on the Task 6b source**
+**Table — Original local verification on the `9f328ca` Task 6b source**
 
 | Command | Result |
 |---|---|
@@ -1072,3 +1072,58 @@ Implementation references:
 - [Guarded client](../../scripts/cloud-e2e/cloudflare.mjs) and [exact-ID consumer](../../scripts/cloud-e2e/root-bootstrap.mjs).
 - [Real D1/recovery tests](../../apps/identity/test-node/bootstrap-root-runner.test.ts), [Worker bootstrap regressions](../../apps/identity/test/onboarding.test.ts) and [controller association refusals](../../scripts/cloud-e2e/provision.test.mjs).
 - [Local authority design](../superpowers/specs/2026-09-29-per-pr-cloud-e2e-design.md#local-exact-d1-bootstrap-authority-2026-10-06) and [bounded implementation status](../superpowers/plans/2026-09-30-per-pr-cloud-e2e.md#task-6b-deferred-exact-d1-bootstrap-and-controller-certification).
+
+### Immutable target and asynchronous freshness review fix (2026-10-06)
+
+The approved local fix keeps each bootstrap on its originally requested Auth
+database and consumes creation freshness across asynchronous work. Independent
+re-review remains pending; full deployed certification is still deferred.
+
+Independent review of `9f328ca` found two Important defects despite its passing
+suite: overlapping Auth creates could replace the target between SELECT and
+INSERT, and delayed durable checkpoints or exact readbacks could extend the
+five-minute window. Deterministic semantic RED reproduced both. The real local
+D1 reproduction left the requested database empty and persisted one
+user/profile/flow/audit in the other database; a delayed final GET also allowed
+bootstrap after the original deadline. Diagnostics contain only outcomes,
+UUIDs and counts, not generated grants or synthetic secrets.
+
+The client now reserves D1 creation before its first await, refusing overlapping
+same-client creates without sibling resources and releasing the reservation on
+completion. Bootstrap captures one immutable Auth/Product/run/account creation
+context and rechecks that exact context after queue acquisition, before and
+after every exact GET, and immediately before SQL transport. Dependency deletion
+or changed ordinary readback cannot restore authority during a pending GET or
+checkpoint. These are process-local safeguards, not distributed provider locks.
+
+The immutable creation deadline starts immediately before Auth POST transport,
+so response/checkpoint latency consumes it. Validity is the half-open interval
+`[createdAt, createdAt + 300000)`; exact expiry and backward clocks revoke
+authority without readback renewal. Root grant expiry remains 600000 ms. Tests
+use deferred boundaries and controlled clocks, not sleeps: literal ages 299999,
+300000 and 300001 ms, delayed POST/checkpoint/final GET, backward clocks,
+queued expiry/deletion and checkpoint dependency revocation. Actual local D1
+tests verify one committed root on the requested database, zero rows in the
+other run and zero persisted bootstrap effects after expired final readback.
+Existing recovery, grant hashing, retry/concurrency, audit rollback, isolation
+and CLI security assertions remain intact.
+
+**Table — Final local verification on the asynchronous-fix source**
+
+| Command | Result |
+|---|---|
+| Whole real D1/bootstrap runner file | 6/6, zero failures/skips, 8.99 s; actual target integrity and expired-readback zero rows. Focused cloud lint and Identity typecheck exit 0. |
+| `node --test scripts/cloud-e2e/*.test.mjs` | 318/318, zero failures/skips, 3,035.52 ms. |
+| `pnpm test` | 100 Vitest files / 1,590 tests plus nine Node tests, zero failures/skips; 62.52 s shell. Identity: 221 Worker plus 89 Node tests. |
+| `pnpm build`, `pnpm lint` | Both exit 0, 11.89 s / 0.96 s shell; existing dashboard chunk and two Fast Refresh warnings remain. |
+| `E2E_BROWSER_CHANNEL=chromium pnpm e2e:local` | One serialized full run after tests/build/lint: 5/5, zero failures/skips, 22.3 s (23.20 s shell); three existing colour-environment warnings. |
+
+Final commands ran after production/test self-review; only verification/status
+docs followed. Installed locked Node/pnpm/Wrangler and ordinary local loopback/
+log access were used, with no install, compatibility/configuration change or
+retry/skip workaround. Complete outputs and distinct browser artifacts are
+retained in ignored fix-round evidence; historical SQLITE_BUSY cause remains
+unproved. The original table retains its original `9f328ca` provenance. No live adapter,
+graph receipt, VerifiedStack, public Worker write, Task 7 progression or Notion
+publication follows; the prior Task 6a-only mirror and all provider/live gates
+remain unchanged.

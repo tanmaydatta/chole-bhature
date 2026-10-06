@@ -402,7 +402,14 @@ them from authenticated protected configuration; that integration is pending.
 Client identity carries the local creation context through a private registry.
 Copied inventory, UUIDs, marker strings, arbitrary clients/callbacks or a
 verification boolean cannot create it. Creation evidence lasts at most five
-minutes and cannot be refreshed by readback. Ambiguous transport/persistence,
+minutes from the conservative pre-POST boundary and cannot be refreshed by
+checkpoint completion or readback. Validity is half-open; exact expiry or a
+backward clock revokes the context. D1 creation reserves the same client before
+discovery awaits so overlapping creates cannot overwrite its authority or
+create unrecorded siblings. Each bootstrap pins the requested Auth UUID and its
+Product/run/account creation context for its entire queued operation, rechecking
+after queue acquisition, before/after exact readback and immediately before SQL.
+Dependency revocation during checkpoint/readback remains final. Ambiguous transport/persistence,
 deletion or changed identity revokes it. Missing, reused, protected, foreign,
 Product-instead-of-Auth and wrong-run targets refuse before SQL. Actual root
 operations remain serialized on the same client and atomic in the shared
@@ -423,6 +430,12 @@ uses two genuinely distinct Product/Auth database pairs, roots and synthetic
 secrets, actual persistence and real local Identity recovery exchange. It closes
 no provider, HTTPS cloud passkey, teardown, pilot or every-push gate. Root review
 is pending, and Task 6b documentation has not been synchronized to the mirror.
+Independent review of original `9f328ca` found an asynchronous target swap and
+freshness stretching across awaits. The separately approved local correction
+has deterministic boundary and actual D1 row-integrity evidence in the
+[review-fix ledger](../../testing/per-pr-cloud-e2e.md#immutable-target-and-asynchronous-freshness-review-fix-2026-10-06);
+independent scoped re-review remains pending. This correction changes no
+provider prerequisite or deployed acceptance claim.
 
 Implementation references:
 

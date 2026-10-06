@@ -481,7 +481,9 @@ retains all original failure/retry evidence and the unchanged deferred gates.
 ### Task 6b: Deferred exact-D1 bootstrap and controller certification
 
 **Status:** The separately approved 2026-10-06 local bootstrap safeguards are
-implemented; independent review is pending. Full deployed controller
+implemented. Independent review of `9f328ca` found two Important asynchronous
+target/freshness defects; their separately approved bounded correction is
+implemented locally and independent scoped re-review is pending. Full deployed controller
 certification remains deferred. This bounded slice authorizes no provider
 adapter, live query, deployment, workflow or Task 7 progression.
 
@@ -498,7 +500,12 @@ that freshly created Auth, its exact run/account and independently supplied
 protected staging Product/Auth UUID exclusions. Raw or copied inventory,
 markers, callbacks and verification booleans cannot mint authority. The
 five-minute client creation context cannot be renewed through readback;
-poison, deletion or changed exact readback revokes it. The returned grant
+its immutable half-open deadline starts immediately before Auth POST transport
+and includes response/checkpoint latency. Exact expiry and backward clocks
+revoke it. D1 creation reserves before the first await; bootstrap pins its
+original Auth/Product/run/account context across queue acquisition and every
+readback/SQL boundary. Poison, deletion or changed exact readback revokes it,
+including during awaited checkpoints/GETs. The returned grant
 expires after 600000 ms. The controller must independently certify trusted account
 subdomain, actual D1 UUIDs, exact service targets and deployed configuration
 before use. Local callable binding shapes and marker strings cannot do this.
@@ -522,6 +529,7 @@ Local slice:
 
 - [x] Reject protected, missing, malformed, reused, foreign and Product Auth targets; preserve zero-SQL refusal and exact inert D1/service association guards.
 - [x] Share bootstrap SQL/domain behavior without an environment override for staging; exercise actual local persistence, 600000 ms expiry, recovery exchange, race/retry, isolation and audit rollback.
+- [x] Implement the approved seven-file asynchronous target/freshness correction after deterministic semantic RED, with actual requested/foreign D1 row-integrity and expired-readback zero-row evidence; retain original `9f328ca` results separately in the [review-fix ledger](../../testing/per-pr-cloud-e2e.md#immutable-target-and-asynchronous-freshness-review-fix-2026-10-06). Same-client overlapping D1 creates refuse; later ordinary sequential creation remains usable. No sleep, dependency/configuration or controller progression change.
 - [ ] Complete root independent review of this local slice. No deployed certification follows from local tests.
 
 Full deployed acceptance remains pending:

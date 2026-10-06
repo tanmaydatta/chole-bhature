@@ -76,6 +76,32 @@ function deferred() {
   return { promise, release };
 }
 
+test('D1 creation reserves the client before discovery awaits and does not create an unrecorded sibling', async () => {
+  const entered = deferred(); const release = deferred(); const calls = []; const writes = [];
+  let first = true; let creates = 0;
+  const client = createCloudflareClient({ accountId: 'account-1', inventory: { ...inventory, cloudflare: { ...inventory.cloudflare, d1Ids: {} } }, now: () => NOW,
+    store: { async put(value) { writes.push(value); } }, transport: { async request(request) {
+      calls.push(request);
+      if (request.method === 'GET') {
+        if (first) { first = false; entered.release(); await release.promise; }
+        return { status: 200, success: true, result: [], result_info: { total_count: 0 } };
+      }
+      creates += 1;
+      return { status: 200, success: true, result: { uuid: request.body.name === names.product ? inventory.cloudflare.d1Ids.product : inventory.cloudflare.d1Ids.auth, name: request.body.name } };
+    } } });
+  const product = client.createD1('product'); await entered.promise;
+  const auth = client.createD1('auth').then(() => 'accepted', () => 'rejected');
+  // Promise outcome is handled immediately; release cannot depend on a transport sleep.
+  release.release(); await product;
+  assert.equal(await auth, 'rejected');
+  assert.equal(creates, 1);
+  assert.equal(calls.filter(call => call.method === 'POST').length, 1);
+  assert.equal(writes.filter(value => value.type !== 'create-intent').length, 1);
+  await client.createD1('auth');
+  assert.equal(creates, 2);
+  assert.deepEqual(writes.at(-1).cloudflare.d1Ids, inventory.cloudflare.d1Ids);
+});
+
 async function workerReceipts(store, runKey = key, runIds = { api: API_ID, identity: IDENTITY_ID, operator: OPERATOR_ID }, overrides = {}, times = {}, priorByRole = {}) {
   const runNames = resourceNames(runKey);
   const state = { ...inventory, key: runKey, names: runNames, cloudflare: { ...inventory.cloudflare, workerIds: {}, accessAppIds: {}, tokenId: null }, betaWorkerIds: {} };
