@@ -274,6 +274,31 @@ ownTests('changed immutable Worker readback quarantines and leaves unresolved re
   assert.equal(mock.calls.filter(call => call[0] === 'beta-worker-create-result').length, 1);
 });
 
+ownTests('wrong inert D1 or service associations stop before credentials, code or bootstrap progression', async t => {
+  for (const [role, bindings] of [
+    ['api', [{ name: 'DB', type: 'd1', database_id: d1Ids.auth }]],
+    ['identity', [{ name: 'DB', type: 'd1', database_id: d1Ids.product }]],
+    ['identity', [{ name: 'DB', type: 'd1', database_id: '77777777-7777-4777-8777-777777777777' }]],
+    ['identity', [{ name: 'DB', type: 'd1', database_id: d1Ids.auth }, { name: 'CORE', type: 'service', service: 'incentives-api-staging' }]],
+    ['operator', [{ name: 'IDENTITY', type: 'service', service: 'foreign-identity' }]],
+  ]) {
+    const input = await fixture(t); const mock = mockBoundary(); const observe = mock.provider.observe;
+    mock.provider.observe = async request => {
+      const response = await observe(request);
+      if (request.role === role && ['beta-worker-create-result', 'beta-worker-readback'].includes(request.kind)) response.response.result.bindings = bindings;
+      return response;
+    };
+    const outcome = await provisionMockStack({ key, accountId: 'account-1', ...input, ...mock });
+    assert.equal(outcome.status, 'quarantined');
+    assert.equal(mock.calls.some(call => call[0] === 'beta-token-create-result'), false);
+    assert.equal(mock.calls.some(call => call[0] === 'beta-access-attachment'), false);
+    assertNoCodeOrAssetsTransport(mock.calls);
+    assert.equal(mock.calls.some(call => call[0] === 'DELETE'), false);
+    assert.equal(outcome.cleanup.status, 'unsupported');
+    assert.equal(JSON.stringify([...mock.values.values()]).includes('activationGrant'), false);
+  }
+});
+
 ownTests('changed Access token policy blocks attachment and code plan without deleting the Worker graph', async t => {
   const input = await fixture(t);
   const mock = mockBoundary({ badAccessReadback: true });

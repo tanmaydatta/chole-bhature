@@ -415,7 +415,9 @@ NO-GO, all four blockers, zero-transport refusal and full Task 5/live gates rema
 ## Task 6: Isolated `ci` app mode and exact-D1 root bootstrap
 
 Task 6 is split into bounded application admission (6a) and deferred
-controller graph certification/exact-D1 bootstrap (6b). Task 6a's approval on
+controller graph certification/exact-D1 bootstrap (6b). The separately approved
+2026-10-06 local bootstrap slice is recorded below; full deployed certification
+remains deferred. Task 6a's approval on
 2026-10-06 authorizes local source/tests/docs and a local commit only. It
 authorizes no bootstrap, cloud target, generated deployment configuration,
 provider research, transport, deployment or workflow. The original Task 6
@@ -478,22 +480,55 @@ retains all original failure/retry evidence and the unchanged deferred gates.
 
 ### Task 6b: Deferred exact-D1 bootstrap and controller certification
 
-**Status:** Not implemented or dispatched. Requires a separate approved plan.
+**Status:** The separately approved 2026-10-06 local bootstrap safeguards are
+implemented; independent review is pending. Full deployed controller
+certification remains deferred. This bounded slice authorizes no provider
+adapter, live query, deployment, workflow or Task 7 progression.
 
-**Files:** Modify `apps/identity/src/cli/bootstrap-root-runner.mjs`;
-create `scripts/cloud-e2e/root-bootstrap.mjs` and `root-bootstrap.test.mjs`;
-add controller configuration/readback tests and existing bootstrap tests.
+**Files:** Shared `apps/identity/src/cli/bootstrap-root-core.mjs` and `.d.mts`,
+existing Worker wrapper/runner and bootstrap tests; new
+`scripts/cloud-e2e/root-bootstrap.mjs` and `root-bootstrap.test.mjs`, guarded
+client/inventory and their tests, existing controller association tests and
+the matching three docs. `provision.mjs`, schemas, deployment configuration,
+dependencies and workflows remain unchanged.
 
 **Interfaces:** `bootstrapCiRoot({authDatabaseId, key, authSecret, email, d1Client})
--> Promise<{activationGrant, expiresAt}>` accepts only an inventory-verified
-new Auth UUID. The controller must independently certify trusted account
+-> Promise<{activationGrant, expiresAt}>` requires the actual guarded client
+that freshly created Auth, its exact run/account and independently supplied
+protected staging Product/Auth UUID exclusions. Raw or copied inventory,
+markers, callbacks and verification booleans cannot mint authority. The
+five-minute client creation context cannot be renewed through readback;
+poison, deletion or changed exact readback revokes it. The returned grant
+expires after 600000 ms. The controller must independently certify trusted account
 subdomain, actual D1 UUIDs, exact service targets and deployed configuration
 before use. Local callable binding shapes and marker strings cannot do this.
 Existing local/staging bootstrap entry points retain their semantics.
 
-- [ ] Add controller config/readback negatives for wrong D1 UUID or service target and bootstrap refusal of the staging Auth UUID. Verify missing/reused/staging IDs refuse before writes.
-- [ ] Extract bootstrap SQL/cryptography for the exact-ID D1 client; never repoint the staging CLI by environment variable. Preserve root authority, expiry, unique disposable secrets and existing bootstrap regressions.
-- [ ] Run focused bootstrap/controller tests and required local regressions under the separately approved plan. Keep cross-Worker deployed capability/inspection/disposal and real HTTPS passkey acceptance deferred to the live graph/pilot gates in Tasks 5 and 7; local Task 6a evidence does not complete them.
+The shared bootstrap core requires atomic batch persistence, including the
+success audit, and preserves root races, same-email resume and expired reissue.
+Worker calls use actual D1 batch; the local/staging runner retains explicit
+targets, stripped child secrets, an exclusive 0600 SQL file and scoped cleanup.
+The exact-ID consumer's injected local `/query` fixture splits rendered SQL
+and executes actual local D1 batch. This establishes no live `/query`
+atomicity: it **must not be wired into a live controller** until provider
+transactionality and the full graph/live gates are separately certified.
+`provisionMockStack` remains unchanged and never reaches root bootstrap while
+Operator service remapping/assets remain unsupported. The
+[local bootstrap ledger](../../testing/per-pr-cloud-e2e.md#local-exact-d1-root-bootstrap-2026-10-06)
+records the tests and remaining boundaries; the mirror remains prior Task 6a
+only, without Task 6b publication authorization.
+
+Local slice:
+
+- [x] Reject protected, missing, malformed, reused, foreign and Product Auth targets; preserve zero-SQL refusal and exact inert D1/service association guards.
+- [x] Share bootstrap SQL/domain behavior without an environment override for staging; exercise actual local persistence, 600000 ms expiry, recovery exchange, race/retry, isolation and audit rollback.
+- [ ] Complete root independent review of this local slice. No deployed certification follows from local tests.
+
+Full deployed acceptance remains pending:
+
+- [ ] Certify deployed controller configuration/readback and protected account exclusions for wrong D1 UUID/service targets; the implemented local negatives do not prove the deployed graph.
+- [ ] Certify a live atomic exact-ID D1 bootstrap adapter before wiring the shared core to a deployed controller; preserve root authority, expiry, unique disposable secrets and the immutable staging target.
+- [ ] Complete cross-Worker deployed capability/inspection/disposal and real HTTPS passkey acceptance under the live graph/pilot gates in Tasks 5 and 7; local Task 6a/6b evidence does not complete them.
 
 ## Task 7: Real passkey bootstrap and cloud Playwright target
 

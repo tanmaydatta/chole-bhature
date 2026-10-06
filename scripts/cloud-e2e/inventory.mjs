@@ -89,6 +89,8 @@ export function validateInventory(value) {
   checkedString(value.cloudflare.accountId, 'InventoryV1 Cloudflare account is invalid.');
   checkedIdMap(value.cloudflare.workerIds, roles.worker);
   checkedIdMap(value.cloudflare.d1Ids, roles.d1, { uuid: true });
+  const d1Ids = Object.values(value.cloudflare.d1Ids).map(id => id.toLowerCase());
+  if (new Set(d1Ids).size !== d1Ids.length) quarantine('InventoryV1 D1 roles share an ambiguous UUID.');
   checkedIdMap(value.cloudflare.accessAppIds, roles.accessApp);
   if (value.cloudflare.tokenId !== null) checkedString(value.cloudflare.tokenId, 'InventoryV1 token ID is invalid.');
   if (!['creating', 'active', 'quarantined', 'deleted'].includes(value.stage) || !ISO_TIME.test(value.createdAt) || !ISO_TIME.test(value.updatedAt)) {

@@ -26,6 +26,16 @@ function mockTransport(responses) {
   return { calls, async request(request) { calls.push(request); const next = responses.shift(); if (next instanceof Error) throw next; if (!next) return next; return { status: 200, success: true, ...(Array.isArray(next.result) ? { result_info: { total_count: next.result.length } } : {}), ...next }; } };
 }
 
+test('protected staging UUID exclusions reject a substituted fresh Auth create before checkpoint or SQL', async () => {
+  const protectedD1Ids = { product: '55555555-5555-4555-8555-555555555555', auth: '66666666-6666-4666-8666-666666666666' };
+  const transport = mockTransport([{ result: [] }, { result: { uuid: protectedD1Ids.auth, name: names.auth } }]);
+  const writes = [];
+  const client = createCloudflareClient({ accountId: 'account-1', inventory: { ...inventory, cloudflare: { ...inventory.cloudflare, d1Ids: { product: inventory.cloudflare.d1Ids.product } } }, protectedD1Ids, transport, store: { async put(value) { writes.push(value); } }, now: () => NOW });
+  await assert.rejects(client.createD1('auth'), /D1|protected|staging/u);
+  assert.equal(writes.filter(value => value.type !== 'create-intent').length, 0);
+  assert.equal(transport.calls.some(value => value.path.endsWith('/query')), false);
+});
+
 function envelope(kind, role, path, result, observedAt = NOW, method = 'GET') {
   return { kind, run: key, role, observedAt, request: { method, path }, response: { success: true, result } };
 }

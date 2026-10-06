@@ -357,8 +357,9 @@ covers real Worker/D1 fixture persistence, signed member sessions, immutable
 15-minute expiry, proof-bound provisioning and Product-then-Auth disposal,
 with a hand-checked Core interface fake where separate local Worker bindings
 are unavailable. It is not a deployed graph, real cloud passkey result or full
-Task 6 completion. Task 6b retains exact-D1 root bootstrap and controller
-configuration/deployed-graph verification; Tasks 5 and 7–10 retain their
+Task 6 completion. Task 6b's bounded local exact-D1 bootstrap safeguards are
+described below; its full controller configuration/deployed-graph verification
+remains deferred. Tasks 5 and 7–10 retain their
 provider, HTTPS browser, teardown and rollout gates. Independent root review
 initially required CI selection-cookie parity and shared Identity admission.
 The approved bounded fix at `736e213` passed independent fix-only re-review:
@@ -384,6 +385,52 @@ One Identity-local service-association contract revalidates configuration at
 fixture, lifecycle and organization operation boundaries, so the same security
 rule cannot drift between copied implementations. This local consistency guard
 still certifies no remote database identity or deployed account/Access property.
+
+### Local exact-D1 bootstrap authority (2026-10-06)
+
+The separately approved local bootstrap slice binds root creation to the
+guarded client that observed complete pre-create discovery, recorded durable
+intent, received a fresh Auth UUID and checkpointed it. Exact readback occurs
+before every bootstrap SQL read and write. The client snapshots its run,
+account and protected staging Product/Auth UUID exclusions; exclusions are
+required, canonical and distinct, but do not grant ownership. Missing or
+invalid protected configuration preserves ordinary client operations and
+disables bootstrap. No ambient staging environment or PR-supplied inventory
+supplies the protected exclusions. A future protected controller must obtain
+them from authenticated protected configuration; that integration is pending.
+
+Client identity carries the local creation context through a private registry.
+Copied inventory, UUIDs, marker strings, arbitrary clients/callbacks or a
+verification boolean cannot create it. Creation evidence lasts at most five
+minutes and cannot be refreshed by readback. Ambiguous transport/persistence,
+deletion or changed identity revokes it. Missing, reused, protected, foreign,
+Product-instead-of-Auth and wrong-run targets refuse before SQL. Actual root
+operations remain serialized on the same client and atomic in the shared
+bootstrap core: user/profile/recovery/success audit commit together, concurrent
+retries converge, and failed audit writes roll back. Grants remain HMAC-derived,
+persist only as hashes and expire after 600000 ms.
+
+The exact-ID adapter currently validates an injected **local** `/query`
+protocol against actual local D1 batch. Rendering multiple SQL statements into
+that endpoint establishes no provider atomicity or authenticated account proof.
+It must not be connected to a live controller until transactionality and the
+complete deployed service/version/Access/assets graph are separately certified.
+The mock controller still stops at unresolved Operator service remapping and
+never calls root bootstrap. Wrong inert D1/service associations remain local
+readback negatives; they issue no graph receipt or VerifiedStack. The
+[local evidence](../../testing/per-pr-cloud-e2e.md#local-exact-d1-root-bootstrap-2026-10-06)
+uses two genuinely distinct Product/Auth database pairs, roots and synthetic
+secrets, actual persistence and real local Identity recovery exchange. It closes
+no provider, HTTPS cloud passkey, teardown, pilot or every-push gate. Root review
+is pending, and Task 6b documentation has not been synchronized to the mirror.
+
+Implementation references:
+
+- [Shared root bootstrap core](../../../apps/identity/src/cli/bootstrap-root-core.mjs).
+- [Guarded exact-ID client](../../../scripts/cloud-e2e/cloudflare.mjs) and [local root consumer](../../../scripts/cloud-e2e/root-bootstrap.mjs).
+- [Actual local bootstrap and recovery tests](../../../apps/identity/test-node/bootstrap-root-runner.test.ts).
+
+### Planned deployed suite integration
 
 Add an explicit `cloud-ci` target instead of relaxing the existing staging origin checks. Generated Workers use a `ci` application environment tied to the controller-verified stack key. Product, Auth and Operator runtime guards admit `ci` only after validating the isolated marker, origin, email/secret mode and callable bindings. Before deployed use, the controller separately certifies exact D1 identities and the service graph. Production and manual staging guards retain their existing behavior. The cloud target requires HTTPS origins matching the controller manifest, and rejects the manual staging domains, stale SHA, missing Access credential, or a mismatched stack ID before fixture writes. The trusted root bootstrap operation targets the exact newly created Auth D1 ID; it does not call the existing CLI's hard-coded staging database path.
 

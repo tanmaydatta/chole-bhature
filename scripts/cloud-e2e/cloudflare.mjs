@@ -1,4 +1,29 @@
 import { assertOwnedResource, betaWorkerAttachmentReceipt, betaWorkerEvidencePhase, betaWorkerReceipt, checkpoint, consumeBetaAccessCreatePlan, consumeBetaTokenCreatePlan, consumeBetaWorkerAction, consumeBetaWorkerCreatePlan, InventoryQuarantineError, validateInventory } from './inventory.mjs';
+import { parseStackKey } from './key.mjs';
+import { renderBootstrapSql } from '../../apps/identity/src/cli/bootstrap-root-core.mjs';
+
+const bootstrapClients = new WeakMap();
+const CANONICAL_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
+
+function protectedIds(value) {
+  if (!value || Object.keys(value).length !== 2 || !CANONICAL_UUID.test(value.product) || !CANONICAL_UUID.test(value.auth) || value.product === value.auth) return null;
+  return Object.freeze({ product: value.product, auth: value.auth });
+}
+
+// A callback operates inside already established client authority; it cannot register it.
+// This adapter is validated with local injected D1.batch only, never a live executor.
+export async function withBootstrapAuthDatabase(client, input, action) {
+  const state = bootstrapClients.get(client);
+  if (!state || JSON.stringify(parseStackKey(input.key)) !== state.key || !CANONICAL_UUID.test(input.authDatabaseId) || input.authDatabaseId !== state.authId()) throw new InventoryQuarantineError('Local Auth bootstrap ownership is unproven.');
+  const previous = state.queue;
+  let release;
+  state.queue = new Promise(resolve => { release = resolve; });
+  await previous;
+  try {
+    const now = await state.check();
+    return await action(state.database, now);
+  } finally { release(); }
+}
 
 export class MutationQuarantinedError extends InventoryQuarantineError {
   constructor(message) {
@@ -235,16 +260,18 @@ export function planBetaWorkerVersion(evidenceReceipt, { module, bindings = [] }
   };
 }
 
-export function createCloudflareClient({ accountId, inventory: rawInventory, transport, store, alert, now = () => new Date().toISOString(), accessAppCreate, serviceTokenCreate }) {
+export function createCloudflareClient({ accountId, inventory: rawInventory, transport, store, alert, now = () => new Date().toISOString(), accessAppCreate, serviceTokenCreate, protectedD1Ids }) {
   let inventory = validateInventory(rawInventory);
   let poisoned = false;
+  const exclusions = protectedIds(protectedD1Ids);
+  let authCreation = null;
   if (accountId !== inventory.cloudflare.accountId) quarantine('Cloudflare account is not certified by inventory.', alert);
   if (!transport || typeof transport.request !== 'function') throw new TypeError('Expected an injected Cloudflare transport with request().');
   const root = `/accounts/${accountId}`;
-  const call = async (method, path, body) => {
+  const call = async (method, path, body, sanitized = false) => {
     if (poisoned) quarantine('Cloudflare client is quarantined after ambiguous persistence.', alert);
     try { return result(await transport.request(body === undefined ? { method, path } : { method, path, body })); }
-    catch (error) { poisoned = true; quarantine(error.message, alert); }
+    catch (error) { poisoned = true; quarantine(sanitized ? 'Local Auth bootstrap transport failed.' : error.message, alert); }
   };
   const completeList = (response, validEntry, uniqueField) => {
     if (!Array.isArray(response.result) || !response.resultInfo || !Number.isSafeInteger(response.resultInfo.total_count) || response.resultInfo.total_count !== response.result.length) {
@@ -266,7 +293,11 @@ export function createCloudflareClient({ accountId, inventory: rawInventory, tra
   async function listD1() { return completeList(await call('GET', `${root}/d1/database`), entry => typeof entry?.name === 'string' && entry.name.length > 0 && typeof entry?.uuid === 'string' && entry.uuid.length > 0, 'uuid'); }
   async function getD1(uuid) {
     if (typeof uuid !== 'string' || uuid !== inventory.cloudflare.d1Ids.product && uuid !== inventory.cloudflare.d1Ids.auth) quarantine('D1 target is not certified by inventory.', alert);
-    return call('GET', `${root}/d1/database/${uuid}`);
+    const response = await call('GET', `${root}/d1/database/${uuid}`);
+    const role = uuid === inventory.cloudflare.d1Ids.auth ? 'auth' : 'product';
+    if (authCreation && (response.missing || response.result?.uuid !== uuid || response.result?.name !== d1Name(inventory, role)
+      || response.result?.account_id !== undefined && response.result.account_id !== accountId)) authCreation = null;
+    return response;
   }
   async function createD1(role) {
     const name = d1Name(inventory, role);
@@ -277,14 +308,21 @@ export function createCloudflareClient({ accountId, inventory: rawInventory, tra
     if (listed.some(database => database?.name === name)) quarantine('D1 already exists; create is ambiguous.', alert);
     await intent(`d1:${role}`, name);
     const created = (await call('POST', `${root}/d1/database`, { name })).result;
-    if (!created || created.name !== name || typeof created.uuid !== 'string' || listed.some(database => database.uuid === created.uuid)) quarantine('D1 create response is reused or ambiguous.', alert);
+    if (!created || created.name !== name || typeof created.uuid !== 'string' || listed.some(database => database.uuid.toLowerCase() === created.uuid.toLowerCase())
+      || Object.values(inventory.cloudflare.d1Ids).some(id => id.toLowerCase() === created.uuid.toLowerCase())
+      || exclusions && Object.values(exclusions).includes(created.uuid.toLowerCase())) { poisoned = true; quarantine('D1 create response is reused, protected, or ambiguous.', alert); }
     try { await check(cloneWith(inventory, 'd1Ids', role, created.uuid, now)); } catch (error) { poisoned = true; quarantine(error.message, alert); }
+    if (role === 'auth' && exclusions && CANONICAL_UUID.test(created.uuid)) {
+      const clock = protocolClock(now);
+      authCreation = { id: created.uuid, createdAt: clock.parsed, expiresAt: clock.parsed + 5 * 60_000 };
+    }
     return created;
   }
   async function deleteD1(role) {
     const id = inventory.cloudflare.d1Ids[role];
     const name = d1Name(inventory, role);
     if (!id || !name) quarantine('D1 target is not certified by inventory.', alert);
+    authCreation = null;
     const current = await getD1(id);
     if (current.missing) return { status: 'missing' };
     const resource = current.result;
@@ -405,10 +443,38 @@ export function createCloudflareClient({ accountId, inventory: rawInventory, tra
     return { status: 'deleted' };
   }
 
-  return Object.freeze({
+  async function bootstrapCheck() {
+    if (poisoned || !exclusions || !authCreation || inventory.stage !== 'creating'
+      || authCreation.id !== inventory.cloudflare.d1Ids.auth || !CANONICAL_UUID.test(inventory.cloudflare.d1Ids.product)
+      || Object.values(inventory.cloudflare.d1Ids).some(id => Object.values(exclusions).includes(id))) quarantine('Local Auth bootstrap ownership is unproven.', alert);
+    const clock = protocolClock(now);
+    if (clock.parsed < authCreation.createdAt || clock.parsed > authCreation.expiresAt) { authCreation = null; quarantine('Local Auth bootstrap creation evidence expired.', alert); }
+    const current = await call('GET', `${root}/d1/database/${authCreation.id}`, undefined, true);
+    if (current.missing || current.result?.uuid !== authCreation.id || current.result?.name !== inventory.names.auth
+      || current.result?.account_id !== undefined && current.result.account_id !== accountId) {
+      authCreation = null; poisoned = true; quarantine('Local Auth bootstrap exact readback changed.', alert);
+    }
+    return clock.parsed;
+  }
+
+  async function bootstrapQuery(sql, params = []) {
+    await bootstrapCheck();
+    const response = await call('POST', `${root}/d1/database/${authCreation.id}/query`, { sql, params }, true);
+    if (!Array.isArray(response.result) || !response.result.length || response.result.some(item => item?.success !== true || !Array.isArray(item.results))) throw new InventoryQuarantineError('Local Auth bootstrap SQL failed.');
+    return response.result;
+  }
+
+  const client = Object.freeze({
     listD1, getD1, createD1, deleteD1, queryD1,
     listWorkers, getWorker, createWorker, updateWorker, deleteWorker, setWorkerSubdomain,
     listAccessApps, createAccessApp, deleteAccessApp,
     listServiceTokens, createServiceToken, deleteServiceToken,
   });
+  bootstrapClients.set(client, { key: JSON.stringify(parseStackKey(inventory.key)), authId: () => authCreation?.id, check: bootstrapCheck, queue: Promise.resolve(), database: Object.freeze({
+    first: async (sql, params = []) => (await bootstrapQuery(sql, params))[0].results[0] ?? null,
+    // Injected LOCAL /query protocol only: the fixture must execute real atomic D1.batch.
+    // Provider atomicity and deployed graph certification remain a separate future gate.
+    batch: statements => bootstrapQuery(statements.map(renderBootstrapSql).join(';\n') + ';'),
+  }) });
+  return client;
 }

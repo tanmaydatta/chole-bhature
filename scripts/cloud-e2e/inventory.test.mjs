@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { assertOwnedResource, checkpoint, checkpointBetaWorkerCreateIntent, checkpointBetaWorkerObservation, discoverRun, InventoryQuarantineError } from './inventory.mjs';
+import { assertOwnedResource, checkpoint, checkpointBetaWorkerCreateIntent, checkpointBetaWorkerObservation, discoverRun, InventoryQuarantineError, validateInventory } from './inventory.mjs';
 import { resourceNames } from './key.mjs';
 import { createCloudflareClient, planBetaWorkerCreate } from './cloudflare.mjs';
 
@@ -23,6 +23,10 @@ const inventory = {
   createdAt: '2026-09-30T10:00:00.000Z',
   updatedAt: '2026-09-30T10:00:00.000Z',
 };
+
+test('refuses a single database UUID assigned to both Product and Auth', () => {
+  assert.throws(() => validateInventory({ ...inventory, cloudflare: { ...inventory.cloudflare, d1Ids: { product: inventory.cloudflare.d1Ids.product, auth: inventory.cloudflare.d1Ids.product } } }), InventoryQuarantineError);
+});
 
 test('durably checkpoints only provenance-correlated Beta intent and exact immutable readback', async () => {
   const writes = [];

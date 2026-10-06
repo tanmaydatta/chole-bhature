@@ -27,7 +27,10 @@ is a local unsent draft; no ticket or channel is selected, and no provider
 response is pending. This draft has not been synchronized to Notion.
 Public Worker mutations
 remain disabled; the local evidence is not an approved Cloudflare
-pilot, deployment, credential change, or every-push workflow.
+pilot, deployment, credential change, or every-push workflow. The separately
+approved 2026-10-06 [local exact-D1 bootstrap safeguards](#local-exact-d1-root-bootstrap-2026-10-06)
+are implemented and locally verified, with root review pending; full deployed
+Task 6b certification remains deferred. This latest local section is not mirrored.
 
 ## Guarded application CI admission (2026-10-06)
 
@@ -37,7 +40,7 @@ admission; the approved bounded fix at `736e213` passed independent fix-only
 re-review with all findings addressed and no new Critical/Important breakage
 (`task-6a-fix1-review.md`).
 The bounded change admits trusted controller-generated CI
-application configuration. Task 6b exact-D1 bootstrap/deployed-graph
+application configuration. Task 6b full deployed-graph/bootstrap
 certification, full Task 5, cloud browser/passkey acceptance and Tasks 7–10
 remain incomplete. Public Worker writes still refuse transport, all four
 provider blockers remain, and no deployment or every-push workflow is enabled.
@@ -988,3 +991,84 @@ Source references retained from the accepted 2026-10-05 investigation:
 - [Beta version create](https://developers.cloudflare.com/api/resources/workers/subresources/beta/subresources/workers/subresources/versions/methods/create/), [version GET](https://developers.cloudflare.com/api/resources/workers/subresources/beta/subresources/workers/subresources/versions/methods/get/), [versions list](https://developers.cloudflare.com/api/resources/workers/subresources/beta/subresources/workers/subresources/versions/methods/list/) and [deployments list](https://developers.cloudflare.com/api/resources/workers/subresources/scripts/subresources/deployments/methods/list/).
 - [Workers roles](https://developers.cloudflare.com/workers/authorization/workers/), [authorization guidance](https://developers.cloudflare.com/workers/authorization/) and [account-token schema](https://developers.cloudflare.com/api/resources/accounts/subresources/tokens/methods/create/).
 - [Asset-session create](https://developers.cloudflare.com/api/resources/workers/subresources/scripts/subresources/assets/subresources/upload/methods/create/), [direct-upload guide](https://developers.cloudflare.com/workers/static-assets/direct-upload/) and [upload schema](https://developers.cloudflare.com/api/typescript/resources/workers/subresources/assets/subresources/upload/methods/create/).
+
+## Local exact-D1 root bootstrap (2026-10-06)
+
+The approved local bootstrap safeguards persist a pending root only through
+the exact Auth database owned by the client that freshly created it; full
+deployed Task 6b controller certification remains deferred and root review is pending.
+
+The client snapshots its exact run/account and required protected staging
+Product/Auth UUID exclusions separately from inventory and PR input. Complete
+pre-create discovery, durable intent/create/checkpoint and fresh exact readback
+establish local client authority. Raw/copied inventory, markers, arbitrary
+callbacks/clients and verification booleans cannot mint it. The context expires
+five minutes after creation without readback renewal; poison, deletion or changed
+readback revokes it. Missing, malformed, reused, protected, foreign,
+Product-instead-of-Auth and wrong-run targets refuse before SQL. Invalid secret,
+email and finite-clock inputs refuse before bootstrap persistence. Same-client
+bootstrap calls serialize; the shared core preserves the existing unique live
+root/open-flow authority, pending-email resume, expired reissue, transactionality
+and mandatory success-audit rollback. Activation grants expire after 600000 ms
+and enter persistence only as hashes.
+
+The exact-ID SQL consumer is an injected **local** protocol. Its fixture splits
+rendered `/query` SQL through installed Wrangler and executes actual local D1
+batch. Local persistence/rollback tests establish no live endpoint atomicity.
+This adapter **must not be wired into a live controller** before provider
+transactionality and full deployed graph/live prerequisites are separately
+certified. Ordinary local/staging CLI targets, argument/output/error contracts,
+secret-stripped children, exclusive 0600 SQL file and scoped cleanup remain.
+No staging CLI environment override was added.
+
+Focused evidence before final verification:
+
+- Existing bootstrap characterization: 14 Worker tests passed in 4.65 s;
+  the real runner/grant-exchange test passed in 4.80 s.
+- Semantic RED: protected staging substitution and Product/Auth UUID aliasing
+  produced two client/inventory assertion failures; invalid clocks and blank
+  secret produced four sanitized Worker assertion failures. Deletion and
+  ordinary changed-readback revocation each failed semantically before the fix.
+- Shared-core onboarding GREEN: 62/62 passed in 4.66 s. Guard/controller
+  GREEN: 74/74 passed in 189.18 ms; wrong inert D1/service targets refused
+  before token/code/bootstrap progression.
+- Actual local integration: four tests passed in 7.84 s, retaining two concurrent
+  fixtures with four distinct Product/Auth UUIDs, distinct roots/secrets, one
+  pending root/flow/audit per run, exact persisted 600000 ms expiry, hashed
+  grants and successful own-grant Identity recovery exchange. Foreign grants
+  and individual ID/client/key swaps refuse in both directions; recipient rows
+  remain intact. New-root and expired-reissue audit failures roll back; retry,
+  concurrent reissue, active-root/different-email refusal and a changed exact
+  readback between SELECT and write are verified against actual D1 rows.
+
+**Table — Final local verification on the Task 6b source**
+
+| Command | Result |
+|---|---|
+| Focused onboarding / real runner and exact-D1 integration | 62/62 (4.82 s) and 4/4 (7.85 s), zero failures/skips. Identity typecheck and focused cloud-script lint exit 0. |
+| `node --test scripts/cloud-e2e/*.test.mjs` | 301/301, zero failures/skips, 2,917.48 ms. |
+| `pnpm test` | 100 Vitest files / 1,588 tests plus nine Node tests, zero failures/skips; 59.24 s shell. Identity: 221 Worker plus 87 Node tests. |
+| `pnpm build`, `pnpm lint` | Both exit 0, 11.86 s / 0.98 s shell. Existing dashboard chunk-over-500-kB warning and Fast Refresh warnings at `ThemeProvider.tsx:9` / `Toast.tsx:15` remain. |
+| `E2E_BROWSER_CHANNEL=chromium pnpm e2e:local` | One full serialized run after tests/build/lint: 5/5, zero failures/skips, 21.3 s (22.12 s shell); existing NO_COLOR/FORCE_COLOR warnings remain. No test/retry/infra change. |
+
+These checks used Node 22.18.0, installed locked pnpm 11.14.0/Wrangler 4.112.0
+and ordinary local loopback/log permission. No package/browser installation,
+compatibility-date change or authenticated provider operation occurred. Full
+outputs and distinct Chromium artifacts are retained in ignored Task 6b
+evidence. The final commands ran after production/test self-review; only
+verification documentation followed. Earlier historic evidence retains its
+original source/run provenance, including the unproved prior SQLITE_BUSY cause.
+
+The mock controller is unchanged and never reaches root bootstrap while
+Operator service remapping/assets remain unresolved. Public Worker mutations
+retain zero transport. No VerifiedStack, provider account/IAM proof, live D1
+query, Access protection, HTTPS cloud passkey, disposal/teardown, pilot or
+every-push gate is completed. The reviewed-status mirror still reflects only
+prior Task 6a synchronization; Task 6b needs separate exact-publication approval.
+
+Implementation references:
+
+- [Shared bootstrap core](../../apps/identity/src/cli/bootstrap-root-core.mjs), [Worker wrapper](../../apps/identity/src/cli/bootstrap-root.ts) and [local/staging runner](../../apps/identity/src/cli/bootstrap-root-runner.mjs).
+- [Guarded client](../../scripts/cloud-e2e/cloudflare.mjs) and [exact-ID consumer](../../scripts/cloud-e2e/root-bootstrap.mjs).
+- [Real D1/recovery tests](../../apps/identity/test-node/bootstrap-root-runner.test.ts), [Worker bootstrap regressions](../../apps/identity/test/onboarding.test.ts) and [controller association refusals](../../scripts/cloud-e2e/provision.test.mjs).
+- [Local authority design](../superpowers/specs/2026-09-29-per-pr-cloud-e2e-design.md#local-exact-d1-bootstrap-authority-2026-10-06) and [bounded implementation status](../superpowers/plans/2026-09-30-per-pr-cloud-e2e.md#task-6b-deferred-exact-d1-bootstrap-and-controller-certification).

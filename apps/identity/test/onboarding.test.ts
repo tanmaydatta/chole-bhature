@@ -1241,6 +1241,21 @@ describe('membership administration invariants', () => {
 });
 
 describe('operations-only root bootstrap', () => {
+  test.each([NaN, Infinity, -Infinity])('rejects nonfinite bootstrap clock %s before persistence', async now => {
+    await expect(bootstrapRoot({ database: testEnv.AUTH_DB, authSecret: testEnv.AUTH_SECRET, email: 'root@example.test', correlationId: 'corr-invalid-clock', now: () => now })).rejects.toThrow(/clock|time/i);
+    for (const table of ['user', 'auth_profile', 'recovery_flow', 'identity_audit']) {
+      await expect(testEnv.AUTH_DB.prepare(`SELECT COUNT(*) AS count FROM ${table}`).first('count')).resolves.toBe(0);
+    }
+  });
+
+  test('rejects blank bootstrap secret before persistence', async () => {
+    const outcome = await bootstrapRoot({ database: testEnv.AUTH_DB, authSecret: ' '.repeat(40), email: 'root@example.test', correlationId: 'corr-invalid-secret' }).then(() => ({ kind: 'accepted' }), error => ({ kind: 'rejected', message: String(error) }));
+    expect(outcome).toMatchObject({ kind: 'rejected', message: expect.stringMatching(/secret/i) });
+    for (const table of ['user', 'auth_profile', 'recovery_flow', 'identity_audit']) {
+      await expect(testEnv.AUTH_DB.prepare(`SELECT COUNT(*) AS count FROM ${table}`).first('count')).resolves.toBe(0);
+    }
+  });
+
   test('creates one pending root without a password and rejects a second live root', async () => {
     const bootstrapped = await bootstrapRoot({
       database: testEnv.AUTH_DB,
