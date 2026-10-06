@@ -764,7 +764,7 @@ describe('live session and tenant boundary', () => {
     expect(env.CORE.listCredentials).not.toHaveBeenCalled();
   });
 
-  test('uses HTTP-safe local cookies and Secure __Host cookies only in staging', async () => {
+  test('uses HTTP-safe local cookies and Secure __Host cookies in staging', async () => {
     const handler = await worker();
     const local = createEnv(root);
     const localCookie = await selectMerchant(handler, local);
@@ -779,6 +779,40 @@ describe('live session and tenant boundary', () => {
     const stagingCookie = await selectMerchant(handler, staging);
     expect(stagingCookie).toContain('__Host-incentives-operator-selection=');
     expect(stagingCookie).toContain('Secure');
+  });
+
+  test('CI selects a root merchant with a Secure host-only cookie and round-trips its signed selection', async () => {
+    const handler = await worker();
+    const env = createEnv(root);
+    env.APP_ENV = 'ci';
+    env.CI_STACK_KEY = '0123456789abcdef0123';
+    env.PUBLIC_APP_ORIGIN = 'https://cb-e2e-0123456789abcdef0123-operator.trusted.workers.dev';
+    delete env.OPERATOR_SELECTION_SECRET_STORE;
+    env.IDENTITY.resolveBrowserPrincipal
+      .mockResolvedValueOnce(root)
+      .mockResolvedValueOnce(rootForMerchant);
+    const selected = await handler?.fetch(new Request(env.PUBLIC_APP_ORIGIN + '/operator/v1/platform/merchant-selection', {
+      method: 'POST', headers: { origin: env.PUBLIC_APP_ORIGIN, cookie: sessionCookie,
+        'content-type': 'application/json', 'sec-fetch-site': 'same-origin',
+        'x-correlation-id': correlationId },
+      body: JSON.stringify({ merchantId: 'merchant-a' }),
+    }), env);
+    expect(selected?.status).toBe(204);
+    const setCookie = selected?.headers.get('set-cookie') ?? '';
+    const [selection, ...attributes] = setCookie.split('; ');
+    expect(selection).toMatch(/^__Host-incentives-operator-selection=[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/u);
+    expect(attributes).toEqual(['Path=/', 'Max-Age=28800', 'HttpOnly', 'Secure', 'SameSite=Strict']);
+    env.IDENTITY.resolveBrowserPrincipal
+      .mockResolvedValueOnce(root)
+      .mockResolvedValueOnce(rootForMerchant);
+    const response = await handler?.fetch(new Request(env.PUBLIC_APP_ORIGIN + '/operator/v1/credentials', {
+      headers: { cookie: sessionCookie + '; ' + selection, 'x-correlation-id': correlationId },
+    }), env);
+    expect(response?.status).toBe(200);
+    expect(env.CORE.listCredentials).toHaveBeenCalledExactlyOnceWith({
+      correlationId, actorUserId: 'user-root', actorKind: 'root',
+      merchantId: 'merchant-a', permission: 'credentials:read',
+    });
   });
 
   test('returns the live selected root merchant from session and ignores invalid selection state', async () => {

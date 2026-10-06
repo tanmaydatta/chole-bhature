@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { assertCiStack } from '../src/ci-stack.js';
+import { assertCiStack, assertIdentityServiceEnvironment, type IdentityServiceAssociation } from '../src/ci-stack.js';
 import type { IdentityWorkerEnv } from '../src/staging-secrets.js';
 
 function valid(): IdentityWorkerEnv {
@@ -15,6 +15,27 @@ function valid(): IdentityWorkerEnv {
 }
 
 describe('identity CI configuration admission', () => {
+  test('accepts matching service associations without calling binding methods', () => {
+    const ci = valid();
+    expect(() => assertIdentityServiceEnvironment({ database: ci.AUTH_DB, appEnv: 'ci', ciEnv: ci })).not.toThrow();
+    for (const mode of ['local', 'staging'] as const) {
+      const nonCi = { ...ci, APP_ENV: mode, CI_STACK_KEY: undefined, E2E_LOCAL_TEST_MODE: '1' };
+      expect(() => assertIdentityServiceEnvironment({ database: nonCi.AUTH_DB, appEnv: mode,
+        ciEnv: nonCi, localTestMode: '1' })).not.toThrow();
+    }
+    expect(() => assertIdentityServiceEnvironment({ database: ci.AUTH_DB, appEnv: 'local' })).not.toThrow();
+  });
+
+  test.each(['database', 'mode', 'local flag', 'bare CI'])
+    ('rejects mismatched service %s association', mismatch => {
+      const ci = valid();
+      const options: IdentityServiceAssociation = { database: ci.AUTH_DB, appEnv: 'ci', ciEnv: ci };
+      if (mismatch === 'database') options.database = { prepare() {}, batch() {} } as D1Database;
+      if (mismatch === 'mode') options.appEnv = 'staging';
+      if (mismatch === 'local flag') options.localTestMode = '0';
+      if (mismatch === 'bare CI') delete options.ciEnv;
+      expect(() => assertIdentityServiceEnvironment(options)).toThrow(/Invalid CI stack/u);
+    });
 
   test('accepts the exact canonical CI stack and checks a supplied expected marker', () => {
     expect(() => assertCiStack(valid(), '0123456789abcdef0123')).not.toThrow();

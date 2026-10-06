@@ -1,5 +1,26 @@
 import type { IdentityWorkerEnv } from './staging-secrets.js';
 
+export interface IdentityServiceAssociation {
+  database: D1Database;
+  ciEnv?: IdentityWorkerEnv | undefined;
+  appEnv?: string | undefined;
+  localTestMode?: string | undefined;
+}
+
+/** Revalidate per-call service configuration; object association is not remote D1 identity proof. */
+export function assertIdentityServiceEnvironment(options: IdentityServiceAssociation): void {
+  if (options.ciEnv) {
+    assertCiStack(options.ciEnv);
+    if (options.ciEnv.APP_ENV !== options.appEnv
+      || options.ciEnv.AUTH_DB !== options.database
+      || options.ciEnv.E2E_LOCAL_TEST_MODE !== options.localTestMode) {
+      throw new Error('Invalid CI stack: service configuration mismatch');
+    }
+  } else if (options.appEnv === 'ci') {
+    throw new Error('Invalid CI stack: full service environment is required');
+  }
+}
+
 function fail(message: string): never {
   throw new Error(`Invalid CI stack: ${message}`);
 }

@@ -14,7 +14,7 @@ import type { OperatorWebEnv } from './routes/types.js';
 const selectionLifetimeSeconds = 8 * 60 * 60;
 
 function selectionCookieName(env: OperatorWebEnv): string {
-  return env.APP_ENV === 'staging'
+  return env.APP_ENV === 'staging' || env.APP_ENV === 'ci'
     ? '__Host-incentives-operator-selection'
     : 'incentives-operator-selection';
 }
@@ -87,7 +87,7 @@ export async function selectionCookie(
     'HMAC', await hmacKey(env.OPERATOR_SELECTION_SECRET),
     new TextEncoder().encode(encodedPayload),
   );
-  const secure = env.APP_ENV === 'staging' ? '; Secure' : '';
+  const secure = env.APP_ENV === 'staging' || env.APP_ENV === 'ci' ? '; Secure' : '';
   return `${selectionCookieName(env)}=${encodedPayload}.${encode(signature)}; Path=/; Max-Age=${selectionLifetimeSeconds}; HttpOnly${secure}; SameSite=Strict`;
 }
 

@@ -31,8 +31,10 @@ pilot, deployment, credential change, or every-push workflow.
 
 ## Guarded application CI admission (2026-10-06)
 
-**Status:** Task 6a is implemented and locally verified; independent root
-review is pending. The bounded change admits trusted controller-generated CI
+**Status:** Task 6a is implemented and locally verified. Initial independent
+review required CI selection-cookie parity and shared Identity service
+admission; the approved bounded fix is locally implemented, awaiting re-review.
+The bounded change admits trusted controller-generated CI
 application configuration. Task 6b exact-D1 bootstrap/deployed-graph
 certification, full Task 5, cloud browser/passkey acceptance and Tasks 7–10
 remain incomplete. Public Worker writes still refuse transport, all four
@@ -52,6 +54,7 @@ remains unsent.
 | Identity email/secrets | `EMAIL_MODE='local-capture'`, `STAGING_ALLOWED_RECIPIENTS` parses as an empty array, direct `AUTH_SECRET`; no Resend values or Auth/Resend Secrets Store bindings. |
 | API/Operator secrets | Direct `DECISION_SIGNING_SECRET` and `OPERATOR_SELECTION_SECRET`; Operator's store binding must be absent. Each direct secret has at least 32 nonblank trimmed characters. |
 | Binding shape | API `DB` and Identity `AUTH_DB` expose `prepare` and `batch`. Identity `CORE`, Operator `IDENTITY`/`CORE` expose their consumed RPC methods; `IDENTITY_AUTH`/`ASSETS` expose `fetch`. Validation calls no binding method. |
+| Root merchant selection | CI uses staging-equivalent `__Host-incentives-operator-selection` with `Secure`, `HttpOnly`, `SameSite=Strict`, `Path=/` and no Domain attribute. Signing, live-session association and eight-hour expiry remain; local cookie policy is unchanged. |
 
 The digest is
 `sha256(JSON.stringify([repository_id, pr, head_sha, run_id, attempt])).slice(0,20)`.
@@ -65,7 +68,7 @@ those identities, graph and Access properties independently before deployment/us
 Each app owns a small typed validator with no I/O or cached authority.
 Validation precedes affected fetch/RPC behavior, secret getters, email delivery,
 forwarding and E2E writes. Identity fixture, lifecycle and organization service
-boundaries require the full environment and matching local database/mode
+boundaries share one Identity-local association contract requiring the full environment and matching local database/mode
 association; a bare CI mode or allow boolean grants no admission. Database
 object association is a local consistency check, not exact remote-D1 proof.
 Ordinary local/staging behavior, root/passkey/recovery rules and explicit local
@@ -117,6 +120,45 @@ Code references:
 - Runtime lifecycle/provenance: [Product tests](../../apps/api/test/e2e-lifecycle.test.ts), [Identity fixtures](../../apps/identity/test/e2e-fixtures.test.ts), [Identity lifecycle](../../apps/identity/test/e2e-lifecycle.test.ts).
 - Local email and BFF: [Identity auth tests](../../apps/identity/test/auth.test.ts), [Operator BFF tests](../../apps/operator-web/test/bff.test.ts).
 - Remaining boundary: [Task 6b](../superpowers/plans/2026-09-30-per-pr-cloud-e2e.md#task-6b-deferred-exact-d1-bootstrap-and-controller-certification).
+
+### CI cookie and shared service admission review fix (2026-10-06)
+
+Initial review identified two Important findings: HTTPS CI root-selection
+cookies lacked the staging Secure/host-prefix policy, and the same Identity
+service-association guard was duplicated across three services. The approved
+fix gives CI and staging identical browser cookie restrictions while retaining
+local behavior, and consolidates Identity's contract without caching admission
+or changing each operation's local/staging/CI rules. Independent fix-only
+re-review is pending; current changes are not synchronized to Notion.
+
+The CI BFF regression performs root merchant selection, asserts the literal
+cookie name/attributes and uses the signed returned cookie on a protected
+credential operation with the exact selected-root context. Identity
+characterization mutates database, mode, local flag, marker or full environment
+after service construction; fixture creation, lifecycle preview/disposal and
+organization principal/provisioning refuse before session/Core/foreign-D1 calls,
+with real Auth D1 claims, tenant rows and root session retained.
+
+**Table — Review-fix local verification**
+
+| Command | Result |
+|---|---|
+| Operator BFF semantic RED | 148 pass/1 expected assertion failure (588 ms): CI emitted the local unprefixed cookie. |
+| Identity pre-extraction characterization | 79/79 passed (10.33 s); association tests established existing behavior before refactoring. |
+| Focused GREEN | Operator BFF 149/149 (460 ms); Identity helper/fixture/lifecycle 84/84 (9.20 s). Both affected app typechecks exit 0. |
+| Final project test/build/lint | 100 Vitest files/1581 tests plus 9 Node tests passed, zero failures/skips (55.59 s shell). Build and lint exit 0 (11.80 s/0.89 s); existing dashboard chunk and two Fast Refresh warnings remain. |
+| Serialized local Chromium Playwright | One full run: 5/5 passed (22.8 s, 23.53 s shell), after other checks completed. A separate output directory preserved original failure artifacts; no retry, E2E/infra source change or cause/fix claim. |
+
+These fix-round results are separate from the original full Playwright
+4-pass/1-startup-failure and unchanged isolated 1/1 retry above. The original
+`SQLITE_BUSY` cause remains unproved. Existing dashboard build/Fast Refresh and
+Playwright colour warnings remain outside scope; no cloud/provider, exact-D1,
+bootstrap or every-push gate is closed by this fix.
+
+Code references:
+
+- Selection policy and BFF consumer: [session.ts](../../apps/operator-web/src/session.ts), [BFF tests](../../apps/operator-web/test/bff.test.ts).
+- Shared service association: [Identity validator](../../apps/identity/src/ci-stack.ts), [fixture tests](../../apps/identity/test/e2e-fixtures.test.ts), [lifecycle/organization tests](../../apps/identity/test/e2e-lifecycle.test.ts).
 
 ## Local verification baseline
 

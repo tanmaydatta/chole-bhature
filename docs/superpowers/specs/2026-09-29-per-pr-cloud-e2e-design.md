@@ -360,8 +360,18 @@ are unavailable. It is not a deployed graph, real cloud passkey result or full
 Task 6 completion. Task 6b retains exact-D1 root bootstrap and controller
 configuration/deployed-graph verification; Tasks 5 and 7–10 retain their
 provider, HTTPS browser, teardown and rollout gates. Independent root review
-is pending, these new changes are local only, and the clarification draft
-remains unsent.
+initially required CI selection-cookie parity and shared Identity admission.
+The approved bounded fix is locally implemented, awaiting fix-only re-review;
+these changes remain local only and the clarification draft remains unsent.
+
+CI root merchant selection now uses the staging HTTPS cookie restrictions:
+Secure, HttpOnly, SameSite=Strict, root path and a host-only cookie prefix,
+with no Domain attribute. The signed selection's live-session association and
+expiry remain unchanged; ordinary local cookie behavior is preserved.
+One Identity-local service-association contract revalidates configuration at
+fixture, lifecycle and organization operation boundaries, so the same security
+rule cannot drift between copied implementations. This local consistency guard
+still certifies no remote database identity or deployed account/Access property.
 
 Add an explicit `cloud-ci` target instead of relaxing the existing staging origin checks. Generated Workers use a `ci` application environment tied to the controller-verified stack key. Product, Auth and Operator runtime guards admit `ci` only after validating the isolated marker, origin, email/secret mode and callable bindings. Before deployed use, the controller separately certifies exact D1 identities and the service graph. Production and manual staging guards retain their existing behavior. The cloud target requires HTTPS origins matching the controller manifest, and rejects the manual staging domains, stale SHA, missing Access credential, or a mismatched stack ID before fixture writes. The trusted root bootstrap operation targets the exact newly created Auth D1 ID; it does not call the existing CLI's hard-coded staging database path.
 

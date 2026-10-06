@@ -1,6 +1,6 @@
 import { env } from 'cloudflare:workers';
 import { createExecutionContext } from 'cloudflare:test';
-import { beforeEach, describe, expect, test } from 'vitest';
+import { beforeEach, describe, expect, test, vi } from 'vitest';
 
 import { createIdentityAuth, getSessionAccess } from '../src/auth.js';
 import { createIdentityE2eFixtures } from '../src/services/e2e-fixtures.js';
@@ -38,7 +38,48 @@ async function seed(input: typeof first) {
   ]);
 }
 
+function ciEnvironment(): Env {
+  const noCall = async () => { throw new Error('unexpected Core call'); };
+  return { ...env, APP_ENV: 'ci', CI_STACK_KEY: '0123456789abcdef0123',
+    PUBLIC_APP_ORIGIN: 'https://cb-e2e-0123456789abcdef0123-operator.trusted.workers.dev',
+    PASSKEY_RP_ID: 'cb-e2e-0123456789abcdef0123-operator.trusted.workers.dev',
+    EMAIL_MODE: 'local-capture', STAGING_ALLOWED_RECIPIENTS: '[]',
+    CORE: { provisionMerchant: noCall, activateMerchant: noCall, getE2eCapabilities: noCall,
+      inspectE2eRun: noCall, previewE2eRun: noCall, disposeE2eRun: noCall } } as Env;
+}
+
 describe('staging-only E2E fixture accounts', () => {
+  test.each(['database', 'mode', 'local flag', 'marker', 'bare CI'])
+    ('rechecks fixture service %s association after construction before creating rows or a session', async mismatch => {
+      await seed(first);
+      const ci = ciEnvironment();
+      const createSession = vi.fn(async () => { throw new Error('unexpected session creation'); });
+      const options: Parameters<typeof createIdentityE2eFixtures>[0] = {
+        database: env.AUTH_DB, appEnv: 'ci', ciEnv: ci, createSession,
+      };
+      const fixtures = createIdentityE2eFixtures(options);
+      const foreign = { prepare: vi.fn(() => { throw new Error('foreign D1 read'); }),
+        batch: vi.fn(() => { throw new Error('foreign D1 write'); }) } as unknown as D1Database;
+      if (mismatch === 'database') ci.AUTH_DB = foreign;
+      if (mismatch === 'mode') options.appEnv = 'staging';
+      if (mismatch === 'local flag') options.localTestMode = '1';
+      if (mismatch === 'marker') ci.CI_STACK_KEY = 'ffffffffffffffffffff';
+      if (mismatch === 'bare CI') delete options.ciEnv;
+      await expect(fixtures.createAccount({ ...first, slug: 'viewer', role: 'viewer' }, 'root', 'ci-mismatch'))
+        .rejects.toThrow(/Invalid CI stack/u);
+      expect(createSession).not.toHaveBeenCalled();
+      expect(foreign.prepare).not.toHaveBeenCalled();
+      expect(foreign.batch).not.toHaveBeenCalled();
+      expect(await env.AUTH_DB.prepare(`SELECT
+        (SELECT COUNT(*) FROM user WHERE email LIKE 'e2e+%') AS users,
+        (SELECT COUNT(*) FROM memberships) AS memberships,
+        (SELECT COUNT(*) FROM e2e_fixture_sessions) AS fixtureSessions,
+        (SELECT COUNT(*) FROM session) AS sessions`).first())
+        .toEqual({ users: 0, memberships: 0, fixtureSessions: 0, sessions: 0 });
+      expect(await env.AUTH_DB.prepare('SELECT status FROM e2e_run_claims WHERE run_id = ?1')
+        .bind(first.runId).first()).toEqual({ status: 'active' });
+    });
+
   test('a bare CI service mode cannot create fixtures without validated configuration', async () => {
     await seed(first);
     const fixtures = createIdentityE2eFixtures({ database: env.AUTH_DB, appEnv: 'ci',

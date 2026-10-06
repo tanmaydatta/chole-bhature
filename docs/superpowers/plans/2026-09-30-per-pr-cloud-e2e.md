@@ -423,7 +423,9 @@ requirements remain below, divided by responsibility.
 
 ### Task 6a: Guarded application CI admission (2026-10-06)
 
-**Status:** Implemented locally; independent root review remains pending.
+**Status:** Implemented locally. Initial independent review required CI
+selection-cookie parity and shared Identity service admission; the separately
+approved bounded fix is locally implemented, awaiting fix-only re-review.
 Current changes have not been synchronized to Notion; the clarification draft
 remains unsent. Verification and limitations are recorded in the
 [application admission ledger](../../testing/per-pr-cloud-e2e.md#guarded-application-ci-admission-2026-10-06).
@@ -449,11 +451,21 @@ full typed environment and its database/mode association, never a bare
 runtime shapes establish no account ownership, D1/service IDs, Access
 protection or secret entropy/uniqueness.
 
+The approved review-fix scope adds Operator `src/session.ts` and its existing
+BFF test: CI uses staging-equivalent Secure/HttpOnly/SameSite=Strict, Path=/,
+no Domain and `__Host-` selection-cookie policy, preserving signing/session/
+expiry and local behavior. Identity consolidates the repeated association
+logic in its existing validator and three service call sites. Existing helper,
+fixture and lifecycle tests cover mode/database/local-flag association and
+post-construction mutation, with real D1 state and zero boundary side effects.
+The [fix verification](../../testing/per-pr-cloud-e2e.md#ci-cookie-and-shared-service-admission-review-fix-2026-10-06)
+retains all original failure/retry evidence and the unchanged deferred gates.
+
 - [x] Establish semantic RED at existing API capability/disposal, Identity signed-fixture and Operator handshake consumers; preserve the original local/staging regressions.
 - [x] Implement the three validators and guarded CI fixture/session/provisioning/capability/inspection/disposal admission. Preserve root/proof/tenant authority, run ownership, immutable 900000 ms fixture expiry and the Product-then-Auth cleanup saga.
 - [x] Exercise real local Worker/D1 persistence, signed sessions, proof rejection, owned-member authorization, local email capture, disposal audit/zero rows, retained concurrent fixtures and idempotent retry. Separate Core/runtime bindings use a hand-checked interface fake only where the local cross-app binding is unavailable.
 - [x] Run focused iteration, three package suites, one final root `pnpm test`, build, lint and local Chromium Playwright; record actual final counts, warnings and limitations in the ledger before committing explicit approved paths.
-- [ ] Complete independent root review; separately authorize exact-content/destination synchronization. Neither step closes provider or live acceptance gates.
+- [ ] Complete independent fix-only re-review after the bounded cookie/shared-guard correction; separately authorize exact-content/destination synchronization. Neither step closes provider or live acceptance gates.
 
 ### Task 6b: Deferred exact-D1 bootstrap and controller certification
 

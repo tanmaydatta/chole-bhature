@@ -1,5 +1,4 @@
-import { assertCiStack } from '../ci-stack.js';
-import type { IdentityWorkerEnv } from '../staging-secrets.js';
+import { assertIdentityServiceEnvironment, type IdentityServiceAssociation } from '../ci-stack.js';
 
 import { E2eRunClaimSchema } from '@incentives/contracts';
 import { z } from 'zod';
@@ -25,29 +24,13 @@ export interface ProductE2eLifecycleClient {
   }>;
 }
 
-interface Options {
-  database: D1Database;
-  ciEnv?: IdentityWorkerEnv | undefined;
+interface Options extends IdentityServiceAssociation {
   appEnv: string | undefined;
-  localTestMode?: string | undefined;
   core: ProductE2eLifecycleClient;
 }
 
-function assertEnvironment(options: Options): void {
-  if (options.ciEnv) {
-    assertCiStack(options.ciEnv);
-    if (options.ciEnv.APP_ENV !== options.appEnv
-      || options.ciEnv.AUTH_DB !== options.database
-      || options.ciEnv.E2E_LOCAL_TEST_MODE !== options.localTestMode) {
-      throw new Error('Invalid CI stack: service configuration mismatch');
-    }
-  } else if (options.appEnv === 'ci') {
-    throw new Error('Invalid CI stack: full service environment is required');
-  }
-}
-
 function assertStaging(options: Options): void {
-  assertEnvironment(options);
+  assertIdentityServiceEnvironment(options);
   if (options.appEnv !== 'ci' && options.appEnv !== 'staging'
     && !(options.appEnv === 'local' && options.localTestMode === '1')) {
     throw new Error('E2E lifecycle is staging-only outside explicit local test mode');

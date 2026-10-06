@@ -1,5 +1,4 @@
-import { assertCiStack } from '../ci-stack.js';
-import type { IdentityWorkerEnv } from '../staging-secrets.js';
+import { assertIdentityServiceEnvironment, type IdentityServiceAssociation } from '../ci-stack.js';
 
 import {
   CoreMerchantActivationResultSchema,
@@ -28,12 +27,9 @@ export interface CoreMerchantProvisioningClient {
   ): Promise<CoreMerchantActivationResult>;
 }
 
-export interface OrganizationServiceOptions {
-  database: D1Database;
-  ciEnv?: IdentityWorkerEnv | undefined;
+export interface OrganizationServiceOptions extends IdentityServiceAssociation {
   core?: CoreMerchantProvisioningClient;
   appEnv?: string | undefined;
-  localTestMode?: string | undefined;
 }
 
 export interface ProvisionClientInput {
@@ -228,19 +224,6 @@ function membershipView(target: MembershipTarget, role = target.role, status = t
   } satisfies MembershipView;
 }
 
-function assertEnvironment(options: OrganizationServiceOptions): void {
-  if (options.ciEnv) {
-    assertCiStack(options.ciEnv);
-    if (options.ciEnv.APP_ENV !== options.appEnv
-      || options.ciEnv.AUTH_DB !== options.database
-      || options.ciEnv.E2E_LOCAL_TEST_MODE !== options.localTestMode) {
-      throw new Error('Invalid CI stack: service configuration mismatch');
-    }
-  } else if (options.appEnv === 'ci') {
-    throw new Error('Invalid CI stack: full service environment is required');
-  }
-}
-
 export function createOrganizationService(options: OrganizationServiceOptions) {
   const database = options.database;
 
@@ -249,7 +232,7 @@ export function createOrganizationService(options: OrganizationServiceOptions) {
       sessionId: string,
       selectedMerchantId?: string,
     ): Promise<OperatorPrincipal | null> {
-      assertEnvironment(options);
+      assertIdentityServiceEnvironment(options);
       const now = Date.now();
       const root = await database.prepare(`
         SELECT session.id AS sessionId, session.userId AS userId,
@@ -358,7 +341,7 @@ export function createOrganizationService(options: OrganizationServiceOptions) {
       principal: OperatorPrincipal,
       rawInput: ProvisionClientInput,
     ): Promise<ClientProvisioningView> {
-      assertEnvironment(options);
+      assertIdentityServiceEnvironment(options);
       if (principal.platformRole !== 'root') {
         throw new OrganizationOperationError('Root authority is required');
       }
