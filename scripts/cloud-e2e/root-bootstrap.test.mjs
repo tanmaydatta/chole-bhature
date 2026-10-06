@@ -102,6 +102,29 @@ test('clock observed at durable checkpoint completion cannot move backwards into
   assert.equal(f.calls.some(call => call.path.endsWith('/query')), false);
 });
 
+for (const [postAge, completionAge] of [[300001, 100], [300000, 100], [200, 100], [-1, 100]]) {
+  test(`post-response age ${postAge}ms cannot mint authority after checkpoint clock ${completionAge}ms or later recovery`, async () => {
+    const birth = Date.parse('2026-10-06T12:00:00.000Z'); let f;
+    f = fixture({ beforeRequest: async request => {
+      if (request.method === 'POST' && request.path.endsWith('/database')) f.setTime(birth + postAge);
+    }, beforeCheckpoint: async value => {
+      if (value.type !== 'create-intent') f.setTime(birth + completionAge);
+    } });
+    const created = await f.client.createD1('auth');
+    const checkpoint = f.writes.find(value => value.type !== 'create-intent');
+    assert.equal(created.uuid, '22222222-2222-4222-8222-222222222222');
+    assert.equal(checkpoint.cloudflare.d1Ids.auth, '22222222-2222-4222-8222-222222222222');
+    assert.equal(checkpoint.updatedAt, new Date(birth + postAge).toISOString());
+    const first = await outcome(bootstrapCiRoot({ authDatabaseId: ids.auth, key, authSecret: secret, email: 'root@example.test', d1Client: f.client }));
+    f.setTime(birth + 250);
+    const recovered = await outcome(bootstrapCiRoot({ authDatabaseId: ids.auth, key, authSecret: secret, email: 'root@example.test', d1Client: f.client }));
+    assert.deepEqual({ first, recovered, sql: f.calls.filter(call => call.path.endsWith('/query')).length },
+      { first: 'rejected', recovered: 'rejected', sql: 0 });
+    // Exact-ID ordinary creation/read remains usable even without bootstrap authority.
+    assert.equal((await f.client.getD1(ids.auth)).result.uuid, ids.auth);
+  });
+}
+
 test('dependency deletion during Auth checkpoint cannot mint new creation authority after revocation', async () => {
   let f;
   f = fixture({ beforeCheckpoint: async value => { if (value.type !== 'create-intent') await f.client.deleteD1('product'); } });

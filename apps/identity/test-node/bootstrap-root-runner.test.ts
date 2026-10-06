@@ -70,7 +70,7 @@ function deferred() {
   return { promise, release };
 }
 
-async function localRun(index: number, options: { createAuth?: boolean; beforeRequest?: (request: LocalRequest) => Promise<void>; replacementId?: string } = {}) {
+async function localRun(index: number, options: { createAuth?: boolean; beforeRequest?: (request: LocalRequest) => Promise<void>; beforeCheckpoint?: (value: unknown) => Promise<void>; replacementId?: string } = {}) {
   const directory = await mkdtemp(path.join(tmpdir(), 'identity-exact-d1-'));
   temporaryDirectories.push(directory);
   const persistDirectory = path.join(directory, 'state');
@@ -99,7 +99,7 @@ async function localRun(index: number, options: { createAuth?: boolean; beforeRe
   const evidence: unknown[] = [];
   let afterQuery = () => {};
   const protectedD1Ids = { product: '55555555-5555-4555-8555-555555555555', auth: '66666666-6666-4666-8666-666666666666' };
-  const d1Client = createCloudflareClient({ accountId: inventory.cloudflare.accountId, inventory, protectedD1Ids, now: () => new Date(ms).toISOString(), store: { async put(value: unknown) { evidence.push(value); } }, transport: {
+  const d1Client = createCloudflareClient({ accountId: inventory.cloudflare.accountId, inventory, protectedD1Ids, now: () => new Date(ms).toISOString(), store: { async put(value: unknown) { evidence.push(value); await options.beforeCheckpoint?.(value); } }, transport: {
     async request(request: typeof calls[number]) {
       calls.push(request);
       await options.beforeRequest?.(request);
@@ -136,6 +136,30 @@ async function counts(database: D1Database) {
 }
 
 describe('guard-owned local exact-D1 bootstrap', () => {
+  for (const postAge of [300001, 200]) {
+    test(`post-response clock ${postAge}ms reversed across checkpoint cannot persist root rows or recover authority`, async () => {
+      const foreign = await localRun(2);
+      let f: Awaited<ReturnType<typeof localRun>>;
+      f = await localRun(1, { createAuth: false, beforeRequest: async request => {
+        if (request.method === 'POST' && request.path.endsWith('/database') && request.body?.name?.endsWith('-auth')) f.advance(postAge);
+      }, beforeCheckpoint: async value => {
+        if ((value as { cloudflare?: { d1Ids: { auth?: string } } }).cloudflare?.d1Ids.auth) f.advance(100 - postAge);
+      } });
+      const created = await f.input.d1Client.createD1('auth');
+      const first = await bootstrapCiRoot(f.input).then(() => 'accepted', () => 'rejected');
+      f.advance(150);
+      const recovered = await bootstrapCiRoot(f.input).then(() => 'accepted', () => 'rejected');
+      expect({ first, recovered, originalRows: await counts(f.database), foreignRows: await counts(foreign.database),
+        queries: f.calls.filter(call => call.path.endsWith('/query')).length,
+      }).toEqual({ first: 'rejected', recovered: 'rejected', originalRows: [0, 0, 0, 0], foreignRows: [0, 0, 0, 0], queries: 0 });
+      expect(created.uuid).toBe('22222222-2222-4222-8222-222222222222');
+      expect(f.evidence.some(value => (value as { cloudflare?: { d1Ids: { auth?: string } } }).cloudflare?.d1Ids.auth === '22222222-2222-4222-8222-222222222222')).toBe(true);
+      expect((await f.input.d1Client.getD1(f.ids.auth)).result.uuid).toBe(f.ids.auth);
+      expect(await f.product.prepare('SELECT id FROM product_sentinel').first('id')).toBe('product-1');
+      expect(await foreign.product.prepare('SELECT id FROM product_sentinel').first('id')).toBe('product-2');
+    });
+  }
+
   test('overlapping Auth creation keeps actual root rows on the requested database and leaves the other run empty', async () => {
     const foreign = await localRun(2);
     const firstList = deferred(); const entered = deferred(); const secondPost = deferred(); const secondEntered = deferred();

@@ -404,7 +404,11 @@ Copied inventory, UUIDs, marker strings, arbitrary clients/callbacks or a
 verification boolean cannot create it. Creation evidence lasts at most five
 minutes from the conservative pre-POST boundary and cannot be refreshed by
 checkpoint completion or readback. Validity is half-open; exact expiry or a
-backward clock revokes the context. D1 creation reserves the same client before
+backward clock revokes the context. The exact post-response timestamp recorded
+in the durable checkpoint is retained through completion: an observed expiry or
+reversal cannot be erased by a later clock recovery. The ordinary exact-ID
+checkpoint remains available even when bootstrap authority is disqualified.
+D1 creation reserves the same client before
 discovery awaits so overlapping creates cannot overwrite its authority or
 create unrecorded siblings. Each bootstrap pins the requested Auth UUID and its
 Product/run/account creation context for its entire queued operation, rechecking
@@ -434,7 +438,11 @@ Independent review of original `9f328ca` found an asynchronous target swap and
 freshness stretching across awaits. The separately approved local correction
 has deterministic boundary and actual D1 row-integrity evidence in the
 [review-fix ledger](../../testing/per-pr-cloud-e2e.md#immutable-target-and-asynchronous-freshness-review-fix-2026-10-06);
-independent scoped re-review remains pending. This correction changes no
+the scoped `a07cf37` re-review closed the target-swap finding but found a
+residual clock reversal across checkpoint completion. Its separately approved
+local correction and Node 22 verification are recorded in the
+[irreversible-clock ledger](../../testing/per-pr-cloud-e2e.md#irreversible-post-response-clock-observations-2026-10-06);
+fresh scoped re-review remains pending. This correction changes no
 provider prerequisite or deployed acceptance claim.
 
 Implementation references:

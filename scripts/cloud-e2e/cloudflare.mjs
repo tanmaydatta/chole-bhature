@@ -326,14 +326,22 @@ export function createCloudflareClient({ accountId, inventory: rawInventory, tra
       if (!created || created.name !== name || typeof created.uuid !== 'string' || listed.some(database => database.uuid.toLowerCase() === created.uuid.toLowerCase())
         || Object.values(inventory.cloudflare.d1Ids).some(id => id.toLowerCase() === created.uuid.toLowerCase())
         || exclusions && Object.values(exclusions).includes(created.uuid.toLowerCase())) { poisoned = true; quarantine('D1 create response is reused, protected, or ambiguous.', alert); }
-      try { await check(cloneWith(inventory, 'd1Ids', role, created.uuid, now)); } catch (error) { poisoned = true; quarantine(error.message, alert); }
+      // Keep the exact post-response observation used by the durable checkpoint;
+      // completion must not resample an observed expiry/reversal out of existence.
+      let checkpointAt;
+      try {
+        const next = cloneWith(inventory, 'd1Ids', role, created.uuid, now);
+        checkpointAt = createdAt === null ? null : protocolClock(() => next.updatedAt).parsed;
+        await check(next);
+      } catch (error) { poisoned = true; quarantine(error.message, alert); }
       if (generation !== d1Revocation) { poisoned = true; quarantine('D1 creation was revoked by a dependency change.', alert); }
       if (role === 'auth' && exclusions && CANONICAL_UUID.test(created.uuid)) {
         authLastClock = protocolClock(now).parsed;
         authCreation = Object.freeze({ id: created.uuid, productId: inventory.cloudflare.d1Ids.product, accountId, key: bootstrapKey, createdAt, expiresAt: createdAt + 5 * 60_000 });
         // Ordinary creation still succeeded; an expired/reversed checkpoint may
         // not leave any bootstrap authority, even if the clock later recovers.
-        if (authLastClock < createdAt || authLastClock >= authCreation.expiresAt) revokeAuth();
+        if (checkpointAt < createdAt || checkpointAt >= authCreation.expiresAt
+          || authLastClock < checkpointAt || authLastClock >= authCreation.expiresAt) revokeAuth();
       }
       return created;
     } finally { d1CreationPending = false; }

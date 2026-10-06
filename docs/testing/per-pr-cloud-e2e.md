@@ -1075,9 +1075,11 @@ Implementation references:
 
 ### Immutable target and asynchronous freshness review fix (2026-10-06)
 
-The approved local fix keeps each bootstrap on its originally requested Auth
-database and consumes creation freshness across asynchronous work. Independent
-re-review remains pending; full deployed certification is still deferred.
+The approved `a07cf37` local fix keeps each bootstrap on its originally requested
+Auth database. Its scoped re-review closed that target-swap finding but found a
+residual clock reversal across checkpoint completion; the following
+[clock correction](#irreversible-post-response-clock-observations-2026-10-06)
+records that finding separately. Full deployed certification is still deferred.
 
 Independent review of `9f328ca` found two Important defects despite its passing
 suite: overlapping Auth creates could replace the target between SELECT and
@@ -1127,3 +1129,58 @@ unproved. The original table retains its original `9f328ca` provenance. No live 
 graph receipt, VerifiedStack, public Worker write, Task 7 progression or Notion
 publication follows; the prior Task 6a-only mirror and all provider/live gates
 remain unchanged.
+
+### Irreversible post-response clock observations (2026-10-06)
+
+The separately approved local correction preserves the exact post-response
+timestamp already recorded in the durable Auth checkpoint through completion.
+Observed expiry or reversal permanently disqualifies bootstrap authority, even
+after later clock recovery; ordinary exact-ID creation and read remain usable.
+Fresh independent root re-review remains pending.
+
+Scoped review of `a07cf37` reproduced POST age 300001 ms followed by checkpoint
+completion age 100 ms accepting an INSERT. Completion had discarded the earlier
+observation. Deterministic consumer RED also reproduced exact-expiry age 300000,
+in-interval reversal 200 to 100, and post-response time before birth. All four
+accepted both initial and recovered bootstrap and transported four SQL queries.
+Actual local D1 RED for ages 300001 and 200 persisted one user/profile/flow/audit
+in the requested database; the other run stayed empty.
+
+The retained checkpoint observation is validated against the original half-open
+five-minute deadline and completion against that observation. There is no hidden
+resampling or deadline renewal. Existing creation reservation, immutable target
+pinning, queued/readback/SQL boundary checks, revocation fencing and 600000 ms
+root grants are unchanged. Actual local D1 GREEN verifies zero bootstrap rows in
+both databases and unchanged Product sentinels after initial and recovered
+attempts, plus retained durable Auth UUID/ordinary read. No new dependency,
+runtime configuration, sleeps, retries or provider transport is introduced.
+
+Initial consumer RED used ambient `/opt/homebrew/bin/node` 26.6.0 rather than
+the approved runtime; initial pnpm child runtime was not explicitly pinned.
+Those captures are retained as intermediate evidence, not Node 22 proof. A
+narrow reversal/restoration of only the clock fix reproduced semantic RED on
+explicit existing Node 22.18.0/pnpm 11.14.0 with Corepack networking disabled:
+66 pass/4 expected failures (83.23 ms), and actual D1 two expected failures
+(1.67 s; six name-filter exclusions). All final checks use the approved explicit
+runtime and restored final source; earlier tables retain their original source
+provenance. Full safe logs are retained separately in ignored fix-round evidence.
+
+**Table — Final local verification on the restored clock-fix source**
+
+| Command | Result |
+|---|---|
+| Covering root/client and whole real D1/runner file | 70/70 (79.61 ms) and 8/8 (9.66 s), zero failures/skips. Actual original/other-run rows remain empty after reversal/recovery, with Product and durable UUID retained. Focused lint/Identity typecheck exit 0. |
+| `node --test scripts/cloud-e2e/*.test.mjs` | 322/322, zero failures/skips, 1,908.46 ms. |
+| `pnpm test` | 100 Vitest files / 1,592 tests plus nine Node tests, zero failures/skips; 58.78 s shell. Identity: 221 Worker plus 91 Node tests. |
+| `pnpm build`, `pnpm lint` | Both exit 0, 11.37 s / 0.81 s shell; existing dashboard chunk and two Fast Refresh warnings remain. |
+| `E2E_BROWSER_CHANNEL=chromium pnpm e2e:local` | One serialized full run after tests/build/lint: 5/5, zero failures/skips, 22.6 s (23.39 s shell); three existing colour-environment warnings. |
+
+These commands use explicit Node 22.18.0/pnpm 11.14.0 with the same Node bin
+prepended to child PATH, Corepack networking disabled and locked-dependency
+verification on the project/build/lint/browser commands. Production/tests
+were frozen before final checks; only verification/status docs followed. Full
+logs and distinct browser artifacts are retained; the earlier incomplete
+runtime provenance and historical unproved SQLITE_BUSY cause are not relabeled.
+No acceptance or live certification is claimed. Prior Task 6a-only mirror status,
+zero-transport public Worker refusal and all deployed/provider/HTTPS/passkey/
+teardown/every-push gates remain unchanged; no Task 7 progression or publication.
