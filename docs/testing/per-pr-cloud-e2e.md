@@ -41,8 +41,12 @@ application configuration. Task 6b exact-D1 bootstrap/deployed-graph
 certification, full Task 5, cloud browser/passkey acceptance and Tasks 7–10
 remain incomplete. Public Worker writes still refuse transport, all four
 provider blockers remain, and no deployment or every-push workflow is enabled.
-These changes have not been synchronized to Notion; the clarification draft
-remains unsent.
+Reviewed nonsecret Task 6a status was narrowly synchronized to the four
+existing Notion destinations on 2026-10-06. Complete whole-page readbacks
+matched only the approved substitutions, with all 17 ordered native index
+child links and active metadata preserved. This is a summary/status sync;
+newer local implementation sections were not reproduced wholesale. The
+clarification draft remains local and unsent; its request body was not published.
 
 **Table — Runtime CI configuration contract**
 
@@ -132,8 +136,8 @@ fix gives CI and staging identical browser cookie restrictions while retaining
 local behavior, and consolidates Identity's contract without caching admission
 or changing each operation's local/staging/CI rules. Independent fix-only
 re-review of `736e213` is complete: I1/I2/M1 addressed, M2 documented/deferred,
-no new breakage (`task-6a-fix1-review.md`). Current changes are not synchronized
-to Notion; exact-content/destination authorization remains pending.
+no new breakage (`task-6a-fix1-review.md`). The separately approved narrow
+reviewed-status synchronization is complete; its scope and verification follow.
 
 The CI BFF regression performs root merchant selection, asserts the literal
 cookie name/attributes and uses the signed returned cookie on a protected
@@ -163,6 +167,31 @@ Code references:
 
 - Selection policy and BFF consumer: [session.ts](../../apps/operator-web/src/session.ts), [BFF tests](../../apps/operator-web/test/bff.test.ts).
 - Shared service association: [Identity validator](../../apps/identity/src/ci-stack.ts), [fixture tests](../../apps/identity/test/e2e-fixtures.test.ts), [lifecycle/organization tests](../../apps/identity/test/e2e-lifecycle.test.ts).
+
+### Reviewed-status mirror synchronization (2026-10-06)
+
+The approved canonical nonsecret status identifies reviewed source `736e213`
+and closing documentation `f8f6dbf`, retains the 1,581 Vitest plus 9 Node and
+5/5 local Playwright results above, and explicitly leaves the historical
+`SQLITE_BUSY` cause, warnings and all provider/deployed/cloud gates unresolved.
+Source and closing-note reviews are complete (`task-6a-fix1-review.md`,
+`task-6a-closing-notes-review.md`); this publication ran no new code suite.
+
+Only the existing [roadmap](https://app.notion.com/p/3a6e5c7c2b8e81f6b412c45a2bc7b344),
+[design](https://app.notion.com/p/3ebe5c7c2b8e8186866ef1e158bfd880),
+[plan](https://app.notion.com/p/3ebe5c7c2b8e81229ee0d8a0acb2d309) and
+[Plans index](https://app.notion.com/p/390e5c7c2b8e8165b7f7d77392eab088)
+received narrow nondeleting, unique-anchor additions on 2026-10-06. Every
+complete readback matched its original whole page plus the exact approved
+addition, without whitespace normalization or a formatting exception.
+All 17 native child URLs, titles and order remain unchanged, with all children
+and four destinations active. Existing content and history were preserved.
+
+This summary/status synchronization is not wholesale reproduction of the
+newer local implementation sections. The clarification request body remains
+local and unsent. Task 6b, provider and deployed-graph/Access proof, cloud
+passkey/browser acceptance, teardown and every-push gates remain pending;
+public Worker writes still refuse transport. No push or deployment is implied.
 
 ## Local verification baseline
 

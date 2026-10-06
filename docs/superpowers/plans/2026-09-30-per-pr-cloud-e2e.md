@@ -428,8 +428,14 @@ selection-cookie parity and shared Identity service admission; the separately
 approved bounded fix at `736e213` passed independent fix-only re-review with
 all findings addressed and no new Critical/Important breakage
 (`task-6a-fix1-review.md`). Existing warnings remain documented/deferred.
-Current changes have not been synchronized to Notion; the clarification draft
-remains unsent. Verification and limitations are recorded in the
+Separately approved reviewed nonsecret Task 6a status was narrowly synchronized
+to the four existing Notion destinations on 2026-10-06. Complete whole-page
+readbacks matched the exact approved additions with no formatting exception;
+all 17 ordered native index child links and active destination/child metadata
+were preserved. This summary/status sync identifies reviewed source `736e213`
+and closing documentation `f8f6dbf`, without reproducing newer local sections
+wholesale. The clarification draft remains local and unsent; its request body
+was not published. Verification and limitations are recorded in the
 [application admission ledger](../../testing/per-pr-cloud-e2e.md#guarded-application-ci-admission-2026-10-06).
 
 **Files:** New `apps/{api,identity,operator-web}/src/ci-stack.ts` and each app's
@@ -468,7 +474,7 @@ retains all original failure/retry evidence and the unchanged deferred gates.
 - [x] Exercise real local Worker/D1 persistence, signed sessions, proof rejection, owned-member authorization, local email capture, disposal audit/zero rows, retained concurrent fixtures and idempotent retry. Separate Core/runtime bindings use a hand-checked interface fake only where the local cross-app binding is unavailable.
 - [x] Run focused iteration, three package suites, one final root `pnpm test`, build, lint and local Chromium Playwright; record actual final counts, warnings and limitations in the ledger before committing explicit approved paths.
 - [x] Complete independent fix-only re-review after the bounded cookie/shared-guard correction at `736e213` (`task-6a-fix1-review.md`); all findings addressed, no new Critical/Important breakage. This closes no provider or live acceptance gate.
-- [ ] Separately authorize exact-content/destination Notion synchronization; current changes remain unsynchronized. Publication closes no provider or live acceptance gate.
+- [x] Separately authorize and complete the narrow reviewed-status synchronization to the four existing Notion destinations on 2026-10-06; exact complete whole-page parity and all 17 preserved ordered native links/active children pass. The [synchronization ledger](../../testing/per-pr-cloud-e2e.md#reviewed-status-mirror-synchronization-2026-10-06) records summary-only scope; no clarification request body was published and no provider or live acceptance gate is closed.
 
 ### Task 6b: Deferred exact-D1 bootstrap and controller certification
 

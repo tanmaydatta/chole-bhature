@@ -364,9 +364,17 @@ initially required CI selection-cookie parity and shared Identity admission.
 The approved bounded fix at `736e213` passed independent fix-only re-review:
 all findings addressed, no new Critical/Important breakage
 (`task-6a-fix1-review.md`). Existing warnings remain documented/deferred.
-These changes remain local only and unsynchronized to Notion;
-exact-content/destination authorization remains pending and the clarification
-draft remains unsent.
+Separately approved reviewed nonsecret Task 6a status was narrowly synchronized
+to the four existing Notion destinations on 2026-10-06. Complete whole-page
+readbacks matched only the exact approved additions, with no formatting
+exception; all 17 ordered native index child links and active destination/child
+metadata were preserved. This summary/status sync identifies reviewed source
+`736e213` and closing documentation `f8f6dbf`; it does not reproduce all newer
+local implementation sections wholesale. The
+[synchronization ledger](../../testing/per-pr-cloud-e2e.md#reviewed-status-mirror-synchronization-2026-10-06)
+records the destinations and limits. The clarification draft remains local
+and unsent; its request body was not published. No provider/live gate,
+Task 6b implementation, push or deployment follows from synchronization.
 
 CI root merchant selection now uses the staging HTTPS cookie restrictions:
 Secure, HttpOnly, SameSite=Strict, root path and a host-only cookie prefix,
