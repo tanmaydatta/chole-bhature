@@ -29,7 +29,8 @@ Public Worker mutations
 remain disabled; the local evidence is not an approved Cloudflare
 pilot, deployment, credential change, or every-push workflow. The separately
 approved 2026-10-06 [local exact-D1 bootstrap safeguards](#local-exact-d1-root-bootstrap-2026-10-06)
-are implemented and locally verified, with root review pending; full deployed
+are implemented, locally verified and independently accepted at `07af8ed`;
+both Important review findings are addressed. Full deployed
 Task 6b certification remains deferred. This latest local section is not mirrored.
 
 ## Guarded application CI admission (2026-10-06)
@@ -996,7 +997,8 @@ Source references retained from the accepted 2026-10-05 investigation:
 
 The approved local bootstrap safeguards persist a pending root only through
 the exact Auth database owned by the client that freshly created it; full
-deployed Task 6b controller certification remains deferred and root review is pending.
+deployed Task 6b controller certification remains deferred. Bounded local source
+`07af8ed` is independently accepted after the two review fixes below.
 
 The client snapshots its exact run/account and required protected staging
 Product/Auth UUID exclusions separately from inventory and PR input. Complete
@@ -1136,7 +1138,10 @@ The separately approved local correction preserves the exact post-response
 timestamp already recorded in the durable Auth checkpoint through completion.
 Observed expiry or reversal permanently disqualifies bootstrap authority, even
 after later clock recovery; ordinary exact-ID creation and read remain usable.
-Fresh independent root re-review remains pending.
+Independent scoped re-review of `07af8ed` is complete: residual I2 addressed,
+no new Critical/Important breakage or out-of-scope observations
+(`task-6b-fix2-review.md`). I1 was already closed by the `a07cf37` review;
+both Important findings are addressed and the bounded local slice is accepted.
 
 Scoped review of `a07cf37` reproduced POST age 300001 ms followed by checkpoint
 completion age 100 ms accepting an INSERT. Completion had discarded the earlier
@@ -1165,7 +1170,7 @@ explicit existing Node 22.18.0/pnpm 11.14.0 with Corepack networking disabled:
 runtime and restored final source; earlier tables retain their original source
 provenance. Full safe logs are retained separately in ignored fix-round evidence.
 
-**Table — Final local verification on the restored clock-fix source**
+**Table — Final local verification on accepted source `07af8ed`**
 
 | Command | Result |
 |---|---|
@@ -1181,6 +1186,11 @@ verification on the project/build/lint/browser commands. Production/tests
 were frozen before final checks; only verification/status docs followed. Full
 logs and distinct browser artifacts are retained; the earlier incomplete
 runtime provenance and historical unproved SQLITE_BUSY cause are not relabeled.
-No acceptance or live certification is claimed. Prior Task 6a-only mirror status,
+Root's fresh committed Node 22 covering checks passed 70/70 (78.89 ms) and
+real D1/runner 8/8 (9.39 s). The accepted source remains `07af8ed`, not the
+closing prose commit; no unchanged code suite was rerun for these status notes.
+Acceptance covers only the bounded local bootstrap safeguards, not full
+Task 6b, the branch, production/staging or any live certification.
+Prior Task 6a-only mirror status,
 zero-transport public Worker refusal and all deployed/provider/HTTPS/passkey/
 teardown/every-push gates remain unchanged; no Task 7 progression or publication.

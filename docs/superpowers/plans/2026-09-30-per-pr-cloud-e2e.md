@@ -485,7 +485,10 @@ implemented. Independent review of `9f328ca` found two Important asynchronous
 target/freshness defects; their separately approved bounded correction is
 implemented locally. Scoped re-review of `a07cf37` closed the target finding
 but found a residual clock reversal across checkpoint completion; its separately
-approved local correction is implemented, with fresh root re-review pending.
+approved local correction at `07af8ed` passed independent scoped re-review:
+I2 addressed, no new Critical/Important breakage or out-of-scope observations
+(`task-6b-fix2-review.md`). Both Important findings are addressed across
+`a07cf37`/`07af8ed`; only the bounded local slice is accepted.
 Full deployed controller
 certification remains deferred. This bounded slice authorizes no provider
 adapter, live query, deployment, workflow or Task 7 progression.
@@ -536,8 +539,8 @@ Local slice:
 - [x] Reject protected, missing, malformed, reused, foreign and Product Auth targets; preserve zero-SQL refusal and exact inert D1/service association guards.
 - [x] Share bootstrap SQL/domain behavior without an environment override for staging; exercise actual local persistence, 600000 ms expiry, recovery exchange, race/retry, isolation and audit rollback.
 - [x] Implement the approved seven-file asynchronous target/freshness correction after deterministic semantic RED, with actual requested/foreign D1 row-integrity and expired-readback zero-row evidence; retain original `9f328ca` results separately in the [review-fix ledger](../../testing/per-pr-cloud-e2e.md#immutable-target-and-asynchronous-freshness-review-fix-2026-10-06). Same-client overlapping D1 creates refuse; later ordinary sequential creation remains usable. No sleep, dependency/configuration or controller progression change.
-- [x] Preserve the irreversible post-response clock observation after residual I2 review of `a07cf37`; deterministic consumer and actual D1 RED/GREEN prove zero bootstrap SQL/rows after checkpoint reversal and later recovery, with ordinary exact-ID creation retained. The [clock-fix ledger](../../testing/per-pr-cloud-e2e.md#irreversible-post-response-clock-observations-2026-10-06) keeps its runtime/source evidence separate; acceptance awaits fresh root re-review.
-- [ ] Complete root independent review of this local slice. No deployed certification follows from local tests.
+- [x] Preserve the irreversible post-response clock observation after residual I2 review of `a07cf37`; deterministic consumer and actual D1 RED/GREEN prove zero bootstrap SQL/rows after checkpoint reversal and later recovery, with ordinary exact-ID creation retained. The [clock-fix ledger](../../testing/per-pr-cloud-e2e.md#irreversible-post-response-clock-observations-2026-10-06) keeps original/runtime evidence separate and records accepted source `07af8ed`: explicit Node 22 final 322 cloud, 1,592 Vitest plus nine Node, eight real D1/runner and five Playwright (22.6 s), with build/lint/typecheck passing. Closing status notes rerun no unchanged code suite.
+- [x] Complete root independent review of bounded local source `07af8ed` on 2026-10-06 (`task-6b-fix2-review.md`): both Important findings addressed, no new Critical/Important breakage. Root fresh committed Node 22 guard 70/70 and real D1/runner 8/8 pass. No full Task 6b, branch, production/staging or deployed certification follows; the prior Task 6a-only mirror remains unchanged.
 
 Full deployed acceptance remains pending:
 

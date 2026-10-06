@@ -432,8 +432,9 @@ readback negatives; they issue no graph receipt or VerifiedStack. The
 [local evidence](../../testing/per-pr-cloud-e2e.md#local-exact-d1-root-bootstrap-2026-10-06)
 uses two genuinely distinct Product/Auth database pairs, roots and synthetic
 secrets, actual persistence and real local Identity recovery exchange. It closes
-no provider, HTTPS cloud passkey, teardown, pilot or every-push gate. Root review
-is pending, and Task 6b documentation has not been synchronized to the mirror.
+no provider, HTTPS cloud passkey, teardown, pilot or every-push gate. Bounded
+local source `07af8ed` is independently accepted; Task 6b documentation has not
+been synchronized to the prior Task 6a-only mirror.
 Independent review of original `9f328ca` found an asynchronous target swap and
 freshness stretching across awaits. The separately approved local correction
 has deterministic boundary and actual D1 row-integrity evidence in the
@@ -442,7 +443,14 @@ the scoped `a07cf37` re-review closed the target-swap finding but found a
 residual clock reversal across checkpoint completion. Its separately approved
 local correction and Node 22 verification are recorded in the
 [irreversible-clock ledger](../../testing/per-pr-cloud-e2e.md#irreversible-post-response-clock-observations-2026-10-06);
-fresh scoped re-review remains pending. This correction changes no
+fresh scoped re-review of `07af8ed` is complete: I2 addressed, no new
+Critical/Important breakage or out-of-scope observations
+(`task-6b-fix2-review.md`). Both Important findings are addressed across
+`a07cf37`/`07af8ed`; acceptance is only for this bounded local slice. The ledger
+retains final explicit Node 22 evidence: 322 cloud tests, 1,592 Vitest plus nine
+Node tests, eight real D1/runner tests, five local Playwright tests (22.6 s),
+and passing build/lint/typecheck. The closing prose commit changes no code or
+test provenance. This correction changes no
 provider prerequisite or deployed acceptance claim.
 
 Implementation references:
