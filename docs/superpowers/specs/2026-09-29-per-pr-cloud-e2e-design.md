@@ -56,7 +56,9 @@ clarification request body were not published. No provider/live gate is closed.
 ordinary-client/discovery lifecycle and creation correction is implemented and
 locally verified, with independent scoped re-review pending. The
 [fresh correction ledger](../../testing/per-pr-cloud-e2e.md#checkpoint-lifecycle-and-creation-correction-2026-10-07)
-records 337 cloud tests and fresh full-project/build/lint/browser evidence.
+records 337 cloud tests, 1,683 Vitest cases (1,592 main-config plus 91
+Identity Node-config), nine separate Node script tests and fresh
+build/lint/browser evidence.
 Earlier accepted Task 5d/5e/6a and bounded Task 6b source `07af8ed` remains
 dated historical evidence. The current correction and roadmap reconciliation
 are local only; the prior `3ba5c14` synchronization provenance supplies no

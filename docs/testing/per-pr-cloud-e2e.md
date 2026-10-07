@@ -100,7 +100,7 @@ do not establish a Beta recovery adapter or live ownership proof.
 | Focused iteration GREEN | 67/67 before final cross-slot/name regressions, 80.10 ms. Deferred discovery/intent/checkpoint barriers, all post-POST failure variants, bootstrap revocation, exact quarantine cleanup, recorded readbacks and audit recovery pass. |
 | `node --test scripts/cloud-e2e/*.test.mjs` | Final source/test freeze: 337/337, zero failures/skips/cancellations, 2,898.94 ms (2.94 s shell). |
 | Affected syntax/lint | Both `.mjs` production syntax checks and four-file oxlint exit 0; focused lint 0.25 s shell. Project build covers the unchanged typed bootstrap consumers. |
-| Serialized `pnpm test` | 100 Vitest files / 1,592 tests plus nine Node tests, zero failures/skips, 67.57 s shell. Identity retains 221 Worker and 91 Node tests, including eight real D1/bootstrap runner cases. |
+| Serialized `pnpm test` | 100 Vitest files / 1,683 tests (1,592 main-config plus 91 Identity Node-config Vitest cases), plus nine separate Node script tests, zero failures/skips, 67.57 s shell. Identity retains 221 Worker and 91 Node-config cases, including eight real D1/bootstrap runner cases. |
 | `pnpm build`, `pnpm lint` | Exit 0, 11.92 s / 0.99 s shell. Existing dashboard chunk and two Fast Refresh warnings remain. |
 | `E2E_BROWSER_CHANNEL=chromium pnpm e2e:local` with a fresh output directory | One serialized full run after tests/build/lint: 5/5, zero failures/skips, 23.4 s (24.18 s shell), two workers; three existing colour-environment warnings. Exact GAP values, persistence/redemption/retry, concurrent scenario isolation, failed-scenario disposal, browser authoring/publication and two independent local bootstrap instances retain their original assertions. |
 
@@ -113,6 +113,11 @@ retained. No installation, configuration/dependency change or real provider
 call occurred. Full new logs are retained under ignored
 `.superpowers/sdd/2026-09-30-per-pr-cloud-e2e/checkpoint-fix1-logs/`;
 historical captures remain untouched.
+
+Fresh aggregate counts include Identity's separate Node-config Vitest run;
+the nine Node script tests use `node:test` separately. Earlier dated aggregate
+counts below retain their originally recorded historical values and have not
+been recertified by this correction.
 
 M2 long tar-name handling, M3 partial extraction residue, M4 JSON object-order
 false refusal and M5 missing sanitized operation/stage diagnostics remain

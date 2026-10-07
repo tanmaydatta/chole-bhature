@@ -16,7 +16,8 @@ Task 5e non-authorizing diagnostics, Task 6a application CI admission and
 bounded local Task 6b exact-D1 bootstrap have accepted local evidence. The
 separately approved 2026-10-07 checkpoint guard correction is implemented and
 locally verified, with independent scoped re-review pending: 337 cloud tests,
-1,592 Vitest plus nine Node tests, build/lint and all five local Playwright
+1,683 Vitest cases (1,592 main-config plus 91 Identity Node-config), nine
+separate Node script tests, build/lint and all five local Playwright
 cases pass. The [correction ledger](../testing/per-pr-cloud-e2e.md#checkpoint-lifecycle-and-creation-correction-2026-10-07)
 records lifecycle/readback persistence, irreversible post-create quarantine,
 client-wide creation reservations and the adopted token-name boundary.
@@ -57,7 +58,7 @@ deferred issue remains in the
 | Current activity | Per-PR Cloud E2E checkpoint guard correction implemented and locally verified; independent scoped re-review pending. Accepted local work includes Task 5d/5e and bounded Task 6a/6b; Worker writes remain blocked. Prior GAP/E2E/Secrets Store merge and staging evidence below remains unchanged. |
 | Current repository baseline | Cached local `origin/dev`/merge-base `f189f5a2ef53a8999969344338f68a2f1117899b`; accumulated checkpoint reviewed at `3ba5c14`, with the 2026-10-07 bounded correction now locally verified. No fresh remote-base/head or merge-conflict certification. |
 | Current product-code baseline | PR #15 merge commit `0c5e5f1a068d942af8f091ab0fc4b7ff8bf44e9d` |
-| Local feature state | Authoritative merchandise pricing and the E2E platform are merged, with the dated staging evidence retained. Cloud E2E foundation/packaging/diagnostics/CI admission/local bootstrap are locally accepted; fresh correction verification passes 337 cloud, 1,592 Vitest plus nine Node and five local Playwright cases (23.4 s), build/lint. Public Worker writes still refuse before transport. |
+| Local feature state | Authoritative merchandise pricing and the E2E platform are merged, with the dated staging evidence retained. Cloud E2E foundation/packaging/diagnostics/CI admission/local bootstrap are locally accepted; fresh correction verification passes 337 cloud, 1,683 Vitest cases plus nine separate Node script tests and five local Playwright cases (23.4 s), build/lint. Public Worker writes still refuse before transport. |
 | Current deployment state | The 2026-09-28 Product/Auth/API/Identity/Operator rollout remains in staging. On 2026-09-29, existing-store Secrets Store bindings deployed to Identity and Operator only; no API/Core/D1 migration occurred |
 | Current release decision | PR #15 merged into `dev` at `0c5e5f1a068d942af8f091ab0fc4b7ff8bf44e9d` after staging validation from source head `df05d8d`; old per-Worker secrets are retained |
 | Gate C finish line | Complete — all mandatory clean-break selection, redemption, tenant-isolation, concurrency, and observability cases passed |
