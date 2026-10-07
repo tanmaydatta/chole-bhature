@@ -38,15 +38,17 @@ newer local sections are not reproduced wholesale.
 
 The separately approved 2026-10-07 accumulated-checkpoint correction implements
 the four Important ordinary-client/discovery findings and reconciles the
-canonical roadmap. Fresh local evidence is recorded below; independent scoped
-re-review remains pending. Earlier accepted source `07af8ed` and documentation
+canonical roadmap. Independent scoped re-review is complete and root accepted
+the bounded local correction. Earlier accepted source `07af8ed` and documentation
 `4d6df6a`/`3ba5c14` retain their dated provenance. This correction has not been
 published to Notion and closes no live gate.
 
 ## Checkpoint lifecycle and creation correction (2026-10-07)
 
-**Status:** Implemented and locally verified; independent scoped re-review
-pending. The 2026-10-07 accumulated review of `3ba5c14` found 0 Critical,
+**Status:** Reviewed and locally accepted at tested source `9408704`.
+Independent scoped re-review of `3ba5c14..3da30f3` is COMPLIANT / APPROVED:
+I1–I4 and M1 addressed, 0 open Important findings and no new findings
+(`checkpoint-fix1-review.md`). The 2026-10-07 accumulated review of `3ba5c14` found 0 Critical,
 4 Important and 5 Minor findings. The bounded correction addresses I1–I4
 in the ordinary client and discovery contracts, plus M1 current-roadmap drift.
 It adds no provider executor, live recovery flag or distributed lock.
@@ -118,6 +120,11 @@ Fresh aggregate counts include Identity's separate Node-config Vitest run;
 the nine Node script tests use `node:test` separately. Earlier dated aggregate
 counts below retain their originally recorded historical values and have not
 been recertified by this correction.
+
+The verification above belongs to source/test freeze `9408704`; `3da30f3`
+corrected fresh documentation counts only. These review-closure notes rerun
+no unchanged source suite. Acceptance covers the bounded local correction,
+not a fresh whole-branch audit, remote/Notion state or provider/live proof.
 
 M2 long tar-name handling, M3 partial extraction residue, M4 JSON object-order
 false refusal and M5 missing sanitized operation/stage diagnostics remain

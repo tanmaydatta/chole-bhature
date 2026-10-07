@@ -14,8 +14,11 @@ The approved per-PR Cloud E2E design is now being implemented on
 remote check). Tasks 1–4, mock-only Task 5a/5b, Task 5d raw-module packaging,
 Task 5e non-authorizing diagnostics, Task 6a application CI admission and
 bounded local Task 6b exact-D1 bootstrap have accepted local evidence. The
-separately approved 2026-10-07 checkpoint guard correction is implemented and
-locally verified, with independent scoped re-review pending: 337 cloud tests,
+separately approved 2026-10-07 checkpoint guard correction is reviewed and
+locally accepted at tested source `9408704`. Scoped re-review of
+`3ba5c14..3da30f3` is COMPLIANT / APPROVED: I1–I4/M1 addressed, 0 open
+Important findings and no new findings (`checkpoint-fix1-review.md`). On that
+source freeze, 337 cloud tests,
 1,683 Vitest cases (1,592 main-config plus 91 Identity Node-config), nine
 separate Node script tests, build/lint and all five local Playwright
 cases pass. The [correction ledger](../testing/per-pr-cloud-e2e.md#checkpoint-lifecycle-and-creation-correction-2026-10-07)
@@ -55,14 +58,14 @@ deferred issue remains in the
 | Question | Current answer |
 |---|---|
 | Overall phase | Post-Gate-C client-readiness corrections; per-PR Cloud E2E foundations in progress |
-| Current activity | Per-PR Cloud E2E checkpoint guard correction implemented and locally verified; independent scoped re-review pending. Accepted local work includes Task 5d/5e and bounded Task 6a/6b; Worker writes remain blocked. Prior GAP/E2E/Secrets Store merge and staging evidence below remains unchanged. |
-| Current repository baseline | Cached local `origin/dev`/merge-base `f189f5a2ef53a8999969344338f68a2f1117899b`; accumulated checkpoint reviewed at `3ba5c14`, with the 2026-10-07 bounded correction now locally verified. No fresh remote-base/head or merge-conflict certification. |
+| Current activity | Per-PR Cloud E2E checkpoint correction reviewed and locally accepted at tested source `9408704`; scoped range `3ba5c14..3da30f3` has 0 open Important/no new findings. Accepted local work includes Task 5d/5e and bounded Task 6a/6b; Worker writes remain blocked. Prior GAP/E2E/Secrets Store merge and staging evidence below remains unchanged. |
+| Current repository baseline | Cached local `origin/dev`/merge-base `f189f5a2ef53a8999969344338f68a2f1117899b`; accumulated checkpoint `3ba5c14` corrected by locally accepted tested source `9408704`, scoped-reviewed through `3da30f3`. No fresh remote-base/head or merge-conflict certification. |
 | Current product-code baseline | PR #15 merge commit `0c5e5f1a068d942af8f091ab0fc4b7ff8bf44e9d` |
 | Local feature state | Authoritative merchandise pricing and the E2E platform are merged, with the dated staging evidence retained. Cloud E2E foundation/packaging/diagnostics/CI admission/local bootstrap are locally accepted; fresh correction verification passes 337 cloud, 1,683 Vitest cases plus nine separate Node script tests and five local Playwright cases (23.4 s), build/lint. Public Worker writes still refuse before transport. |
 | Current deployment state | The 2026-09-28 Product/Auth/API/Identity/Operator rollout remains in staging. On 2026-09-29, existing-store Secrets Store bindings deployed to Identity and Operator only; no API/Core/D1 migration occurred |
 | Current release decision | PR #15 merged into `dev` at `0c5e5f1a068d942af8f091ab0fc4b7ff8bf44e9d` after staging validation from source head `df05d8d`; old per-Worker secrets are retained |
 | Gate C finish line | Complete — all mandatory clean-break selection, redemption, tenant-isolation, concurrency, and observability cases passed |
-| Next plan work | Independently re-review the local checkpoint correction, then separately resolve/adopt provider prerequisites and prove the remaining Task 5/deployed Task 6b gates. Local Task 6a/b is already implemented; cloud HTTPS/passkey, complete cleanup and every-push execution remain future work. |
+| Next plan work | Separately authorize provider prerequisite/clarification work and any eventual adoption; no next task is authorized by local acceptance. Remaining Task 5/deployed Task 6b gates, cloud HTTPS/passkey, complete cleanup and every-push execution remain future work; local Task 6a/b is already implemented. |
 
 ## Source-of-truth map
 
@@ -319,7 +322,10 @@ cases (22.6 s); those are historical 2026-10-06 results.
 The 2026-10-07 accumulated review found four Important exported-client/
 discovery gaps. Their approved correction now passes 337 cloud tests and
 fresh complete project/build/lint plus five local Playwright cases (23.4 s);
-independent scoped re-review remains pending. It preserves terminal stages,
+independent scoped re-review of `3ba5c14..3da30f3` is COMPLIANT / APPROVED,
+with I1–I4/M1 addressed, 0 open Important and no new findings. Root accepted
+tested source `9408704`; documentation-only closure reruns no unchanged
+suite. It preserves terminal stages,
 checkpoints legitimate transitions, fences ordinary mutation by lifecycle,
 poisons ambiguous Access/token POST outcomes, reserves same-client creation
 before awaits and validates the adopted token name/body before POST.
@@ -388,13 +394,14 @@ The approved design uses a trusted controller and isolated, disposable
 Cloudflare resources for same-repository pull requests; it does not repurpose
 manual staging. Tasks 1–4, mock-only Task 5a/5b, Task 5d/5e and bounded local
 Task 6a/6b are implemented and locally accepted. The current checkpoint guard
-correction is locally verified and awaits independent scoped re-review.
+correction is reviewed and locally accepted at tested source `9408704`, with
+0 open Important/no new findings in scoped range `3ba5c14..3da30f3`.
 Worker writes remain blocked and the design is not deployed or automatic.
 
 The remaining milestones are, in order:
 
-1. independent scoped re-review of the current checkpoint correction, followed
-   by separately approved provider clarification/prerequisite adoption;
+1. separately authorized provider clarification/prerequisite work and any
+   eventual adoption; local acceptance supplies no automatic progression;
 2. a separately approved protected two-stack infrastructure pilot resolving
    Beta recovery, provider response shapes, assets, service-binding remapping,
    and no code exposure before Access;

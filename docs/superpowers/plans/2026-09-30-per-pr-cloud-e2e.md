@@ -84,11 +84,14 @@ Task 5d raw-module packaging, Task 5e non-authorizing diagnostics, Task 6a CI
 admission and bounded local Task 6b bootstrap have accepted local evidence.
 The accumulated review of `3ba5c14` found four Important ordinary-client/
 discovery defects. Their separately approved eight-path correction and M1
-roadmap reconciliation are implemented and locally verified; independent
-scoped re-review is pending. The [fresh correction ledger](../../testing/per-pr-cloud-e2e.md#checkpoint-lifecycle-and-creation-correction-2026-10-07)
+roadmap reconciliation are reviewed and locally accepted at tested source
+`9408704`. Scoped re-review of `3ba5c14..3da30f3` is COMPLIANT / APPROVED:
+I1–I4/M1 addressed, 0 open Important findings and no new findings
+(`checkpoint-fix1-review.md`). The [fresh correction ledger](../../testing/per-pr-cloud-e2e.md#checkpoint-lifecycle-and-creation-correction-2026-10-07)
 records 337 cloud tests, 1,683 Vitest cases (1,592 main-config plus 91
 Identity Node-config), nine separate Node script tests, passing build/lint
-and one full local browser run. These are new-source checks; the earlier
+and one full local browser run on that source freeze; review-closure notes
+rerun no unchanged suite. These are new-source checks; the earlier
 `07af8ed`/`4d6df6a`/`3ba5c14` accepted-source and synchronization records remain
 historical. The correction is local only, with no fresh Notion publication.
 M2 long tar paths, M3 extraction residue, M4 object-order false refusals and M5
@@ -189,7 +192,7 @@ contracts; there is no new provider boundary or live task progression.
 - [x] Preserve terminal discovery IDs/stage/timestamps without recovery or reads; verify every returned recorded/recovered identity and adopted graph before progression. Checkpoint every legitimate returned ID or stage change and refuse absent/failing persistence. Creation requires `creating`; D1 SQL requires `creating`/`active`; healthy exact cleanup also permits `quarantined`; `deleted` cannot mutate.
 - [x] Reserve creation client-wide before awaits across D1/Access/token; refuse sibling overlap and merge sequential retries from the latest inventory. Permanently poison/revoke bootstrap after ambiguous post-POST result/validation/persistence; later mutations issue zero calls. Token builders accept only the adopted plain own-name body before POST. This is in-process only, without distributed coordination or new provider schema.
 - [x] Verify final frozen source on pinned Node 22: 337 cloud tests, serialized 1,683 Vitest cases (1,592 main-config plus 91 Identity Node-config) and nine separate Node script tests, affected syntax/lint and project build/lint; retain all new outputs and the initial loopback sandbox failure. Complete one full local Chromium Playwright run after the other commands. The [ledger](../../testing/per-pr-cloud-e2e.md#checkpoint-lifecycle-and-creation-correction-2026-10-07) owns exact timings, warnings and limits.
-- [ ] Complete independent scoped re-review of this correction. Local verification is not fresh branch/remote merge certification, provider/live acceptance, deployment or publication authority.
+- [x] Complete independent scoped re-review of `3ba5c14..3da30f3`: COMPLIANT / APPROVED, I1–I4/M1 addressed, 0 open Important findings and no new findings (`checkpoint-fix1-review.md`). Root accepted the bounded local correction at tested source `9408704`; documentation-only closure reruns no unchanged suite. Acceptance is not a fresh whole-branch audit, remote merge certification, provider/live acceptance, deployment or publication authority.
 
 ## Task 5: Disposable two-stack Cloudflare feasibility pilot
 
