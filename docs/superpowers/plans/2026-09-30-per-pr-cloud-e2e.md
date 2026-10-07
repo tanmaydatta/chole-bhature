@@ -93,7 +93,15 @@ Identity Node-config), nine separate Node script tests, passing build/lint
 and one full local browser run on that source freeze; review-closure notes
 rerun no unchanged suite. These are new-source checks; the earlier
 `07af8ed`/`4d6df6a`/`3ba5c14` accepted-source and synchronization records remain
-historical. The correction is local only, with no fresh Notion publication.
+historical. The reviewed nonsecret current-checkpoint summary was narrowly
+published on 2026-10-07 to the existing roadmap/design/plan/Plans index.
+Complete whole-page readback equality passed, with all other content and all
+17 ordered native child URLs/titles/active metadata preserved and independently
+verified by root. The [checkpoint publication ledger](../../testing/per-pr-cloud-e2e.md#reviewed-local-checkpoint-publication-2026-10-07)
+records tested source `9408704`, scoped review `3ba5c14..3da30f3` and local
+closure `3c04e95`; this publication/documentation reruns no unchanged suite.
+The clarification draft remains unsent; its body and wholesale local evidence
+were not published. No live acceptance or next task is authorized by the sync.
 M2 long tar paths, M3 extraction residue, M4 object-order false refusals and M5
 sanitized operation/stage diagnostics remain deferred. Full Task 5, deployed
 Task 6b and Tasks 7–10 remain incomplete; automatic cloud writes remain disabled.

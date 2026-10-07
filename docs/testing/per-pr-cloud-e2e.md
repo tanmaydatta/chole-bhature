@@ -40,8 +40,43 @@ The separately approved 2026-10-07 accumulated-checkpoint correction implements
 the four Important ordinary-client/discovery findings and reconciles the
 canonical roadmap. Independent scoped re-review is complete and root accepted
 the bounded local correction. Earlier accepted source `07af8ed` and documentation
-`4d6df6a`/`3ba5c14` retain their dated provenance. This correction has not been
-published to Notion and closes no live gate.
+`4d6df6a`/`3ba5c14` retain their dated provenance. The reviewed nonsecret
+checkpoint summary was published on 2026-10-07, as recorded in the
+[checkpoint publication ledger](#reviewed-local-checkpoint-publication-2026-10-07),
+and closes no live gate.
+
+## Reviewed local checkpoint publication (2026-10-07)
+
+**Status:** The independently reviewed local checkpoint and bounded guard
+correction are mirrored as a nonsecret current-status summary in the four
+existing [roadmap](https://app.notion.com/p/3a6e5c7c2b8e81f6b412c45a2bc7b344),
+[design](https://app.notion.com/p/3ebe5c7c2b8e8186866ef1e158bfd880),
+[plan](https://app.notion.com/p/3ebe5c7c2b8e81229ee0d8a0acb2d309) and
+[Plans index](https://app.notion.com/p/390e5c7c2b8e8165b7f7d77392eab088)
+destinations. Each bounded replacement passed complete fresh readback equality
+to its precomputed whole-page expected string, with no normalization or
+formatting exception. All other page content and all 17 ordered native child
+URLs/titles were preserved; all four destinations and 17 children remain
+active with matching metadata. Root independently verified the complete
+readbacks and native-child preservation before this publication provenance
+update.
+
+The summary identifies tested source `9408704`, independent correction review
+of `3ba5c14..3da30f3` and local closing documentation `3c04e95`: I1–I4/M1 are
+addressed, with zero open Important findings and no new findings in the scoped
+correction. The [correction evidence](#checkpoint-lifecycle-and-creation-correction-2026-10-07)
+belongs to that source freeze; this publication and its matching documentation
+rerun no unchanged source suite. The 2026-10-06 `07af8ed`/`4d6df6a`/`3ba5c14`
+bootstrap publication remains dated history.
+
+Only reviewed nonsecret status was published. The clarification draft remains
+unsent, and neither its body nor wholesale local evidence was synchronized.
+M2–M5 remain deferred. Provider/Operator contracts, protected configuration,
+remote D1 atomicity, deployed graph, cloud HTTPS/passkey/full-suite/two-stack
+proof, complete teardown/reconciliation and every-push execution remain
+pending. Public Worker writes refuse transport and automatic cloud writes
+remain disabled. No full Task 5/deployed Task 6b/Tasks 7–10 completion or live
+acceptance follows; prerequisite/clarification work requires separate approval.
 
 ## Checkpoint lifecycle and creation correction (2026-10-07)
 

@@ -31,15 +31,17 @@ Cloudflare writes are disabled, and no live pilot has run.
 
 **Notion mirror:** https://app.notion.com/p/Product-Current-State-and-Roadmap-3a6e5c7c2b8e81f6b412c45a2bc7b344
 
-**Mirror state:** The reviewed nonsecret bounded Task 6b summary was narrowly
-synchronized on 2026-10-06, retaining accepted source `07af8ed`, closing
-documentation `4d6df6a` and synchronization provenance `3ba5c14`. Earlier
-Task 5a/5b, packaging, diagnostic and Task 6a publications remain dated
-history. The [bootstrap synchronization ledger](../testing/per-pr-cloud-e2e.md#reviewed-local-bootstrap-status-synchronization-2026-10-06)
-records exact whole-page parity and preserved 17 index children. The current
-2026-10-07 correction and repository-roadmap reconciliation are local only
-and await a separately authorized publication; no fresh Notion readback or
-synchronization is claimed. Live-pilot gates remain unresolved.
+**Mirror state (2026-10-07):** The reviewed nonsecret accumulated-checkpoint
+summary is synchronized to the existing roadmap, design, plan and Plans
+index. It identifies tested source `9408704`, scoped review
+`3ba5c14..3da30f3` and local closure `3c04e95`. Complete whole-page readback
+equality passed with all other content and all 17 ordered native child
+URLs/titles/active metadata preserved and independently verified by root;
+the [checkpoint publication ledger](../testing/per-pr-cloud-e2e.md#reviewed-local-checkpoint-publication-2026-10-07)
+records the bounded scope and provenance. The 2026-10-06 bootstrap publication
+at `07af8ed`/`4d6df6a`/`3ba5c14` and earlier publications remain dated history.
+The clarification draft remains unsent; its body and wholesale local evidence
+were not published. This publication closes no live-pilot or full-plan gate.
 
 This is the canonical operational answer to:
 
