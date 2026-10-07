@@ -267,25 +267,38 @@ export function createCloudflareClient({ accountId, inventory: rawInventory, tra
   const exclusions = protectedIds(protectedD1Ids);
   let authCreation = null;
   let authLastClock = null;
-  let d1CreationPending = false;
+  let creationPending = false;
   let d1Revocation = 0;
   const bootstrapKey = JSON.stringify(parseStackKey(inventory.key));
   const revokeAuth = () => { authCreation = null; d1Revocation += 1; };
+  const poison = message => { poisoned = true; revokeAuth(); quarantine(message, alert); };
+  const mutationPhase = operation => {
+    if (poisoned) quarantine('Cloudflare client is quarantined after an ambiguous operation.', alert);
+    const allowed = operation === 'create' ? ['creating'] : operation === 'query' ? ['creating', 'active'] : ['creating', 'active', 'quarantined'];
+    if (!allowed.includes(inventory.stage)) quarantine('Inventory lifecycle does not permit this mutation.', alert);
+  };
+  const reserveCreation = () => {
+    mutationPhase('create');
+    if (creationPending) quarantine('Resource creation is already in progress on this client.', alert);
+    // One in-process reservation across creation slots prevents sibling
+    // checkpoints from being based on competing inventory snapshots.
+    creationPending = true;
+  };
   if (accountId !== inventory.cloudflare.accountId) quarantine('Cloudflare account is not certified by inventory.', alert);
   if (!transport || typeof transport.request !== 'function') throw new TypeError('Expected an injected Cloudflare transport with request().');
   const root = `/accounts/${accountId}`;
   const call = async (method, path, body, sanitized = false) => {
     if (poisoned) quarantine('Cloudflare client is quarantined after ambiguous persistence.', alert);
     try { return result(await transport.request(body === undefined ? { method, path } : { method, path, body })); }
-    catch (error) { poisoned = true; quarantine(sanitized ? 'Local Auth bootstrap transport failed.' : error.message, alert); }
+    catch (error) { poison(sanitized ? 'Local Auth bootstrap transport failed.' : error.message); }
   };
   const completeList = (response, validEntry, uniqueField) => {
     if (!Array.isArray(response.result) || !response.resultInfo || !Number.isSafeInteger(response.resultInfo.total_count) || response.resultInfo.total_count !== response.result.length) {
-      poisoned = true; quarantine('Cloudflare list response is incomplete or malformed.', alert);
+      poison('Cloudflare list response is incomplete or malformed.');
     }
     const values = response.result.map(entry => entry?.[uniqueField]);
     if (response.result.some(entry => !validEntry(entry)) || values.some(value => typeof value !== 'string' || value.length === 0) || new Set(values).size !== values.length) {
-      poisoned = true; quarantine('Cloudflare list contains a malformed resource entry.', alert);
+      poison('Cloudflare list contains a malformed resource entry.');
     }
     return response.result;
   };
@@ -306,13 +319,13 @@ export function createCloudflareClient({ accountId, inventory: rawInventory, tra
     return response;
   }
   async function createD1(role) {
+    mutationPhase('create');
     const name = d1Name(inventory, role);
     if (!name) quarantine('D1 role is not certified by inventory.', alert);
     if (inventory.cloudflare.d1Ids[role]) quarantine('D1 role already has a recorded exact ID.', alert);
-    if (d1CreationPending) quarantine('D1 creation is already in progress on this client.', alert);
     // Reserve before discovery, intent or checkpoint awaits; concurrent creates
     // must not create siblings or overwrite one another's inventory/context.
-    d1CreationPending = true;
+    reserveCreation();
     const generation = d1Revocation;
     try {
       const listed = await listD1();
@@ -325,7 +338,7 @@ export function createCloudflareClient({ accountId, inventory: rawInventory, tra
       const created = (await call('POST', `${root}/d1/database`, { name })).result;
       if (!created || created.name !== name || typeof created.uuid !== 'string' || listed.some(database => database.uuid.toLowerCase() === created.uuid.toLowerCase())
         || Object.values(inventory.cloudflare.d1Ids).some(id => id.toLowerCase() === created.uuid.toLowerCase())
-        || exclusions && Object.values(exclusions).includes(created.uuid.toLowerCase())) { poisoned = true; quarantine('D1 create response is reused, protected, or ambiguous.', alert); }
+        || exclusions && Object.values(exclusions).includes(created.uuid.toLowerCase())) poison('D1 create response is reused, protected, or ambiguous.');
       // Keep the exact post-response observation used by the durable checkpoint;
       // completion must not resample an observed expiry/reversal out of existence.
       let checkpointAt;
@@ -333,8 +346,8 @@ export function createCloudflareClient({ accountId, inventory: rawInventory, tra
         const next = cloneWith(inventory, 'd1Ids', role, created.uuid, now);
         checkpointAt = createdAt === null ? null : protocolClock(() => next.updatedAt).parsed;
         await check(next);
-      } catch (error) { poisoned = true; quarantine(error.message, alert); }
-      if (generation !== d1Revocation) { poisoned = true; quarantine('D1 creation was revoked by a dependency change.', alert); }
+      } catch (error) { poison(error.message); }
+      if (generation !== d1Revocation) poison('D1 creation was revoked by a dependency change.');
       if (role === 'auth' && exclusions && CANONICAL_UUID.test(created.uuid)) {
         authLastClock = protocolClock(now).parsed;
         authCreation = Object.freeze({ id: created.uuid, productId: inventory.cloudflare.d1Ids.product, accountId, key: bootstrapKey, createdAt, expiresAt: createdAt + 5 * 60_000 });
@@ -344,9 +357,10 @@ export function createCloudflareClient({ accountId, inventory: rawInventory, tra
           || authLastClock < checkpointAt || authLastClock >= authCreation.expiresAt) revokeAuth();
       }
       return created;
-    } finally { d1CreationPending = false; }
+    } finally { creationPending = false; }
   }
   async function deleteD1(role) {
+    mutationPhase('delete');
     const id = inventory.cloudflare.d1Ids[role];
     const name = d1Name(inventory, role);
     if (!id || !name) quarantine('D1 target is not certified by inventory.', alert);
@@ -362,7 +376,7 @@ export function createCloudflareClient({ accountId, inventory: rawInventory, tra
     const response = await call('GET', `${root}/workers/scripts`);
     const listed = completeList(response, entry => typeof entry?.id === 'string' && entry.id.length > 0 && typeof entry?.tag === 'string' && entry.tag.length > 0, 'id');
     const tags = listed.map(entry => entry.tag);
-    if (new Set(tags).size !== tags.length) { poisoned = true; quarantine('Cloudflare Worker list has duplicate immutable tags.', alert); }
+    if (new Set(tags).size !== tags.length) poison('Cloudflare Worker list has duplicate immutable tags.');
     return listed;
   }
   async function getWorker(role) {
@@ -378,7 +392,7 @@ export function createCloudflareClient({ accountId, inventory: rawInventory, tra
     try {
       const tags = Object.fromEntries(listed.map(script => [script.id, script.tag]));
       return { name, tag: matches[0].tag, bindings: normalizeWorkerBindings(settings.result?.bindings, tags) };
-    } catch (error) { poisoned = true; quarantine(error.message, alert); }
+    } catch (error) { poison(error.message); }
   }
   async function deleteWorker(role) {
     return createWorker(role);
@@ -396,6 +410,7 @@ export function createCloudflareClient({ accountId, inventory: rawInventory, tra
     return createWorker(role);
   }
   async function queryD1(role, sql, params = []) {
+    mutationPhase('query');
     const id = inventory.cloudflare.d1Ids[role];
     if (!d1Name(inventory, role) || !id || typeof sql !== 'string' || !Array.isArray(params)) quarantine('D1 query is not certified by inventory.', alert);
     const current = await getD1(id);
@@ -408,26 +423,36 @@ export function createCloudflareClient({ accountId, inventory: rawInventory, tra
   }
   async function listAccessApps() { return completeList(await call('GET', `${root}/access/apps`), entry => typeof entry?.id === 'string' && entry.id.length > 0 && typeof entry?.name === 'string' && entry.name.length > 0, 'id'); }
   async function createAccessApp(role) {
+    mutationPhase('create');
     const name = accessAppName(role);
     if (!name) quarantine('Access application role is not certified by inventory.', alert);
     if (inventory.cloudflare.accessAppIds[role]) quarantine('Access application role already has a recorded exact ID.', alert);
     if (typeof accessAppCreate !== 'function') throw new TypeError('Expected a protected accessAppCreate builder.');
-    const listed = await listAccessApps();
-    if (!Array.isArray(listed)) throw new TypeError('Cloudflare Access app list response is invalid.');
-    if (listed.some(app => app?.name === name)) quarantine('Access application already exists; create is ambiguous.', alert);
-    await intent(`accessApp:${role}`, name);
-    const body = await accessAppCreate({ role, name, inventory: structuredClone(inventory) });
-    if (!body || typeof body !== 'object') throw new TypeError('Protected accessAppCreate builder returned an invalid body.');
+    reserveCreation();
+    let postAttempted = false;
     try {
-      if (body.name !== name) throw new TypeError('Protected Access application name is not controller-derived.');
-      assertOwnedResource({ ...inventory, cloudflare: { ...inventory.cloudflare, accessAppIds: { ...inventory.cloudflare.accessAppIds, [role]: '__pending__' } } }, { accountId, kind: 'accessApp', role, name, id: '__pending__', graph: normalizeAccessGraph(body) }, `accessApp:${role}`);
-    } catch (error) { poisoned = true; quarantine(error.message, alert); }
-    const created = (await call('POST', `${root}/access/apps`, body)).result;
-    if (!created || created.name !== name || typeof created.id !== 'string' || created.id.length === 0) quarantine('Access application create response is not an exact identity.', alert);
-    try { await check(cloneWith(inventory, 'accessAppIds', role, created.id, now)); } catch (error) { poisoned = true; quarantine(error.message, alert); }
-    return created;
+      const listed = await listAccessApps();
+      if (listed.some(app => app.name === name)) quarantine('Access application already exists; create is ambiguous.', alert);
+      await intent(`accessApp:${role}`, name);
+      const body = await accessAppCreate({ role, name, inventory: structuredClone(inventory) });
+      if (!body || typeof body !== 'object') throw new TypeError('Protected accessAppCreate builder returned an invalid body.');
+      try {
+        if (body.name !== name) throw new TypeError('Protected Access application name is not controller-derived.');
+        assertOwnedResource({ ...inventory, cloudflare: { ...inventory.cloudflare, accessAppIds: { ...inventory.cloudflare.accessAppIds, [role]: '__pending__' } } }, { accountId, kind: 'accessApp', role, name, id: '__pending__', graph: normalizeAccessGraph(body) }, `accessApp:${role}`);
+      } catch (error) { poison(error.message); }
+      postAttempted = true;
+      const created = (await call('POST', `${root}/access/apps`, body)).result;
+      if (!created || created.name !== name || typeof created.id !== 'string' || created.id.length === 0
+        || listed.some(app => app.id === created.id) || Object.values(inventory.cloudflare.accessAppIds).includes(created.id)) throw new TypeError('Access application create response is not an exact fresh identity.');
+      await check(cloneWith(inventory, 'accessAppIds', role, created.id, now));
+      return created;
+    } catch (error) {
+      if (postAttempted) poison('Access application creation outcome is ambiguous.');
+      throw error;
+    } finally { creationPending = false; }
   }
   async function deleteAccessApp(role) {
+    mutationPhase('delete');
     const id = inventory.cloudflare.accessAppIds[role];
     const name = accessAppName(role);
     if (!id || !name) quarantine('Access application target is not certified by inventory.', alert);
@@ -436,29 +461,36 @@ export function createCloudflareClient({ accountId, inventory: rawInventory, tra
     const matches = listed.filter(app => app?.id === id);
     if (matches.length === 0) return { status: 'missing' };
     if (matches.length !== 1) quarantine('Access application lookup is ambiguous.', alert);
-    try { assertOwnedResource(inventory, { accountId, kind: 'accessApp', role, name: matches[0].name, id: matches[0].id, graph: normalizeAccessGraph(matches[0]) }, `accessApp:${role}`); } catch (error) { poisoned = true; quarantine(error.message, alert); }
+    try { assertOwnedResource(inventory, { accountId, kind: 'accessApp', role, name: matches[0].name, id: matches[0].id, graph: normalizeAccessGraph(matches[0]) }, `accessApp:${role}`); } catch (error) { poison(error.message); }
     await call('DELETE', `${root}/access/apps/${id}`);
     return { status: 'deleted' };
   }
   async function listServiceTokens() { return completeList(await call('GET', `${root}/access/service_tokens`), entry => typeof entry?.id === 'string' && entry.id.length > 0 && typeof entry?.name === 'string' && entry.name.length > 0, 'id'); }
   async function createServiceToken() {
+    mutationPhase('create');
     const name = inventory.names.token;
     if (inventory.cloudflare.tokenId) quarantine('Service token already has a recorded exact ID.', alert);
     if (typeof serviceTokenCreate !== 'function') throw new TypeError('Expected a protected serviceTokenCreate builder.');
-    const listed = await listServiceTokens();
-    if (!Array.isArray(listed)) throw new TypeError('Cloudflare service token list response is invalid.');
-    if (listed.some(token => token?.name === name)) quarantine('Service token already exists; create is ambiguous.', alert);
-    await intent('token', name);
-    const body = await serviceTokenCreate({ name, inventory: structuredClone(inventory) });
-    if (!body || typeof body !== 'object') throw new TypeError('Protected serviceTokenCreate builder returned an invalid body.');
-    const created = (await call('POST', `${root}/access/service_tokens`, body)).result;
-    if (!created || created.name !== name || typeof created.id !== 'string' || created.id.length === 0) quarantine('Service token create response is not an exact identity.', alert);
-    const candidate = validateInventory({ ...inventory, cloudflare: { ...inventory.cloudflare, tokenId: created.id }, updatedAt: now() });
-    try { await checkpoint(candidate, store); } catch (error) { poisoned = true; quarantine(error.message, alert); }
-    inventory = candidate;
-    return created;
+    reserveCreation();
+    let postAttempted = false;
+    try {
+      const listed = await listServiceTokens();
+      if (listed.some(token => token.name === name)) quarantine('Service token already exists; create is ambiguous.', alert);
+      await intent('token', name);
+      const body = await serviceTokenCreate({ name, inventory: structuredClone(inventory) });
+      if (!body || Object.getPrototypeOf(body) !== Object.prototype || Reflect.ownKeys(body).length !== 1 || !Object.hasOwn(body, 'name') || body.name !== name) throw new TypeError('Protected service token body must contain only the controller-derived own name.');
+      postAttempted = true;
+      const created = (await call('POST', `${root}/access/service_tokens`, body)).result;
+      if (!created || created.name !== name || typeof created.id !== 'string' || created.id.length === 0 || listed.some(token => token.id === created.id)) throw new TypeError('Service token create response is not an exact fresh identity.');
+      await check({ ...inventory, cloudflare: { ...inventory.cloudflare, tokenId: created.id }, updatedAt: now() });
+      return created;
+    } catch (error) {
+      if (postAttempted) poison('Service token creation outcome is ambiguous.');
+      throw error;
+    } finally { creationPending = false; }
   }
   async function deleteServiceToken() {
+    mutationPhase('delete');
     const id = inventory.cloudflare.tokenId;
     if (!id) quarantine('Service token target is not certified by inventory.', alert);
     const listed = await listServiceTokens();

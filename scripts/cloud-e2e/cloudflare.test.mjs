@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import * as cloudflareProtocol from './cloudflare.mjs';
-import { createCloudflareClient, MutationQuarantinedError, planBetaWorkerCreate, planBetaWorkerDelete, planBetaWorkerRead, planBetaWorkerVersion, prepareBetaWorkerEvidence } from './cloudflare.mjs';
+import { createCloudflareClient, MutationQuarantinedError, planBetaWorkerCreate, planBetaWorkerDelete, planBetaWorkerRead, planBetaWorkerVersion, prepareBetaWorkerEvidence, withBootstrapAuthDatabase } from './cloudflare.mjs';
 import { checkpointBetaAccessCreateIntent, checkpointBetaAccessIdentity, checkpointBetaTokenCreateIntent, checkpointBetaWorkerAccessAttachment, checkpointBetaWorkerCreateIntent, checkpointBetaWorkerDependencies, checkpointBetaWorkerObservation, InventoryQuarantineError } from './inventory.mjs';
 import { resourceNames } from './key.mjs';
 
@@ -75,6 +75,149 @@ function deferred() {
   const promise = new Promise(resolve => { release = resolve; });
   return { promise, release };
 }
+
+function legacyAccessBody({ role, name, inventory: current }) {
+  return { name, destinations: [{ type: 'worker', worker_id: current.cloudflare.workerIds[role], overrides: [] }], policies: [{ decision: 'non_identity', include: [{ service_token: { token_id: current.cloudflare.tokenId } }] }] };
+}
+
+test('I1 ordinary mutation lifecycle refuses terminal SQL and creates before any transport', async () => {
+  for (const stage of ['quarantined', 'deleted', 'active']) {
+    const transport = mockTransport([]);
+    const client = createCloudflareClient({ accountId: 'account-1', inventory: { ...inventory, stage, cloudflare: { ...inventory.cloudflare, d1Ids: { auth: inventory.cloudflare.d1Ids.auth }, accessAppIds: {}, tokenId: null } }, transport, store: { async put() {} }, accessAppCreate: legacyAccessBody, serviceTokenCreate: ({ name }) => ({ name }) });
+    if (stage !== 'active') await assert.rejects(client.queryD1('auth', 'SELECT 1'), MutationQuarantinedError);
+    await assert.rejects(client.createD1('product'), MutationQuarantinedError);
+    await assert.rejects(client.createAccessApp('api'), MutationQuarantinedError);
+    await assert.rejects(client.createServiceToken(), MutationQuarantinedError);
+    assert.equal(transport.calls.length, 0);
+  }
+});
+
+test('I1 healthy lifecycle permits exact SQL and quarantined cleanup but deleted cleanup is fenced', async () => {
+  for (const stage of ['creating', 'active']) {
+    const transport = mockTransport([{ result: { uuid: inventory.cloudflare.d1Ids.auth, name: names.auth } }, { result: [{ success: true, results: [{ value: 1 }] }] }]);
+    const client = createCloudflareClient({ accountId: 'account-1', inventory: { ...inventory, stage }, transport });
+    assert.deepEqual(await client.queryD1('auth', 'SELECT 1'), [{ success: true, results: [{ value: 1 }] }]);
+    assert.deepEqual(transport.calls.map(call => call.method), ['GET', 'POST']);
+  }
+  for (const stage of ['quarantined', 'deleted']) {
+    const transport = mockTransport([{ result: { uuid: inventory.cloudflare.d1Ids.product, name: names.product } }, { result: null }]);
+    const client = createCloudflareClient({ accountId: 'account-1', inventory: { ...inventory, stage }, transport });
+    if (stage === 'quarantined') assert.deepEqual(await client.deleteD1('product'), { status: 'deleted' });
+    else await assert.rejects(client.deleteD1('product'), MutationQuarantinedError);
+    assert.deepEqual(transport.calls.map(call => call.method), stage === 'quarantined' ? ['GET', 'DELETE'] : []);
+  }
+  const transport = mockTransport([{ result: [{ ...legacyAccessBody({ role: 'api', name: names.accessApi, inventory }), id: 'access-app-1' }] }, { result: null }, { result: [{ id: 'token-1', name: names.token }] }, { result: null }]);
+  const client = createCloudflareClient({ accountId: 'account-1', inventory: { ...inventory, stage: 'quarantined' }, transport });
+  assert.deepEqual(await client.deleteAccessApp('api'), { status: 'deleted' });
+  assert.deepEqual(await client.deleteServiceToken(), { status: 'deleted' });
+  assert.deepEqual(transport.calls.map(call => call.method), ['GET', 'DELETE', 'GET', 'DELETE']);
+});
+
+test('I2 Access and token ambiguous post-POST outcomes irreversibly fence every later mutation', async () => {
+  for (const kind of ['access', 'token']) for (const failure of ['wrong-name', 'missing-id', 'null-result', 'invalid-checkpoint-clock', 'checkpoint-failure']) {
+    const writes = []; let clockCalls = 0;
+    const name = kind === 'access' ? names.accessApi : names.token;
+    const created = failure === 'wrong-name' ? { id: 'created-id', name: 'foreign' } : failure === 'missing-id' ? { name } : failure === 'null-result' ? null : { id: 'created-id', name };
+    const transport = mockTransport([{ result: [] }, { result: created }, { result: [] }, { result: { id: 'second-id', name } }]);
+    const client = createCloudflareClient({ accountId: 'account-1', inventory: { ...inventory, cloudflare: { ...inventory.cloudflare, accessAppIds: {}, tokenId: kind === 'token' ? null : 'token-1' } }, transport, accessAppCreate: legacyAccessBody, serviceTokenCreate: ({ name }) => ({ name }), now: () => ++clockCalls > 1 && failure === 'invalid-checkpoint-clock' ? 'invalid-clock' : NOW,
+      store: { async put(value) { writes.push(value); if (failure === 'checkpoint-failure' && value.type !== 'create-intent') throw new Error('checkpoint unavailable'); } } });
+    await assert.rejects(kind === 'access' ? client.createAccessApp('api') : client.createServiceToken());
+    const count = transport.calls.length;
+    for (const operation of [() => client.createAccessApp('api'), () => client.createServiceToken(), () => client.createD1('auth'), () => client.queryD1('auth', 'SELECT 1'), () => client.deleteD1('product'), () => client.deleteAccessApp('api'), () => client.deleteServiceToken()]) await assert.rejects(operation());
+    assert.equal(count, 2);
+    assert.equal(transport.calls.length, 2, `${kind}/${failure} must not transport after uncertainty`);
+    assert.equal(writes.filter(value => value.type === 'create-intent').length, 1);
+  }
+});
+
+test('I2 malformed Access creation revokes existing exact Auth bootstrap authority', async () => {
+  const transport = mockTransport([{ result: [] }, { result: { uuid: inventory.cloudflare.d1Ids.auth, name: names.auth } }, { result: [] }, { result: { name: 'foreign', id: 'unknown' } }]);
+  const client = createCloudflareClient({ accountId: 'account-1', inventory: { ...inventory, cloudflare: { ...inventory.cloudflare, d1Ids: { product: inventory.cloudflare.d1Ids.product }, accessAppIds: {} } }, protectedD1Ids: { product: '55555555-5555-4555-8555-555555555555', auth: '66666666-6666-4666-8666-666666666666' }, transport, now: () => NOW, store: { async put() {} }, accessAppCreate: legacyAccessBody });
+  await client.createD1('auth');
+  await assert.rejects(client.createAccessApp('api'), MutationQuarantinedError);
+  let actions = 0;
+  await assert.rejects(withBootstrapAuthDatabase(client, { key, authDatabaseId: inventory.cloudflare.d1Ids.auth }, async () => { actions += 1; }));
+  assert.equal(actions, 0);
+  assert.equal(transport.calls.length, 4);
+});
+
+test('I3 creation reservation covers discovery intent and checkpoint awaits with one POST per slot', async () => {
+  for (const kind of ['access', 'token']) for (const phase of ['discovery', 'intent', 'checkpoint']) {
+    const entered = deferred(); const release = deferred(); const calls = []; const writes = [];
+    let held = false; let creates = 0;
+    const hold = async current => { if (!held && current === phase) { held = true; entered.release(); await release.promise; } };
+    const client = createCloudflareClient({ accountId: 'account-1', inventory: { ...inventory, cloudflare: { ...inventory.cloudflare, accessAppIds: {}, tokenId: kind === 'token' ? null : 'token-1' } }, now: () => NOW, accessAppCreate: legacyAccessBody, serviceTokenCreate: ({ name }) => ({ name }),
+      store: { async put(value) { writes.push(structuredClone(value)); await hold(value.type === 'create-intent' ? 'intent' : 'checkpoint'); } },
+      transport: { async request(request) { calls.push(request); if (request.method === 'GET') { await hold('discovery'); return { status: 200, success: true, result: [], result_info: { total_count: 0 } }; } creates += 1; return { status: 200, success: true, result: { id: `created-${creates}`, name: request.body.name } }; } } });
+    const create = () => kind === 'access' ? client.createAccessApp('api') : client.createServiceToken();
+    const first = create(); await entered.promise;
+    const overlap = create().then(() => 'accepted', () => 'refused');
+    release.release(); await first;
+    assert.equal(await overlap, 'refused', `${kind}/${phase}`);
+    assert.equal(calls.filter(call => call.method === 'POST').length, 1);
+    assert.equal(writes.filter(value => value.type !== 'create-intent').length, 1);
+    assert.equal(kind === 'access' ? writes.at(-1).cloudflare.accessAppIds.api : writes.at(-1).cloudflare.tokenId, 'created-1');
+  }
+});
+
+test('I3 same-client sibling creates refuse overlap then checkpoint both IDs on sequential retry', async () => {
+  const entered = deferred(); const release = deferred(); const writes = []; const calls = []; let held = false;
+  const client = createCloudflareClient({ accountId: 'account-1', inventory: { ...inventory, cloudflare: { ...inventory.cloudflare, workerIds: { api: 'worker-tag-1', operator: 'worker-tag-3' }, accessAppIds: {} } }, now: () => NOW, accessAppCreate: legacyAccessBody,
+    store: { async put(value) { writes.push(structuredClone(value)); if (value.type !== 'create-intent' && !held) { held = true; entered.release(); await release.promise; } } },
+    transport: { async request(request) { calls.push(request); return request.method === 'GET' ? { status: 200, success: true, result: [], result_info: { total_count: 0 } } : { status: 200, success: true, result: { id: request.body.name === names.accessApi ? 'access-api-created' : 'access-operator-created', name: request.body.name } }; } } });
+  const first = client.createAccessApp('api'); await entered.promise;
+  const overlap = client.createAccessApp('operator').then(() => 'accepted', () => 'refused');
+  release.release(); await first;
+  assert.equal(await overlap, 'refused');
+  assert.equal(calls.filter(call => call.method === 'POST').length, 1);
+  await client.createAccessApp('operator');
+  assert.deepEqual(writes.at(-1).cloudflare.accessAppIds, { api: 'access-api-created', operator: 'access-operator-created' });
+  assert.equal(calls.filter(call => call.method === 'POST').length, 2);
+});
+
+test('I3 separate run clients progress while another token checkpoint is held', async () => {
+  const entered = deferred(); const release = deferred(); const writes = [];
+  const otherKey = { ...key, run_id: 123456790 }; const otherNames = resourceNames(otherKey);
+  const store = { async put(value) { writes.push(structuredClone(value)); if (value.key.run_id === 123456789 && value.type !== 'create-intent') { entered.release(); await release.promise; } } };
+  const make = (runKey, runNames, id) => createCloudflareClient({ accountId: 'account-1', inventory: { ...inventory, key: runKey, names: runNames, cloudflare: { ...inventory.cloudflare, tokenId: null } }, now: () => NOW, store, serviceTokenCreate: ({ name }) => ({ name }), transport: mockTransport([{ result: [] }, { result: { id, name: runNames.token } }]) });
+  const first = make(key, names, 'first-token').createServiceToken(); await entered.promise;
+  assert.equal((await make(otherKey, otherNames, 'other-token').createServiceToken()).id, 'other-token');
+  assert.equal(writes.at(-1).key.run_id, 123456790);
+  assert.equal(writes.at(-1).cloudflare.tokenId, 'other-token');
+  release.release(); assert.equal((await first).id, 'first-token');
+});
+
+test('I3 token checkpoint reservation protects Access and D1 sibling inventory from overlap', async () => {
+  const entered = deferred(); const release = deferred(); const writes = []; const calls = []; let held = false;
+  const client = createCloudflareClient({ accountId: 'account-1', inventory: { ...inventory, cloudflare: { ...inventory.cloudflare, tokenId: null, accessAppIds: {}, d1Ids: { auth: inventory.cloudflare.d1Ids.auth } } }, now: () => NOW, accessAppCreate: legacyAccessBody, serviceTokenCreate: ({ name }) => ({ name }),
+    store: { async put(value) { writes.push(structuredClone(value)); if (!held && value.type !== 'create-intent') { held = true; entered.release(); await release.promise; } } },
+    transport: { async request(request) { calls.push(request); if (request.method === 'GET') return { status: 200, success: true, result: [], result_info: { total_count: 0 } }; return { status: 200, success: true, result: request.path.endsWith('/d1/database') ? { name: request.body.name, uuid: inventory.cloudflare.d1Ids.product } : { name: request.body.name, id: request.path.endsWith('/apps') ? 'access-created' : 'token-created' } }; } } });
+  const first = client.createServiceToken(); await entered.promise;
+  const overlap = Promise.all([client.createAccessApp('api').then(() => 'accepted', () => 'refused'), client.createD1('product').then(() => 'accepted', () => 'refused')]);
+  release.release(); await first;
+  assert.deepEqual(await overlap, ['refused', 'refused']);
+  assert.equal(calls.filter(call => call.method === 'POST').length, 1);
+  await client.createAccessApp('api'); await client.createD1('product');
+  assert.equal(writes.at(-1).cloudflare.tokenId, 'token-created');
+  assert.deepEqual(writes.at(-1).cloudflare.accessAppIds, { api: 'access-created' });
+  assert.deepEqual(writes.at(-1).cloudflare.d1Ids, { auth: '22222222-2222-4222-8222-222222222222', product: '11111111-1111-4111-8111-111111111111' });
+  assert.equal(calls.filter(call => call.method === 'POST').length, 3);
+});
+
+test('I4 service token name and adopted name-only body are validated before POST', async () => {
+  for (const body of [{ name: 'foreign' }, {}, { name: names.token, unsupported: true }, [], Object.assign(Object.create({ name: names.token }), {}), null]) {
+    const transport = mockTransport([{ result: [] }, { result: { id: 'created', name: names.token } }]); const writes = [];
+    const client = createCloudflareClient({ accountId: 'account-1', inventory: { ...inventory, cloudflare: { ...inventory.cloudflare, tokenId: null } }, transport, store: { async put(value) { writes.push(value); } }, serviceTokenCreate: () => body });
+    await assert.rejects(client.createServiceToken());
+    assert.equal(transport.calls.filter(call => call.method === 'POST').length, 0);
+    assert.equal(writes.filter(value => value.type !== 'create-intent').length, 0);
+  }
+  const transport = mockTransport([{ result: [] }, { result: { id: 'token-created', name: names.token } }]); const writes = [];
+  const client = createCloudflareClient({ accountId: 'account-1', inventory: { ...inventory, cloudflare: { ...inventory.cloudflare, tokenId: null } }, transport, store: { async put(value) { writes.push(value); } }, serviceTokenCreate: ({ name }) => ({ name }), now: () => NOW });
+  assert.equal((await client.createServiceToken()).id, 'token-created');
+  assert.deepEqual(transport.calls[1].body, { name: names.token });
+  assert.equal(writes.at(-1).cloudflare.tokenId, 'token-created');
+});
 
 test('D1 creation reserves the client before discovery awaits and does not create an unrecorded sibling', async () => {
   const entered = deferred(); const release = deferred(); const calls = []; const writes = [];

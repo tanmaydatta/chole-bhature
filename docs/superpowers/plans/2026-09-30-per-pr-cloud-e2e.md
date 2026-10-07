@@ -12,7 +12,7 @@
 
 **Notion mirror:** https://app.notion.com/p/Per-PR-Cloud-E2E-Implementation-Plan-3ebe5c7c2b8e81229ee0d8a0acb2d309
 
-**Mirror state:** The approved Task 5a/5b mock-only protocol and controller
+**Historical mirror state (2026-10-02):** The approved Task 5a/5b mock-only protocol and controller
 status is synchronized: 83 local cloud-script tests pass, public Worker writes
 remain zero-transport refusals, and the separately approved live-pilot gates
 remain incomplete.
@@ -78,6 +78,21 @@ No Cloudflare resource has been created, no live pilot has run, and automatic
 per-PR cloud writes remain disabled. Two minor artifact hardening observations
 (long tar paths and partial extraction residue on write failure) are deferred
 to final branch review.
+
+**Current local checkpoint (2026-10-07):** Tasks 1–4, mock-only Task 5a/5b,
+Task 5d raw-module packaging, Task 5e non-authorizing diagnostics, Task 6a CI
+admission and bounded local Task 6b bootstrap have accepted local evidence.
+The accumulated review of `3ba5c14` found four Important ordinary-client/
+discovery defects. Their separately approved eight-path correction and M1
+roadmap reconciliation are implemented and locally verified; independent
+scoped re-review is pending. The [fresh correction ledger](../../testing/per-pr-cloud-e2e.md#checkpoint-lifecycle-and-creation-correction-2026-10-07)
+records 337 cloud tests, 1,592 Vitest plus nine Node tests, passing build/lint
+and one full local browser run. These are new-source checks; the earlier
+`07af8ed`/`4d6df6a`/`3ba5c14` accepted-source and synchronization records remain
+historical. The correction is local only, with no fresh Notion publication.
+M2 long tar paths, M3 extraction residue, M4 object-order false refusals and M5
+sanitized operation/stage diagnostics remain deferred. Full Task 5, deployed
+Task 6b and Tasks 7–10 remain incomplete; automatic cloud writes remain disabled.
 
 ## Global Constraints
 
@@ -161,6 +176,19 @@ The Operator SPA's separate assets upload/completion JWT, Beta version JSON (`ma
 - [x] Write mocked tests for pre-create intent and immediate ID checkpoint; crash between create/checkpoint with and without independent creation evidence; foreign resource with matching prefix; same short hash but different ID; missing resource as idempotent success; staging/demo name or D1 UUID; wrong service binding graph; ID change between read and delete. Assert ambiguous or changed resources cause zero mutations and alert status. Worker write cases test refusal until a certified-ID path exists.
 - [x] Run `node --test scripts/cloud-e2e/inventory.test.mjs scripts/cloud-e2e/cloudflare.test.mjs`; the initial missing-module failure and final passing local suite are recorded in the Task 4 report.
 - [x] Implement guarded inventory and client using explicit account ID and validated key. D1/Access/token mutation guards and Worker read/discovery are mock-tested. The old name-addressed Worker mutation path is deliberately disabled because immutable-ID write semantics and first-route protection were not established. Task 4 is a foundation, not functioning Worker deploy/cleanup; 37/37 cloud-script tests passed.
+
+### Checkpoint guard correction (2026-10-07)
+
+The approved bounded correction touches only the two guard modules, their two
+test files and the four existing status/design/plan/roadmap pages. It preserves
+the Beta receipt/controller authority and original-target/bootstrap deadline
+contracts; there is no new provider boundary or live task progression.
+
+- [x] Record semantic RED before production edits for terminal preservation/durable stage changes, ordinary mutation lifecycle fences, irreversible Access/token post-POST poisoning, creation overlap and token pre-POST name/body validation. Retain supplemental RED for recovered Access graph proof and recorded Worker listed-name proof.
+- [x] Preserve terminal discovery IDs/stage/timestamps without recovery or reads; verify every returned recorded/recovered identity and adopted graph before progression. Checkpoint every legitimate returned ID or stage change and refuse absent/failing persistence. Creation requires `creating`; D1 SQL requires `creating`/`active`; healthy exact cleanup also permits `quarantined`; `deleted` cannot mutate.
+- [x] Reserve creation client-wide before awaits across D1/Access/token; refuse sibling overlap and merge sequential retries from the latest inventory. Permanently poison/revoke bootstrap after ambiguous post-POST result/validation/persistence; later mutations issue zero calls. Token builders accept only the adopted plain own-name body before POST. This is in-process only, without distributed coordination or new provider schema.
+- [x] Verify final frozen source on pinned Node 22: 337 cloud tests, serialized 1,592 Vitest plus nine Node tests, affected syntax/lint and project build/lint; retain all new outputs and the initial loopback sandbox failure. Complete one full local Chromium Playwright run after the other commands. The [ledger](../../testing/per-pr-cloud-e2e.md#checkpoint-lifecycle-and-creation-correction-2026-10-07) owns exact timings, warnings and limits.
+- [ ] Complete independent scoped re-review of this correction. Local verification is not fresh branch/remote merge certification, provider/live acceptance, deployment or publication authority.
 
 ## Task 5: Disposable two-stack Cloudflare feasibility pilot
 

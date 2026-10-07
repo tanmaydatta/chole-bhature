@@ -1,6 +1,6 @@
 # Product Current State and Roadmap
 
-**Updated:** 2026-10-02
+**Updated:** 2026-10-07
 
 **Status:** Active — Gate C complete; GAP-030/031 and the E2E platform are
 merged on `dev`. The separate Secrets Store cutover is deployed and verified
@@ -10,22 +10,32 @@ or D1 migration is part of that cutover.
 
 The approved per-PR Cloud E2E design is now being implemented on
 `feat/per-pr-cloud-e2e`, based on `origin/dev` commit
-`f189f5a0a527e8f350b1e77f4dcb29e96020d778`. Tasks 1–4 are locally verified
-through `7f74de3`; the approved 2026-10-01 Task 5a/5b amendments and bounded
-mock controller bring the local cloud-script suite to 83 passing tests. The
-controller orders mock D1, empty Worker, token, and Access transitions through
-a pure API code plan, then reports Operator unsupported. Public Worker writes
-still deliberately refuse with zero transport calls. No Cloudflare stack has
+`f189f5a2ef53a8999969344338f68a2f1117899b` (cached local reference, not a fresh
+remote check). Tasks 1–4, mock-only Task 5a/5b, Task 5d raw-module packaging,
+Task 5e non-authorizing diagnostics, Task 6a application CI admission and
+bounded local Task 6b exact-D1 bootstrap have accepted local evidence. The
+separately approved 2026-10-07 checkpoint guard correction is implemented and
+locally verified, with independent scoped re-review pending: 337 cloud tests,
+1,592 Vitest plus nine Node tests, build/lint and all five local Playwright
+cases pass. The [correction ledger](../testing/per-pr-cloud-e2e.md#checkpoint-lifecycle-and-creation-correction-2026-10-07)
+records lifecycle/readback persistence, irreversible post-create quarantine,
+client-wide creation reservations and the adopted token-name boundary.
+The mock controller still stops at the unresolved Operator graph; public
+Worker writes refuse with zero transport calls. No Cloudflare stack has
 been deployed or tested: automatic per-PR
 Cloudflare writes are disabled, and no live pilot has run.
 
 **Notion mirror:** https://app.notion.com/p/Product-Current-State-and-Roadmap-3a6e5c7c2b8e81f6b412c45a2bc7b344
 
-**Mirror state:** The 2026-09-30 per-PR Cloud E2E design, Tasks 1–4 local
-progress, proposed API gate, and 2026-09-29 PR #15 merge evidence are
-synchronized, including the final Task 5a/5b mock-only protocol and controller
-status: 83 local cloud-script tests pass, public Worker writes make zero
-transport calls, and the live-pilot gates remain unresolved.
+**Mirror state:** The reviewed nonsecret bounded Task 6b summary was narrowly
+synchronized on 2026-10-06, retaining accepted source `07af8ed`, closing
+documentation `4d6df6a` and synchronization provenance `3ba5c14`. Earlier
+Task 5a/5b, packaging, diagnostic and Task 6a publications remain dated
+history. The [bootstrap synchronization ledger](../testing/per-pr-cloud-e2e.md#reviewed-local-bootstrap-status-synchronization-2026-10-06)
+records exact whole-page parity and preserved 17 index children. The current
+2026-10-07 correction and repository-roadmap reconciliation are local only
+and await a separately authorized publication; no fresh Notion readback or
+synchronization is claimed. Live-pilot gates remain unresolved.
 
 This is the canonical operational answer to:
 
@@ -44,14 +54,14 @@ deferred issue remains in the
 | Question | Current answer |
 |---|---|
 | Overall phase | Post-Gate-C client-readiness corrections; per-PR Cloud E2E foundations in progress |
-| Current activity | GAP-030/031 merged as PR #13; E2E platform PR #14 merged at `b524c32b98652cfcadb75c7af2f234cf33495f6b`; Secrets Store PR #15 merged at `0c5e5f1a068d942af8f091ab0fc4b7ff8bf44e9d` after staging validation from source head `df05d8d`; per-PR Cloud E2E Tasks 1–4 plus mock-only Task 5a/5b controller are locally verified, with Worker writes still blocked |
-| Current repository baseline | `origin/dev` at `f189f5a0a527e8f350b1e77f4dcb29e96020d778`; the per-PR Cloud E2E worktree starts at `407cb3a6c8f9b66078c69f7621b8100956f8629f` and is locally reviewed through `7f74de3` |
+| Current activity | Per-PR Cloud E2E checkpoint guard correction implemented and locally verified; independent scoped re-review pending. Accepted local work includes Task 5d/5e and bounded Task 6a/6b; Worker writes remain blocked. Prior GAP/E2E/Secrets Store merge and staging evidence below remains unchanged. |
+| Current repository baseline | Cached local `origin/dev`/merge-base `f189f5a2ef53a8999969344338f68a2f1117899b`; accumulated checkpoint reviewed at `3ba5c14`, with the 2026-10-07 bounded correction now locally verified. No fresh remote-base/head or merge-conflict certification. |
 | Current product-code baseline | PR #15 merge commit `0c5e5f1a068d942af8f091ab0fc4b7ff8bf44e9d` |
-| Local feature state | Authoritative merchandise pricing and the E2E platform are merged; the E2E platform passed 5 local Playwright tests and 4 applicable staging tests. Per-PR Cloud E2E Tasks 1–3 passed local baseline, run-identity, and artifact-boundary verification; Task 4 plus mock-only Task 5a/5b controller passed 83 local cloud-script tests, while public Worker writes still refuse before transport |
+| Local feature state | Authoritative merchandise pricing and the E2E platform are merged, with the dated staging evidence retained. Cloud E2E foundation/packaging/diagnostics/CI admission/local bootstrap are locally accepted; fresh correction verification passes 337 cloud, 1,592 Vitest plus nine Node and five local Playwright cases (23.4 s), build/lint. Public Worker writes still refuse before transport. |
 | Current deployment state | The 2026-09-28 Product/Auth/API/Identity/Operator rollout remains in staging. On 2026-09-29, existing-store Secrets Store bindings deployed to Identity and Operator only; no API/Core/D1 migration occurred |
 | Current release decision | PR #15 merged into `dev` at `0c5e5f1a068d942af8f091ab0fc4b7ff8bf44e9d` after staging validation from source head `df05d8d`; old per-Worker secrets are retained |
 | Gate C finish line | Complete — all mandatory clean-break selection, redemption, tenant-isolation, concurrency, and observability cases passed |
-| Next plan work | Complete the remaining Task 5 pilot gates: separately approve and prove live schemas, no pre-Access exposure, assets/service-binding/recovery behavior, and two-stack isolation before automatic every-push execution |
+| Next plan work | Independently re-review the local checkpoint correction, then separately resolve/adopt provider prerequisites and prove the remaining Task 5/deployed Task 6b gates. Local Task 6a/b is already implemented; cloud HTTPS/passkey, complete cleanup and every-push execution remain future work. |
 
 ## Source-of-truth map
 
@@ -281,9 +291,9 @@ preserve manual staging and exclude fork pull requests. Tasks 1–3 are verified
 locally: the 5-test Playwright baseline ran in 24.4 seconds, the trusted
 run-identity boundary rejects forks and stale heads, and the controller-side
 artifact boundary verifies only a bounded untrusted bundle. Task 4 added
-reviewed exact-identity inventory and fail-closed client guards. The approved
-mock-only Task 5a/5b amendments and controller bring the local cloud-script
-total to 83 and keep public Worker create/update/delete/subdomain calls
+reviewed exact-identity inventory and fail-closed client guards. The dated
+2026-10-02 mock-only Task 5a/5b amendments/controller passed 83 local cloud
+tests and kept public Worker create/update/delete/subdomain calls
 disabled before transport. The mock controller drives separate Beta IDs,
 fixed request plans, disabled/readback and token-exclusive Access gates; it
 stops after a pure API code plan at the unresolved Operator gate. Durable mock
@@ -298,6 +308,23 @@ cleanable; an ambiguous Auth POST retains only that uncertain D1 target when
 there is no Worker graph. Changed IDs or failed deletes are never called clean.
 The controller keeps session registration and raw cleanup private, so forged
 or copied session objects cannot authorize provider calls.
+The later accepted local slices include Task 5d raw-module packaging and its
+metadata correction; Task 5e diagnostic comparisons that always remain
+unsupported; Task 6a CI admission/cookie/service consistency; and bounded
+Task 6b exact-D1 bootstrap with immutable target/deadline and irreversible
+clock observations. Accepted tested source `07af8ed` passed 322 cloud tests,
+1,592 Vitest plus nine Node, eight real D1/runner and five local Playwright
+cases (22.6 s); those are historical 2026-10-06 results.
+The 2026-10-07 accumulated review found four Important exported-client/
+discovery gaps. Their approved correction now passes 337 cloud tests and
+fresh complete project/build/lint plus five local Playwright cases (23.4 s);
+independent scoped re-review remains pending. It preserves terminal stages,
+checkpoints legitimate transitions, fences ordinary mutation by lifecycle,
+poisons ambiguous Access/token POST outcomes, reserves same-client creation
+before awaits and validates the adopted token name/body before POST.
+M2 long tar names, M3 partial extraction residue, M4 object-order false refusal
+and M5 sanitized operation/stage diagnostics remain explicitly deferred in the
+[current correction ledger](../testing/per-pr-cloud-e2e.md#checkpoint-lifecycle-and-creation-correction-2026-10-07).
 The [public-API feasibility ledger](../testing/per-pr-cloud-e2e.md#worker-api-feasibility-public-documentation-2026-09-30)
 records unresolved first-route, service-binding, Access, assets and audit
 requirements. No Cloudflare resource was created, no
@@ -358,21 +385,25 @@ of truth and old per-Worker secrets remain retained.
 
 The approved design uses a trusted controller and isolated, disposable
 Cloudflare resources for same-repository pull requests; it does not repurpose
-manual staging. Tasks 1–4 and the bounded mock-only Task 5a/5b controller are
-complete as local foundations, but Worker writes remain blocked and the design
-is not deployed or automatic.
+manual staging. Tasks 1–4, mock-only Task 5a/5b, Task 5d/5e and bounded local
+Task 6a/6b are implemented and locally accepted. The current checkpoint guard
+correction is locally verified and awaits independent scoped re-review.
+Worker writes remain blocked and the design is not deployed or automatic.
 
 The remaining milestones are, in order:
 
-1. a separately approved protected two-stack infrastructure pilot resolving
+1. independent scoped re-review of the current checkpoint correction, followed
+   by separately approved provider clarification/prerequisite adoption;
+2. a separately approved protected two-stack infrastructure pilot resolving
    Beta recovery, provider response shapes, assets, service-binding remapping,
    and no code exposure before Access;
-2. Task 6's isolated `cloud-ci` runtime guards and exact-D1 root bootstrap
-   after the pilot;
-3. a real HTTPS passkey/full-suite pilot;
-4. failure and cancellation cleanup, including independent reconciliation and
+3. remaining deployed Task 6b authenticated configuration, exact graph and
+   remote D1 atomicity certification; local runtime admission/bootstrap is
+   already implemented;
+4. a real HTTPS passkey/full-suite pilot;
+5. failure and cancellation cleanup, including independent reconciliation and
    janitor behavior; and
-5. a protected every-push workflow only after the full pilot security matrix
+6. a protected every-push workflow only after the full pilot security matrix
    passes. Fork pull requests remain excluded.
 
 ### 4. Turn the approved free-shipping financial design into an implementation plan

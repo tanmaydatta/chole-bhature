@@ -9,7 +9,7 @@ workflow.
 
 **Notion mirror:** https://app.notion.com/p/Per-PR-Cloud-E2E-Design-Spec-3ebe5c7c2b8e8186866ef1e158bfd880
 
-**Mirror state:** The approved Task 5a/5b mock-only protocol and controller
+**Historical mirror state (2026-10-02):** The approved Task 5a/5b mock-only protocol and controller
 status is synchronized: 83 local cloud-script tests pass, public Worker writes
 remain zero-transport refusals, and no live provider behavior, pilot,
 deployment, or workflow is claimed.
@@ -45,12 +45,23 @@ Reviewed nonsecret Task 6b bounded local bootstrap status was narrowly
 synchronized on 2026-10-06 to the same four existing destinations. Complete
 whole-page PATCH/fresh-GET parity passed with no normalization or formatting
 exception; all 17 ordered native child links and active destination/child
-metadata were preserved and independently verified by root. Current mirrored
+metadata were preserved and independently verified by root. The 2026-10-06 mirrored
 status identifies accepted tested source `07af8ed` and closing documentation
 `4d6df6a`; the earlier Task 6a synchronization remains historical. The
 [bootstrap synchronization ledger](../../testing/per-pr-cloud-e2e.md#reviewed-local-bootstrap-status-synchronization-2026-10-06)
 records summary-only scope and evidence. Full local sections and the unsent
 clarification request body were not published. No provider/live gate is closed.
+
+**Current local checkpoint (2026-10-07):** The separately approved
+ordinary-client/discovery lifecycle and creation correction is implemented and
+locally verified, with independent scoped re-review pending. The
+[fresh correction ledger](../../testing/per-pr-cloud-e2e.md#checkpoint-lifecycle-and-creation-correction-2026-10-07)
+records 337 cloud tests and fresh full-project/build/lint/browser evidence.
+Earlier accepted Task 5d/5e/6a and bounded Task 6b source `07af8ed` remains
+dated historical evidence. The current correction and roadmap reconciliation
+are local only; the prior `3ba5c14` synchronization provenance supplies no
+fresh Notion parity or publication claim. M2–M5 remain deferred; live NO-GO
+and all remaining Task 5/6b and Tasks 7–10 gates remain.
 
 ## Goal and success criteria
 
@@ -102,6 +113,48 @@ GitHub's [`pull_request_target` guidance](https://docs.github.com/en/actions/ref
 ## Fail-closed provisioning and Access gate
 
 The controller writes a trusted inventory checkpoint after each successful create and can rediscover deterministic names if cancellation occurs between creation and checkpoint. It records the exact Cloudflare IDs and run tuple in restricted, short-retention controller evidence; the janitor also enumerates the reserved prefix to find incomplete stacks. Discovery must verify exact names, IDs, bindings, and creation ownership before mutation; an ambiguous or foreign match stops and alerts rather than deleting it.
+
+### Ordinary local lifecycle and creation fencing (2026-10-07)
+
+The local inventory stage fences authority at each ordinary mutation boundary.
+Creation requires `creating`; general D1 SQL permits `creating` or `active`.
+Exact proven cleanup also permits a healthy `quarantined` inventory, because
+quarantine must preserve the ability to remove independently owned resources.
+`deleted` never grants mutation authority. Read-only inspection remains
+available in every stage while the client is healthy; public Worker writes
+remain unsupported with zero transport.
+
+Terminal discovery preserves stage, IDs and timestamps, without recovery or
+provider reads. In creating/active discovery, every returned identity,
+including an audit-recovered candidate, needs current exact readback. Worker
+name/tag and bindings, D1 name/UUID, Access name/ID and its adopted policy graph,
+and token name/ID must all match. Stored complete IDs alone cannot revive a
+run. Missing-ID recovery retains the unique durable intent and independently
+matching controller audit requirement. A verified complete creating inventory
+may become active, and an incomplete active inventory may become creating;
+every returned ID or stage change must first be durably persisted. Unchanged
+discovery preserves timestamps. No separate recovery flag or provider ownership
+assertion is introduced.
+
+A client-wide reservation precedes every D1/Access/token creation await. It
+refuses overlapping same-slot and sibling creates; sequential retry after
+durable completion merges from the latest inventory, preserving earlier IDs.
+This trades same-client creation concurrency for unambiguous checkpoint
+ownership. Separate clients/runs remain independent, and no distributed lock,
+store CAS or crash-recovery guarantee follows. Once a POST may have occurred,
+any ambiguous Access/token transport, envelope, identity, validation, clock or
+persistence outcome permanently poisons the client and revokes Auth bootstrap
+authority. Later mutations make zero calls; unknown resources are not retried
+or guess-deleted. Original-target pinning, queued revalidation and the
+half-open bootstrap deadline remain in force.
+
+Before token POST, the protected builder may supply only the already-adopted
+plain `{name}` body with the controller-derived own name. Additional provider
+fields remain unsupported rather than becoming an invented contract. The
+existing Beta receipts and verifier-owned controller cleanup are separate
+authority paths; these local corrections neither replace them nor enable
+provider execution. Exact stage permissions and fresh semantic verification
+are recorded in the [correction ledger](../../testing/per-pr-cloud-e2e.md#checkpoint-lifecycle-and-creation-correction-2026-10-07).
 
 The original sequence that deployed Core, Identity, and Operator **before**
 creating Worker-level Access is **superseded for implementation**. It cannot

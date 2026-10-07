@@ -541,6 +541,49 @@ function auditProvesCreation(entry, { controllerTokenId, id, startedAt, method, 
     && entry.resource?.id === id && entry.raw?.method === method && entry.raw?.uri === uri;
 }
 
+function discoveryAccessGraph(app) {
+  const destination = Array.isArray(app?.destinations) && app.destinations.length === 1 ? app.destinations[0] : null;
+  const policy = Array.isArray(app?.policies) && app.policies.length === 1 ? app.policies[0] : null;
+  const token = Array.isArray(policy?.include) && policy.include.length === 1 ? policy.include[0]?.service_token : null;
+  if (!destination || !policy || !token) quarantine('Discovery Access graph is incomplete.');
+  exactKeys(destination, ['type', 'worker_id', 'overrides'], 'Discovery Access destination is unsupported.');
+  exactKeys(policy, ['decision', 'include'], 'Discovery Access policy is unsupported.');
+  exactKeys(policy.include[0], ['service_token'], 'Discovery Access policy is unsupported.');
+  exactKeys(token, ['token_id'], 'Discovery Access token reference is unsupported.');
+  if (destination.type !== 'worker' || !Array.isArray(destination.overrides) || destination.overrides.length !== 0) quarantine('Discovery Access destination is unsupported.');
+  return { workerId: destination.worker_id, tokenId: token.token_id, decision: policy.decision, exclusive: true, publicOverrides: false };
+}
+
+async function verifyRecordedResources(inventory, api) {
+  for (const role of roles.worker) {
+    if (!inventory.cloudflare.workerIds[role]) continue;
+    if (typeof api.listWorkers !== 'function' || typeof api.getWorker !== 'function') quarantine('Discovery evidence source is incomplete.');
+    const listed = await api.listWorkers();
+    const matches = Array.isArray(listed) ? listed.filter(resource => resource?.id === inventory.names[role] || resource?.tag === inventory.cloudflare.workerIds[role]) : [];
+    if (matches.length !== 1 || matches[0].id !== inventory.names[role] || matches[0].tag !== inventory.cloudflare.workerIds[role]) quarantine('Recorded Worker is missing or changed.');
+    const current = await api.getWorker(role);
+    assertOwnedResource(inventory, { accountId: inventory.cloudflare.accountId, kind: 'worker', role, name: current?.name, id: current?.tag, bindings: current?.bindings }, `worker:${role}`);
+  }
+  for (const [kind, section, validRoles, list, idField] of [
+    ['d1', 'd1Ids', roles.d1, 'listD1', 'uuid'],
+    ['accessApp', 'accessAppIds', roles.accessApp, 'listAccessApps', 'id'],
+    ['token', 'tokenId', [undefined], 'listServiceTokens', 'id'],
+  ]) {
+    const recordedRoles = validRoles.filter(role => section === 'tokenId' ? inventory.cloudflare.tokenId : inventory.cloudflare[section][role]);
+    if (!recordedRoles.length) continue;
+    if (typeof api[list] !== 'function') quarantine('Discovery evidence source is incomplete.');
+    const listed = await api[list]();
+    if (!Array.isArray(listed)) quarantine('Recorded resource discovery is malformed.');
+    for (const role of recordedRoles) {
+      const id = expectedId(inventory, kind, role); const name = expectedName(inventory, kind, role);
+      const matches = listed.filter(resource => resource?.[idField] === id || resource?.name === name);
+      if (matches.length !== 1) quarantine('Recorded resource is missing or ambiguous.');
+      const current = matches[0];
+      assertOwnedResource(inventory, { accountId: inventory.cloudflare.accountId, kind, role, name: current.name, id: current[idField], ...(kind === 'accessApp' ? { graph: discoveryAccessGraph(current) } : {}) }, kind === 'token' ? 'token' : `${kind}:${role}`);
+    }
+  }
+}
+
 async function discoverRunInner(rawKey, api) {
   let key;
   try { key = parseStackKey(rawKey); } catch { quarantine('Discovery key is invalid.'); }
@@ -548,6 +591,9 @@ async function discoverRunInner(rawKey, api) {
   if (typeof api.controllerTokenId !== 'string' || api.controllerTokenId.length === 0) quarantine('Discovery requires a trusted nonempty controller token ID.');
   const { inventory, intents } = parseCheckpointRecord(await api.loadCheckpoint(key));
   if (!sameJson(inventory.key, key)) quarantine('Checkpoint key does not match the trusted run.');
+  // Terminal discovery is inspection of durable evidence, never recovery or
+  // authority renewal. No timestamp or provider state is changed here.
+  if (inventory.stage === 'quarantined' || inventory.stage === 'deleted') return inventory;
   const next = structuredClone(inventory);
   let recovered = false;
   for (const role of roles.worker) {
@@ -602,13 +648,16 @@ async function discoverRunInner(rawKey, api) {
   await recoverListed({ kind: 'd1', section: 'd1Ids', validRoles: roles.d1, list: 'listD1', idField: 'uuid', method: 'POST', uri: () => `/accounts/${next.cloudflare.accountId}/d1/database` });
   await recoverListed({ kind: 'accessApp', section: 'accessAppIds', validRoles: roles.accessApp, list: 'listAccessApps', idField: 'id', method: 'POST', uri: () => `/accounts/${next.cloudflare.accountId}/access/apps` });
   await recoverListed({ kind: 'token', section: 'tokenId', validRoles: [undefined], list: 'listServiceTokens', idField: 'id', method: 'POST', uri: () => `/accounts/${next.cloudflare.accountId}/access/service_tokens` });
+  // Audit-correlated recovery establishes a candidate ID, not its graph.
+  // Every returned identity, including recovered slots, needs current readback.
+  await verifyRecordedResources(next, api);
   const complete = roles.worker.every(role => next.cloudflare.workerIds[role])
     && roles.d1.every(role => next.cloudflare.d1Ids[role])
     && roles.accessApp.every(role => next.cloudflare.accessAppIds[role]) && next.cloudflare.tokenId;
-  let lifecycleChanged = false;
   if (complete) next.stage = 'active';
-  else if (next.stage === 'active') { next.stage = 'creating'; lifecycleChanged = true; }
-  next.updatedAt = new Date().toISOString();
+  else if (next.stage === 'active') next.stage = 'creating';
+  const lifecycleChanged = next.stage !== inventory.stage;
+  if (recovered || lifecycleChanged) next.updatedAt = new Date().toISOString();
   if ((recovered || lifecycleChanged) && typeof api.saveCheckpoint !== 'function') quarantine('Changed inventory cannot be returned before a durable checkpoint.');
   if (recovered || lifecycleChanged) await api.saveCheckpoint(validateInventory(next));
   return validateInventory(next);

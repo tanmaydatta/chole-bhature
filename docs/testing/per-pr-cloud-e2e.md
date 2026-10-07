@@ -36,6 +36,101 @@ nonsecret summary is now mirrored, as recorded in the
 [bootstrap synchronization ledger](#reviewed-local-bootstrap-status-synchronization-2026-10-06);
 newer local sections are not reproduced wholesale.
 
+The separately approved 2026-10-07 accumulated-checkpoint correction implements
+the four Important ordinary-client/discovery findings and reconciles the
+canonical roadmap. Fresh local evidence is recorded below; independent scoped
+re-review remains pending. Earlier accepted source `07af8ed` and documentation
+`4d6df6a`/`3ba5c14` retain their dated provenance. This correction has not been
+published to Notion and closes no live gate.
+
+## Checkpoint lifecycle and creation correction (2026-10-07)
+
+**Status:** Implemented and locally verified; independent scoped re-review
+pending. The 2026-10-07 accumulated review of `3ba5c14` found 0 Critical,
+4 Important and 5 Minor findings. The bounded correction addresses I1–I4
+in the ordinary client and discovery contracts, plus M1 current-roadmap drift.
+It adds no provider executor, live recovery flag or distributed lock.
+
+**Table — Ordinary client lifecycle authority while healthy**
+
+| Operation | Permitted inventory stages | Remaining identity requirement |
+|---|---|---|
+| Read-only lists and exact reads | `creating`, `active`, `quarantined`, `deleted` | Existing exact-target and complete-list guards |
+| D1, Access application or service-token creation | `creating` | Durable exact-name intent, fresh exact result and successful ID checkpoint |
+| Ordinary D1 SQL | `creating`, `active` | Recorded exact UUID and current identity readback |
+| Exact D1, Access application or token cleanup | `creating`, `active`, `quarantined` | Existing exact identity and adopted binding/policy proof |
+| Public Worker create/update/delete/subdomain | None | Unsupported, zero transport |
+
+A poisoned client makes no subsequent transport call and cannot bootstrap.
+Every ambiguous Access/token POST transport, envelope, identity, validation,
+clock or persistence outcome irreversibly poisons that client and revokes its
+Auth creation context. Unknown resources are neither retried nor guess-deleted.
+Healthy quarantined inventory still permits proven exact-ID cleanup; deleted
+inventory cannot authorize mutation.
+
+One client-wide creation reservation covers D1, Access and token slots before
+the first discovery/intent/builder/checkpoint await. Same-client same-slot or
+sibling overlap refuses; after durable completion, sequential sibling retry
+uses the latest inventory and preserves earlier IDs. Separate clients/runs
+remain independent. The reservation is process-local only: it supplies no
+store CAS, cross-process ownership, crash recovery or provider locking.
+The token builder accepts only a plain object with one own field, `name`, equal
+to the controller-derived token name, before POST. Extra provider fields are
+unadopted; no new provider request schema is certified.
+
+Terminal discovery preserves validated `quarantined`/`deleted` stage, IDs and
+timestamps without provider reads, recovery or persistence. Creating/active
+discovery reads every returned resource, including recovered IDs: exact Worker
+listed name/tag and current bindings, exact D1 name/UUID, exact Access name/ID
+and adopted destination/policy graph, and exact token name/ID. Missing or
+substituted recorded resources refuse. Missing-ID recovery still requires a
+unique durable intent and independently matching controller audit evidence.
+A fully verified creating inventory may become active; an incomplete active
+inventory may become creating. Every recovered ID or legitimate stage change
+requires a successful durable checkpoint before return. Unchanged discovery
+preserves timestamps and needs no save. These local legacy discovery reads
+do not establish a Beta recovery adapter or live ownership proof.
+
+**Table — Fresh pinned-Node-22 correction evidence**
+
+| Command or boundary | Result |
+|---|---|
+| Original semantic I1–I4 RED | 12 tests: 11 expected assertion failures / one independence positive, 53.78 ms. Terminal revival, missing transition persistence, terminal transport, malformed-result reuse, overlap acceptance and wrong-name token POST were reproduced before production edits. |
+| Supplemental I1 RED | Recovered Access graph: one expected assertion failure, 49.44 ms; foreign listed Worker name with recorded tag: one expected assertion failure, 44.19 ms. Each was captured before its correction. |
+| Focused iteration GREEN | 67/67 before final cross-slot/name regressions, 80.10 ms. Deferred discovery/intent/checkpoint barriers, all post-POST failure variants, bootstrap revocation, exact quarantine cleanup, recorded readbacks and audit recovery pass. |
+| `node --test scripts/cloud-e2e/*.test.mjs` | Final source/test freeze: 337/337, zero failures/skips/cancellations, 2,898.94 ms (2.94 s shell). |
+| Affected syntax/lint | Both `.mjs` production syntax checks and four-file oxlint exit 0; focused lint 0.25 s shell. Project build covers the unchanged typed bootstrap consumers. |
+| Serialized `pnpm test` | 100 Vitest files / 1,592 tests plus nine Node tests, zero failures/skips, 67.57 s shell. Identity retains 221 Worker and 91 Node tests, including eight real D1/bootstrap runner cases. |
+| `pnpm build`, `pnpm lint` | Exit 0, 11.92 s / 0.99 s shell. Existing dashboard chunk and two Fast Refresh warnings remain. |
+| `E2E_BROWSER_CHANNEL=chromium pnpm e2e:local` with a fresh output directory | One serialized full run after tests/build/lint: 5/5, zero failures/skips, 23.4 s (24.18 s shell), two workers; three existing colour-environment warnings. Exact GAP values, persistence/redemption/retry, concurrent scenario isolation, failed-scenario disposal, browser authoring/publication and two independent local bootstrap instances retain their original assertions. |
+
+Commands use explicit Node 22.18.0/pnpm 11.14.0, the Node bin first in child
+PATH, Corepack networking disabled and project-script locked-dependency
+verification. The full project command sets workspace concurrency to one.
+Its initial sandbox attempt stopped before Identity assertions with loopback
+`EPERM` (2.06 s); the scoped local-loopback/log retry passed. Both captures are
+retained. No installation, configuration/dependency change or real provider
+call occurred. Full new logs are retained under ignored
+`.superpowers/sdd/2026-09-30-per-pr-cloud-e2e/checkpoint-fix1-logs/`;
+historical captures remain untouched.
+
+M2 long tar-name handling, M3 partial extraction residue, M4 JSON object-order
+false refusal and M5 missing sanitized operation/stage diagnostics remain
+explicitly deferred. Dashboard chunk/Fast Refresh and browser colour warnings
+remain unchanged; historical `SQLITE_BUSY` cause is unproved. Authenticated
+protected configuration, remote D1 atomicity, deployed service/version/D1/
+Access/assets graph, cloud HTTPS/passkey/full-suite/two-stack proof, complete
+teardown/reconciliation and every-push workflow remain separate live gates.
+The 2026-10-06 Notion synchronization retained in the historical ledger below
+is not fresh publication or acceptance of this correction.
+
+Code references:
+
+- [Ordinary client lifecycle, reservations and poisoning](../../scripts/cloud-e2e/cloudflare.mjs).
+- [Discovery readback and durable transitions](../../scripts/cloud-e2e/inventory.mjs).
+- [Client semantic and deferred-boundary regressions](../../scripts/cloud-e2e/cloudflare.test.mjs).
+- [Terminal, recovery, graph and persistence regressions](../../scripts/cloud-e2e/inventory.test.mjs).
+
 ## Guarded application CI admission (2026-10-06)
 
 **Status:** Task 6a is implemented and locally verified. Initial independent
