@@ -1,3 +1,5 @@
+import { assertIdentityServiceEnvironment, type IdentityServiceAssociation } from '../ci-stack.js';
+
 import { E2eRunClaimSchema } from '@incentives/contracts';
 import { z } from 'zod';
 
@@ -22,15 +24,14 @@ export interface ProductE2eLifecycleClient {
   }>;
 }
 
-interface Options {
-  database: D1Database;
+interface Options extends IdentityServiceAssociation {
   appEnv: string | undefined;
-  localTestMode?: string | undefined;
   core: ProductE2eLifecycleClient;
 }
 
 function assertStaging(options: Options): void {
-  if (options.appEnv !== 'staging'
+  assertIdentityServiceEnvironment(options);
+  if (options.appEnv !== 'ci' && options.appEnv !== 'staging'
     && !(options.appEnv === 'local' && options.localTestMode === '1')) {
     throw new Error('E2E lifecycle is staging-only outside explicit local test mode');
   }

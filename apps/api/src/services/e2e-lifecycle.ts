@@ -2,6 +2,7 @@ import { E2eRunClaimSchema } from '@incentives/contracts';
 import { z } from 'zod';
 
 import type { Env } from '../env.js';
+import { assertCiStack } from '../ci-stack.js';
 
 const IdentitySchema = E2eRunClaimSchema.extend({
   merchantId: z.string().min(1),
@@ -25,7 +26,8 @@ interface Claim {
 }
 
 function assertStaging(env: Env): void {
-  if (env.APP_ENV !== 'staging'
+  assertCiStack(env);
+  if (env.APP_ENV !== 'ci' && env.APP_ENV !== 'staging'
     && !(env.APP_ENV === 'local' && env.E2E_LOCAL_TEST_MODE === '1')) {
     throw new Error('E2E lifecycle is staging-only outside explicit local test mode');
   }

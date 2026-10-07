@@ -42,3 +42,33 @@ describe('Identity staging Secrets Store resolution', () => {
     expect(input.AUTH_SECRET_STORE?.get).not.toHaveBeenCalled();
   });
 });
+
+function valid(): IdentityWorkerEnv {
+  return { APP_ENV: 'ci', CI_STACK_KEY: '0123456789abcdef0123',
+    PUBLIC_APP_ORIGIN: 'https://cb-e2e-0123456789abcdef0123-operator.trusted.workers.dev',
+    AUTH_DB: { prepare() {}, batch() {} },
+    AUTH_SECRET: 'disposable-ci-auth-secret-at-least-32-characters',
+    EMAIL_MODE: 'local-capture', STAGING_ALLOWED_RECIPIENTS: '[]',
+    PASSKEY_RP_ID: 'cb-e2e-0123456789abcdef0123-operator.trusted.workers.dev',
+    CORE: Object.fromEntries(['provisionMerchant', 'activateMerchant', 'getE2eCapabilities',
+      'inspectE2eRun', 'previewE2eRun', 'disposeE2eRun'].map(name => [name, () => {}])),
+  } as IdentityWorkerEnv;
+}
+
+describe('CI direct ephemeral secret resolution', () => {
+  test('resolves the validated direct secret and rejects forbidden store configuration before reading it', async () => {
+    const input = valid();
+    expect((await resolveIdentitySecrets(input)).AUTH_SECRET).toBe(input.AUTH_SECRET);
+    const get = vi.fn(async () => { throw new Error('external secret read'); });
+    await expect(resolveIdentitySecrets({ ...input, AUTH_SECRET_STORE: { get } })).rejects.toThrow(/CI/u);
+    expect(get).not.toHaveBeenCalled();
+    input.PUBLIC_APP_ORIGIN = 'https://operator.example.test';
+    await expect(resolveIdentitySecrets(input)).rejects.toThrow(/CI/u);
+  });
+  test('rejects a leaked marker in staging before a secret getter', async () => {
+    const get = vi.fn(async () => 'staging-value');
+    await expect(resolveIdentitySecrets({ ...valid(), APP_ENV: 'staging', AUTH_SECRET_STORE: { get } }))
+      .rejects.toThrow(/CI/u);
+    expect(get).not.toHaveBeenCalled();
+  });
+});

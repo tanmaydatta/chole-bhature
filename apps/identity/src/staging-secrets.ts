@@ -1,4 +1,5 @@
 import type { Env } from './worker.js';
+import { assertCiStack } from './ci-stack.js';
 
 export type IdentityWorkerEnv = Omit<Env, 'AUTH_SECRET' | 'RESEND_API_KEY' | 'RESEND_FROM'> & {
   AUTH_SECRET?: string;
@@ -21,6 +22,8 @@ async function requiredSecret(binding: SecretsStoreSecret | undefined, name: str
 }
 
 export async function resolveIdentitySecrets(env: IdentityWorkerEnv): Promise<Env> {
+  assertCiStack(env);
+  if (env.APP_ENV === 'ci') return { ...env, AUTH_SECRET: env.AUTH_SECRET! };
   if (env.APP_ENV === 'staging') {
     const [authSecret, resendApiKey, resendFrom] = await Promise.all([
       requiredSecret(env.AUTH_SECRET_STORE, 'AUTH_SECRET'),

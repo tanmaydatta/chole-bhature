@@ -1,6 +1,6 @@
 # Product Current State and Roadmap
 
-**Updated:** 2026-09-29
+**Updated:** 2026-10-07
 
 **Status:** Active — Gate C complete; GAP-030/031 and the E2E platform are
 merged on `dev`. The separate Secrets Store cutover is deployed and verified
@@ -8,10 +8,40 @@ in staging and PR #15 merged into `dev` at
 `0c5e5f1a068d942af8f091ab0fc4b7ff8bf44e9d`. No production, API/Core,
 or D1 migration is part of that cutover.
 
+The approved per-PR Cloud E2E design is now being implemented on
+`feat/per-pr-cloud-e2e`, based on `origin/dev` commit
+`f189f5a2ef53a8999969344338f68a2f1117899b` (cached local reference, not a fresh
+remote check). Tasks 1–4, mock-only Task 5a/5b, Task 5d raw-module packaging,
+Task 5e non-authorizing diagnostics, Task 6a application CI admission and
+bounded local Task 6b exact-D1 bootstrap have accepted local evidence. The
+separately approved 2026-10-07 checkpoint guard correction is reviewed and
+locally accepted at tested source `9408704`. Scoped re-review of
+`3ba5c14..3da30f3` is COMPLIANT / APPROVED: I1–I4/M1 addressed, 0 open
+Important findings and no new findings (`checkpoint-fix1-review.md`). On that
+source freeze, 337 cloud tests,
+1,683 Vitest cases (1,592 main-config plus 91 Identity Node-config), nine
+separate Node script tests, build/lint and all five local Playwright
+cases pass. The [correction ledger](../testing/per-pr-cloud-e2e.md#checkpoint-lifecycle-and-creation-correction-2026-10-07)
+records lifecycle/readback persistence, irreversible post-create quarantine,
+client-wide creation reservations and the adopted token-name boundary.
+The mock controller still stops at the unresolved Operator graph; public
+Worker writes refuse with zero transport calls. No Cloudflare stack has
+been deployed or tested: automatic per-PR
+Cloudflare writes are disabled, and no live pilot has run.
+
 **Notion mirror:** https://app.notion.com/p/Product-Current-State-and-Roadmap-3a6e5c7c2b8e81f6b412c45a2bc7b344
 
-**Mirror state:** Repository and Notion synchronized for the 2026-09-29 PR #15
-merge record.
+**Mirror state (2026-10-07):** The reviewed nonsecret accumulated-checkpoint
+summary is synchronized to the existing roadmap, design, plan and Plans
+index. It identifies tested source `9408704`, scoped review
+`3ba5c14..3da30f3` and local closure `3c04e95`. Complete whole-page readback
+equality passed with all other content and all 17 ordered native child
+URLs/titles/active metadata preserved and independently verified by root;
+the [checkpoint publication ledger](../testing/per-pr-cloud-e2e.md#reviewed-local-checkpoint-publication-2026-10-07)
+records the bounded scope and provenance. The 2026-10-06 bootstrap publication
+at `07af8ed`/`4d6df6a`/`3ba5c14` and earlier publications remain dated history.
+The clarification draft remains unsent; its body and wholesale local evidence
+were not published. This publication closes no live-pilot or full-plan gate.
 
 This is the canonical operational answer to:
 
@@ -29,15 +59,15 @@ deferred issue remains in the
 
 | Question | Current answer |
 |---|---|
-| Overall phase | Post-Gate-C client-readiness corrections |
-| Current activity | GAP-030/031 merged as PR #13; E2E platform PR #14 merged at `b524c32b98652cfcadb75c7af2f234cf33495f6b`; Secrets Store PR #15 merged at `0c5e5f1a068d942af8f091ab0fc4b7ff8bf44e9d` after staging validation from source head `df05d8d` |
-| Current repository baseline | PR #15 merge commit `0c5e5f1a068d942af8f091ab0fc4b7ff8bf44e9d` on `dev` |
+| Overall phase | Post-Gate-C client-readiness corrections; per-PR Cloud E2E foundations in progress |
+| Current activity | Per-PR Cloud E2E checkpoint correction reviewed and locally accepted at tested source `9408704`; scoped range `3ba5c14..3da30f3` has 0 open Important/no new findings. Accepted local work includes Task 5d/5e and bounded Task 6a/6b; Worker writes remain blocked. Prior GAP/E2E/Secrets Store merge and staging evidence below remains unchanged. |
+| Current repository baseline | Cached local `origin/dev`/merge-base `f189f5a2ef53a8999969344338f68a2f1117899b`; accumulated checkpoint `3ba5c14` corrected by locally accepted tested source `9408704`, scoped-reviewed through `3da30f3`. No fresh remote-base/head or merge-conflict certification. |
 | Current product-code baseline | PR #15 merge commit `0c5e5f1a068d942af8f091ab0fc4b7ff8bf44e9d` |
-| Local feature state | Authoritative merchandise pricing and the E2E platform are merged; the E2E platform passed 5 local Playwright tests and 4 applicable staging tests |
+| Local feature state | Authoritative merchandise pricing and the E2E platform are merged, with the dated staging evidence retained. Cloud E2E foundation/packaging/diagnostics/CI admission/local bootstrap are locally accepted; fresh correction verification passes 337 cloud, 1,683 Vitest cases plus nine separate Node script tests and five local Playwright cases (23.4 s), build/lint. Public Worker writes still refuse before transport. |
 | Current deployment state | The 2026-09-28 Product/Auth/API/Identity/Operator rollout remains in staging. On 2026-09-29, existing-store Secrets Store bindings deployed to Identity and Operator only; no API/Core/D1 migration occurred |
 | Current release decision | PR #15 merged into `dev` at `0c5e5f1a068d942af8f091ab0fc4b7ff8bf44e9d` after staging validation from source head `df05d8d`; old per-Worker secrets are retained |
 | Gate C finish line | Complete — all mandatory clean-break selection, redemption, tenant-isolation, concurrency, and observability cases passed |
-| Next plan work | Design E2E/CI execution. Free-shipping financial-authority work remains later |
+| Next plan work | Separately authorize provider prerequisite/clarification work and any eventual adoption; no next task is authorized by local acceptance. Remaining Task 5/deployed Task 6b gates, cloud HTTPS/passkey, complete cleanup and every-push execution remain future work; local Task 6a/b is already implemented. |
 
 ## Source-of-truth map
 
@@ -56,6 +86,7 @@ Use this page for current sequencing and status. Follow its links for detail:
 | Approved Promo selection and atomic-redemption design | [Repository](../superpowers/specs/2026-07-23-promo-selection-code-stacking-design.md) · [Notion](https://app.notion.com/p/Promo-Selection-Code-Stacking-and-Atomic-Redemption-Design-Spec-3a6e5c7c2b8e81549b6adc7f3d096455) |
 | Current correction implementation plan | [Repository](../superpowers/plans/2026-07-24-promo-selection-code-stacking.md) · [Notion](https://app.notion.com/p/Promo-Selection-Code-Stacking-and-Atomic-Redemption-Implementation-Plan-3a7e5c7c2b8e811791dee0d21803c8e2) |
 | Approved free-shipping financial design | [Repository](../superpowers/specs/2026-07-23-free-shipping-budget-authority-design.md) · [Notion](https://app.notion.com/p/Free-Shipping-Budget-Authority-Reservations-and-Reversals-Design-Spec-3a6e5c7c2b8e81f49c6ecbf878d7d48c) |
+| Per-PR Cloud E2E design and implementation plan | [Repository design](../superpowers/specs/2026-09-29-per-pr-cloud-e2e-design.md) · [Notion design](https://app.notion.com/p/Per-PR-Cloud-E2E-Design-Spec-3ebe5c7c2b8e8186866ef1e158bfd880) · [Repository plan](../superpowers/plans/2026-09-30-per-pr-cloud-e2e.md) · [Notion plan](https://app.notion.com/p/Per-PR-Cloud-E2E-Implementation-Plan-3ebe5c7c2b8e81229ee0d8a0acb2d309) |
 | All implementation plans and their statuses | [Notion Plans index](https://app.notion.com/p/Plans-390e5c7c2b8e8165b7f7d77392eab088) |
 
 When these documents disagree about what is happening now, update this page
@@ -260,6 +291,55 @@ Operator Web source deployed and passed its scoped E2E verification. It did not
 include database migrations, Core deployment, production, or unrelated
 resources. Old per-Worker secrets remain pending separately reviewed cleanup.
 
+The approved [per-PR Cloud E2E design](../superpowers/specs/2026-09-29-per-pr-cloud-e2e-design.md)
+and [implementation plan](../superpowers/plans/2026-09-30-per-pr-cloud-e2e.md)
+preserve manual staging and exclude fork pull requests. Tasks 1–3 are verified
+locally: the 5-test Playwright baseline ran in 24.4 seconds, the trusted
+run-identity boundary rejects forks and stale heads, and the controller-side
+artifact boundary verifies only a bounded untrusted bundle. Task 4 added
+reviewed exact-identity inventory and fail-closed client guards. The dated
+2026-10-02 mock-only Task 5a/5b amendments/controller passed 83 local cloud
+tests and kept public Worker create/update/delete/subdomain calls
+disabled before transport. The mock controller drives separate Beta IDs,
+fixed request plans, disabled/readback and token-exclusive Access gates; it
+stops after a pure API code plan at the unresolved Operator gate. Durable mock
+token and Access create intents plus correlated ID checkpoints remove future-ID
+preseeding, and all three role receipts rotate together after each identity
+checkpoint. Their run/role reservation canonicalizes the trusted key within
+one local evidence-store object and
+process; it is not store CAS or cross-process coordination. Mock D1 cleanup
+is observed only before a Worker exists; unresolved graphs remain inventoried.
+Failed Auth pre-create reads or intents leave proven Product independently
+cleanable; an ambiguous Auth POST retains only that uncertain D1 target when
+there is no Worker graph. Changed IDs or failed deletes are never called clean.
+The controller keeps session registration and raw cleanup private, so forged
+or copied session objects cannot authorize provider calls.
+The later accepted local slices include Task 5d raw-module packaging and its
+metadata correction; Task 5e diagnostic comparisons that always remain
+unsupported; Task 6a CI admission/cookie/service consistency; and bounded
+Task 6b exact-D1 bootstrap with immutable target/deadline and irreversible
+clock observations. Accepted tested source `07af8ed` passed 322 cloud tests,
+1,592 Vitest plus nine Node, eight real D1/runner and five local Playwright
+cases (22.6 s); those are historical 2026-10-06 results.
+The 2026-10-07 accumulated review found four Important exported-client/
+discovery gaps. Their approved correction now passes 337 cloud tests and
+fresh complete project/build/lint plus five local Playwright cases (23.4 s);
+independent scoped re-review of `3ba5c14..3da30f3` is COMPLIANT / APPROVED,
+with I1–I4/M1 addressed, 0 open Important and no new findings. Root accepted
+tested source `9408704`; documentation-only closure reruns no unchanged
+suite. It preserves terminal stages,
+checkpoints legitimate transitions, fences ordinary mutation by lifecycle,
+poisons ambiguous Access/token POST outcomes, reserves same-client creation
+before awaits and validates the adopted token name/body before POST.
+M2 long tar names, M3 partial extraction residue, M4 object-order false refusal
+and M5 sanitized operation/stage diagnostics remain explicitly deferred in the
+[current correction ledger](../testing/per-pr-cloud-e2e.md#checkpoint-lifecycle-and-creation-correction-2026-10-07).
+The [public-API feasibility ledger](../testing/per-pr-cloud-e2e.md#worker-api-feasibility-public-documentation-2026-09-30)
+records unresolved first-route, service-binding, Access, assets and audit
+requirements. No Cloudflare resource was created, no
+disposable-stack pilot has run, and no deployment, full cloud suite, or
+automatic per-PR Cloudflare write is claimed.
+
 ## What happens after Gate C
 
 ### 1. Gate C verification milestone — complete
@@ -310,12 +390,31 @@ failed staging Playwright tests in 32.0 seconds. PR #15 then merged into `dev`
 at `0c5e5f1a068d942af8f091ab0fc4b7ff8bf44e9d`; Bitwarden remains the source
 of truth and old per-Worker secrets remain retained.
 
-### 3. Design E2E/CI execution
+### 3. Implement approved per-PR Cloud E2E execution
 
-Decide the E2E/CI design: local isolated Playwright coverage on every PR, with
-staging execution gated by reviewed credentials and deployment scope, or a
-separately approved staging-per-PR model. Do not treat either choice as
-implemented yet.
+The approved design uses a trusted controller and isolated, disposable
+Cloudflare resources for same-repository pull requests; it does not repurpose
+manual staging. Tasks 1–4, mock-only Task 5a/5b, Task 5d/5e and bounded local
+Task 6a/6b are implemented and locally accepted. The current checkpoint guard
+correction is reviewed and locally accepted at tested source `9408704`, with
+0 open Important/no new findings in scoped range `3ba5c14..3da30f3`.
+Worker writes remain blocked and the design is not deployed or automatic.
+
+The remaining milestones are, in order:
+
+1. separately authorized provider clarification/prerequisite work and any
+   eventual adoption; local acceptance supplies no automatic progression;
+2. a separately approved protected two-stack infrastructure pilot resolving
+   Beta recovery, provider response shapes, assets, service-binding remapping,
+   and no code exposure before Access;
+3. remaining deployed Task 6b authenticated configuration, exact graph and
+   remote D1 atomicity certification; local runtime admission/bootstrap is
+   already implemented;
+4. a real HTTPS passkey/full-suite pilot;
+5. failure and cancellation cleanup, including independent reconciliation and
+   janitor behavior; and
+6. a protected every-push workflow only after the full pilot security matrix
+   passes. Fork pull requests remain excluded.
 
 ### 4. Turn the approved free-shipping financial design into an implementation plan
 
@@ -409,6 +508,7 @@ Update this page:
 - when an approved design becomes a plan, starts implementation, completes, or
   is killed.
 
-Every update must keep the repository and Notion copies content-equivalent.
+Repository updates awaiting an authorized Notion export must state the mirror
+lag explicitly; reconcile the copies before claiming them synchronized.
 Use concrete statuses: `Todo`, `In progress`, `Blocked`, `Done`, `Deferred`, or
 `Killed`.

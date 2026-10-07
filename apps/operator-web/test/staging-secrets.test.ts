@@ -32,3 +32,40 @@ describe('Operator Web staging Secrets Store resolution', () => {
     expect((await resolveOperatorSecret(env)).OPERATOR_SELECTION_SECRET).toBe('local-secret');
   });
 });
+
+function valid(): OperatorWebWorkerEnv {
+  return { APP_ENV: 'ci', CI_STACK_KEY: '0123456789abcdef0123',
+    PUBLIC_APP_ORIGIN: 'https://cb-e2e-0123456789abcdef0123-operator.trusted.workers.dev',
+    OPERATOR_SELECTION_SECRET: 'disposable-ci-selection-secret-at-least-32-characters',
+    IDENTITY_AUTH: { fetch() {} }, ASSETS: { fetch() {} },
+    IDENTITY: Object.fromEntries(['getE2eCapabilities', 'resolveBrowserPrincipal', 'listClients',
+      'getProvisioningForRoot', 'listMembers', 'listInvitations', 'provisionClient',
+      'getProvisioning', 'createInvitation', 'retryInvitation', 'acceptInvitation', 'removeMember',
+      'changeMemberRole', 'previewE2eRun', 'disposeE2eRun', 'inspectE2eRun', 'createE2eAccount']
+      .map(name => [name, () => {}])),
+    CORE: Object.fromEntries(['createCredential', 'listCredentials', 'revokeCredential',
+      'listSchemaDefinitions', 'getPublishedSchema', 'createSchemaDefinition', 'updateSchemaDefinition',
+      'deleteSchemaDefinition', 'previewSchemaDefinitionImpact', 'deprecateSchemaDefinition',
+      'publishSchema', 'getCustomer', 'upsertCustomer', 'listPrograms', 'createProgramDraft',
+      'getProgram', 'updateProgramDraft', 'publishProgram', 'pauseProgram', 'resumeProgram', 'endProgram']
+      .map(name => [name, () => {}])),
+  } as OperatorWebWorkerEnv;
+}
+
+describe('CI direct ephemeral secret resolution', () => {
+  test('resolves the validated direct secret and rejects forbidden store configuration before reading it', async () => {
+    const input = valid();
+    expect((await resolveOperatorSecret(input)).OPERATOR_SELECTION_SECRET).toBe(input.OPERATOR_SELECTION_SECRET);
+    const get = vi.fn(async () => { throw new Error('external secret read'); });
+    await expect(resolveOperatorSecret({ ...input, OPERATOR_SELECTION_SECRET_STORE: { get } })).rejects.toThrow(/CI/u);
+    expect(get).not.toHaveBeenCalled();
+    input.PUBLIC_APP_ORIGIN = 'https://operator.example.test';
+    await expect(resolveOperatorSecret(input)).rejects.toThrow(/CI/u);
+  });
+  test('rejects a leaked marker in staging before a secret getter', async () => {
+    const get = vi.fn(async () => 'staging-value');
+    await expect(resolveOperatorSecret({ ...valid(), APP_ENV: 'staging', OPERATOR_SELECTION_SECRET_STORE: { get } }))
+      .rejects.toThrow(/CI/u);
+    expect(get).not.toHaveBeenCalled();
+  });
+});

@@ -30,6 +30,7 @@ import { schemaRoutes } from './routes/schemas.js';
 import { teamRoutes } from './routes/team.js';
 import type { OperatorWebEnv, ProtectedRoute } from './routes/types.js';
 import { resolveOperatorSecret, type OperatorWebWorkerEnv } from './staging-secrets.js';
+import { assertCiStack } from './ci-stack.js';
 import {
   apiError,
   apiErrorStatus,
@@ -271,7 +272,7 @@ async function handleProvisionClient(
   } catch {
     return invalidRequest(id);
   }
-  if (body.e2eRun && env.APP_ENV !== 'staging'
+  if (body.e2eRun && env.APP_ENV !== 'ci' && env.APP_ENV !== 'staging'
     && !(env.APP_ENV === 'local' && env.E2E_LOCAL_TEST_MODE === '1')) return notFound(id);
   try {
     const { provisioningId, merchantId } = await deriveProvisioningIds(
@@ -355,7 +356,7 @@ async function handleProvisioningRetry(
       if (typeof body !== 'object' || body === null) return invalidRequest(id);
       const entries = Object.entries(body);
       if (entries.length === 1 && entries[0]?.[0] === 'e2eRun') {
-        if (env.APP_ENV !== 'staging'
+        if (env.APP_ENV !== 'ci' && env.APP_ENV !== 'staging'
           && !(env.APP_ENV === 'local' && env.E2E_LOCAL_TEST_MODE === '1')) return notFound(id);
         e2eRun = E2eRunProofSchema.parse(entries[0][1]);
       } else if (entries.length !== 0) return invalidRequest(id);
@@ -431,8 +432,8 @@ async function handleE2eLifecycle(
   runId: string,
   action: 'preview' | 'dispose' | 'inspect',
 ): Promise<Response> {
-  // Normal local and every non-staging deployment remain closed.
-  if (env.APP_ENV !== 'staging'
+  // Ordinary local deployments remain closed.
+  if (env.APP_ENV !== 'ci' && env.APP_ENV !== 'staging'
     && !(env.APP_ENV === 'local' && env.E2E_LOCAL_TEST_MODE === '1')) return notFound(id);
   if ([...new URL(request.url).searchParams].length > 0) return invalidRequest(id);
   if (!E2eRunIdSchema.safeParse(runId).success) return invalidRequest(id);
@@ -471,7 +472,7 @@ async function handleE2eLifecycle(
 async function handleE2eCapabilities(
   request: Request, env: OperatorWebEnv, id: string,
 ): Promise<Response> {
-  if (env.APP_ENV !== 'staging'
+  if (env.APP_ENV !== 'ci' && env.APP_ENV !== 'staging'
     && !(env.APP_ENV === 'local' && env.E2E_LOCAL_TEST_MODE === '1')) return notFound(id);
   if ([...new URL(request.url).searchParams].length > 0) return invalidRequest(id);
   const principal = await resolveBrowserPrincipal(env, request.headers.get('cookie') ?? '', id);
@@ -500,7 +501,7 @@ async function handleE2eCapabilities(
 async function handleE2eFixtureAccount(
   request: Request, env: OperatorWebEnv, id: string, runId: string,
 ): Promise<Response> {
-  if (env.APP_ENV !== 'staging') return notFound(id);
+  if (env.APP_ENV !== 'ci' && env.APP_ENV !== 'staging') return notFound(id);
   if ([...new URL(request.url).searchParams].length > 0) return invalidRequest(id);
   let body;
   try {
@@ -614,6 +615,7 @@ export function createOperatorWebWorker(): ExportedHandler<OperatorWebWorkerEnv>
       const id = correlationId(request);
       const url = new URL(request.url);
       try {
+        assertCiStack(workerEnv);
         if (
           !url.pathname.startsWith('/auth/')
           && !url.pathname.startsWith('/internal/')

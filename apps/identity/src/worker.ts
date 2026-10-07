@@ -31,6 +31,7 @@ import {
 import { WorkerEntrypoint } from 'cloudflare:workers';
 
 import { createIdentityAuth, validateIdentityEnvironment } from './auth.js';
+import { assertCiStack } from './ci-stack.js';
 import { createIdentityEmailAdapter } from './email.js';
 import {
   beginRootRecovery,
@@ -67,7 +68,8 @@ interface CoreE2eLifecycleClient {
 export interface Env {
   AUTH_DB: D1Database;
   AUTH_SECRET: string;
-  APP_ENV: 'local' | 'staging';
+  APP_ENV: 'local' | 'staging' | 'ci';
+  CI_STACK_KEY?: string;
   E2E_LOCAL_TEST_MODE?: string;
   PUBLIC_APP_ORIGIN: string;
   COOKIE_PREFIX: string;
@@ -127,8 +129,10 @@ function allowedRecipients(env: Env): ReadonlySet<string> {
 }
 
 function operatorService(env: Env) {
+  assertCiStack(env);
   return createIdentityOperatorService({
     database: env.AUTH_DB,
+    ciEnv: env,
     core: env.CORE,
     email: createIdentityEmailAdapter({
       mode: env.EMAIL_MODE,
@@ -156,7 +160,7 @@ export class IdentityOperatorService extends WorkerEntrypoint<IdentityWorkerEnv>
       error: { code, message: 'E2E capability handshake is unavailable',
         correlationId, retryable: code === 'IDENTITY_UNAVAILABLE' },
     });
-    if (this.env.APP_ENV !== 'staging'
+    if (this.env.APP_ENV !== 'ci' && this.env.APP_ENV !== 'staging'
       && !(this.env.APP_ENV === 'local' && this.env.E2E_LOCAL_TEST_MODE === '1')) {
       return failure('NOT_FOUND');
     }
@@ -165,7 +169,8 @@ export class IdentityOperatorService extends WorkerEntrypoint<IdentityWorkerEnv>
       return failure('INVALID_REQUEST');
     }
     try {
-      const principal = await createOrganizationService({ database: this.env.AUTH_DB })
+      const principal = await createOrganizationService({ database: this.env.AUTH_DB, appEnv: this.env.APP_ENV,
+        ciEnv: this.env, localTestMode: this.env.E2E_LOCAL_TEST_MODE })
         .resolvePrincipal(parsed.sessionId);
       if (!principal) return failure('UNAUTHORIZED');
       if (principal.platformRole !== 'root') return failure('FORBIDDEN');
@@ -191,10 +196,11 @@ export class IdentityOperatorService extends WorkerEntrypoint<IdentityWorkerEnv>
       error: { code, message: 'Operation is not permitted', correlationId,
         retryable: code === 'IDENTITY_UNAVAILABLE' },
     });
-    if (this.env.APP_ENV !== 'staging') return failure('NOT_FOUND');
+    if (this.env.APP_ENV !== 'ci' && this.env.APP_ENV !== 'staging') return failure('NOT_FOUND');
     if (!parsed.success) return failure('INVALID_REQUEST');
     try {
-      const principal = await createOrganizationService({ database: this.env.AUTH_DB })
+      const principal = await createOrganizationService({ database: this.env.AUTH_DB, appEnv: this.env.APP_ENV,
+        ciEnv: this.env, localTestMode: this.env.E2E_LOCAL_TEST_MODE })
         .resolvePrincipal(parsed.data.sessionId);
       if (!principal) return failure('UNAUTHORIZED');
       if (principal.platformRole !== 'root') return failure('FORBIDDEN');
@@ -215,6 +221,7 @@ export class IdentityOperatorService extends WorkerEntrypoint<IdentityWorkerEnv>
       const auth = createIdentityAuth(env);
       const fixtures = createIdentityE2eFixtures({
         database: this.env.AUTH_DB, appEnv: this.env.APP_ENV,
+        ciEnv: this.env, localTestMode: this.env.E2E_LOCAL_TEST_MODE,
         createSession: (userId, runId, merchantId) => auth.createFixtureSession({
           userId, runId, merchantId,
         }),
@@ -253,13 +260,14 @@ export class IdentityOperatorService extends WorkerEntrypoint<IdentityWorkerEnv>
         ? 'Identity is temporarily unavailable' : 'Operation is not permitted',
       correlationId, retryable },
     });
-    if (this.env.APP_ENV !== 'staging'
+    if (this.env.APP_ENV !== 'ci' && this.env.APP_ENV !== 'staging'
       && !(this.env.APP_ENV === 'local' && this.env.E2E_LOCAL_TEST_MODE === '1')) {
       return failure('NOT_FOUND');
     }
     if (!parsed.success) return failure('INVALID_REQUEST');
     try {
-      const principal = await createOrganizationService({ database: this.env.AUTH_DB })
+      const principal = await createOrganizationService({ database: this.env.AUTH_DB, appEnv: this.env.APP_ENV,
+        ciEnv: this.env, localTestMode: this.env.E2E_LOCAL_TEST_MODE })
         .resolvePrincipal(parsed.data.sessionId);
       if (!principal) return failure('UNAUTHORIZED');
       if (principal.platformRole !== 'root') return failure('FORBIDDEN');
@@ -283,6 +291,7 @@ export class IdentityOperatorService extends WorkerEntrypoint<IdentityWorkerEnv>
       };
       const lifecycle = createIdentityE2eLifecycle({
         database: this.env.AUTH_DB, appEnv: this.env.APP_ENV,
+        ciEnv: this.env,
         localTestMode: this.env.E2E_LOCAL_TEST_MODE,
         core: {
           preview: tenant => this.env.CORE.previewE2eRun(context, tenant),

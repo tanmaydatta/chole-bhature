@@ -1,3 +1,5 @@
+import { assertIdentityServiceEnvironment, type IdentityServiceAssociation } from '../ci-stack.js';
+
 import {
   CoreMerchantActivationResultSchema,
   CoreMerchantProvisionResultSchema,
@@ -25,11 +27,9 @@ export interface CoreMerchantProvisioningClient {
   ): Promise<CoreMerchantActivationResult>;
 }
 
-export interface OrganizationServiceOptions {
-  database: D1Database;
+export interface OrganizationServiceOptions extends IdentityServiceAssociation {
   core?: CoreMerchantProvisioningClient;
   appEnv?: string | undefined;
-  localTestMode?: string | undefined;
 }
 
 export interface ProvisionClientInput {
@@ -232,6 +232,7 @@ export function createOrganizationService(options: OrganizationServiceOptions) {
       sessionId: string,
       selectedMerchantId?: string,
     ): Promise<OperatorPrincipal | null> {
+      assertIdentityServiceEnvironment(options);
       const now = Date.now();
       const root = await database.prepare(`
         SELECT session.id AS sessionId, session.userId AS userId,
@@ -294,7 +295,7 @@ export function createOrganizationService(options: OrganizationServiceOptions) {
             (session.authenticationMethod = 'magic-link'
               AND auth_profile.email_login_enabled = 1)
             OR (session.authenticationMethod = 'e2e-fixture'
-              AND ?3 = 'staging' AND auth_profile.email_login_enabled = 0
+              AND ?3 IN ('staging', 'ci') AND auth_profile.email_login_enabled = 0
               AND EXISTS (
                 SELECT 1 FROM e2e_run_claims
                 JOIN e2e_fixture_sessions
@@ -340,6 +341,7 @@ export function createOrganizationService(options: OrganizationServiceOptions) {
       principal: OperatorPrincipal,
       rawInput: ProvisionClientInput,
     ): Promise<ClientProvisioningView> {
+      assertIdentityServiceEnvironment(options);
       if (principal.platformRole !== 'root') {
         throw new OrganizationOperationError('Root authority is required');
       }
@@ -350,7 +352,7 @@ export function createOrganizationService(options: OrganizationServiceOptions) {
         correlationId: requiredText(rawInput.correlationId, 'correlationId'),
         ...(rawInput.e2eRun ? { e2eRun: E2eRunProofSchema.parse(rawInput.e2eRun) } : {}),
       };
-      if (input.e2eRun && options.appEnv !== 'staging'
+      if (input.e2eRun && options.appEnv !== 'ci' && options.appEnv !== 'staging'
         && !(options.appEnv === 'local' && options.localTestMode === '1')) {
         throw new OrganizationOperationError('E2E provisioning requires staging');
       }

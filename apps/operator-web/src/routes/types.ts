@@ -95,7 +95,8 @@ export interface CoreRpcService {
 }
 
 export interface OperatorWebEnv {
-  APP_ENV: 'local' | 'staging';
+  APP_ENV: 'local' | 'staging' | 'ci';
+  CI_STACK_KEY?: string;
   E2E_LOCAL_TEST_MODE?: string;
   PUBLIC_APP_ORIGIN: string;
   OPERATOR_SELECTION_SECRET: string;

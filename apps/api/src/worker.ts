@@ -39,6 +39,7 @@ import { z } from 'zod';
 import { WorkerEntrypoint } from 'cloudflare:workers';
 
 import { createApp } from './app.js';
+import { assertCiStack } from './ci-stack.js';
 import { productE2eCapabilities } from './services/e2e-capabilities.js';
 import { MerchantIdentityConflictError } from './errors/merchant-errors.js';
 import { requireOperatorContext } from './auth/operator-context.js';
@@ -98,9 +99,12 @@ function coreMerchantFailure(error: unknown) {
   };
 }
 
+const app = createApp();
+
 export class CoreOperatorService extends WorkerEntrypoint<Env> {
   async getE2eCapabilities(context: { actorUserId: string;
     actorKind: 'root' | 'member'; correlationId: string }) {
+    assertCiStack(this.env);
     if (context.actorKind !== 'root' || !context.actorUserId || !context.correlationId) {
       throw new Error('E2E capability inspection requires root authority');
     }
@@ -112,6 +116,7 @@ export class CoreOperatorService extends WorkerEntrypoint<Env> {
     identity: E2eTenantIdentity,
     query: E2eInspectionQuery,
   ) {
+    assertCiStack(this.env);
     const operator = requireOperatorContext(
       OperatorCallContextSchema.parse(context), 'credentials:manage',
     );
@@ -123,6 +128,7 @@ export class CoreOperatorService extends WorkerEntrypoint<Env> {
   }
 
   async previewE2eRun(context: OperatorCallContext, identity: E2eTenantIdentity) {
+    assertCiStack(this.env);
     const operator = requireOperatorContext(
       OperatorCallContextSchema.parse(context), 'credentials:manage',
     );
@@ -134,6 +140,7 @@ export class CoreOperatorService extends WorkerEntrypoint<Env> {
   }
 
   async disposeE2eRun(context: OperatorCallContext, identity: E2eTenantIdentity) {
+    assertCiStack(this.env);
     const operator = requireOperatorContext(
       OperatorCallContextSchema.parse(context), 'credentials:manage',
     );
@@ -147,6 +154,7 @@ export class CoreOperatorService extends WorkerEntrypoint<Env> {
   }
 
   async provisionMerchant(context: OperatorCallContext, input: MerchantProvisionRequest) {
+    assertCiStack(this.env);
     const parsedContext = OperatorCallContextSchema.parse(context);
     const parsedInput = MerchantProvisionRequestSchema.parse(input);
     try {
@@ -164,6 +172,7 @@ export class CoreOperatorService extends WorkerEntrypoint<Env> {
   }
 
   async activateMerchant(context: OperatorCallContext, input: MerchantActivationRequest) {
+    assertCiStack(this.env);
     const parsedContext = OperatorCallContextSchema.parse(context);
     const parsedInput = MerchantActivationRequestSchema.parse(input);
     try {
@@ -181,6 +190,7 @@ export class CoreOperatorService extends WorkerEntrypoint<Env> {
   }
 
   async createCredential(context: OperatorCallContext, input: ApiCredentialCreateInput) {
+    assertCiStack(this.env);
     return ApiCredentialCreateResultSchema.parse(await createCredential(
       this.env,
       OperatorCallContextSchema.parse(context),
@@ -189,6 +199,7 @@ export class CoreOperatorService extends WorkerEntrypoint<Env> {
   }
 
   async listCredentials(context: OperatorCallContext) {
+    assertCiStack(this.env);
     return z.array(ApiCredentialViewSchema).parse(await listCredentials(
       this.env,
       OperatorCallContextSchema.parse(context),
@@ -196,6 +207,7 @@ export class CoreOperatorService extends WorkerEntrypoint<Env> {
   }
 
   async revokeCredential(context: OperatorCallContext, credentialId: string) {
+    assertCiStack(this.env);
     return ApiCredentialViewSchema.parse(await revokeCredential(
       this.env,
       OperatorCallContextSchema.parse(context),
@@ -204,6 +216,7 @@ export class CoreOperatorService extends WorkerEntrypoint<Env> {
   }
 
   async getCustomer(context: OperatorCallContext, customerRef: string) {
+    assertCiStack(this.env);
     const operator = requireOperatorContext(
       OperatorCallContextSchema.parse(context),
       'customers:read',
@@ -218,6 +231,7 @@ export class CoreOperatorService extends WorkerEntrypoint<Env> {
     customerRef: string,
     input: CustomerPatchRequest,
   ) {
+    assertCiStack(this.env);
     return CustomerRecordSchema.parse(await createOperatorCustomerMutationService(
       createRepositories(this.env),
     ).upsert(
@@ -228,6 +242,7 @@ export class CoreOperatorService extends WorkerEntrypoint<Env> {
   }
 
   async listSchemaDefinitions(context: OperatorCallContext) {
+    assertCiStack(this.env);
     return SchemaDefinitionsResponseSchema.parse(await listSchemaDefinitions(
       this.env,
       OperatorCallContextSchema.parse(context),
@@ -235,6 +250,7 @@ export class CoreOperatorService extends WorkerEntrypoint<Env> {
   }
 
   async getPublishedSchema(context: OperatorCallContext) {
+    assertCiStack(this.env);
     return PublishedSchemaResponseSchema.parse(await getPublishedSchema(
       this.env,
       OperatorCallContextSchema.parse(context),
@@ -242,6 +258,7 @@ export class CoreOperatorService extends WorkerEntrypoint<Env> {
   }
 
   async createSchemaDefinition(context: OperatorCallContext, input: VariableDefinition) {
+    assertCiStack(this.env);
     return SchemaDefinitionViewSchema.parse(await createSchemaDefinition(
       this.env,
       OperatorCallContextSchema.parse(context),
@@ -254,6 +271,7 @@ export class CoreOperatorService extends WorkerEntrypoint<Env> {
     definitionId: string,
     input: VariableDefinition,
   ) {
+    assertCiStack(this.env);
     return SchemaDefinitionViewSchema.parse(await updateSchemaDefinition(
       this.env,
       OperatorCallContextSchema.parse(context),
@@ -263,6 +281,7 @@ export class CoreOperatorService extends WorkerEntrypoint<Env> {
   }
 
   async deleteSchemaDefinition(context: OperatorCallContext, definitionId: string) {
+    assertCiStack(this.env);
     await deleteSchemaDefinition(
       this.env,
       OperatorCallContextSchema.parse(context),
@@ -271,6 +290,7 @@ export class CoreOperatorService extends WorkerEntrypoint<Env> {
   }
 
   async previewSchemaDefinitionImpact(context: OperatorCallContext, definitionId: string) {
+    assertCiStack(this.env);
     return SchemaDefinitionImpactPreviewSchema.parse(await previewSchemaDefinitionImpact(
       this.env,
       OperatorCallContextSchema.parse(context),
@@ -279,6 +299,7 @@ export class CoreOperatorService extends WorkerEntrypoint<Env> {
   }
 
   async deprecateSchemaDefinition(context: OperatorCallContext, definitionId: string) {
+    assertCiStack(this.env);
     await deprecateSchemaDefinition(
       this.env,
       OperatorCallContextSchema.parse(context),
@@ -287,6 +308,7 @@ export class CoreOperatorService extends WorkerEntrypoint<Env> {
   }
 
   async publishSchema(context: OperatorCallContext) {
+    assertCiStack(this.env);
     return SchemaPublicationResultSchema.parse(await publishSchema(
       this.env,
       OperatorCallContextSchema.parse(context),
@@ -294,6 +316,7 @@ export class CoreOperatorService extends WorkerEntrypoint<Env> {
   }
 
   async createProgramDraft(context: OperatorCallContext, input: PromoProgram) {
+    assertCiStack(this.env);
     return OperatorProgramViewSchema.parse(await createProgramDraft(
       this.env,
       OperatorCallContextSchema.parse(context),
@@ -302,6 +325,7 @@ export class CoreOperatorService extends WorkerEntrypoint<Env> {
   }
 
   async getProgram(context: OperatorCallContext, externalRef: string) {
+    assertCiStack(this.env);
     return OperatorProgramViewSchema.parse(await getProgram(
       this.env,
       OperatorCallContextSchema.parse(context),
@@ -310,6 +334,7 @@ export class CoreOperatorService extends WorkerEntrypoint<Env> {
   }
 
   async listPrograms(context: OperatorCallContext) {
+    assertCiStack(this.env);
     return OperatorProgramListResponseSchema.parse(await listPrograms(
       this.env,
       OperatorCallContextSchema.parse(context),
@@ -321,6 +346,7 @@ export class CoreOperatorService extends WorkerEntrypoint<Env> {
     externalRef: string,
     input: PromoProgram,
   ) {
+    assertCiStack(this.env);
     return OperatorProgramViewSchema.parse(await updateProgramDraft(
       this.env,
       OperatorCallContextSchema.parse(context),
@@ -330,6 +356,7 @@ export class CoreOperatorService extends WorkerEntrypoint<Env> {
   }
 
   async publishProgram(context: OperatorCallContext, externalRef: string) {
+    assertCiStack(this.env);
     return ProgramPublicationResultSchema.parse(await publishProgram(
       this.env,
       OperatorCallContextSchema.parse(context),
@@ -338,6 +365,7 @@ export class CoreOperatorService extends WorkerEntrypoint<Env> {
   }
 
   async pauseProgram(context: OperatorCallContext, externalRef: string) {
+    assertCiStack(this.env);
     return ProgramLifecycleSchema.parse(await pauseProgram(
       this.env,
       OperatorCallContextSchema.parse(context),
@@ -346,6 +374,7 @@ export class CoreOperatorService extends WorkerEntrypoint<Env> {
   }
 
   async resumeProgram(context: OperatorCallContext, externalRef: string) {
+    assertCiStack(this.env);
     return ProgramLifecycleSchema.parse(await resumeProgram(
       this.env,
       OperatorCallContextSchema.parse(context),
@@ -354,6 +383,7 @@ export class CoreOperatorService extends WorkerEntrypoint<Env> {
   }
 
   async endProgram(context: OperatorCallContext, externalRef: string) {
+    assertCiStack(this.env);
     return ProgramLifecycleSchema.parse(await endProgram(
       this.env,
       OperatorCallContextSchema.parse(context),
@@ -362,4 +392,9 @@ export class CoreOperatorService extends WorkerEntrypoint<Env> {
   }
 }
 
-export default createApp();
+export default {
+  fetch(request, env, context) {
+    assertCiStack(env);
+    return app.fetch(request, env, context);
+  },
+} satisfies ExportedHandler<Env>;

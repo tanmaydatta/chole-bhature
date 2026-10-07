@@ -4,6 +4,8 @@ import { SELF } from 'cloudflare:test';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 
 import { createResendEmailAdapter } from '../src/email.js';
+import identityWorker, { type Env } from '../src/worker.js';
+import { createExecutionContext, waitOnExecutionContext } from 'cloudflare:test';
 
 const testEnv = env as typeof env & { AUTH_DB: D1Database };
 const publicOrigin = 'https://operator.example.test';
@@ -88,6 +90,35 @@ function linkFrom(text: string) {
 beforeEach(clearAuthData);
 
 describe('invite-only passwordless authentication', () => {
+  test('CI captures a real employee magic link locally and rejects external email config before writes', async () => {
+    await seedUser({ id: 'ci-employee', email: 'ci-employee@example.test' });
+    const origin = 'https://cb-e2e-0123456789abcdef0123-operator.trusted.workers.dev';
+    const noCall = async () => { throw new Error('unexpected Core call'); };
+    const ci = { ...env, APP_ENV: 'ci', CI_STACK_KEY: '0123456789abcdef0123',
+      PUBLIC_APP_ORIGIN: origin, PASSKEY_RP_ID: new URL(origin).hostname,
+      EMAIL_MODE: 'local-capture', STAGING_ALLOWED_RECIPIENTS: '[]',
+      CORE: { provisionMerchant: noCall, activateMerchant: noCall, getE2eCapabilities: noCall,
+        inspectE2eRun: noCall, previewE2eRun: noCall, disposeE2eRun: noCall } } as Env;
+    const request = () => new Request(origin + '/auth/sign-in/magic-link', {
+      method: 'POST', headers: { origin, 'content-type': 'application/json',
+        'cf-connecting-ip': '203.0.113.50' },
+      body: JSON.stringify({ email: 'ci-employee@example.test', callbackURL: '/signed-in' }),
+    });
+    const context = createExecutionContext();
+    expect(await (await identityWorker.fetch(request(), ci, context)).json()).toEqual({ ok: true });
+    await waitOnExecutionContext(context);
+    const captured = await capturedMessages();
+    expect(captured.map(message => message.recipient)).toEqual(['ci-employee@example.test']);
+    expect(linkFrom(captured[0]?.textBody ?? '')).toMatch(/^https:\/\/cb-e2e-0123456789abcdef0123-operator\.trusted\.workers\.dev\/auth\/magic-link\/verify\?/u);
+    const verification = await env.AUTH_DB.prepare('SELECT COUNT(*) AS total FROM verification').first();
+    const audit = await env.AUTH_DB.prepare('SELECT COUNT(*) AS total FROM identity_audit').first();
+    const rejected = await identityWorker.fetch(request(), { ...ci, RESEND_API_KEY: 'forbidden' }, createExecutionContext());
+    expect(await rejected.json()).toMatchObject({ error: { code: 'IDENTITY_UNAVAILABLE' } });
+    expect(await env.AUTH_DB.prepare('SELECT COUNT(*) AS total FROM verification').first()).toEqual(verification);
+    expect(await env.AUTH_DB.prepare('SELECT COUNT(*) AS total FROM identity_audit').first()).toEqual(audit);
+    expect(await capturedMessages()).toEqual(captured);
+  });
+
   test('blocks public signup at the HTTP route and does not create a user', async () => {
     const response = await authRequest('/auth/sign-up/email', {
       method: 'POST',

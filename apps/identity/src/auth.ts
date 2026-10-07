@@ -11,6 +11,7 @@ import {
   writeIdentityAudit,
 } from './recovery.js';
 import type { Env } from './worker.js';
+import { assertCiStack } from './ci-stack.js';
 
 export type AuthenticationMethod = 'magic-link' | 'passkey' | 'recovery' | 'e2e-fixture';
 
@@ -141,8 +142,9 @@ function parseAllowedRecipients(value: string): ReadonlySet<string> {
 }
 
 export function validateIdentityEnvironment(env: Env): void {
-  if (env.APP_ENV !== 'local' && env.APP_ENV !== 'staging') {
-    throw new Error('APP_ENV must be local or staging');
+  assertCiStack(env);
+  if (env.APP_ENV !== 'ci' && env.APP_ENV !== 'local' && env.APP_ENV !== 'staging') {
+    throw new Error('APP_ENV must be local, staging or ci');
   }
   if (env.EMAIL_MODE !== 'local-capture' && env.EMAIL_MODE !== 'resend') {
     throw new Error('EMAIL_MODE must be local-capture or resend');
@@ -379,6 +381,7 @@ async function isPasskeyAuthorizationCurrent(
 }
 
 export async function getSessionAccess(env: Env, sessionId: string): Promise<SessionAccess | null> {
+  assertCiStack(env);
   return env.AUTH_DB.prepare(`
     SELECT session.id AS sessionId, session.userId AS userId,
       auth_profile.subject_kind AS subjectKind,
@@ -416,7 +419,7 @@ export async function getSessionAccess(env: Env, sessionId: string): Promise<Ses
         )
         OR (
           session.authenticationMethod = 'e2e-fixture'
-          AND ?3 = 'staging'
+          AND ?3 IN ('staging', 'ci')
           AND session.recoveryOnly = 0
           AND auth_profile.subject_kind = 'employee'
           AND auth_profile.email_login_enabled = 0
@@ -644,7 +647,7 @@ export function createIdentityAuth(
       session: {
         create: {
           before: async (session, context) => {
-            const method = fixtureUserGrant === session.userId && env.APP_ENV === 'staging'
+            const method = fixtureUserGrant === session.userId && (env.APP_ENV === 'staging' || env.APP_ENV === 'ci')
               ? 'e2e-fixture' : authenticationMethodForPath(context?.path ?? '');
             const allowed = method === 'passkey'
               ? await isPasskeyAuthorizationCurrent(env, passkeyAuthorization, session.userId)
@@ -786,7 +789,7 @@ export function createIdentityAuth(
       }),
       // Better Auth's testUtils declaration permits `init().options` to be
       // undefined under exactOptionalPropertyTypes; the runtime plugin is valid.
-      ...(env.APP_ENV === 'staging' ? [testUtils() as unknown as BetterAuthPlugin] : []),
+      ...((env.APP_ENV === 'staging' || env.APP_ENV === 'ci') ? [testUtils() as unknown as BetterAuthPlugin] : []),
     ],
   });
 
@@ -818,13 +821,16 @@ export function createIdentityAuth(
     return { session: null, invalid: true };
   };
 
-  const getSession = async (headers: Headers): Promise<CurrentSession> =>
-    (await resolveSession(headers)).session;
+  const getSession = async (headers: Headers): Promise<CurrentSession> => {
+    assertCiStack(env);
+    return (await resolveSession(headers)).session;
+  };
 
   return {
     getSession,
     async createFixtureSession(input) {
-      if (env.APP_ENV !== 'staging') throw new Error('E2E fixture sessions are staging-only');
+      assertCiStack(env);
+      if (env.APP_ENV !== 'ci' && env.APP_ENV !== 'staging') throw new Error('E2E fixture sessions are staging-only');
       if (fixtureUserGrant !== null) throw new Error('E2E fixture session creation is busy');
       const owned = await env.AUTH_DB.prepare(`
         SELECT memberships.id
@@ -866,6 +872,7 @@ export function createIdentityAuth(
       }
     },
     async handler(request, executionContext) {
+      assertCiStack(env);
       const pathname = new URL(request.url).pathname;
       const id = correlationId(request);
       if (pathname === '/auth/sign-in/magic-link' && request.method === 'POST') {

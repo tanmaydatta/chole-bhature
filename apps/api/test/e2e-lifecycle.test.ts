@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, test } from 'vitest';
 import type { Env } from '../src/env.js';
 import { createProductE2eLifecycle } from '../src/services/e2e-lifecycle.js';
 import { provisionMerchant } from '../src/routes/internal-merchants.js';
-import { CoreOperatorService } from '../src/worker.js';
+import apiWorker, { CoreOperatorService } from '../src/worker.js';
 import { inspectProductE2eRun } from '../src/services/e2e-inspection.js';
 
 const first = {
@@ -42,6 +42,39 @@ async function seedRun(input: typeof first, target = stagingEnv()): Promise<void
 }
 
 describe('staging E2E tenant disposal in Product D1', () => {
+  test('invalid CI fetch and RPC configuration refuses before database mutation', async () => {
+    await seedRun(first);
+    const ci = { ...env, APP_ENV: 'ci', CI_STACK_KEY: '0123456789abcdef0123',
+      PUBLIC_APP_ORIGIN: 'https://operator.example.test',
+      DECISION_SIGNING_SECRET: 'disposable-ci-decision-secret-32-characters' } as Env;
+    const service = new CoreOperatorService(createExecutionContext(), ci);
+    await expect(service.disposeE2eRun({ actorKind: 'root', actorUserId: 'root', merchantId: first.merchantId,
+      permission: 'credentials:manage', correlationId: 'ci' }, first)).rejects.toThrow(/CI/u);
+    expect(() => apiWorker.fetch(new Request('https://operator.example.test/'), ci, createExecutionContext()))
+      .toThrow(/CI/u);
+    expect(await env.DB.prepare('SELECT status FROM e2e_run_claims WHERE run_id = ?1')
+      .bind(first.runId).first()).toEqual({ status: 'active' });
+    expect(await env.DB.prepare('SELECT COUNT(*) AS total FROM customers WHERE merchant_id = ?1')
+      .bind(first.merchantId).first()).toEqual({ total: 1 });
+  });
+
+  test('validated CI capabilities and disposal retain proof and concurrent-run isolation', async () => {
+    await seedRun(first);
+    await seedRun(second);
+    const ci = { ...env, APP_ENV: 'ci', CI_STACK_KEY: '0123456789abcdef0123',
+      PUBLIC_APP_ORIGIN: 'https://cb-e2e-0123456789abcdef0123-api.trusted.workers.dev',
+      DECISION_SIGNING_SECRET: 'disposable-ci-decision-secret-32-characters' } as Env;
+    const rpc = new CoreOperatorService(createExecutionContext(), ci);
+    expect(await rpc.getE2eCapabilities({ actorKind: 'root', actorUserId: 'root',
+      correlationId: 'ci' })).toMatchObject({ version: 1, disposal: true });
+    const lifecycle = createProductE2eLifecycle(ci);
+    await expect(lifecycle.dispose({ ...first, proofHash: second.proofHash })).rejects.toThrow(/provenance/u);
+    const disposed = await lifecycle.dispose(first);
+    expect(Object.values(disposed.counts).every(value => value === 0)).toBe(true);
+    expect((await lifecycle.dispose(first)).status).toBe('disposed');
+    expect((await lifecycle.preview(second)).counts.customers).toBe(1);
+  });
+
   beforeEach(async () => {
     await env.DB.batch([
       env.DB.prepare('DELETE FROM e2e_run_claims'),
@@ -50,7 +83,7 @@ describe('staging E2E tenant disposal in Product D1', () => {
     ]);
   });
 
-  test('rejects foreign merchant, wrong proof, and non-staging environment', async () => {
+  test.each(['local', 'production'])('rejects foreign merchant, wrong proof, and %s environment', async mode => {
     await seedRun(first);
     await env.DB.prepare(`INSERT INTO merchants
       (id, name, status, created_at, updated_at)
@@ -59,7 +92,7 @@ describe('staging E2E tenant disposal in Product D1', () => {
     const service = createProductE2eLifecycle(stagingEnv());
     await expect(service.preview({ ...first, merchantId: 'foreign-merchant' })).rejects.toThrow();
     await expect(service.dispose({ ...first, proofHash: 'c'.repeat(64) })).rejects.toThrow();
-    await expect(createProductE2eLifecycle({ ...env, APP_ENV: 'local' } as Env)
+    await expect(createProductE2eLifecycle({ ...env, APP_ENV: mode } as Env)
       .preview(first)).rejects.toThrow(/staging/u);
     expect(await env.DB.prepare("SELECT id FROM merchants WHERE id = 'foreign-merchant'").first())
       .toMatchObject({ id: 'foreign-merchant' });
