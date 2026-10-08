@@ -54,6 +54,31 @@ it fails before any write on old/mixed Workers or missing lifecycle migrations.
 The storage-state **path** is safe to place in the shell command; keep the
 file and its containing directory private.
 
+## Check the local cloud helper groundwork
+
+Cloud candidate and Access routing checks run on controlled local fixtures;
+`E2E_TARGET=cloud-ci` remains unavailable. With dependencies and the pinned
+browser already installed, run `pnpm --filter @incentives/e2e test`, then
+`E2E_BROWSER_CHANNEL=chromium pnpm e2e:local` from the repository root. The
+original five business/isolation/cleanup cases retain their assertions; a
+separate local-only browser case checks HTTP navigation, assets, subrequests,
+credential snapshots and refusal before foreign or redirected dispatch.
+Staging skips that controlled-fixture case.
+
+The groundwork is implemented and locally tested; independent task review
+passed on 2026-10-08. Acceptance covers this bounded local groundwork.
+
+The candidate must match an independently supplied run tuple and account
+subdomain. This local consistency check proves no live GitHub freshness,
+provider ownership, deployment, binding graph or Access policy. The dedicated
+HTTP contexts dispatch only to the exact candidate API/Operator origins,
+refuse header collisions and Host spoofing, and refuse every 3xx response,
+including same-origin redirects. Browser contexts start fresh with service
+workers blocked; WebSockets and real cloud authentication remain outside this
+groundwork. No cloud login or runtime cloud command is supplied. See the
+[dated local evidence](../../docs/testing/per-pr-cloud-e2e.md#local-candidate-and-access-routing-groundwork-2026-10-08)
+and remaining deployment gates before extending these helpers.
+
 ## Recipes and ownership
 
 `pnpm recipe:e2e <recipe> --input /absolute/path/input.json [--run e2e_...]`

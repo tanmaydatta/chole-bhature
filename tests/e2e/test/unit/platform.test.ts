@@ -6,6 +6,12 @@ import { loadTarget, newRunId, runScoped } from '../../src/config.js';
 import { createManifest, recordResource, nextCleanup } from '../../src/manifest.js';
 
 describe('E2E target and run identity', () => {
+  test('keeps cloud-ci unavailable even when cloud-looking origins are supplied', () => {
+    expect(() => loadTarget({ E2E_TARGET: 'cloud-ci',
+      E2E_API_ORIGIN: 'https://cb-e2e-1dcb45133da23b01d244-api.fixture.workers.dev',
+      E2E_OPERATOR_ORIGIN: 'https://cb-e2e-1dcb45133da23b01d244-operator.fixture.workers.dev',
+    })).toThrow(/local or staging/u);
+  });
   test('exposes explicit local and staging headed commands with browser-only selection', () => {
     const packageFile = fileURLToPath(new URL('../../../../package.json', import.meta.url));
     const scripts = (JSON.parse(readFileSync(packageFile, 'utf8')) as {

@@ -45,6 +45,75 @@ checkpoint summary was published on 2026-10-07, as recorded in the
 [checkpoint publication ledger](#reviewed-local-checkpoint-publication-2026-10-07),
 and closes no live gate.
 
+## Local candidate and Access routing groundwork (2026-10-08)
+
+**Status:** Bounded Task 7a local groundwork is implemented and locally tested;
+independent task review passed on 2026-10-08. Acceptance covers this local scope.
+Full Task 7 remains incomplete, public Worker writes still refuse
+transport and automatic cloud writes remain disabled. The merged `dev` base
+is `218bc2a`; earlier checkpoint/source/publication evidence retains its dates.
+
+The candidate requires strict plain own-data records, all six existing run-key
+fields matching an independently supplied current-run expectation, and exact
+distinct run-derived HTTPS API/Operator origins under the expected account
+subdomain. The existing key parser and resource-name digest are reused.
+Frozen candidate data establishes syntax and tuple consistency only; caller
+expectations do not establish live GitHub freshness, provider ownership,
+verified bindings, Access receipts or deployment authority. The executable
+configuration still admits only local/staging and refuses `cloud-ci`.
+
+Access credentials are snapshotted before context creation and applied only
+per dispatched HTTP request. Dedicated API/browser contexts refuse foreign,
+Identity, alternate-preview and other-run destinations before transport.
+Case-insensitive existing Access headers, malformed/control-containing input,
+Host/authority spoofing and reflection failures refuse without input-bearing
+errors. API caller Host headers are unsupported; any browser Host must match
+the request URL. Browser contexts are fresh with service workers blocked.
+All 3xx responses refuse with automatic redirects disabled, including
+same-origin redirects; no redirected response is fulfilled to the browser.
+Context disposal closes its dispatch lifetime. WebSockets, malicious test-code
+exfiltration and future authentication redirect semantics are not covered.
+
+Synthetic fixture hostnames reach only an allowlisted ephemeral loopback
+TLS/CONNECT fixture. Actual Playwright HTTP and Chromium routing deliver
+headers to an independent local receiver; foreign/redirect/spoof negatives
+require zero receiver requests. Test-only proxy/TLS settings are absent from
+production helpers. These local results prove no real Cloudflare Access
+policy, HTTPS deployment or cloud passkey behavior. Browser coverage belongs
+to a separate local-only Playwright case; the original five business,
+isolation and cleanup cases retain their exact assertions.
+
+**Table — Fresh local groundwork verification**
+
+| Boundary or command | Result |
+|---|---|
+| Semantic RED/GREEN | Candidate consistency: 40 intended failures before validation, then 46/46 with the existing platform cases. Access policy: 34 intended failures/one positive before guards, then 75/75 with candidate cases. Real API/browser transport and redirect guards each produced two intended failures before correction. Foreign dispatch/Host/reflection regressions produced four intended failures, then focused 86/86 before browser runner placement. |
+| Serialized full CI package coverage | `pnpm -r --workspace-concurrency=1 test`: 102 Vitest files / 1,672 tests, zero failures/skips, including Identity's 221 Worker plus 91 Node-config cases and E2E's 119 browser-free unit cases. Counts are summed from this run's package summaries. |
+| Root and shared-key Node regressions | The two root script suites pass 9/9; cloud key/live-run guard fixtures pass 9/9. Their GitHub/provider inputs are controlled fixtures, not authenticated live calls. |
+| `pnpm build`, `pnpm lint` | Both exit 0. Existing dashboard chunk-over-500-kB and two Fast Refresh warnings remain; no new final lint warning. |
+| Full local Chromium Playwright | One full serialized run after other checks: 6/6, zero failures/skips, 22.9 s with two workers. Original five business/isolation/cleanup cases plus the local-only routing case (681 ms). Existing colour-environment warnings remain. |
+
+Checks use pinned Node 22.18.0/pnpm 11.14.0, Corepack networking disabled and
+locked-dependency verification, with no installation or upgrade. Initial local
+transport and project sandbox attempts encountered loopback/Wrangler-log
+`EPERM`; those environmental failures are separate from semantic RED. Test
+listener errors now reject promptly. Approved local-only retries pass.
+The root script's nested recursive command did not inherit the outer workspace
+concurrency option, so final CI coverage runs the recursive package command
+directly with concurrency one, followed by both root Node suites separately.
+Raw logs and a new private Playwright output directory preserve older evidence.
+Initial build test-fixture type errors and the intermediate control-regex lint
+warning were corrected before the final source checks. No staging/provider,
+credential, workflow or deployment operation occurred.
+
+Code references:
+
+- [Candidate validation](../../tests/e2e/src/cloud-target.ts) and
+  [candidate negative cases](../../tests/e2e/test/unit/cloud-target.test.ts).
+- [Scoped HTTP contexts](../../tests/e2e/src/cloud-access.ts) and
+  [policy/API transport cases](../../tests/e2e/test/unit/cloud-access.test.ts).
+- [Controlled local browser coverage](../../tests/e2e/test/playwright/cloud-access.browser.spec.ts).
+
 ## Reviewed local checkpoint publication (2026-10-07)
 
 **Status:** The independently reviewed local checkpoint and bounded guard

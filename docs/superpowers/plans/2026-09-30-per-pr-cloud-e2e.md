@@ -599,6 +599,21 @@ Full deployed acceptance remains pending:
 
 ## Task 7: Real passkey bootstrap and cloud Playwright target
 
+**Bounded local groundwork (2026-10-08):** Candidate tuple/origin consistency
+and per-request Access helpers are implemented and locally tested, with negative
+policy and controlled API/browser transport coverage. Independent task review
+passed on 2026-10-08; acceptance covers this bounded local groundwork.
+The [dated evidence](../../testing/per-pr-cloud-e2e.md#local-candidate-and-access-routing-groundwork-2026-10-08)
+records the boundary. Candidate data and caller expectations grant no live
+GitHub/provider/deployment authority. Runtime `cloud-ci` remains rejected;
+no cloud login, fixture, client wiring, controller, workflow or live provider
+operation is added. Owned HTTP contexts refuse foreign destinations and all
+3xx responses; same-origin auth redirects remain unsupported. Fresh browser
+contexts block service workers; WebSockets are outside this HTTP foundation.
+The original five local business/isolation/cleanup cases are unchanged, with
+one additional local-only routing case. Full Task 7 and every live gate below
+remain unchecked/incomplete.
+
 **Files:** Create: `tests/e2e/src/cloud-login.ts`, `cloud-access.ts`, focused `tests/e2e/test/unit/{cloud-login,cloud-access,config}.test.ts`; Modify: Playwright files in the file map and `package.json` for `e2e:cloud-ci`.
 
 **Interfaces:** `loadTarget(env)` adds `{kind:'cloud-ci', apiOrigin, operatorOrigin, stackKey}` from a controller-issued manifest whose run tuple and artifact provenance are rechecked against GitHub's live PR/run metadata; no unspecified cryptographic signature is assumed. `accessHeadersFor(url, verifiedOrigins, credential) -> HeadersInit` returns headers only for exact API/Operator origins; `createCloudRootState({target, activationGrant, output}) -> Promise<void>` runs trusted protected-branch code in a fresh bootstrap job with **no account token**, uses CDP virtual authenticator for real registration and sign-in, then verifies root through `/operator/v1/session`. The controller passes only the activation grant, verified origins/tuple, and short-lived stack Access credential in a one-day restricted artifact; the bootstrap job passes a 0600 root state and stack credential to the later Playwright job through a separate one-day artifact. Delete both at teardown where the API permits; never log their contents.
