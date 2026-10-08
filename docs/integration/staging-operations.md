@@ -236,6 +236,57 @@ active or disposing claims, 10 disposed claims, and 10 audit rows. This cutover
 did not run API/Core deployment or any D1 migration, and it does not verify
 email delivery or a headed browser run.
 
+### Completed manual staging rollout — 2026-10-07
+
+The owner explicitly authorized an agent to execute this one-time existing-staging
+rollout and run-scoped E2E fixture creation/disposal. The default owner-run
+procedure below still governs future releases. [PR #17](https://github.com/tanmaydatta/chole-bhature/pull/17)
+merged into `dev` at `98d4df691dfb9094c7cc65c1409fd445a86a55f1`;
+deployment used reviewed HEAD `8902146993a45fd55e625488c6b0ea09e6b1dcf6`,
+whose identical tree is `eafe9f5a41c5efb40403a4177ebd54cb90dde0a9`.
+Fresh remote-source, preflight, build, lint, and full test gates passed before
+the protected API → Identity → Operator deployment sequence.
+
+API deployed to `8a316b34-febc-431d-b124-844357b2b960` at 100% traffic.
+Identity deployed to `dc29e3a1-d462-4838-9ded-fd1513c6ddfc` at 100% traffic.
+Operator Web deployed to `cc1de389-1e1b-4d9b-a022-a8c36ad57b98` at 100% traffic.
+Each protected command confirmed the authenticated Product D1 target and
+completed successfully. Fresh deployment status matched each uploaded UUID;
+new-version metadata matched the existing staging D1, private service,
+Secrets Store, signing-secret, and asset bindings. This source-to-version
+record is observed command provenance; the versions have no immutable commit
+tag. Identity privacy was confirmed before rollout by an owner-provided
+dashboard screenshot showing Production workers.dev off, Preview off, and
+an empty Custom Domains and Routes table; the deployed config retains that
+private configuration. This is screenshot/config evidence, not an API read
+of post-deployment exposure settings.
+
+No SQL migration changed in PR #17. The exact existing Product `0007`/`0008`
+ledger markers and nullable `TEXT` column check passed with `rows_written=0`
+and `changed_db=false`; the protected protocol also verified Product `0008`
+and Auth `0005`/`0006`. No migration or secret change was performed. A frozen
+pnpm `11.14.0` dependency recovery was separately approved after its implicit
+pre-test install removed local dependency links. Recovery preserved source
+and lockfile; subsequent commands ran sequentially with process-only
+`pnpm_config_enable_global_virtual_store=false` and
+`pnpm_config_verify_deps_before_run=error`. Fresh build and lint passed;
+the full test command passed 100 Vitest files / 1,592 tests plus nine Node
+tests in 63.226 seconds. Existing chunk-size and React fast-refresh warnings
+remain.
+
+After all three versions were coherent, `pnpm e2e:staging` reused the private
+state from the owner's ordinary root passkey sign-in. The live root-session
+and capability checks passed before fixtures. The full suite passed **4 tests,
+with 1 local-only skip and 0 failures**, using two workers in **37.0 seconds**
+(38.182 seconds including the command wrapper). All five scenario-owned
+tenants asserted zero run-owned Product and Auth rows after disposal; all 31
+recorded resources were marked cleaned. Sanitized disposal/audit tombstones
+remain. The [dated E2E record](../testing/gap-030-031-e2e.md#manual-staging-rollout-result-2026-10-07)
+contains run IDs and coverage. This does not verify email delivery, invitation
+acceptance, a headed staging run, the whole migration ledger, or production.
+Per-PR cloud provisioning remains groundwork and live **NO-GO**; no CI/CD,
+per-PR resources, demo, or production activation was included.
+
 ### User-controlled Cloudflare activation
 
 The owner-run procedure below is the default for future cutovers: the owner runs one command,
