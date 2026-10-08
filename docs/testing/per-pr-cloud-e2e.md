@@ -45,6 +45,82 @@ checkpoint summary was published on 2026-10-07, as recorded in the
 [checkpoint publication ledger](#reviewed-local-checkpoint-publication-2026-10-07),
 and closes no live gate.
 
+## Local passkey bootstrap extraction (2026-10-08)
+
+**Status:** Bounded Task 7b is implemented and locally tested; independent task
+review passed on 2026-10-08 for this local scope. The merged `dev` base is
+`8c63e55`, with the same tree as accepted
+Task 7a source `e254426`. Full Task 7, deployed Task 6b and all live gates remain
+incomplete. Public Worker writes still refuse transport; automatic cloud
+writes remain disabled and live NO-GO is unchanged.
+
+Managed-local setup keeps its existing real CDP virtual WebAuthn authenticator,
+activation UI, recovery-code acknowledgement and passkey sign-in. Its root
+email is chosen before the local CLI call. The CLI's strict pending-root result
+supplies both the activation grant and independently expected root user ID;
+the server session supplies neither the expectation nor an invented email
+field. Before serialization, the same browser context must receive HTTP 200,
+the strict session schema, that exact user ID, root role and solely `passkey`.
+Fixture, recovery, magic-link, mixed methods, malformed sessions, HTTP errors
+and redirects refuse. Origins must be exact canonical HTTP localhost or
+127.0.0.1 origins with an explicit valid port.
+
+State stays in memory until owned browser/context cleanup succeeds. Publication
+creates a random sibling temporary file exclusively with mode 0600, writes,
+syncs and closes it, then hard-links the complete file exclusively to the
+destination. Existing output files, symlinks and directories are preserved;
+rejected validation/serialization/publication leaves no final state artifact.
+Owned unpublished temporaries are removed. If temporary unlink fails after
+successful publication, the valid output still counts as success and the
+owning local stack's private-directory cleanup handles the residual private
+temporary. Filesystem crash/cleanup-failure recovery is not certified.
+
+The 54 new browser-free Vitest cases use actual ephemeral loopback HTTP,
+Playwright's real request context and actual filesystem outcomes. Only the
+browser snapshot boundary is substituted. Real Chromium/WebAuthn belongs to
+local Playwright. Its existing two-stack case additionally restores both saved
+files into fresh browser contexts, validates exact independently expected
+root/passkey sessions, checks mode 0600 and signed-in UI, and retains both
+cross-state refusals. No additional stack is launched for these positive checks;
+all six existing business, isolation, cleanup and controlled-routing cases
+retain their full assertions and the two-worker runner.
+
+**Table — Local extraction verification**
+
+| Boundary or command | Result |
+|---|---|
+| Semantic RED / initial GREEN | 49 intended assertion failures / five positives among 54 cases before safeguards; strengthened RED asserts actual unwanted files. Initial GREEN: 54/54, 498 ms. |
+| Stable pre-lint-correction full project suite | `pnpm -r --workspace-concurrency=1 test`: 103 Vitest files / 1,726 cases, zero failures/skips/warnings; Identity retains 221 Worker and 91 Node-config cases, E2E 173 browser-free cases. Log-write span 70.364 s. |
+| Final covering E2E unit suite | 16 files / 173 cases, zero failures/skips/warnings, 921 ms after the narrow cleanup control-flow correction. |
+| Final root and shared-key Node regressions | Root script suites 9/9, 1,094.46 ms; cloud key/live-run guard fixtures 9/9, 45.74 ms. Inputs are controlled fixtures; no credentials or authenticated live calls. |
+| Final `pnpm build`, `pnpm lint` | Both exit 0; log-write spans 12.434 s / 0.910 s. Existing dashboard chunk-over-500-kB and two Fast Refresh warnings remain; the new `no-unsafe-finally` warning is fixed. |
+| Full final local Chromium Playwright | One serialized final run: 6/6, zero failures/skips/retries, 24.2 s, two workers. Strengthened two-stack test 9.0 s; exactly three existing colour-environment warnings remain. |
+
+The first lint found a new `no-unsafe-finally` warning plus the two existing
+dashboard Fast Refresh warnings. The stable full project run finished before
+the narrow warning correction; its source provenance is retained separately
+from final covering checks. No cases were added beyond the original 54.
+Pinned Node 22.18.0/pnpm 11.14.0, Corepack networking disabled and locked
+dependency verification are used without installs. Root's initial baseline
+sandbox failures were loopback `EPERM`/timeouts, not semantic RED; its local-only
+retry passed 119/119. Raw logs and fresh browser output preserve earlier evidence.
+
+This helper adds no cloud target/login or Access wiring, and changes no global
+Operator client semantics or application contracts. The four unresolved
+provider blockers remain `service-binding-remapping-unresolved`,
+`asset-session-name-target-unproven`, `asset-upload-hash-contract-unproven` and
+`asset-completion-scope-unproven`. Local state restoration certifies no provider
+ownership, Access policy, deployed graph, HTTPS cloud passkey, two-cloud-stack
+pilot, teardown or every-push workflow. No commit, push, deployment, Notion,
+credential or live provider operation is part of this slice.
+
+Code references:
+
+- [Local bootstrap and private publication](../../tests/e2e/src/passkey-bootstrap.ts).
+- [Managed-local CLI identity and stack lifecycle](../../tests/e2e/src/local-stack.ts).
+- [Browser-free semantic failure cases](../../tests/e2e/test/unit/passkey-bootstrap.test.ts).
+- [Existing two-stack restored-session integration](../../tests/e2e/test/playwright/local-stack.api.spec.ts).
+
 ## Local candidate and Access routing groundwork (2026-10-08)
 
 **Status:** Bounded Task 7a local groundwork is implemented and locally tested;
@@ -459,7 +535,7 @@ a status-only probe is not equivalent coverage.
 | Published configuration | Both run-scoped Promos are read back active after publication. Their stored active rewards retain the 2,500 basis-point / 1,500-minor-unit cap and the 500-minor-unit matching-product rule. |
 | Evaluation and receipt | Evaluation decisions and the full price breakdown equal the exact expected breakdown. Redemption retains the evaluation ID, full breakdown, ordered program/rule entries, and is inspected with `integrityVerified: true`; the inspected redemption result equals the original result and has `receiptIntegrityVerified: true`. Inspection also checks each Promo at one use, 1,500 committed spend, and 3,500 budget remaining. |
 | Idempotency | Retrying the identical redemption request returns a deep-equal redemption. Reusing its idempotency key with a changed external order is rejected as `409 VERSION_CONFLICT`. |
-| Managed local-stack passkey bootstrap | During local stack setup, CDP enables WebAuthn and adds a virtual CTAP2 authenticator with resident key and verified user support. The browser opens root setup, submits the activation grant, creates the root passkey, requires the `Save your root recovery codes` heading, acknowledges the codes, finishes setup, chooses `Sign in with passkey`, and requires the `Sign in to Incentives` heading to become hidden. It then saves a cookie-containing root storage state with mode `0600`. This is current managed-local setup coverage only: it is not a staging assertion. The future `cloud-ci` flow must separately prove the equivalent real HTTPS passkey registration/sign-in and scoped state handoff on its disposable stack. |
+| Managed local-stack passkey bootstrap | During local stack setup, CDP enables WebAuthn and adds a virtual CTAP2 authenticator with resident key and verified user support. The browser opens root setup, submits the activation grant, creates the root passkey, requires the `Save your root recovery codes` heading, acknowledges the codes, finishes setup, chooses `Sign in with passkey`, and requires the `Sign in to Incentives` heading to become hidden. Before exclusive mode-0600 state publication it requires a strict server session for the independently CLI-issued user ID, root role and exactly `['passkey']`. The existing two-stack integration restores both saved files into fresh browser contexts and rechecks exact session identity/method, private mode, signed-in UI and cross-state refusal. This is managed-local coverage only: it is not a staging assertion. The future `cloud-ci` flow must separately prove equivalent real HTTPS passkey registration/sign-in and scoped state handoff on its disposable stack. |
 | Browser flow | The actual edit page displays the maximum as `1500`; the test changes it to `1600`, restores `1500`, saves, verifies the GBP 15.00 summary, reloads and verifies it again, reads persisted configuration, confirms the publication dialog, publishes, sees active revision 1, and reads the persisted active reward again. |
 | Concurrent and failure cleanup | Concurrent scenarios have different run, merchant, evaluation, and redemption IDs, retain the 3,000 result, and keep each program reference scoped to its own run. The failure scenario creates only its recorded tenant, throws intentionally, and still disposes that tenant. |
 | Disposal proof | `withScenarioRun` cleans managed local/staging tenants in `finally`; `assertRunDisposed` requires recorded resources, every resource marked `cleaned`, disposal status for the run, and zero counts for every Product and Auth D1 inventory category. |
