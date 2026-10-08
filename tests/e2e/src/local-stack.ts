@@ -6,9 +6,9 @@ import { chmod, mkdir, mkdtemp, open, readFile, rm, writeFile,
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { chromium, expect } from '@playwright/test';
 
 import { newRunId, RunIdSchema, type RunId } from './config.js';
+import { bootstrapLocalRootPasskey, parseLocalRootBootstrapResult } from './passkey-bootstrap.js';
 
 const repositoryRoot = fileURLToPath(new URL('../../../', import.meta.url));
 const workerNames = ['core', 'identity', 'operator'] as const;
@@ -139,7 +139,7 @@ async function stopChildren(children: ChildProcess[]): Promise<void> {
 }
 
 export async function startManagedLocalStack(options: { skipBuild?: boolean } = {}): Promise<{ stop(): Promise<void>;
-  operatorOrigin: string; apiOrigin: string; storageState: string; directory: string }> {
+  operatorOrigin: string; apiOrigin: string; storageState: string; directory: string; rootUserId: string }> {
   const runId: RunId = newRunId();
   const directory = await mkdtemp(join(tmpdir(), 'incentives-e2e-local-'));
   await chmod(directory, 0o700);
@@ -182,14 +182,14 @@ export async function startManagedLocalStack(options: { skipBuild?: boolean } = 
         'd1', 'migrations', 'apply', database, '--local', '--config', configPaths[app],
         '--persist-to', config.persistTo], repositoryRoot);
     }
+    const rootEmail = `root+${runId}@e2e.invalid`;
     const bootstrap = await run(process.execPath,
       [join(repositoryRoot, 'apps/identity/src/cli/bootstrap-root-runner.mjs'),
-        '--environment', 'local', '--email', `root+${runId}@e2e.invalid`], repositoryRoot,
+        '--environment', 'local', '--email', rootEmail], repositoryRoot,
       { ...process.env, AUTH_SECRET: authSecret,
         E2E_LOCAL_WRANGLER_CONFIG: configPaths.identity,
         E2E_LOCAL_PERSIST_TO: config.persistTo });
-    const grant = (JSON.parse(bootstrap) as { activationGrant?: unknown }).activationGrant;
-    if (typeof grant !== 'string') throw new Error('Root bootstrap did not return an activation grant');
+    const expectedRoot = parseLocalRootBootstrapResult(bootstrap);
     for (const [app, port, inspector] of [
       ['core', ports.core, ports.coreInspector],
       ['identity', ports.identity, ports.identityInspector],
@@ -208,39 +208,11 @@ export async function startManagedLocalStack(options: { skipBuild?: boolean } = 
       children.push(child);
     }
     await waitFor(config.operatorOrigin, children);
-    const browser = await chromium.launch({ channel: process.env.E2E_BROWSER_CHANNEL ?? 'chrome' });
-    const context = await browser.newContext({ baseURL: config.operatorOrigin });
-    try {
-      const page = await context.newPage();
-      const cdp = await context.newCDPSession(page);
-      await cdp.send('WebAuthn.enable');
-      await cdp.send('WebAuthn.addVirtualAuthenticator', { options: {
-        protocol: 'ctap2', transport: 'internal', hasResidentKey: true,
-        hasUserVerification: true, isUserVerified: true,
-        automaticPresenceSimulation: true,
-      } });
-      await page.goto(config.operatorOrigin);
-      await page.getByRole('button', { name: 'Root setup or recovery' }).click();
-      await page.getByLabel('Activation grant').fill(grant);
-      await page.getByRole('button', { name: 'Set up root passkey' }).click();
-      await expect(page.getByRole('heading', { name: 'Save your root recovery codes' }))
-        .toBeVisible({ timeout: 20_000 });
-      await page.getByLabel('I have stored these recovery codes securely').check();
-      await page.getByRole('button', { name: 'Finish setup' }).click();
-      await page.getByRole('button', { name: 'Sign in with passkey' }).click();
-      await expect(page.getByRole('heading', { name: 'Sign in to Incentives' }))
-        .toBeHidden({ timeout: 20_000 });
-      const storageState = join(directory, 'root-storage-state.json');
-      await context.storageState({ path: storageState });
-      await chmod(storageState, 0o600);
-      const saved = await readFile(storageState, 'utf8');
-      if (!saved.includes('cookies')) throw new Error('Root storage state was not saved');
-      return { stop, operatorOrigin: config.operatorOrigin, apiOrigin: config.apiOrigin,
-        storageState, directory };
-    } finally {
-      await context.close();
-      await browser.close();
-    }
+    const storageState = await bootstrapLocalRootPasskey({ operatorOrigin: config.operatorOrigin,
+      expectedRootUserId: expectedRoot.userId, activationGrant: expectedRoot.activationGrant,
+      storageStatePath: join(directory, 'root-storage-state.json') });
+    return { stop, operatorOrigin: config.operatorOrigin, apiOrigin: config.apiOrigin,
+      storageState, directory, rootUserId: expectedRoot.userId };
   } catch (error) {
     const diagnostic = (await Promise.all(workerNames.map(async app => {
       try {

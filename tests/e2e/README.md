@@ -18,6 +18,22 @@ temporary files/processes. System Chrome must be installed; set
 have installed its pinned browser instead. The headed script intentionally
 selects the browser project; the headless script runs all projects.
 
+The local passkey bootstrap helper accepts only exact HTTP loopback origins
+with an explicit port. Before saving state it checks the server session against
+the root user ID returned by that suite's local bootstrap CLI, requires the
+strict session schema, root role and exactly `['passkey']`, and refuses HTTP
+errors or redirects. It keeps browser state in memory until its browser closes,
+then publishes a complete file created with mode 0600 without overwriting an
+existing file, symlink or directory. The existing two-stack Playwright case
+restores both saved files into fresh browser contexts and verifies their exact
+root identities, passkey sessions and signed-in UI, while retaining cross-state
+rejection. Browser-free Vitest cases exercise real local HTTP and filesystem
+failure paths; actual Chromium/WebAuthn runs only in local Playwright.
+This bounded local extraction is implemented and locally tested; independent
+task review passed on 2026-10-08 for this local Task 7b scope.
+It adds no cloud target or login, Access wiring or provider authority. See the
+[dated local passkey evidence](../../docs/testing/per-pr-cloud-e2e.md#local-passkey-bootstrap-extraction-2026-10-08).
+
 For staging, first apply a pending Product `0007` migration before Product
 `0008`, then apply the matching Auth migrations and deploy the
 [matching Workers](../../docs/integration/staging-operations.md#e2e-platform-deployment-order)

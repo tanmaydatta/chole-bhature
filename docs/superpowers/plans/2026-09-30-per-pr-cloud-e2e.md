@@ -133,7 +133,7 @@ Task 6b and Tasks 7–10 remain incomplete; automatic cloud writes remain disabl
 | Trusted controller protocol | `scripts/cloud-e2e/key.mjs`, `artifact.mjs`, `inventory.mjs`, `cloudflare.mjs`, `provision.mjs`, `teardown.mjs`, `cli.mjs`; corresponding `scripts/cloud-e2e/*.test.mjs` | Protected-branch input validation, artifact schema, exact-ID Cloudflare operations, checkpoints, policy gate, cleanup. These files must never be imported from a PR checkout. |
 | CI transport | `.github/workflows/cloud-e2e.yml`, `.github/workflows/cloud-e2e-cleanup.yml`, `.github/workflows/cloud-e2e-janitor.yml`; `scripts/cloud-e2e/build-artifact.mjs`, `verify-run.mjs`, `evidence.mjs` | Separate runners/jobs, no shared privileged cache, immutable run metadata and short-lived artifact transport. Existing `.github/workflows/ci.yml` remains the build/lint/unit gate. |
 | `ci` application mode | `apps/{api,identity,operator-web}/src/ci-stack.ts`, `apps/api/src/worker.ts`, `apps/identity/src/services/organizations.ts`, `apps/identity/src/routes/internal.ts`, `apps/api/src/env.ts`, `apps/api/src/services/e2e-capabilities.ts`, `apps/api/src/services/e2e-lifecycle.ts`, `apps/identity/src/auth.ts`, `worker.ts`, `staging-secrets.ts`, `services/e2e-fixtures.ts`, `services/e2e-lifecycle.ts`, `apps/operator-web/src/routes/types.ts`, `worker.ts`, `staging-secrets.ts`; focused existing tests | Validate stack marker/bindings, direct disposable secrets and capture email, then admit E2E capabilities, fixtures, inspection and disposal only on marked `ci`. |
-| Exact-D1 root and browser | `apps/identity/src/cli/bootstrap-root-runner.mjs`, new `scripts/cloud-e2e/root-bootstrap.mjs`, `tests/e2e/src/cloud-login.ts`, their tests | Controller reuses root bootstrap SQL/cryptography against the inventory's new Auth D1 ID to produce a grant; a separate account-token-free job registers and signs in through real HTTPS passkey UI with virtual WebAuthn. |
+| Exact-D1 root and browser | `apps/identity/src/cli/bootstrap-root-runner.mjs`, new `scripts/cloud-e2e/root-bootstrap.mjs`, local `tests/e2e/src/passkey-bootstrap.ts`, future `tests/e2e/src/cloud-login.ts`, their tests | Local bootstrap extracts existing CDP registration/sign-in and validates the independently CLI-issued root before exclusive private state publication. Future controller/HTTPS bootstrap remains deferred. |
 | Cloud Playwright | `tests/e2e/src/config.ts`, `operator-client.ts`, `execution.ts`, `scenario-run.ts`, `manifest.ts`, `playwright.global-setup.ts`, `playwright.config.ts`, `test/playwright/promo.browser.spec.ts`, focused unit tests | Validate verified stack manifest and host-scoped Access headers; run existing API/browser scenarios and cleanup on external stack. |
 | Docs | `README.md` if it becomes tracked, `tests/e2e/README.md`, `docs/testing/gap-030-031-e2e.md`, `docs/integration/staging-operations.md`, new `docs/testing/per-pr-cloud-e2e.md` | Commands, trust/cleanup runbook, exact test coverage and email limitation, staging preservation, pilot/rollout evidence. The current untracked `README.md` is user-owned; do not add or overwrite it without separately resolving ownership. |
 
@@ -613,6 +613,31 @@ contexts block service workers; WebSockets are outside this HTTP foundation.
 The original five local business/isolation/cleanup cases are unchanged, with
 one additional local-only routing case. Full Task 7 and every live gate below
 remain unchecked/incomplete.
+
+**Bounded local passkey extraction (2026-10-08):** Task 7b is implemented and
+locally tested; independent task review passed on 2026-10-08 for this bounded
+local scope. It extracts the existing
+managed-local CDP/WebAuthn registration and sign-in into a small local-only
+helper. The suite chooses its root email before the local CLI call and parses
+that call's pending-root user ID and activation grant together. The same
+browser context must return a schema-valid `/operator/v1/session` with that
+independently expected ID, root role and exactly `['passkey']`; no email field
+is invented. HTTP errors, redirects and noncanonical/non-loopback origins
+refuse before browser state reaches disk. Browser/context cleanup precedes
+exclusive publication of complete state created with mode 0600; existing files,
+symlinks and directories remain intact.
+
+Browser-free Vitest uses real loopback HTTP and filesystem assertions, with
+only the browser snapshot boundary substituted. The existing two-local-stack
+Playwright case additionally restores each file into a fresh browser context,
+checks exact independently expected root/passkey session, mode and signed-in UI,
+and retains all health/isolation/cross-state assertions. All six existing cases
+and substantive business/disposal assertions remain. The
+[local passkey evidence](../../testing/per-pr-cloud-e2e.md#local-passkey-bootstrap-extraction-2026-10-08)
+records implementation, verification and bounded independent task review.
+This extraction grants no cloud admission/login, Access wiring,
+deployed acceptance or full Task 7 completion. All four provider blockers and
+live NO-GO remain; the future cloud requirements below stay unchecked.
 
 **Files:** Create: `tests/e2e/src/cloud-login.ts`, `cloud-access.ts`, focused `tests/e2e/test/unit/{cloud-login,cloud-access,config}.test.ts`; Modify: Playwright files in the file map and `package.json` for `e2e:cloud-ci`.
 
