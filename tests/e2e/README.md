@@ -1,14 +1,20 @@
 # End-to-end test workspace
 
-From the repository root, after `pnpm install --frozen-lockfile`:
+The full local API/browser suite runs automatically on same-repository PR
+pushes. See [Local PR E2E CI](../../docs/testing/local-pr-e2e-ci.md) for its
+six-test coverage, diagnostics policy and staging/cloud evidence boundary.
+Staging remains protected owner-run acceptance after deployment; disposable
+cloud PR stacks and guarded upload remain paused and unfinished.
+
+From the repository root, after `pnpm install --frozen-lockfile` and `pnpm build`:
 
 ```sh
 pnpm e2e:local:headed
 ```
 
 This opens system Chrome so you can watch the Promo draft, save, refresh, detail,
-and publish flow. `pnpm e2e:local` runs the browser smoke plus the detailed API
-flow headlessly. No pre-existing root session, ports, `.dev.vars`, or local D1
+and publish flow. `pnpm e2e:local` runs all six API/browser tests headlessly
+with two workers. No pre-existing root session, ports, `.dev.vars`, or local D1
 state is needed: Playwright builds the dashboard/dependencies once, allocates
 unique loopback ports and Worker names, migrates two private temporary D1
 stores, bootstraps a disposable root through the existing root CLI and actual
@@ -118,13 +124,15 @@ order, and idempotency identifiers are run-scoped. A mode-0600 manifest in
 `tests/e2e/.runs` records every created ID and its owner. The run proof,
 cookies, and tokens are separate private files. Independent scenarios share
 one suite bootstrap but not tenant state or browser contexts. Playwright uses
-two bounded workers; API tests carry detailed assertions while one browser
-spec exercises real UI interactions. The measured local baseline on
+two bounded workers; API tests carry detailed business assertions, one browser
+spec exercises real Promo UI interactions, and another checks controlled local
+routing. The measured local baseline on
 2026-09-25 was 5 Playwright tests in 23.9 seconds, including bootstrap,
 two concurrent full scenarios, browser smoke, and two simultaneous independent
-Worker/Auth D1 instances. CI may select `--project=api` or
-`--project=browser`, or shard with Playwright's `--shard` flag; each shard
-starts its own isolated stack.
+Worker/Auth D1 instances. The PR CI job runs every project and all six tests
+without selection or sharding. For focused local diagnosis, Playwright accepts
+`--project=api`, `--project=browser`, or `--shard`; each shard starts its own
+isolated stack.
 
 ## Cleanup and recovery
 

@@ -1,0 +1,106 @@
+# Local PR E2E CI
+
+Same-repository pull requests run the full local API and browser suite against disposable Workers and real local D1 stores, checking product behavior before staging acceptance.
+
+## Execution contract
+
+| Boundary | Contract |
+|---|---|
+| Trigger | Pull requests opened, reopened or updated by a push, for any target branch; the head repository must equal this repository. External forks skip the local E2E job. |
+| Superseded runs | The existing workflow/ref concurrency group cancels older runs for the same PR ref, including its baseline and local E2E jobs. |
+| Baseline | The existing build, lint and unit-test `verify` job still runs. Pushes to `dev` run that baseline; the local E2E job is PR-only. |
+| Runtime | Ubuntu, Node 22.18.0, pnpm 11.14.0, frozen lockfile installation, Corepack networking disabled (`COREPACK_ENABLE_NETWORK=0`), dependency verification required (`pnpm_config_verify_deps_before_run=error`) and global virtual store disabled (`pnpm_config_enable_global_virtual_store=false`); project-pinned Playwright Chromium with Linux system dependencies, then workspace build. |
+| Suite | `pnpm e2e:local`, both API and browser projects, all six tests, two workers, no filtering or sharding; the existing one CI retry remains. |
+| Authority | `contents: read`; checkout credentials are not persisted for the local E2E job. No staging session, Cloudflare token, repository secret or privileged GitHub write token is supplied to the suite. |
+| Isolation | Fresh root/passkey identity, unique loopback ports and Worker names, private temporary Product/Auth D1 stores, and independently scoped scenario tenants. The suite owns and closes its local processes and temporary stack files. |
+
+Built workspace contracts must exist before Playwright imports its global
+setup. The managed stack additionally builds its dashboard and runtime
+dependencies, migrates its private databases and bootstraps root through the
+supported local CLI and actual passkey UI with a virtual WebAuthn authenticator.
+
+Code references:
+
+- [CI workflow](../../.github/workflows/ci.yml).
+- [Playwright configuration](../../tests/e2e/playwright.config.ts).
+- [Managed-local setup](../../tests/e2e/playwright.global-setup.ts).
+- [Local stack lifecycle](../../tests/e2e/src/local-stack.ts).
+- [Actual passkey bootstrap and private state publication](../../tests/e2e/src/passkey-bootstrap.ts).
+
+## Behavioral coverage
+
+**Table — Existing full local suite**
+
+| Case | Assertions |
+|---|---|
+| Exact Promo business flow | Author and publish a 25% order Promo capped at GBP 15.00 and a GBP 5.00 per-matching-unit Promo; read configurations back; assert ordered rule/line allocations, 3,000 total discount and 7,001 discounted subtotal; verify signed evaluation/redemption integrity, persisted ledger, one usage and 3,500 remaining budget per Promo; identical retry changes nothing and conflicting reuse is refused. |
+| Concurrent scenarios | Two complete business scenarios run concurrently with different run, merchant, evaluation and redemption IDs, run-owned allocations and exact totals; both dispose successfully. |
+| Failure cleanup | An intentionally failed scenario disposes only its recorded tenant. Success and failure paths assert zero run-owned Product/Auth rows and cleaned manifest resources. Sanitized disposal audit tombstones remain. |
+| Independent stacks | Two extra local stacks have distinct origins, directories and root identities. Fresh browser contexts restore each mode-0600 saved state and verify the independently expected root identity, root role, passkey-only session and signed-in UI; both cross-state uses are rejected. |
+| Promo browser flow | Use the real edit page, check the 1500 cap, change and restore it, save, verify the exact GBP 15.00 detail summary, reload, check API persistence, publish through the confirmation dialog, and verify active revision 1 and the exact persisted published reward. |
+| Controlled local routing | A real browser navigates pages, assets and subrequests through a local transport fixture; credential snapshots survive caller mutation, foreign requests never dispatch, same-origin and foreign redirects refuse, header collisions refuse before dispatch, and closed contexts stay closed. This uses synthetic Access fixture credentials, not live Access. |
+
+All existing assertions remain intact. The business flow uses actual local
+Workers/D1 and browser interactions. Passkey bootstrap runs during managed
+setup and is additionally checked through the restored-session isolation case.
+The controlled routing fixture certifies its local HTTP boundary only.
+
+Code references:
+
+- [Business, concurrency and failure cleanup tests](../../tests/e2e/test/playwright/gap.api.spec.ts).
+- [Exact scenario and persistence assertions](../../tests/e2e/src/gap-scenario.ts).
+- [Independent stack and session checks](../../tests/e2e/test/playwright/local-stack.api.spec.ts).
+- [Promo browser test](../../tests/e2e/test/playwright/promo.browser.spec.ts).
+- [Controlled routing browser test](../../tests/e2e/test/playwright/cloud-access.browser.spec.ts).
+
+## Diagnostics and private state
+
+CI reports test names, timings and assertion failures in its console using the
+list reporter. Trace and screenshot capture are disabled in CI, video remains
+disabled, and the workflow uploads no artifacts or raw reports. Local runs
+outside CI retain their existing failure trace/screenshot behavior.
+
+Saved browser state, cookies, API credentials, run proofs, manifests, generated
+Worker configs, temporary D1 stores and raw diagnostic files remain private.
+The ignored `.runs` directory is not uploaded. Assertion failures are diagnosed
+from the console and reproduced locally; raw local traces/reports must not be
+attached to public evidence because they can carry privileged synthetic sessions,
+headers and run proofs.
+
+## Dated verification and remaining acceptance
+
+On 2026-10-09, the full managed-local baseline passed six tests with two workers
+in 27.5 seconds, with no skips or retries, using Node 22.18.0, pnpm 11.14.0 and
+the lockfile-pinned Chromium. A fresh checkout first required the workspace build;
+the restricted local sandbox also required permission to bind loopback servers.
+Neither setup failure executed a behavioral test.
+
+The final local run with `CI=true` and pinned Chromium passed all six tests
+with two workers in 22.1 seconds (22.88 seconds for the command), with no
+failures, skips or retries. A temporary product UI regression rendered a
+250% summary instead of 25%; the unchanged browser test failed on its exact
+GBP 15.00 summary assertion after saving. The product file was restored
+byte-for-byte before the full passing run. This is macOS local evidence with
+CI settings; hosted Ubuntu execution is reported by the PR check.
+
+Local CI does not certify deployed Worker versions/bindings, remote D1 migration
+state, staging secrets, HTTPS/passkey policy, live Access, invitation/email
+delivery, production behavior or deployment/teardown. Staging remains an
+owner-run manual acceptance step after an approved deployment, using an ordinary
+private root passkey session, the cross-Worker capability/migration handshake,
+the full applicable suite and scoped cleanup.
+
+Disposable cloud PR stacks and guarded upload remain paused, unfinished,
+unadopted and unverified. The unresolved provider boundaries remain service
+binding remapping, the asset/session target name, upload hash semantics and
+asset completion scope. Local routing checks establish no live provider
+ownership, GitHub freshness, cloud binding graph, Access policy, HTTPS cloud
+passkey login, two-cloud-stack isolation or remote teardown; `cloud-ci` remains
+unavailable. This workflow creates no cloud deployment.
+
+## Related
+
+- [End-to-end test workspace](../../tests/e2e/README.md).
+- [GAP-030/031 automated end-to-end verification](gap-030-031-e2e.md).
+- [Staging Worker operations](../integration/staging-operations.md).
+- [Per-PR Cloud E2E pilot ledger](per-pr-cloud-e2e.md).
