@@ -87,12 +87,20 @@ headers and run proofs.
 
 ## Dated verification and remaining acceptance
 
-The reviewed implementation was published in [PR #21](https://github.com/tanmaydatta/chole-bhature/pull/21)
-on 2026-10-09. [Hosted Ubuntu run 37911292536](https://github.com/tanmaydatta/chole-bhature/actions/runs/37911292536)
+On 2026-10-09, [hosted Ubuntu run 37935917355](https://github.com/tanmaydatta/chole-bhature/actions/runs/37935917355)
+passed both `verify` and `local-e2e` on the reviewed [harness commit 0974eb77](https://github.com/tanmaydatta/chole-bhature/commit/0974eb77df181e02f9d23788df07c93f1c609986)
+in [PR #21](https://github.com/tanmaydatta/chole-bhature/pull/21). The full suite
+passed all six tests with two workers in 42.6 seconds, with no failures, skips,
+flaky results or retries; the independent-stack case took 16.8 seconds.
+Before and after the suite, numeric summaries reported zero workerd processes
+and threads, and no orphan workerd termination was reported. This satisfies
+the hosted gate for that commit; the original native cause remains unproved,
+and one green run does not prove the flake is eliminated.
+
+The earlier [hosted Ubuntu run 37911292536](https://github.com/tanmaydatta/chole-bhature/actions/runs/37911292536)
 passed baseline `verify` and five of six E2E tests. The independent-stack case
 failed when the Operator runtime stopped before readiness; its retry timed out.
-The original native cause remains unproved and this is a blocking merge gate,
-not a green hosted result. The preceding [run 37911132214](https://github.com/tanmaydatta/chole-bhature/actions/runs/37911132214)
+That failed run did not satisfy the hosted gate. The preceding [run 37911132214](https://github.com/tanmaydatta/chole-bhature/actions/runs/37911132214)
 was cancelled after the same-PR documentation push `b851c53`, demonstrating
 superseded-run cancellation.
 
@@ -102,9 +110,11 @@ Semantic regression tests first demonstrated abandoned temporary resources,
 failure to await late peers/cleanup, lost early native hints and credential-shaped
 log reflection; the implementation then passed those tests. The full local suite
 passed all six tests with two workers in 23.4 seconds (24.14 seconds for the
-command), with no skips or retries. These are macOS results using the pinned
-runtime and CI Chromium settings; the new harness diagnostics and cleanup still
-require reviewed Ubuntu execution and do not claim to fix the native fault.
+command), with no skips or retries. Independent review then passed the exact
+reviewed source's full local suite in 20.1 seconds, with two workers and no
+skips or retries. These are macOS results using the pinned runtime and CI
+Chromium settings, separate from the successful Ubuntu result above; neither
+claims to prove the original native fault fixed.
 
 On 2026-10-09, the full managed-local baseline passed six tests with two workers
 in 27.5 seconds, with no skips or retries, using Node 22.18.0, pnpm 11.14.0 and
@@ -112,7 +122,7 @@ the lockfile-pinned Chromium. A fresh checkout first required the workspace buil
 the restricted local sandbox also required permission to bind loopback servers.
 Neither setup failure executed a behavioral test.
 
-The final local run with `CI=true` and pinned Chromium passed all six tests
+The initial CI milestone's final local run with `CI=true` and pinned Chromium passed all six tests
 with two workers in 22.1 seconds (22.88 seconds for the command), with no
 failures, skips or retries. A temporary product UI regression rendered a
 250% summary instead of 25%; the unchanged browser test failed on its exact

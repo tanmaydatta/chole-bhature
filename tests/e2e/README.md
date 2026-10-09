@@ -3,9 +3,11 @@
 The full local API/browser suite runs automatically on same-repository PR
 pushes. See [Local PR E2E CI](../../docs/testing/local-pr-e2e-ci.md) for its
 six-test coverage, diagnostics policy and staging/cloud evidence boundary.
-The first Ubuntu run passed baseline verification and five of six E2E cases;
-the two-stack startup failure remains a blocking gate with its native cause
-unproved. The linked reference records the run and cancellation evidence.
+The reviewed harness commit passed hosted Ubuntu baseline verification and all
+six E2E cases with two workers in 42.6 seconds, without retries. The original
+native startup cause remains unproved; one green run does not establish that
+the flake is eliminated. The linked reference records the exact run, earlier
+failure and cancellation evidence.
 Staging remains protected owner-run acceptance after deployment; disposable
 cloud PR stacks and guarded upload remain paused and unfinished.
 
