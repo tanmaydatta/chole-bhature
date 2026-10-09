@@ -2,10 +2,13 @@ import { createServer, type Server } from 'node:http';
 import { mkdtemp, readFile, readdir, rm, stat, symlink, writeFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { request, type APIRequestContext } from '@playwright/test';
-import { afterEach, beforeEach, describe, expect, test } from 'vitest';
+import { setTimeout as delay } from 'node:timers/promises';
+import { chromium, request, type APIRequestContext } from '@playwright/test';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
-import { parseLocalRootBootstrapResult, saveLocalPasskeyRootState } from '../../src/passkey-bootstrap.js';
+import { parseLocalRootBootstrapResult, saveLocalPasskeyRootState,
+  withLocalPasskeyBrowser, withLocalPasskeyContext } from '../../src/passkey-bootstrap.js';
+import { createLocalStackOwner } from '../../src/local-stack.js';
 
 const rootSession = {
   userId: 'independently-issued-root', platformRole: 'root',
@@ -146,6 +149,27 @@ describe('local passkey root state publication', () => {
     expect(await readdir(directory)).toEqual(['root.json']);
   });
 
+  // Break caught: ignoring abort publishes a privileged session after its owner has cancelled.
+  test('refuses an already cancelled publication without any artifact or private error', async () => {
+    const controller = new AbortController();
+    controller.abort(new Error('PRIVATE_ACTIVATION_GRANT'));
+    const outcome = await publish({ signal: controller.signal }).catch(error => error);
+    expect(outcome).toBeInstanceOf(Error);
+    expect(String(outcome)).not.toContain('PRIVATE_ACTIVATION_GRANT');
+    expect(await readdir(directory)).toEqual([]);
+  });
+
+  test('does not publish when cancellation occurs during snapshot acquisition', async () => {
+    const controller = new AbortController();
+    const outcome = await saveLocalPasskeyRootState({ request: api, storageState: async () => {
+      controller.abort();
+      return snapshot;
+    } }, { operatorOrigin: origin, expectedRootUserId: rootSession.userId,
+      storageStatePath: output, signal: controller.signal }).catch(error => error);
+    expect(outcome).toBeInstanceOf(Error);
+    expect(await readdir(directory)).toEqual([]);
+  });
+
   // Overwriting or unlinking existing destinations must fail these preservation assertions.
   test('preserves an unrelated existing output and removes only its unpublished temporary file', async () => {
     await writeFile(output, 'unrelated owner content', { mode: 0o600 });
@@ -174,6 +198,163 @@ describe('local passkey root state publication', () => {
   test('leaves no partial artifact when the destination parent is absent', async () => {
     await expect(publish({ storageStatePath: join(directory, 'absent', 'root.json') })).rejects.toThrow();
     expect(await readdir(directory)).toEqual([]);
+  });
+});
+
+describe('owned passkey browser cancellation', () => {
+  test('bounds pending browser acquisition and reports incompleteness to caller and owner', async () => {
+    const browser = await chromium.launch({ channel: process.env.E2E_BROWSER_CHANNEL ?? 'chrome' });
+    const owner = createLocalStackOwner();
+    const controller = new AbortController();
+    let release!: () => void;
+    const late = new Promise<void>(done => { release = done; });
+    let started!: () => void;
+    const launching = new Promise<void>(done => { started = done; });
+    const outcome = withLocalPasskeyBrowser(async () => { started(); await late; return browser; },
+      async () => { throw new Error('must not enter bootstrap'); }, controller.signal, owner).catch(error => error);
+    try {
+      await launching;
+      vi.useFakeTimers(); controller.abort(new Error('PRIVATE_GRANT'));
+      await vi.advanceTimersByTimeAsync(10_001);
+      const error = await outcome;
+      expect(String(error)).toMatch(/cancelled.*cleanup incomplete/iu);
+      expect(String(error)).not.toContain('PRIVATE_GRANT');
+      const cleanup = await owner.stop().catch(error => error);
+      expect(String(cleanup)).toMatch(/cleanup incomplete/iu);
+    } finally {
+      vi.useRealTimers(); release(); await browser.close(); await outcome;
+      await owner.stop().catch(() => {});
+    }
+  });
+
+  test('reports failed cleanup of a real browser acquired after cancellation', async () => {
+    const owner = createLocalStackOwner();
+    const browser = await chromium.launch({ channel: process.env.E2E_BROWSER_CHANNEL ?? 'chrome' });
+    let release!: () => void;
+    const late = new Promise<void>(done => { release = done; });
+    let started!: () => void;
+    const launching = new Promise<void>(done => { started = done; });
+    const wrapped = new Proxy(browser, { get(target, name) {
+      return name === 'close' ? async () => { await target.close(); throw new Error('PRIVATE_COOKIE'); }
+        : Reflect.get(target, name);
+    } });
+    const controller = new AbortController();
+    let entered = false;
+    const outcome = withLocalPasskeyBrowser(async () => { started(); await late; return wrapped; },
+      async () => { entered = true; }, controller.signal, owner).catch(error => error);
+    try {
+      await launching;
+      controller.abort();
+      await delay(20); release();
+      const error = await outcome;
+      expect(String(error)).toMatch(/cancelled.*cleanup/iu);
+      expect(String(error)).not.toContain('PRIVATE_COOKIE');
+      expect(entered).toBe(false);
+      const cleanup = await owner.stop().catch(error => error);
+      expect(String(cleanup)).toMatch(/cleanup incomplete/iu);
+      expect(String(cleanup)).not.toContain('PRIVATE_COOKIE');
+      for (let attempt = 0; attempt < 100 && browser.isConnected(); attempt++) await delay(10);
+      expect(browser.isConnected()).toBe(false);
+    } finally { release(); await browser.close(); await outcome; await owner.stop().catch(() => {}); }
+  });
+
+  test('bounds a blocked real-browser close and reports cancellation plus cleanup failure privately', async () => {
+    const browser = await chromium.launch({ channel: process.env.E2E_BROWSER_CHANNEL ?? 'chrome' });
+    let release!: () => void;
+    const blocked = new Promise<void>(done => { release = done; });
+    const wrapped = new Proxy(browser, { get(target, name) {
+      return name === 'close' ? async () => { await blocked; await target.close(); }
+        : Reflect.get(target, name);
+    } });
+    const controller = new AbortController();
+    let entered!: () => void;
+    const using = new Promise<void>(done => { entered = done; });
+    let settled = false;
+    const outcome = withLocalPasskeyBrowser(async () => wrapped, async () => {
+      entered(); await new Promise(() => {});
+    }, controller.signal).catch(error => { settled = true; return error; });
+    try {
+      await using;
+      vi.useFakeTimers();
+      controller.abort(new Error('PRIVATE_COOKIE'));
+      await vi.advanceTimersByTimeAsync(10_001);
+      expect(settled).toBe(true);
+      const error = await outcome;
+      expect(String(error)).toMatch(/cancelled.*cleanup/iu);
+      expect(String(error)).not.toContain('PRIVATE_COOKIE');
+    } finally {
+      vi.useRealTimers(); release(); await browser.close(); await outcome;
+    }
+  });
+  test('closes late context initialization without entering bootstrap or closing a foreign browser', async () => {
+    const browser = await chromium.launch({ channel: process.env.E2E_BROWSER_CHANNEL ?? 'chrome' });
+    const context = await browser.newContext();
+    const page = await context.newPage();
+    const controller = new AbortController();
+    let release!: () => void;
+    const late = new Promise<void>(done => { release = done; });
+    let started!: () => void;
+    const initializing = new Promise<void>(done => { started = done; });
+    let entered = false;
+    const outcome = withLocalPasskeyContext(async () => { started(); await late; return context; },
+      async () => { entered = true; }, controller.signal).catch(error => error);
+    try {
+      await initializing;
+      controller.abort(new Error('PRIVATE_SESSION'));
+      release();
+      const error = await outcome;
+      expect(error).toBeInstanceOf(Error);
+      expect(String(error)).not.toContain('PRIVATE_SESSION');
+      for (let attempt = 0; attempt < 100 && !page.isClosed(); attempt++) await delay(10);
+      expect(page.isClosed()).toBe(true);
+      expect(entered).toBe(false);
+      expect(browser.isConnected()).toBe(true);
+    } finally { release(); await browser.close(); }
+  });
+  // Real Chromium is the resource; only a delayed dependency boundary is controlled.
+  test('closes a browser that fulfills after cancellation without running bootstrap', async () => {
+    const browser = await chromium.launch({ channel: process.env.E2E_BROWSER_CHANNEL ?? 'chrome' });
+    const controller = new AbortController();
+    let release!: () => void;
+    const late = new Promise<void>(done => { release = done; });
+    let started!: () => void;
+    const launching = new Promise<void>(done => { started = done; });
+    let entered = false;
+    const outcome = withLocalPasskeyBrowser(async () => { started(); await late; return browser; },
+      async () => { entered = true; }, controller.signal).catch(error => error);
+    try {
+      await launching;
+      controller.abort(new Error('PRIVATE_GRANT'));
+      release();
+      const error = await outcome;
+      expect(error).toBeInstanceOf(Error);
+      expect(String(error)).not.toContain('PRIVATE_GRANT');
+      expect(entered).toBe(false);
+      for (let attempt = 0; attempt < 100 && browser.isConnected(); attempt++) await delay(10);
+      expect(browser.isConnected()).toBe(false);
+    } finally { release(); await browser.close(); }
+  });
+
+  test('closes initialized contexts when cancellation interrupts a blocked browser operation', async () => {
+    const browser = await chromium.launch({ channel: process.env.E2E_BROWSER_CHANNEL ?? 'chrome' });
+    const controller = new AbortController();
+    let entered!: () => void;
+    const ready = new Promise<void>(done => { entered = done; });
+    let page: Awaited<ReturnType<Awaited<ReturnType<typeof browser.newContext>>['newPage']>> | undefined;
+    const outcome = withLocalPasskeyBrowser(async () => browser, async owned => {
+      const context = await owned.newContext();
+      page = await context.newPage();
+      entered();
+      await page.waitForFunction(() => false, undefined, { timeout: 2_000 });
+    }, controller.signal).catch(error => error);
+    try {
+      await ready;
+      controller.abort();
+      expect(await Promise.race([outcome.then(() => true), delay(1_000).then(() => false)]))
+        .toBe(true);
+      expect(browser.isConnected()).toBe(false);
+      expect(page!.isClosed()).toBe(true);
+    } finally { await browser.close(); }
   });
 });
 

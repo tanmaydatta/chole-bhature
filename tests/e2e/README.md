@@ -3,11 +3,12 @@
 The full local API/browser suite runs automatically on same-repository PR
 pushes. See [Local PR E2E CI](../../docs/testing/local-pr-e2e-ci.md) for its
 six-test coverage, diagnostics policy and staging/cloud evidence boundary.
-The reviewed harness commit passed hosted Ubuntu baseline verification and all
-six E2E cases with two workers in 42.6 seconds, without retries. The original
-native startup cause remains unproved; one green run does not establish that
-the flake is eliminated. The linked reference records the exact run, earlier
-failure and cancellation evidence.
+An earlier harness commit passed all six hosted Ubuntu cases in 42.6 seconds,
+but the subsequent documentation head timed out in the independent-stack case
+on both attempts and left owned runtimes for runner cleanup. The hosted gate
+is not satisfied for that head. The original native/hang cause remains unproved;
+the linked reference records exact runs, cancellation evidence and the pending
+timeout-safe lifecycle change.
 Staging remains protected owner-run acceptance after deployment; disposable
 cloud PR stacks and guarded upload remain paused and unfinished.
 
@@ -38,8 +39,9 @@ then publishes a complete file created with mode 0600 without overwriting an
 existing file, symlink or directory. The existing two-stack Playwright case
 restores both saved files into fresh browser contexts and verifies their exact
 root identities, passkey sessions and signed-in UI, while retaining cross-state
-rejection. Browser-free Vitest cases exercise real local HTTP and filesystem
-failure paths; actual Chromium/WebAuthn runs only in local Playwright.
+rejection. Vitest cases exercise real local HTTP/filesystem failure paths and
+real Chromium browser/context cancellation, including late fulfillment. Actual
+WebAuthn bootstrap remains in the full local Playwright suite.
 This bounded local extraction is implemented and locally tested; independent
 task review passed on 2026-10-08 for this local Task 7b scope.
 It adds no cloud target or login, Access wiring or provider authority. See the
@@ -141,13 +143,30 @@ isolated stack.
 
 ## Cleanup and recovery
 
-The independent-stack owner preserves concurrent starts, waits for both startup
-attempts (including a late successful peer), and stops every acquired stack on
-startup failure, assertion failure and success. It awaits all stops before
-propagating startup/assertion/cleanup failures. Managed startup diagnostics emit
-only a fixed phase, known failure hints and launcher exit/signal values, never
-raw private logs or error content; unknown log text is not reflected. CI's
-best-effort capacity summaries contain only bounded system numbers.
+The independent-stack test registers its fixture owner before simultaneous
+startup. Normal test timeout teardown cancels pending and ready stacks without
+waiting indefinitely for startup fulfillment. Setup commands and Workers belong
+to dedicated POSIX process groups pinned by live IPC supervisors. Only each live
+supervisor signals its own group and inheriting descendants; the parent never
+signals a remembered group ID after supervisor exit. Late temporary resources, browsers and contexts are
+disposed before use, and cancellation prevents root-state publication. Successful
+tests still await both starts and all stops; cleanup failures are reported with
+the original test failure preserved.
+
+Setup commands and passkey bootstrap have 45-second cancellation deadlines;
+pending browser acquisition plus close has a 10-second cleanup bound, as do
+resource cleanup and supervisor IPC shutdown. Owned groups receive TERM then
+KILL after five seconds; numeric membership inspection excludes the supervisor
+and its completed inspector. Inspection failure triggers best-effort self-group
+termination and remains an incomplete cleanup, not success. Late browser close
+failure or acquisition deadline reaches both caller and fixture owner. The suite's test
+timeout, retry count, concurrency and assertions are unchanged. Fixture teardown
+supports normal Playwright test interruption, not uncatchable OS termination
+such as SIGKILL or descendants that escape their owned process group.
+Managed diagnostics emit fixed phases before awaits and every ten seconds,
+bounded elapsed milliseconds, known failure hints and launcher exit/signal
+values, never raw private logs or error content. Unknown text is not reflected.
+CI's best-effort capacity summaries contain only bounded system numbers.
 
 The scenario runner previews and disposes its claimed tenant in `finally`,
 then reopens a root read-only inventory to assert **zero Product and Auth

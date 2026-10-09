@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
-import { link, open, unlink } from 'node:fs/promises';
+import { link, open, stat, unlink } from 'node:fs/promises';
 import { dirname, isAbsolute, join } from 'node:path';
-import { chromium, expect, type BrowserContext } from '@playwright/test';
+import { chromium, expect, type Browser, type BrowserContext } from '@playwright/test';
 import { OperatorSessionViewSchema } from '@incentives/contracts';
 import { z } from 'zod';
 
@@ -12,7 +12,70 @@ const RootBootstrapResultSchema = z.object({
 type RootBootstrapResult = z.infer<typeof RootBootstrapResultSchema>;
 
 export interface LocalRootStateOptions {
-  operatorOrigin: string; expectedRootUserId: string; storageStatePath: string;
+  operatorOrigin: string; expectedRootUserId: string; storageStatePath: string; signal?: AbortSignal;
+  owner?: { own(stop: () => Promise<void>): void };
+}
+
+function active(signal?: AbortSignal) {
+  if (signal?.aborted) throw new Error('Local passkey operation cancelled');
+}
+
+// Abort closes acquired browsers now, and closes late launch fulfillment before use.
+async function withLocalPasskeyResource<Resource extends { close(): Promise<void> }, Result>(
+  launch: () => Promise<Resource>, use: (resource: Resource) => Promise<Result>, signal?: AbortSignal,
+  owner?: LocalRootStateOptions['owner']): Promise<Result> {
+  active(signal);
+  let acquisition: Promise<Resource>;
+  let closing: Promise<void> | undefined;
+  const close = () => {
+    if (closing) return closing;
+    let timer: ReturnType<typeof setTimeout>;
+    const deadline = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error('Local passkey cleanup deadline exceeded')), 10_000);
+    });
+    // One bound covers pending acquisition and late close; failure stays owned.
+    closing = Promise.race([acquisition.then(resource => resource.close()), deadline])
+      .finally(() => clearTimeout(timer));
+    return closing;
+  };
+  // Register before the factory can run, including cancellation during launch.
+  owner?.own(close);
+  acquisition = Promise.resolve().then(() => { active(signal); return launch(); });
+  let interrupt!: () => void;
+  const cancelled = new Promise<never>((_, reject) => {
+    interrupt = () => reject(new Error('Local passkey operation cancelled'));
+  });
+  signal?.addEventListener('abort', interrupt, { once: true });
+  const operation = acquisition.then(async acquired => {
+    active(signal);
+    return use(acquired);
+  });
+  let failed = false;
+  let failure: unknown;
+  let result: Result | undefined;
+  try { result = await Promise.race([operation, cancelled]); }
+  catch (error) { failed = true; failure = error; }
+  signal?.removeEventListener('abort', interrupt);
+  // Both operation and late disposal retain rejection handlers after a deadline.
+  try { await close(); } catch {
+    const primary = `Local passkey operation ${signal?.aborted ? 'cancelled' : 'failed'}`;
+    throw new AggregateError([new Error(primary), new Error('Local passkey cleanup incomplete')],
+      `${primary}; cleanup incomplete`);
+  }
+  if (failed) throw failure;
+  return result as Result;
+}
+
+export function withLocalPasskeyBrowser<Result>(launch: () => Promise<Browser>,
+  use: (browser: Browser) => Promise<Result>, signal?: AbortSignal,
+  owner?: LocalRootStateOptions['owner']): Promise<Result> {
+  return withLocalPasskeyResource(launch, use, signal, owner);
+}
+
+export function withLocalPasskeyContext<Result>(create: () => Promise<BrowserContext>,
+  use: (context: BrowserContext) => Promise<Result>, signal?: AbortSignal,
+  owner?: LocalRootStateOptions['owner']): Promise<Result> {
+  return withLocalPasskeyResource(create, use, signal, owner);
 }
 
 export function parseLocalRootBootstrapResult(raw: string): RootBootstrapResult {
@@ -38,12 +101,14 @@ export async function saveLocalPasskeyRootState(
 ): Promise<string> {
   requireLocalOptions(options);
   try {
+    active(options.signal);
     return await publishLocalRootState(await verifiedLocalRootSnapshot(context, options), options);
   } catch { throw new Error('Local passkey root session verification or state publication failed'); }
 }
 
 async function verifiedLocalRootSnapshot(context: Pick<BrowserContext, 'request' | 'storageState'>,
   options: LocalRootStateOptions): Promise<string> {
+  active(options.signal);
   const response = await context.request.get(`${options.operatorOrigin}/operator/v1/session`,
     { failOnStatusCode: false, maxRedirects: 0 });
   if (response.status() !== 200) throw new Error();
@@ -51,25 +116,40 @@ async function verifiedLocalRootSnapshot(context: Pick<BrowserContext, 'request'
   if (session.userId !== options.expectedRootUserId || session.platformRole !== 'root'
     || session.authenticationMethods.length !== 1
     || session.authenticationMethods[0] !== 'passkey') throw new Error();
-  return JSON.stringify(await context.storageState());
+  const snapshot = await context.storageState();
+  active(options.signal);
+  return JSON.stringify(snapshot);
 }
 
 async function publishLocalRootState(serialized: string, options: LocalRootStateOptions): Promise<string> {
+  active(options.signal);
   const temporary = join(dirname(options.storageStatePath),
     `.root-state-${randomBytes(16).toString('hex')}.tmp`);
   const file = await open(temporary, 'wx', 0o600);
+  let identity: Awaited<ReturnType<typeof file.stat>> | undefined;
   let published = false;
   try {
+    active(options.signal);
+    identity = await file.stat();
     await file.writeFile(serialized);
     await file.sync();
     await file.close();
+    active(options.signal);
     // link publishes a complete private file exclusively, including against symlinks.
     await link(temporary, options.storageStatePath);
     published = true;
+    active(options.signal);
   } catch {
     // Report the publication outcome after owned temporary-file cleanup.
   } finally {
     await file.close().catch(() => {});
+    if (published && options.signal?.aborted) {
+      const current = await stat(options.storageStatePath).catch(() => undefined);
+      if (identity && current?.ino === identity.ino && current.dev === identity.dev) {
+        await unlink(options.storageStatePath);
+      }
+      published = false;
+    }
     try { await unlink(temporary); }
     catch {
       // The owning local stack removes any residual private temporary file.
@@ -84,13 +164,13 @@ export async function bootstrapLocalRootPasskey(
   options: LocalRootStateOptions & { activationGrant: string },
 ): Promise<string> {
   requireLocalOptions(options);
+  active(options.signal);
   if (!options.activationGrant) throw new Error('Local root activation grant is required');
   try {
-    let serialized: string;
-    const browser = await chromium.launch({ channel: process.env.E2E_BROWSER_CHANNEL ?? 'chrome' });
-    try {
-      const context = await browser.newContext({ baseURL: options.operatorOrigin });
-      try {
+    const serialized = await withLocalPasskeyBrowser(() =>
+      chromium.launch({ channel: process.env.E2E_BROWSER_CHANNEL ?? 'chrome' }), async browser => {
+      return await withLocalPasskeyContext(() => browser.newContext({ baseURL: options.operatorOrigin }), async context => {
+        active(options.signal);
         const page = await context.newPage();
         const cdp = await context.newCDPSession(page);
         await cdp.send('WebAuthn.enable');
@@ -110,9 +190,9 @@ export async function bootstrapLocalRootPasskey(
         await page.getByRole('button', { name: 'Sign in with passkey' }).click();
         await expect(page.getByRole('heading', { name: 'Sign in to Incentives' }))
           .toBeHidden({ timeout: 20_000 });
-        serialized = await verifiedLocalRootSnapshot(context, options);
-      } finally { await context.close(); }
-    } finally { await browser.close(); }
+        return await verifiedLocalRootSnapshot(context, options);
+      }, options.signal, options.owner);
+    }, options.signal, options.owner);
     // Finish owned browser cleanup before publishing a success artifact.
     return await publishLocalRootState(serialized, options);
   } catch { throw new Error('Local root passkey bootstrap failed; inspect the local Worker setup'); }

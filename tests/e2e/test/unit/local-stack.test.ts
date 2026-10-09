@@ -1,11 +1,14 @@
-import { afterEach, describe, expect, test } from 'vitest';
-import { access, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { afterEach, describe, expect, test, vi } from 'vitest';
+import { access, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { execFile, spawn } from 'node:child_process';
+import { promisify } from 'node:util';
+import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { setImmediate } from 'node:timers/promises';
+import { setImmediate, setTimeout as delay } from 'node:timers/promises';
 
 import { localStackConfiguration, summarizeLocalWorkerFailure,
-  withLocalStackPair } from '../../src/local-stack.js';
+  createLocalStackOwner, withLocalStackFixture, withLocalStackPair } from '../../src/local-stack.js';
 
 const ports = { core: 20101, identity: 20102, operator: 20103,
   coreInspector: 20104, identityInspector: 20105, operatorInspector: 20106 };
@@ -34,6 +37,221 @@ describe('isolated local Worker stack', () => {
     expect(() => localStackConfiguration('/repo', '/private/tmp/first',
       'foreign', ports)).toThrow();
   });
+});
+
+function alive(pid: number) {
+  try { process.kill(pid, 0); return true; }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === 'ESRCH') return false; throw error; }
+}
+
+async function eventuallyAbsent(pid: number) {
+  for (let attempt = 0; attempt < 100 && alive(pid); attempt++) await delay(20);
+  return !alive(pid);
+}
+
+async function waitForFile(path: string) {
+  for (let attempt = 0; attempt < 200 && !await present(path); attempt++) await delay(10);
+  return readFile(path, 'utf8');
+}
+
+function killControlled(pids: number[]) {
+  for (const pid of pids) { try { process.kill(pid, 'SIGKILL'); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error; } }
+}
+
+describe('timeout-safe local stack ownership', () => {
+  test('never signals a logically reused group after its owned launcher exits', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'local-owner-reuse-'));
+    ownedDirectories.push(directory);
+    const marker = join(directory, 'exited-command');
+    const foreign = spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'],
+      { detached: true, stdio: 'ignore' });
+    await new Promise<void>(resolve => foreign.once('spawn', resolve));
+    const owner = createLocalStackOwner();
+    const child = owner.spawn(process.execPath, ['-e',
+      'require("node:fs").writeFileSync(process.argv[1],"completed");', marker], { stdio: 'ignore' });
+    const originalKill = process.kill.bind(process);
+    // OS PID churn is nondeterministic: redirect a stale post-exit group signal
+    // to a real foreign group at the exact production signalling boundary.
+    const kill = vi.spyOn(process, 'kill').mockImplementation((pid, signal) => {
+      if (pid === -child.pid! && child.exitCode !== null) return originalKill(-foreign.pid!, signal);
+      return originalKill(pid, signal);
+    });
+    try {
+      await waitForFile(marker);
+      await delay(100);
+      await owner.stop().catch(() => {});
+      expect(alive(foreign.pid!)).toBe(true);
+    } finally { kill.mockRestore(); foreign.kill('SIGKILL'); await owner.stop().catch(() => {}); }
+  });
+
+  test('reaps the owned launcher before probing its terminated group', async () => {
+    const owner = createLocalStackOwner();
+    const child = owner.spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'], { stdio: 'ignore' });
+    await new Promise<void>(resolve => child.once('spawn', resolve));
+    let reaped = false;
+    child.once('exit', () => { reaped = true; });
+    const earlyProbes: number[] = [];
+    const originalKill = process.kill.bind(process);
+    const kill = vi.spyOn(process, 'kill').mockImplementation((pid, signal) => {
+      if (pid === -child.pid! && signal === 0 && !reaped) earlyProbes.push(pid);
+      return originalKill(pid, signal);
+    });
+    try {
+      await owner.stop();
+      expect(reaped).toBe(true);
+      expect(earlyProbes).toEqual([]);
+      expect(await eventuallyAbsent(child.pid!)).toBe(true);
+    } finally { kill.mockRestore(); killControlled([child.pid!]); await owner.stop(); }
+  });
+
+  test('rejects acquisitions after cancellation before creating any real resource', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'local-owner-refusal-'));
+    ownedDirectories.push(directory);
+    const marker = join(directory, 'forbidden');
+    const owner = createLocalStackOwner();
+    await owner.stop();
+    await expect(owner.acquire(async () => { await writeFile(marker, 'PRIVATE_GRANT'); return marker; },
+      path => rm(path))).rejects.not.toThrow('PRIVATE_GRANT');
+    expect(await present(marker)).toBe(false);
+  });
+
+  test('attempts all owned cleanup idempotently and preserves fixture failure without private errors', async () => {
+    const first = await fileResource();
+    const second = await fileResource({ cleanupError: new Error('PRIVATE_COOKIE') });
+    const bodyError = new Error('controlled body failure');
+    const outcome = await withLocalStackFixture(async owner => {
+      owner.own(() => first.stop()); owner.own(() => second.stop());
+      throw bodyError;
+    }).catch(error => error);
+    expect(outcome).toBeInstanceOf(AggregateError);
+    expect(outcome.errors[0]).toBe(bodyError);
+    expect(String(outcome.errors[1])).toMatch(/cleanup incomplete/iu);
+    expect(String(outcome.errors[1])).not.toContain('PRIVATE_COOKIE');
+    expect(await present(first.marker)).toBe(false);
+    expect(await present(second.marker)).toBe(false);
+  });
+
+  test('bounds blocked cleanup without waiting for its late release', async () => {
+    const release = deferred();
+    const resource = await fileResource({ beforeStop: release.promise });
+    const owner = createLocalStackOwner();
+    owner.own(() => resource.stop());
+    let settled = false;
+    const outcome = owner.stop().catch(error => { settled = true; return error; });
+    try {
+      vi.useFakeTimers();
+      // Let the registered cleanup enter its controlled gate before advancing only the deadline clock.
+      await Promise.resolve();
+      await vi.advanceTimersByTimeAsync(10_001);
+      expect(settled).toBe(true);
+      expect(String(await outcome)).toMatch(/cleanup incomplete/iu);
+      expect(await present(resource.marker)).toBe(true);
+    } finally {
+      vi.useRealTimers(); release.resolve(); await outcome;
+      for (let attempt = 0; attempt < 100 && await present(resource.marker); attempt++) await delay(10);
+    }
+    expect(await present(resource.marker)).toBe(false);
+  });
+
+  test('emits only bounded phase labels before failure without reflecting private input', async () => {
+    const messages: string[] = [];
+    const log = vi.spyOn(console, 'log').mockImplementation(value => { messages.push(String(value)); });
+    const owner = createLocalStackOwner();
+    try {
+      owner.phase('root-bootstrap');
+      owner.phase('PRIVATE_GRANT:/private/root.json');
+      expect(messages.some(message => /^local-stack phase=root-bootstrap; elapsed_ms=\d+$/u.test(message))).toBe(true);
+      expect(messages.some(message => /^local-stack phase=unknown; elapsed_ms=\d+$/u.test(message))).toBe(true);
+      expect(messages.join('\n')).not.toMatch(/PRIVATE|\/private|root.json/iu);
+      await owner.stop();
+    } finally { log.mockRestore(); }
+  });
+  // Break caught: killing only the launcher leaves its real descendant alive.
+  test('stops an owned launcher and descendant without killing a foreign process', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'local-owner-descendant-'));
+    ownedDirectories.push(directory);
+    const marker = join(directory, 'pids');
+    const owner = createLocalStackOwner();
+    const foreign = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
+    const script = 'const {spawn}=require("node:child_process"); const {writeFileSync}=require("node:fs");'
+      + 'const peer=spawn(process.execPath,["-e","setInterval(()=>{},1000)"],{stdio:"ignore"});'
+      + 'writeFileSync(process.argv[1],JSON.stringify([process.pid,peer.pid]));setInterval(()=>{},1000);';
+    let pids: number[] = [];
+    try {
+      owner.spawn(process.execPath, ['-e', script, marker], { stdio: 'ignore' });
+      pids = JSON.parse(await waitForFile(marker));
+      await owner.stop();
+      expect(await eventuallyAbsent(pids[0]!)).toBe(true);
+      expect(await eventuallyAbsent(pids[1]!)).toBe(true);
+      expect(alive(foreign.pid!)).toBe(true);
+    } finally { killControlled(pids); foreign.kill('SIGKILL'); await owner.stop(); }
+  });
+
+  test('cancels an in-flight setup command and preserves its private cancellation reason', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'local-owner-command-'));
+    ownedDirectories.push(directory);
+    const marker = join(directory, 'pid');
+    const owner = createLocalStackOwner();
+    const script = 'require("node:fs").writeFileSync(process.argv[1],String(process.pid));'
+      + 'setTimeout(()=>process.exit(0),2000);';
+    const outcome = owner.run(process.execPath, ['-e', script, marker], directory).catch(error => error);
+    const pid = Number(await waitForFile(marker));
+    try {
+      await owner.stop();
+      expect(alive(pid)).toBe(false);
+      expect(await outcome).toBeInstanceOf(Error);
+    } finally { killControlled([pid]); await outcome; }
+  });
+
+  test('disposes late acquisition after cancellation and refuses subsequent acquisitions', async () => {
+    const resource = await fileResource();
+    const release = deferred();
+    const entered = deferred();
+    const owner = createLocalStackOwner();
+    const outcome = owner.acquire(async () => { entered.resolve(); await release.promise; return resource; },
+      acquired => acquired.stop()).catch(error => error);
+    await entered.promise;
+    await owner.stop();
+    release.resolve();
+    expect(await outcome).toBeInstanceOf(Error);
+    expect(await present(resource.marker)).toBe(false);
+    const forbidden = join(tmpdir(), 'not-created-by-cancelled-owner');
+    await expect(owner.acquire(async () => { throw new Error(`PRIVATE_GRANT:${forbidden}`); },
+      async () => {})).rejects.not.toThrow('PRIVATE_GRANT');
+  });
+
+  // Exercises this project's fixture boundary under a real pinned Playwright body timeout.
+  test('real runner timeout tears down both pending starts and their descendants', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'local-owner-runner-'));
+    ownedDirectories.push(directory);
+    const ownerModule = fileURLToPath(new URL('../../src/local-stack.ts', import.meta.url));
+    const testModule = fileURLToPath(new URL('../../node_modules/@playwright/test/index.mjs', import.meta.url));
+    const cli = fileURLToPath(new URL('../../node_modules/@playwright/test/cli.js', import.meta.url));
+    const command = 'const {spawn}=require("node:child_process");const {writeFileSync}=require("node:fs");'
+      + 'const peer=spawn(process.execPath,["-e","setInterval(()=>{},1000)"],{stdio:"ignore"});'
+      + 'writeFileSync(process.argv[1],JSON.stringify([process.pid,peer.pid]));setInterval(()=>{},1000);';
+    await writeFile(join(directory, 'package.json'), '{"type":"module"}');
+    await writeFile(join(directory, 'config.ts'), 'export default {testDir:".",timeout:500,workers:1,retries:0,reporter:"json"};');
+    await writeFile(join(directory, 'timeout.spec.ts'), `import { test as base } from ${JSON.stringify(testModule)};
+import { withLocalStackFixture } from ${JSON.stringify(ownerModule)};
+const test=base.extend({ owned: async ({},use)=>withLocalStackFixture(use) });
+test('controlled owned startup timeout',async({owned})=>{
+ await Promise.all([0,1].map(i=>owned.run(process.execPath,['-e',${JSON.stringify(command)},${JSON.stringify(directory)}+'/'+i+'.pids'],${JSON.stringify(directory)})));
+});`);
+    let pids: number[] = [];
+    try {
+      const result = await promisify(execFile)(process.execPath, [cli, 'test', '--config', join(directory, 'config.ts')],
+        { cwd: directory, timeout: 20_000, maxBuffer: 1_000_000 }).catch(error => error);
+      const report = JSON.parse(result.stdout);
+      expect(report.errors).toEqual([]);
+      pids = [...JSON.parse(await waitForFile(join(directory, '0.pids'))),
+        ...JSON.parse(await waitForFile(join(directory, '1.pids')))];
+      expect(report.stats.unexpected).toBe(1);
+      expect(report.suites[0].specs[0].tests[0].results[0].status).toBe('timedOut');
+      expect(await Promise.all(pids.map(eventuallyAbsent))).toEqual([true, true, true, true]);
+    } finally { killControlled(pids); }
+  }, 25_000);
 });
 
 function deferred() {
