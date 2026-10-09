@@ -2,11 +2,11 @@ import { createServer, type Server } from 'node:http';
 import { mkdtemp, readFile, readdir, rm, stat, symlink, writeFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { setTimeout as delay } from 'node:timers/promises';
+import { setImmediate as eventLoopTurn, setTimeout as delay } from 'node:timers/promises';
 import { chromium, request, type APIRequestContext } from '@playwright/test';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
-import { parseLocalRootBootstrapResult, saveLocalPasskeyRootState,
+import { bootstrapLocalRootPasskey, parseLocalRootBootstrapResult, saveLocalPasskeyRootState,
   withLocalPasskeyBrowser, withLocalPasskeyContext } from '../../src/passkey-bootstrap.js';
 import { createLocalStackOwner } from '../../src/local-stack.js';
 
@@ -126,6 +126,102 @@ describe('local passkey root state publication', () => {
     expect(await readdir(directory)).toEqual([]);
   });
 
+  // Real browser, navigation, CDP and owned cleanup; abort before a missing root UI.
+  // Without pre-operation progress the old helper exposes no stage before cancellation.
+  test('reports closed passkey substeps before a blocked real UI without reflecting private inputs', async () => {
+    const controller = new AbortController();
+    const owner = createLocalStackOwner();
+    const labels: string[] = [];
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const diagnosticOwner = { own: owner.own, phase(value: string) {
+      labels.push(value); owner.phase(value);
+      if (value === 'passkey-root-activation') controller.abort(new Error('PRIVATE_ABORT_COOKIE'));
+    } };
+    // Bound the absent-progress RED after actual navigation, not browser launch speed.
+    let fallback: ReturnType<typeof setTimeout> | undefined;
+    const afterNavigation = () => { fallback = setTimeout(() => controller.abort(), 1_000); };
+    server.once('request', afterNavigation);
+    try {
+      const outcome = await bootstrapLocalRootPasskey({ operatorOrigin: origin,
+        expectedRootUserId: 'PRIVATE_ROOT_ID', storageStatePath: output,
+        activationGrant: 'PRIVATE_ACTIVATION_GRANT', signal: controller.signal,
+        owner: diagnosticOwner }).catch(error => error);
+      expect(labels).toEqual(['passkey-browser-launch', 'passkey-context-init', 'passkey-page-init',
+        'passkey-webauthn', 'passkey-page-navigation', 'passkey-root-activation',
+        'passkey-context-close', 'passkey-browser-close']);
+      expect(String(outcome)).toContain('Local root passkey bootstrap failed');
+      expect(await readdir(directory)).toEqual([]);
+      const diagnostics = log.mock.calls.flat().join('\n');
+      expect(diagnostics).toContain('phase=passkey-root-activation');
+      expect(diagnostics).not.toMatch(/PRIVATE|127\.0\.0\.1|root\.json|private-cookie-value/iu);
+      expect(String(outcome)).not.toMatch(/PRIVATE|127\.0\.0\.1|root\.json/iu);
+    } finally {
+      clearTimeout(fallback); server.off('request', afterNavigation);
+      await owner.stop(); log.mockRestore();
+    }
+  });
+
+  // Substitute only close/launch boundaries around real Browser and Context objects.
+  // Nested failure must not prevent the enclosing browser from being disposed.
+  test.each(['failure', 'deadline'] as const)('closes the real enclosing browser after nested context cleanup %s', async mode => {
+    const browser = await chromium.launch({ channel: process.env.E2E_BROWSER_CHANNEL ?? 'chrome' });
+    const owner = createLocalStackOwner();
+    const controller = new AbortController();
+    let release!: () => void;
+    const blockedClose = new Promise<void>(done => { release = done; });
+    let entered!: () => void;
+    const rootUi = new Promise<void>(done => { entered = done; });
+    let browserCloseAttempted = false;
+    const wrapped = new Proxy(browser, { get(target, name) {
+      if (name === 'close') return async () => { browserCloseAttempted = true; await target.close(); };
+      if (name === 'newContext') return async (options: Parameters<typeof browser.newContext>[0]) => {
+        const context = await target.newContext(options);
+        return new Proxy(context, { get(inner, key) {
+          if (key !== 'close') return Reflect.get(inner, key);
+          return async () => {
+            if (mode === 'deadline') await blockedClose;
+            await inner.close();
+            if (mode === 'failure') throw new Error('PRIVATE_CONTEXT_COOKIE');
+          };
+        } });
+      };
+      return Reflect.get(target, name);
+    } });
+    const launch = vi.spyOn(chromium, 'launch').mockResolvedValue(wrapped);
+    const diagnosticOwner = { own: owner.own, phase(value: string) {
+      owner.phase(value);
+      if (value === 'passkey-root-activation') {
+        if (mode === 'deadline') vi.useFakeTimers();
+        controller.abort(new Error('PRIVATE_ABORT_GRANT')); entered();
+      }
+    } };
+    const outcome = bootstrapLocalRootPasskey({ operatorOrigin: origin,
+      expectedRootUserId: rootSession.userId, storageStatePath: output,
+      activationGrant: 'PRIVATE_ACTIVATION_GRANT', signal: controller.signal,
+      owner: diagnosticOwner }).catch(error => error);
+    try {
+      await rootUi;
+      if (mode === 'deadline') {
+        await eventLoopTurn();
+        await vi.advanceTimersByTimeAsync(10_001);
+      }
+      const error = await outcome;
+      vi.useRealTimers();
+      expect(String(error)).toContain('Local root passkey bootstrap failed');
+      expect(String(error)).not.toContain('PRIVATE');
+      expect(browserCloseAttempted).toBe(true);
+      await browser.close();
+      expect(browser.isConnected()).toBe(false);
+      expect(await readdir(directory)).toEqual([]);
+      const cleanup = await owner.stop().catch(error => error);
+      expect(String(cleanup)).toContain('cleanup incomplete');
+      expect(String(cleanup)).not.toContain('PRIVATE');
+    } finally {
+      vi.useRealTimers(); release(); launch.mockRestore(); await browser.close();
+      await outcome; await owner.stop().catch(() => {});
+    }
+  });
+
   // Accepting a foreign or noncanonical origin would allow this helper to become a cloud login seam.
   test.each([
     'https://operator.staging.wastd.dev', 'https://localhost:4000',
@@ -202,7 +298,42 @@ describe('local passkey root state publication', () => {
 });
 
 describe('owned passkey browser cancellation', () => {
+  test('still attempts real browser close when a nested cleanup hook never settles', async () => {
+    const browser = await chromium.launch({ channel: process.env.E2E_BROWSER_CHANNEL ?? 'chrome' });
+    const owner = createLocalStackOwner();
+    const controller = new AbortController();
+    let entered!: () => void;
+    const using = new Promise<void>(done => { entered = done; });
+    let browserCloseAttempted = false;
+    const wrapped = new Proxy(browser, { get(target, name) {
+      return name === 'close' ? async () => { browserCloseAttempted = true; await target.close(); }
+        : Reflect.get(target, name);
+    } });
+    const outcome = withLocalPasskeyBrowser(async () => wrapped, async () => {
+      entered(); await new Promise(() => {});
+    }, controller.signal, owner, () => new Promise(() => {})).catch(error => error);
+    try {
+      await using; vi.useFakeTimers(); controller.abort(new Error('PRIVATE_ABORT_COOKIE'));
+      await eventLoopTurn(); await vi.advanceTimersByTimeAsync(10_001);
+      const error = await outcome;
+      expect(String(error)).toMatch(/cancelled.*cleanup incomplete/iu);
+      expect(String(error)).not.toContain('PRIVATE');
+      expect(browserCloseAttempted).toBe(true);
+      vi.useRealTimers(); await browser.close();
+      expect(browser.isConnected()).toBe(false);
+      const cleanup = await owner.stop().catch(error => error);
+      expect(String(cleanup)).toMatch(/cleanup incomplete/iu);
+    } finally { vi.useRealTimers(); await browser.close(); await outcome; await owner.stop().catch(() => {}); }
+  });
+
   test('bounds pending browser acquisition and reports incompleteness to caller and owner', async () => {
+    const realNow = Date.now.bind(Date);
+    const began = realNow();
+    const step = (value: 'browser-launch' | 'launch-gated' | 'disposal-registered' | 'caller-settled'
+      | 'owner-stop' | 'owner-stopped' | 'browser-close' | 'browser-closed') =>
+      console.log(`local-passkey-unit step=${value}; elapsed_ms=${
+        Math.max(0, Math.min(3_600_000, realNow() - began))}`);
+    step('browser-launch');
     const browser = await chromium.launch({ channel: process.env.E2E_BROWSER_CHANNEL ?? 'chrome' });
     const owner = createLocalStackOwner();
     const controller = new AbortController();
@@ -214,15 +345,25 @@ describe('owned passkey browser cancellation', () => {
       async () => { throw new Error('must not enter bootstrap'); }, controller.signal, owner).catch(error => error);
     try {
       await launching;
+      step('launch-gated');
       vi.useFakeTimers(); controller.abort(new Error('PRIVATE_GRANT'));
+      // Abort resumes the async helper before its cleanup deadline is installed.
+      // Flush that continuation using a real turn before advancing the fake clock.
+      await eventLoopTurn();
+      expect(vi.getTimerCount()).toBe(1);
+      step('disposal-registered');
       await vi.advanceTimersByTimeAsync(10_001);
       const error = await outcome;
+      step('caller-settled');
       expect(String(error)).toMatch(/cancelled.*cleanup incomplete/iu);
       expect(String(error)).not.toContain('PRIVATE_GRANT');
+      step('owner-stop');
       const cleanup = await owner.stop().catch(error => error);
+      step('owner-stopped');
       expect(String(cleanup)).toMatch(/cleanup incomplete/iu);
     } finally {
-      vi.useRealTimers(); release(); await browser.close(); await outcome;
+      vi.useRealTimers(); release(); step('browser-close'); await browser.close();
+      step('browser-closed'); await outcome;
       await owner.stop().catch(() => {});
     }
   });

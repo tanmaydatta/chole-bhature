@@ -7,13 +7,13 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { newRunId, RunIdSchema, type RunId } from './config.js';
-import { bootstrapLocalRootPasskey, parseLocalRootBootstrapResult } from './passkey-bootstrap.js';
+import { bootstrapLocalRootPasskey, localPasskeyPhases, parseLocalRootBootstrapResult } from './passkey-bootstrap.js';
 
 const repositoryRoot = fileURLToPath(new URL('../../../', import.meta.url));
 const workerNames = ['core', 'identity', 'operator'] as const;
 
 const phases = ['setup', 'build', 'migrations', 'root-bootstrap', 'worker-readiness',
-  'passkey-bootstrap', 'ready', 'cleanup'] as const;
+  'passkey-bootstrap', ...localPasskeyPhases, 'ready', 'cleanup'] as const;
 
 function cleanupDeadline<Result>(operation: Promise<Result>): Promise<Result> {
   let timer: ReturnType<typeof setTimeout>;

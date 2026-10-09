@@ -3,12 +3,13 @@
 The full local API/browser suite runs automatically on same-repository PR
 pushes. See [Local PR E2E CI](../../docs/testing/local-pr-e2e-ci.md) for its
 six-test coverage, diagnostics policy and staging/cloud evidence boundary.
-An earlier harness commit passed all six hosted Ubuntu cases in 42.6 seconds,
-but the subsequent documentation head timed out in the independent-stack case
-on both attempts and left owned runtimes for runner cleanup. The hosted gate
-is not satisfied for that head. The original native/hang cause remains unproved;
-the linked reference records exact runs, cancellation evidence and the pending
-timeout-safe lifecycle change.
+The latest published harness head failed one of 210 unit cases and the
+independent-stack E2E case during passkey bootstrap on both attempts. Its
+post-suite process counts were zero, but the hosted gate remains blocked.
+An earlier harness commit passed all six hosted Ubuntu cases in 42.6 seconds.
+The original native/hang cause remains unproved; the linked reference records
+exact runs, cancellation evidence and the locally tested cleanup/diagnostic
+amendment awaiting reviewed Ubuntu verification.
 Staging remains protected owner-run acceptance after deployment; disposable
 cloud PR stacks and guarded upload remain paused and unfinished.
 
@@ -166,6 +167,12 @@ such as SIGKILL or descendants that escape their owned process group.
 Managed diagnostics emit fixed phases before awaits and every ten seconds,
 bounded elapsed milliseconds, known failure hints and launcher exit/signal
 values, never raw private logs or error content. Unknown text is not reflected.
+Passkey substeps identify launch, context/page/CDP initialization, navigation,
+activation, recovery, sign-in, server verification, state snapshot, cleanup and
+publication. Nested context cleanup precedes its enclosing browser close;
+both share the existing ten-second total bound. A failed or never-settling
+nested cleanup still attempts browser close and reports safe incompleteness,
+without waiting for arbitrary bootstrap work or publishing after cancellation.
 CI's best-effort capacity summaries contain only bounded system numbers.
 
 The scenario runner previews and disposes its claimed tenant in `finally`,

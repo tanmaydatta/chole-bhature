@@ -64,7 +64,12 @@ outside CI retain their existing failure trace/screenshot behavior.
 
 Managed startup reports a fixed lifecycle phase before asynchronous work and
 every ten seconds, with elapsed milliseconds bounded to 0–3,600,000. Timeout
-diagnosis therefore does not depend on reaching an outer catch. Failures report
+diagnosis therefore does not depend on reaching an outer catch.
+Passkey progress additionally identifies browser launch, context/page and CDP
+virtual-authenticator initialization, page navigation, root activation, recovery
+confirmation, passkey sign-in, server verification, state snapshot, context and
+browser close, and state publication. These labels contain no origins, paths,
+root identities, activation grants, cookies or raw errors. Failures report
 per-Worker known failure hints and the owned Wrangler launcher's exit/signal state. Classification
 scans the complete private Worker log, including an early native error followed
 by a long backtrace, but emits only closed labels: resource unavailable, address
@@ -79,7 +84,10 @@ signal rather than substituting a successful supervisor exit. Setup commands and
 cancel after 45 seconds. Cancellation rejects new acquisitions, closes acquired
 or late browsers/contexts, and prevents root-state publication. Pending browser
 acquisition plus close has one ten-second cleanup bound; its failure or deadline
-is tracked by the owner and reaches the caller/fixture. Resource cleanup and
+is tracked by the owner and reaches the caller/fixture. The browser waits for its
+registered context cleanup, not arbitrary bootstrap work. Failed or never-settling
+nested cleanup shares that same bound and still attempts the enclosing browser
+close; neither stack startup nor suite concurrency is serialized. Resource cleanup and
 supervisor IPC shutdown are also bounded to ten seconds. Groups receive TERM,
 then KILL after five seconds; numeric membership inspection excludes the live
 supervisor and its completed inspector. Inspection failure triggers best-effort
@@ -109,6 +117,30 @@ attached to public evidence because they can carry privileged synthetic sessions
 headers and run proofs.
 
 ## Dated verification and remaining acceptance
+
+On 2026-10-09, the latest published [hosted Ubuntu run 37951296533](https://github.com/tanmaydatta/chole-bhature/actions/runs/37951296533)
+on [harness head 9c258ac](https://github.com/tanmaydatta/chole-bhature/commit/9c258acbf61c2b41712eaf6eaad645504633d0d6)
+failed both jobs. Baseline `verify` passed build/lint but its E2E unit package
+passed 209 of 210 cases: the pending-browser-acquisition test exceeded its
+unchanged five-second test timeout. The full suite passed five of six cases;
+the independent-stack case failed during passkey bootstrap at its 45-second
+startup deadline on both attempts. Pre/post numeric summaries reported zero
+workerd processes, threads and RSS; no orphan workerd termination was reported.
+The hosted gate remains blocked. The exact unit timeout stage and the original
+native/hang/resource cause remain unproved and are not assumed to be shared.
+
+The local amendment made the fake-clock cleanup-timer registration boundary
+explicit and added fixed passkey substeps before asynchronous work. A real
+WebAuthn/browser cancellation regression also exposed simultaneous nested
+context/browser close exceeding the unchanged five-second unit limit; structured
+context-before-browser disposal passed that regression. Real-resource tests
+cover child close failure/deadline and an unfulfilled cleanup hook while still
+attempting the enclosing browser close and reporting safe incompleteness.
+The amended source passed 97 focused cases and all 214 E2E unit-package cases;
+its unchanged full suite passed six tests with two workers in 21.2 seconds,
+without skips or retries. These are macOS results with pinned CI runtime/browser
+settings, not an explanation or fix claim for either hosted failure. Independent
+review and a new Ubuntu run are required before accepting this amendment.
 
 On 2026-10-09, the subsequent [hosted Ubuntu run 37936891294](https://github.com/tanmaydatta/chole-bhature/actions/runs/37936891294)
 on [documentation head 5a005a60](https://github.com/tanmaydatta/chole-bhature/commit/5a005a60c1100c2de279bbf0e3ee5fb96611f1d6)
