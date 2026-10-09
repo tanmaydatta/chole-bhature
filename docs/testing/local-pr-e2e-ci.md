@@ -12,7 +12,7 @@ Same-repository pull requests run the full local API and browser suite against d
 | Runtime | Ubuntu, Node 22.18.0, pnpm 11.14.0, frozen lockfile installation, Corepack networking disabled (`COREPACK_ENABLE_NETWORK=0`), dependency verification required (`pnpm_config_verify_deps_before_run=error`) and global virtual store disabled (`pnpm_config_enable_global_virtual_store=false`); project-pinned Playwright Chromium with Linux system dependencies, then workspace build. |
 | Suite | `pnpm e2e:local`, both API and browser projects, all six tests, two workers, no filtering or sharding; the existing one CI retry remains. |
 | Authority | `contents: read`; checkout credentials are not persisted for the local E2E job. No staging session, Cloudflare token, repository secret or privileged GitHub write token is supplied to the suite. |
-| Isolation | Fresh root/passkey identity, unique loopback ports and Worker names, private temporary Product/Auth D1 stores, and independently scoped scenario tenants. The suite owns and closes its local processes and temporary stack files. |
+| Isolation | Fresh root/passkey identity, unique loopback ports and Worker names, private temporary Product/Auth D1 stores, and independently scoped scenario tenants. Concurrent stack starts settle before their owner exits; every acquired stack is stopped on startup, assertion and success paths, including late successful peers. Cleanup failures propagate after all owned stops settle. |
 
 Built workspace contracts must exist before Playwright imports its global
 setup. The managed stack additionally builds its dashboard and runtime
@@ -44,6 +44,8 @@ All existing assertions remain intact. The business flow uses actual local
 Workers/D1 and browser interactions. Passkey bootstrap runs during managed
 setup and is additionally checked through the restored-session isolation case.
 The controlled routing fixture certifies its local HTTP boundary only.
+The independent-stack case still starts both stacks concurrently; failure-safe
+ownership does not serialize startup or change its behavioral assertions.
 
 Code references:
 
@@ -60,6 +62,22 @@ list reporter. Trace and screenshot capture are disabled in CI, video remains
 disabled, and the workflow uploads no artifacts or raw reports. Local runs
 outside CI retain their existing failure trace/screenshot behavior.
 
+Managed startup failures report a fixed lifecycle phase, per-Worker known
+failure hints and the owned Wrangler launcher's exit/signal state. Classification
+scans the complete private Worker log, including an early native error followed
+by a long backtrace, but emits only closed labels: resource unavailable, address
+in use, too many open files, out of memory, native check failed or segmentation
+fault. Unknown content is not reflected. These are diagnostic hints, not proof
+of the native cause; the launcher's state is not a directly observed workerd exit.
+Temporary files are removed even when startup or another cleanup action fails;
+an incomplete cleanup is reported without raw error content.
+
+Before and after the suite, CI prints best-effort numeric capacity summaries:
+CPU/affinity counts, memory, process/thread and workerd counts, workerd RSS,
+process/file limits and available cgroup PID/memory/OOM-kill counters. No process
+arguments, environment or raw log content is printed. Unavailable counters are
+`null`; a summary failure does not change the suite's exit status.
+
 Saved browser state, cookies, API credentials, run proofs, manifests, generated
 Worker configs, temporary D1 stores and raw diagnostic files remain private.
 The ignored `.runs` directory is not uploaded. Assertion failures are diagnosed
@@ -70,7 +88,23 @@ headers and run proofs.
 ## Dated verification and remaining acceptance
 
 The reviewed implementation was published in [PR #21](https://github.com/tanmaydatta/chole-bhature/pull/21)
-on 2026-10-09. Hosted Ubuntu validation is pending the PR's checks.
+on 2026-10-09. [Hosted Ubuntu run 37911292536](https://github.com/tanmaydatta/chole-bhature/actions/runs/37911292536)
+passed baseline `verify` and five of six E2E tests. The independent-stack case
+failed when the Operator runtime stopped before readiness; its retry timed out.
+The original native cause remains unproved and this is a blocking merge gate,
+not a green hosted result. The preceding [run 37911132214](https://github.com/tanmaydatta/chole-bhature/actions/runs/37911132214)
+was cancelled after the same-PR documentation push `b851c53`, demonstrating
+superseded-run cancellation.
+
+The subsequent local harness check on 2026-10-09 passed all 21 focused
+configuration/ownership/privacy cases and all 192 E2E unit-package cases.
+Semantic regression tests first demonstrated abandoned temporary resources,
+failure to await late peers/cleanup, lost early native hints and credential-shaped
+log reflection; the implementation then passed those tests. The full local suite
+passed all six tests with two workers in 23.4 seconds (24.14 seconds for the
+command), with no skips or retries. These are macOS results using the pinned
+runtime and CI Chromium settings; the new harness diagnostics and cleanup still
+require reviewed Ubuntu execution and do not claim to fix the native fault.
 
 On 2026-10-09, the full managed-local baseline passed six tests with two workers
 in 27.5 seconds, with no skips or retries, using Node 22.18.0, pnpm 11.14.0 and

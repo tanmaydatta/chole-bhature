@@ -3,16 +3,12 @@ import { stat } from 'node:fs/promises';
 import { OperatorSessionViewSchema } from '@incentives/contracts';
 
 import { loadTarget } from '../../src/config.js';
-import { startManagedLocalStack } from '../../src/local-stack.js';
+import { startManagedLocalStack, withLocalStackPair } from '../../src/local-stack.js';
 import { openOperatorClient } from '../../src/operator-client.js';
 
 test('two local bootstrap instances have isolated health, root sessions and Auth D1', async ({ browser }) => {
   test.skip(loadTarget(process.env).kind !== 'local', 'Local stack isolation is local-only');
-  const [first, second] = await Promise.all([
-    startManagedLocalStack({ skipBuild: true }),
-    startManagedLocalStack({ skipBuild: true }),
-  ]);
-  try {
+  await withLocalStackPair(() => startManagedLocalStack({ skipBuild: true }), async ([first, second]) => {
     expect(first.operatorOrigin).not.toBe(second.operatorOrigin);
     expect(first.apiOrigin).not.toBe(second.apiOrigin);
     expect(first.directory).not.toBe(second.directory);
@@ -45,7 +41,5 @@ test('two local bootstrap instances have isolated health, root sessions and Auth
     await expect(openOperatorClient({ kind: 'local',
       operatorOrigin: first.operatorOrigin, apiOrigin: first.apiOrigin },
     { E2E_OPERATOR_STORAGE_STATE: second.storageState })).rejects.toThrow();
-  } finally {
-    await Promise.all([first.stop(), second.stop()]);
-  }
+  });
 });

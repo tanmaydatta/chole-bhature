@@ -62,5 +62,40 @@ jobs:
       # Playwright imports built workspace contracts before global setup can start.
       - run: pnpm build
       - name: Run full local stack API and browser suite
-        run: pnpm e2e:local
+        run: |
+          capacity() {
+            node --input-type=module <<'NODE'
+          import { readFileSync } from 'node:fs';
+          import { availableParallelism, cpus, freemem, totalmem } from 'node:os';
+          import { execFileSync } from 'node:child_process';
+          const number = path => {
+            try { const value = readFileSync(path, 'utf8').trim(); return /^\d+$/.test(value) ? Number(value) : null; }
+            catch { return null; }
+          };
+          const oomKills = () => {
+            try { const value = readFileSync('/sys/fs/cgroup/memory.events.local', 'utf8').match(/^oom_kill (\d+)$/m)?.[1]; return value ? Number(value) : null; }
+            catch { return null; }
+          };
+          const limits = readFileSync('/proc/self/limits', 'utf8');
+          const limit = label => {
+            const value = limits.split('\n').find(line => line.startsWith(label))?.slice(label.length).trim().split(/\s+/)[0];
+            return value && /^\d+$/.test(value) ? Number(value) : null;
+          };
+          const processes = execFileSync('ps', ['-e', '-o', 'comm=,nlwp=,rss='], { encoding: 'utf8' })
+            .trim().split('\n').map(line => line.trim().split(/\s+/));
+          const workerd = processes.filter(([name]) => name === 'workerd');
+          console.log(JSON.stringify({ cpuCount: cpus().length, affinityCpuCount: availableParallelism(),
+            totalMemoryBytes: totalmem(), freeMemoryBytes: freemem(), processCount: processes.length,
+            threadCount: processes.reduce((sum, row) => sum + Number(row[1]), 0),
+            workerdCount: workerd.length, workerdThreadCount: workerd.reduce((sum, row) => sum + Number(row[1]), 0),
+            workerdRssKiB: workerd.reduce((sum, row) => sum + Number(row[2]), 0),
+            openFileSoftLimit: limit('Max open files'), processSoftLimit: limit('Max processes'),
+            cgroupPidsCurrent: number('/sys/fs/cgroup/pids.current'), cgroupPidsMax: number('/sys/fs/cgroup/pids.max'),
+            cgroupMemoryCurrentBytes: number('/sys/fs/cgroup/memory.current'), cgroupMemoryMaxBytes: number('/sys/fs/cgroup/memory.max'),
+            cgroupOomKills: oomKills() }));
+          NODE
+          }
+          capacity || true
+          trap 'capacity || true' EXIT
+          pnpm e2e:local
       # No artifact upload: local root sessions, run proofs and request headers are private.

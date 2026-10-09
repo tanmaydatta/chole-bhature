@@ -13,6 +13,49 @@ import { bootstrapLocalRootPasskey, parseLocalRootBootstrapResult } from './pass
 const repositoryRoot = fileURLToPath(new URL('../../../', import.meta.url));
 const workerNames = ['core', 'identity', 'operator'] as const;
 
+// Both starts settle before the owner exits, including peers that finish after a rejection.
+export async function withLocalStackPair<Stack extends { stop(): Promise<void> }, Result>(
+  start: () => Promise<Stack>, use: (stacks: [Stack, Stack]) => Promise<Result>,
+): Promise<Result> {
+  const attempts = await Promise.allSettled([
+    Promise.resolve().then(start), Promise.resolve().then(start),
+  ]);
+  const stacks = attempts.flatMap(attempt => attempt.status === 'fulfilled' ? [attempt.value] : []);
+  const failures: unknown[] = attempts.flatMap(attempt => attempt.status === 'rejected' ? [attempt.reason] : []);
+  let result: Result | undefined;
+  if (failures.length === 0) {
+    try { result = await use([stacks[0]!, stacks[1]!]); }
+    catch (error) { failures.push(error); }
+  }
+  const cleanup = await Promise.allSettled(stacks.map(stack => Promise.resolve().then(() => stack.stop())));
+  failures.push(...cleanup.flatMap(attempt => attempt.status === 'rejected' ? [attempt.reason] : []));
+  if (failures.length === 1) throw failures[0];
+  if (failures.length > 1) throw new AggregateError(failures, 'Local stack pair failed after owned cleanup');
+  return result as Result;
+}
+
+// Recognize hints from the complete private log; never reflect any part of its text.
+const nativeFailureHints = [
+  ['resource-unavailable', /\b(?:EAGAIN|Resource temporarily unavailable|pthread_create)\b/iu],
+  ['address-in-use', /\b(?:EADDRINUSE|Address already in use)\b/iu],
+  ['too-many-open-files', /\b(?:EMFILE|ENFILE|Too many open files)\b/iu],
+  ['out-of-memory', /\b(?:ENOMEM|Cannot allocate memory|Out of memory)\b/iu],
+  ['native-check-failed', /\b(?:Check failed|Fatal error)\b/iu],
+  ['segmentation-fault', /\bSegmentation fault\b/iu],
+] as const;
+const knownSignals = new Set(['SIGABRT', 'SIGSEGV', 'SIGKILL', 'SIGTERM', 'SIGBUS', 'SIGILL']);
+
+export function summarizeLocalWorkerFailure(output: string,
+  state?: { exitCode: number | null; signalCode: string | null }): string {
+  const hints = nativeFailureHints.filter(([, pattern]) => pattern.test(output)).map(([hint]) => hint);
+  const exit = state === undefined ? 'not-started' : state.exitCode === null ? 'none'
+    : Number.isInteger(state.exitCode) && state.exitCode >= 0 && state.exitCode <= 255
+      ? String(state.exitCode) : 'unknown';
+  const signal = state?.signalCode == null ? 'none'
+    : knownSignals.has(state.signalCode) ? state.signalCode : 'unknown';
+  return `hints=${hints.join(',') || 'unknown'}; exit=${exit}; signal=${signal}`;
+}
+
 export interface LocalPorts {
   core: number; identity: number; operator: number;
   coreInspector: number; identityInspector: number; operatorInspector: number;
@@ -142,17 +185,21 @@ export async function startManagedLocalStack(options: { skipBuild?: boolean } = 
   operatorOrigin: string; apiOrigin: string; storageState: string; directory: string; rootUserId: string }> {
   const runId: RunId = newRunId();
   const directory = await mkdtemp(join(tmpdir(), 'incentives-e2e-local-'));
-  await chmod(directory, 0o700);
-  const ports = await localPorts();
-  const config = localStackConfiguration(repositoryRoot, directory, runId, ports);
   const children: ChildProcess[] = [];
   const logs: FileHandle[] = [];
+  let phase = 'setup';
   async function stop() {
-    await stopChildren(children);
-    await Promise.all(logs.map(log => log.close()));
-    await rm(directory, { recursive: true, force: true });
+    let failures = 0;
+    try { await stopChildren(children); } catch { failures++; }
+    const closed = await Promise.allSettled(logs.map(log => log.close()));
+    failures += closed.filter(result => result.status === 'rejected').length;
+    try { await rm(directory, { recursive: true, force: true }); } catch { failures++; }
+    if (failures > 0) throw new Error('Managed local stack cleanup did not complete');
   }
   try {
+    await chmod(directory, 0o700);
+    const ports = await localPorts();
+    const config = localStackConfiguration(repositoryRoot, directory, runId, ports);
     for (const app of workerNames) await mkdir(join(directory, app), { mode: 0o700 });
     const configPaths = Object.fromEntries(workerNames.map(app =>
       [app, join(directory, app, 'wrangler.json')])) as Record<typeof workerNames[number], string>;
@@ -173,15 +220,18 @@ export async function startManagedLocalStack(options: { skipBuild?: boolean } = 
         { mode: 0o600, flag: 'wx' }),
     ]);
     if (!options.skipBuild) {
+      phase = 'build';
       await run('pnpm', ['--filter', '@incentives/api', 'build:dependencies'], repositoryRoot);
       await run('pnpm', ['--filter', '@incentives/dashboard', 'build'], repositoryRoot);
     }
+    phase = 'migrations';
     for (const [app, database] of [['core', 'incentives-dev'],
       ['identity', 'incentives-auth-local']] as const) {
       await run(process.execPath, [wrangler(app === 'core' ? 'api' : app),
         'd1', 'migrations', 'apply', database, '--local', '--config', configPaths[app],
         '--persist-to', config.persistTo], repositoryRoot);
     }
+    phase = 'root-bootstrap';
     const rootEmail = `root+${runId}@e2e.invalid`;
     const bootstrap = await run(process.execPath,
       [join(repositoryRoot, 'apps/identity/src/cli/bootstrap-root-runner.mjs'),
@@ -190,6 +240,7 @@ export async function startManagedLocalStack(options: { skipBuild?: boolean } = 
         E2E_LOCAL_WRANGLER_CONFIG: configPaths.identity,
         E2E_LOCAL_PERSIST_TO: config.persistTo });
     const expectedRoot = parseLocalRootBootstrapResult(bootstrap);
+    phase = 'worker-readiness';
     for (const [app, port, inspector] of [
       ['core', ports.core, ports.coreInspector],
       ['identity', ports.identity, ports.identityInspector],
@@ -208,19 +259,23 @@ export async function startManagedLocalStack(options: { skipBuild?: boolean } = 
       children.push(child);
     }
     await waitFor(config.operatorOrigin, children);
+    phase = 'passkey-bootstrap';
     const storageState = await bootstrapLocalRootPasskey({ operatorOrigin: config.operatorOrigin,
       expectedRootUserId: expectedRoot.userId, activationGrant: expectedRoot.activationGrant,
       storageStatePath: join(directory, 'root-storage-state.json') });
     return { stop, operatorOrigin: config.operatorOrigin, apiOrigin: config.apiOrigin,
       storageState, directory, rootUserId: expectedRoot.userId };
-  } catch (error) {
+  } catch {
     const diagnostic = (await Promise.all(workerNames.map(async app => {
+      let output = '';
       try {
-        const output = await readFile(join(directory, `${app}.log`), 'utf8');
-        return `${app}: ${output.slice(-2_000)}`;
-      } catch { return ''; }
-    }))).filter(Boolean).join('\n').replaceAll(/[a-f0-9]{64}/giu, '[redacted]');
-    await stop();
-    throw new Error(`${String(error)}${diagnostic ? `\n${diagnostic}` : ''}`);
+        output = await readFile(join(directory, `${app}.log`), 'utf8');
+      } catch { /* Unavailable private log still has a safe process-state summary. */ }
+      return `${app}: ${summarizeLocalWorkerFailure(output, children[workerNames.indexOf(app)])}`;
+    }))).join('\n');
+    let cleanupFailed = false;
+    try { await stop(); } catch { cleanupFailed = true; }
+    throw new Error(`Managed local stack startup failed during ${phase}${
+      cleanupFailed ? '; owned cleanup incomplete' : ''}\n${diagnostic}`);
   }
 }

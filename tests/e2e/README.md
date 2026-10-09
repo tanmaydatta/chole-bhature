@@ -3,6 +3,9 @@
 The full local API/browser suite runs automatically on same-repository PR
 pushes. See [Local PR E2E CI](../../docs/testing/local-pr-e2e-ci.md) for its
 six-test coverage, diagnostics policy and staging/cloud evidence boundary.
+The first Ubuntu run passed baseline verification and five of six E2E cases;
+the two-stack startup failure remains a blocking gate with its native cause
+unproved. The linked reference records the run and cancellation evidence.
 Staging remains protected owner-run acceptance after deployment; disposable
 cloud PR stacks and guarded upload remain paused and unfinished.
 
@@ -135,6 +138,14 @@ without selection or sharding. For focused local diagnosis, Playwright accepts
 isolated stack.
 
 ## Cleanup and recovery
+
+The independent-stack owner preserves concurrent starts, waits for both startup
+attempts (including a late successful peer), and stops every acquired stack on
+startup failure, assertion failure and success. It awaits all stops before
+propagating startup/assertion/cleanup failures. Managed startup diagnostics emit
+only a fixed phase, known failure hints and launcher exit/signal values, never
+raw private logs or error content; unknown log text is not reflected. CI's
+best-effort capacity summaries contain only bounded system numbers.
 
 The scenario runner previews and disposes its claimed tenant in `finally`,
 then reopens a root read-only inventory to assert **zero Product and Auth
