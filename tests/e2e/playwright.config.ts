@@ -9,7 +9,9 @@ export default defineConfig({
   workers: 2,
   retries: process.env.CI ? 1 : 0,
   reporter: 'list',
-  use: { trace: 'retain-on-failure', screenshot: 'only-on-failure' },
+  // CI keeps console assertions only; traces/screenshots can contain root sessions and proofs.
+  use: { trace: process.env.CI ? 'off' : 'retain-on-failure',
+    screenshot: process.env.CI ? 'off' : 'only-on-failure' },
   projects: [
     { name: 'api', testMatch: '**/*.api.spec.ts' },
     { name: 'browser', testMatch: '**/*.browser.spec.ts',
