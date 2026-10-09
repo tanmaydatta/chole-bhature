@@ -69,6 +69,9 @@ headers and run proofs.
 
 ## Dated verification and remaining acceptance
 
+The reviewed implementation was published in [PR #21](https://github.com/tanmaydatta/chole-bhature/pull/21)
+on 2026-10-09. Hosted Ubuntu validation is pending the PR's checks.
+
 On 2026-10-09, the full managed-local baseline passed six tests with two workers
 in 27.5 seconds, with no skips or retries, using Node 22.18.0, pnpm 11.14.0 and
 the lockfile-pinned Chromium. A fresh checkout first required the workspace build;
