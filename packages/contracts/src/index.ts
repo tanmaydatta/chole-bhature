@@ -5,6 +5,7 @@ export * from './credentials.js';
 export * from './conditions.js';
 export * from './errors.js';
 export * from './evaluation.js';
+export * from './e2e-control.js';
 export * from './audit.js';
 export { LoyaltyProgramSchema } from './loyalty-program.js';
 export type { LoyaltyProgram } from './loyalty-program.js';

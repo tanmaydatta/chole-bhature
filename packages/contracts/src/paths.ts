@@ -1,4 +1,5 @@
 export const INVITATION_ACCEPT_PATH = '/invite/accept';
+export const E2E_CONTROL_PREFIX = '/operator/v1/e2e-control';
 
 export function invitationAcceptanceUrl(publicOrigin: string, token: string): string {
   const link = new URL(INVITATION_ACCEPT_PATH, publicOrigin);
