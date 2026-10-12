@@ -2,6 +2,46 @@
 
 Same-repository pull requests run the full local API and browser suite against disposable Workers and real local D1 stores, checking product behavior before staging acceptance.
 
+## Foundation status — 2026-10-12
+
+The local E2E foundation is accepted for use with a known passkey-activation
+flake. It is not fully stable, and staging/cloud E2E acceptance remains
+unfinished. Product work proceeds; further diagnosis of this flake is capped
+at two hours and does not block product work on perfect flake elimination.
+All six tests and their assertions remain enabled, the existing single CI
+retry is unchanged, and genuine failures continue to block CI. No case is
+quarantined or disabled, and no timeout or concurrency limit is relaxed.
+
+The [Ubuntu run 37955992809](https://github.com/tanmaydatta/chole-bhature/actions/runs/37955992809),
+executed on 2026-10-09 for [harness commit bab7e8ad](https://github.com/tanmaydatta/chole-bhature/commit/bab7e8adf086ad33f2578279b86bf57b23914ad5)
+in [PR #21](https://github.com/tanmaydatta/chole-bhature/pull/21), passed both
+`verify` and `local-e2e`. Baseline build/lint, all 1,767 Vitest cases (including
+214 E2E unit-package cases), and nine Node fixture cases passed. The full
+API/browser suite ran all six cases with two workers in 2.0 minutes: Playwright
+reported five passed and one flaky, with all six ultimately succeeding.
+
+The independent-stack case hit the existing 45-second passkey-bootstrap
+deadline on its first attempt and passed retry #1 in 20.1 seconds. Its last
+reported closed phase was `passkey-root-activation`, which spans clicking root
+setup, filling the activation grant and clicking passkey setup; it does not
+identify the exact blocked operation or prove the native/hang/resource cause.
+Before and after the suite, workerd processes, threads and RSS were zero,
+and no orphan workerd termination was reported. This run satisfies the hosted
+gate for that commit with the recorded flake; it does not prove flake elimination.
+
+The context-before-browser cleanup and fixed passkey phase amendment received
+independent scoped review. An independent local check on 2026-10-09 passed all
+six cases with two workers in 22.5 seconds, without retries or skips, on the
+same harness commit. This is local evidence, separate from the Ubuntu result.
+The historical failures below remain evidence for earlier heads, not the
+current hosted gate status.
+
+Protected owner-run manual staging acceptance follows a separately approved
+deployment; this closeout performs neither deployment nor staging acceptance.
+Per-PR cloud environments and guarded upload remain parked and unfinished,
+with all four provider boundaries unchanged: service binding remapping,
+asset/session target name, upload hash semantics and asset completion scope.
+
 ## Execution contract
 
 | Boundary | Contract |
@@ -116,9 +156,9 @@ from the console and reproduced locally; raw local traces/reports must not be
 attached to public evidence because they can carry privileged synthetic sessions,
 headers and run proofs.
 
-## Dated verification and remaining acceptance
+## Historical verification and remaining acceptance
 
-On 2026-10-09, the latest published [hosted Ubuntu run 37951296533](https://github.com/tanmaydatta/chole-bhature/actions/runs/37951296533)
+On 2026-10-09, [hosted Ubuntu run 37951296533](https://github.com/tanmaydatta/chole-bhature/actions/runs/37951296533)
 on [harness head 9c258ac](https://github.com/tanmaydatta/chole-bhature/commit/9c258acbf61c2b41712eaf6eaad645504633d0d6)
 failed both jobs. Baseline `verify` passed build/lint but its E2E unit package
 passed 209 of 210 cases: the pending-browser-acquisition test exceeded its
@@ -126,7 +166,7 @@ unchanged five-second test timeout. The full suite passed five of six cases;
 the independent-stack case failed during passkey bootstrap at its 45-second
 startup deadline on both attempts. Pre/post numeric summaries reported zero
 workerd processes, threads and RSS; no orphan workerd termination was reported.
-The hosted gate remains blocked. The exact unit timeout stage and the original
+That head did not satisfy the hosted gate. The exact unit timeout stage and the original
 native/hang/resource cause remain unproved and are not assumed to be shared.
 
 The local amendment made the fake-clock cleanup-timer registration boundary
@@ -140,17 +180,18 @@ The amended source passed 97 focused cases and all 214 E2E unit-package cases;
 its unchanged full suite passed six tests with two workers in 21.2 seconds,
 without skips or retries. These are macOS results with pinned CI runtime/browser
 settings, not an explanation or fix claim for either hosted failure. Independent
-review and a new Ubuntu run are required before accepting this amendment.
+review and a new Ubuntu run were pending at that checkpoint; the reviewed
+amendment's later hosted result is recorded in the dated foundation status above.
 
-On 2026-10-09, the subsequent [hosted Ubuntu run 37936891294](https://github.com/tanmaydatta/chole-bhature/actions/runs/37936891294)
+On 2026-10-09, [hosted Ubuntu run 37936891294](https://github.com/tanmaydatta/chole-bhature/actions/runs/37936891294)
 on [documentation head 5a005a60](https://github.com/tanmaydatta/chole-bhature/commit/5a005a60c1100c2de279bbf0e3ee5fb96611f1d6)
 passed `verify`, but only five of six E2E cases passed. The independent-stack
 case timed out at 120 seconds on both attempts; post-suite totals were 24 workerd
 processes, 204 threads and 2,252,980 KiB RSS, and runner cleanup terminated 24
 orphaned workerd processes. That head does not satisfy the hosted gate. The
 native/hang/resource cause remains unproved. The timeout-safe ownership change
-requires a newly reviewed Ubuntu run; an earlier green run is historical evidence,
-not acceptance of this change.
+still required a newly reviewed Ubuntu run at that checkpoint; an earlier
+green run was historical evidence, not acceptance of that change.
 
 The proposed timeout-safe lifecycle passed 93 focused process/browser/privacy
 cases and all 210 E2E unit-package cases on 2026-10-09. A real controlled
@@ -212,7 +253,7 @@ owner-run manual acceptance step after an approved deployment, using an ordinary
 private root passkey session, the cross-Worker capability/migration handshake,
 the full applicable suite and scoped cleanup.
 
-Disposable cloud PR stacks and guarded upload remain paused, unfinished,
+Disposable cloud PR stacks and guarded upload remain parked, unfinished,
 unadopted and unverified. The unresolved provider boundaries remain service
 binding remapping, the asset/session target name, upload hash semantics and
 asset completion scope. Local routing checks establish no live provider

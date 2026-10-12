@@ -1,17 +1,22 @@
 # End-to-end test workspace
 
 The full local API/browser suite runs automatically on same-repository PR
-pushes. See [Local PR E2E CI](../../docs/testing/local-pr-e2e-ci.md) for its
-six-test coverage, diagnostics policy and staging/cloud evidence boundary.
-The latest published harness head failed one of 210 unit cases and the
-independent-stack E2E case during passkey bootstrap on both attempts. Its
-post-suite process counts were zero, but the hosted gate remains blocked.
-An earlier harness commit passed all six hosted Ubuntu cases in 42.6 seconds.
-The original native/hang cause remains unproved; the linked reference records
-exact runs, cancellation evidence and the locally tested cleanup/diagnostic
-amendment awaiting reviewed Ubuntu verification.
-Staging remains protected owner-run acceptance after deployment; disposable
-cloud PR stacks and guarded upload remain paused and unfinished.
+pushes against disposable Workers and private local D1 stores.
+
+As of 2026-10-12, the local E2E foundation is accepted for use with a known
+passkey-activation flake. Both jobs passed in [Ubuntu run 37955992809](https://github.com/tanmaydatta/chole-bhature/actions/runs/37955992809)
+on [harness commit bab7e8ad](https://github.com/tanmaydatta/chole-bhature/commit/bab7e8adf086ad33f2578279b86bf57b23914ad5)
+in [PR #21](https://github.com/tanmaydatta/chole-bhature/pull/21): five E2E cases
+passed first attempt and the independent-stack case passed its existing single
+CI retry. Pre/post workerd processes, threads and RSS were zero.
+This is a usable foundation, not fully stable or finished E2E acceptance.
+All six tests remain enabled and genuine failures block CI. Further flake
+diagnosis is capped at two hours; product work proceeds without waiting for
+perfect flake elimination. See [Local PR E2E CI](../../docs/testing/local-pr-e2e-ci.md)
+for exact evidence, historical failures and remaining boundaries. Staging
+remains protected owner-run manual acceptance after a separately approved
+deployment; per-PR cloud environments and guarded upload remain parked and
+unfinished. This closeout performs no deployment or staging acceptance.
 
 From the repository root, after `pnpm install --frozen-lockfile` and `pnpm build`:
 
