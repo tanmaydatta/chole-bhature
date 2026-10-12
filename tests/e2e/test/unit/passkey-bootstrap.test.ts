@@ -3,10 +3,11 @@ import { mkdtemp, readFile, readdir, rm, stat, symlink, writeFile, mkdir } from 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setImmediate as eventLoopTurn, setTimeout as delay } from 'node:timers/promises';
+import { format } from 'node:util';
 import { chromium, request, type APIRequestContext } from '@playwright/test';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
-import { bootstrapLocalRootPasskey, parseLocalRootBootstrapResult, saveLocalPasskeyRootState,
+import { bootstrapLocalRootPasskey, localPasskeyPhases, parseLocalRootBootstrapResult, saveLocalPasskeyRootState,
   withLocalPasskeyBrowser, withLocalPasskeyContext } from '../../src/passkey-bootstrap.js';
 import { createLocalStackOwner } from '../../src/local-stack.js';
 
@@ -31,12 +32,17 @@ describe('local passkey root state publication', () => {
   let disconnect: boolean;
   let storageFailure: boolean;
   let redirectedRequests: string[];
+  let traceFixture: ((stage: 'api-dispose' | 'server-close' | 'directory-remove' | 'fixture-done') => void) | undefined;
+  let traceLines: string[] | undefined;
+  let restoreTraceInfo: (() => void) | undefined;
 
   beforeEach(async () => {
     directory = await mkdtemp(join(tmpdir(), 'passkey-bootstrap-unit-'));
     output = join(directory, 'root.json');
     body = { ...rootSession }; status = 200; invalidJson = false;
     disconnect = false; storageFailure = false; redirectedRequests = [];
+    traceFixture = undefined;
+    traceLines = undefined; restoreTraceInfo = undefined;
     server = createServer((incoming, response) => {
       if (incoming.url !== '/operator/v1/session') {
         redirectedRequests.push(incoming.url ?? '');
@@ -59,9 +65,28 @@ describe('local passkey root state publication', () => {
   });
 
   afterEach(async () => {
-    await api?.dispose();
-    if (server?.listening) await new Promise<void>(resolve => server.close(() => resolve()));
-    if (directory) await rm(directory, { recursive: true, force: true });
+    try {
+      traceFixture?.('api-dispose');
+      await api?.dispose();
+      traceFixture?.('server-close');
+      if (server?.listening) await new Promise<void>(resolve => server.close(() => resolve()));
+      traceFixture?.('directory-remove');
+      if (directory) await rm(directory, { recursive: true, force: true });
+      traceFixture?.('fixture-done');
+      if (traceLines) {
+        const closedStage = /^local-passkey-unit stage=(?:start|unknown|passkey-browser-launch|passkey-context-init|passkey-page-init|passkey-webauthn|passkey-page-navigation|navigation-request|fallback-abort|passkey-root-activation|passkey-context-close|passkey-browser-close|bootstrap-settled|assertions-done|owner-stop|owner-stopped|api-dispose|server-close|directory-remove|fixture-done); elapsed_ms=(\d+)$/u;
+        expect(traceLines.at(-1)).toMatch(/^local-passkey-unit stage=fixture-done; elapsed_ms=\d+$/u);
+        expect(traceLines).toContainEqual(expect.stringMatching(/^local-passkey-unit stage=unknown; elapsed_ms=\d+$/u));
+        for (const line of traceLines) {
+          const match = closedStage.exec(line);
+          expect(match).not.toBeNull();
+          const elapsed = Number(match![1]);
+          expect(elapsed).toBeGreaterThanOrEqual(0);
+          expect(elapsed).toBeLessThanOrEqual(3_600_000);
+        }
+        expect(traceLines.join('\n')).not.toMatch(/PRIVATE|127\.0\.0\.1|root\.json|private-cookie-value/iu);
+      }
+    } finally { restoreTraceInfo?.(); }
   });
 
   function publish(overrides: Partial<Parameters<typeof saveLocalPasskeyRootState>[1]> = {}) {
@@ -132,20 +157,44 @@ describe('local passkey root state publication', () => {
     const controller = new AbortController();
     const owner = createLocalStackOwner();
     const labels: string[] = [];
+    const capturedInfo: string[] = [];
+    traceLines = capturedInfo;
+    const originalInfo = console.info.bind(console);
+    const info = vi.spyOn(console, 'info').mockImplementation((...args) => {
+      capturedInfo.push(format(...args)); originalInfo(...args);
+    });
+    restoreTraceInfo = () => info.mockRestore();
+    const started = Date.now();
+    const stage = (value: string) => {
+      const safe = localPasskeyPhases.find(phase => phase === value)
+        ?? (['start', 'navigation-request', 'fallback-abort', 'bootstrap-settled',
+          'assertions-done', 'owner-stop', 'owner-stopped', 'api-dispose',
+          'server-close', 'directory-remove', 'fixture-done'].includes(value) ? value : 'unknown');
+      console.info(`local-passkey-unit stage=${safe}; elapsed_ms=${
+        Math.max(0, Math.min(3_600_000, Date.now() - started))}`);
+    };
+    traceFixture = stage;
+    stage('start');
+    stage('PRIVATE_SYNTHETIC_PHASE');
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
     const diagnosticOwner = { own: owner.own, phase(value: string) {
+      stage(value);
       labels.push(value); owner.phase(value);
       if (value === 'passkey-root-activation') controller.abort(new Error('PRIVATE_ABORT_COOKIE'));
     } };
     // Bound the absent-progress RED after actual navigation, not browser launch speed.
     let fallback: ReturnType<typeof setTimeout> | undefined;
-    const afterNavigation = () => { fallback = setTimeout(() => controller.abort(), 1_000); };
+    const afterNavigation = () => {
+      stage('navigation-request');
+      fallback = setTimeout(() => { stage('fallback-abort'); controller.abort(); }, 1_000);
+    };
     server.once('request', afterNavigation);
     try {
       const outcome = await bootstrapLocalRootPasskey({ operatorOrigin: origin,
         expectedRootUserId: 'PRIVATE_ROOT_ID', storageStatePath: output,
         activationGrant: 'PRIVATE_ACTIVATION_GRANT', signal: controller.signal,
         owner: diagnosticOwner }).catch(error => error);
+      stage('bootstrap-settled');
       expect(labels).toEqual(['passkey-browser-launch', 'passkey-context-init', 'passkey-page-init',
         'passkey-webauthn', 'passkey-page-navigation', 'passkey-root-activation',
         'passkey-context-close', 'passkey-browser-close']);
@@ -155,9 +204,11 @@ describe('local passkey root state publication', () => {
       expect(diagnostics).toContain('phase=passkey-root-activation');
       expect(diagnostics).not.toMatch(/PRIVATE|127\.0\.0\.1|root\.json|private-cookie-value/iu);
       expect(String(outcome)).not.toMatch(/PRIVATE|127\.0\.0\.1|root\.json/iu);
+      stage('assertions-done');
     } finally {
       clearTimeout(fallback); server.off('request', afterNavigation);
-      await owner.stop(); log.mockRestore();
+      try { stage('owner-stop'); await owner.stop(); stage('owner-stopped'); }
+      finally { log.mockRestore(); }
     }
   });
 
