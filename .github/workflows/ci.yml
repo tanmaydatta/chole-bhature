@@ -33,3 +33,69 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y expect
       - run: pnpm test
+
+  local-e2e:
+    # PR synchronize events run on every push; external forks keep baseline verify only.
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CI: 'true'
+      E2E_BROWSER_CHANNEL: chromium
+      COREPACK_ENABLE_NETWORK: '0'
+      pnpm_config_verify_deps_before_run: error
+      pnpm_config_enable_global_virtual_store: 'false'
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 11.14.0
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22.18.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Install pinned Chromium and Linux dependencies
+        run: pnpm --filter @incentives/e2e exec playwright install --with-deps chromium
+      # Playwright imports built workspace contracts before global setup can start.
+      - run: pnpm build
+      - name: Run full local stack API and browser suite
+        run: |
+          capacity() {
+            node --input-type=module <<'NODE'
+          import { readFileSync } from 'node:fs';
+          import { availableParallelism, cpus, freemem, totalmem } from 'node:os';
+          import { execFileSync } from 'node:child_process';
+          const number = path => {
+            try { const value = readFileSync(path, 'utf8').trim(); return /^\d+$/.test(value) ? Number(value) : null; }
+            catch { return null; }
+          };
+          const oomKills = () => {
+            try { const value = readFileSync('/sys/fs/cgroup/memory.events.local', 'utf8').match(/^oom_kill (\d+)$/m)?.[1]; return value ? Number(value) : null; }
+            catch { return null; }
+          };
+          const limits = readFileSync('/proc/self/limits', 'utf8');
+          const limit = label => {
+            const value = limits.split('\n').find(line => line.startsWith(label))?.slice(label.length).trim().split(/\s+/)[0];
+            return value && /^\d+$/.test(value) ? Number(value) : null;
+          };
+          const processes = execFileSync('ps', ['-e', '-o', 'comm=,nlwp=,rss='], { encoding: 'utf8' })
+            .trim().split('\n').map(line => line.trim().split(/\s+/));
+          const workerd = processes.filter(([name]) => name === 'workerd');
+          console.log(JSON.stringify({ cpuCount: cpus().length, affinityCpuCount: availableParallelism(),
+            totalMemoryBytes: totalmem(), freeMemoryBytes: freemem(), processCount: processes.length,
+            threadCount: processes.reduce((sum, row) => sum + Number(row[1]), 0),
+            workerdCount: workerd.length, workerdThreadCount: workerd.reduce((sum, row) => sum + Number(row[1]), 0),
+            workerdRssKiB: workerd.reduce((sum, row) => sum + Number(row[2]), 0),
+            openFileSoftLimit: limit('Max open files'), processSoftLimit: limit('Max processes'),
+            cgroupPidsCurrent: number('/sys/fs/cgroup/pids.current'), cgroupPidsMax: number('/sys/fs/cgroup/pids.max'),
+            cgroupMemoryCurrentBytes: number('/sys/fs/cgroup/memory.current'), cgroupMemoryMaxBytes: number('/sys/fs/cgroup/memory.max'),
+            cgroupOomKills: oomKills() }));
+          NODE
+          }
+          capacity || true
+          trap 'capacity || true' EXIT
+          pnpm e2e:local
+      # No artifact upload: local root sessions, run proofs and request headers are private.

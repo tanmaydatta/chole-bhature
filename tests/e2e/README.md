@@ -1,14 +1,32 @@
 # End-to-end test workspace
 
-From the repository root, after `pnpm install --frozen-lockfile`:
+The full local API/browser suite runs automatically on same-repository PR
+pushes against disposable Workers and private local D1 stores.
+
+As of 2026-10-12, the local E2E foundation is accepted for use with a known
+passkey-activation flake. Both jobs passed in [Ubuntu run 37955992809](https://github.com/tanmaydatta/chole-bhature/actions/runs/37955992809)
+on [harness commit bab7e8ad](https://github.com/tanmaydatta/chole-bhature/commit/bab7e8adf086ad33f2578279b86bf57b23914ad5)
+in [PR #21](https://github.com/tanmaydatta/chole-bhature/pull/21): five E2E cases
+passed first attempt and the independent-stack case passed its existing single
+CI retry. Pre/post workerd processes, threads and RSS were zero.
+This is a usable foundation, not fully stable or finished E2E acceptance.
+All six tests remain enabled and genuine failures block CI. Further flake
+diagnosis is capped at two hours; product work proceeds without waiting for
+perfect flake elimination. See [Local PR E2E CI](../../docs/testing/local-pr-e2e-ci.md)
+for exact evidence, historical failures and remaining boundaries. Staging
+remains protected owner-run manual acceptance after a separately approved
+deployment; per-PR cloud environments and guarded upload remain parked and
+unfinished. This closeout performs no deployment or staging acceptance.
+
+From the repository root, after `pnpm install --frozen-lockfile` and `pnpm build`:
 
 ```sh
 pnpm e2e:local:headed
 ```
 
 This opens system Chrome so you can watch the Promo draft, save, refresh, detail,
-and publish flow. `pnpm e2e:local` runs the browser smoke plus the detailed API
-flow headlessly. No pre-existing root session, ports, `.dev.vars`, or local D1
+and publish flow. `pnpm e2e:local` runs all six API/browser tests headlessly
+with two workers. No pre-existing root session, ports, `.dev.vars`, or local D1
 state is needed: Playwright builds the dashboard/dependencies once, allocates
 unique loopback ports and Worker names, migrates two private temporary D1
 stores, bootstraps a disposable root through the existing root CLI and actual
@@ -27,8 +45,9 @@ then publishes a complete file created with mode 0600 without overwriting an
 existing file, symlink or directory. The existing two-stack Playwright case
 restores both saved files into fresh browser contexts and verifies their exact
 root identities, passkey sessions and signed-in UI, while retaining cross-state
-rejection. Browser-free Vitest cases exercise real local HTTP and filesystem
-failure paths; actual Chromium/WebAuthn runs only in local Playwright.
+rejection. Vitest cases exercise real local HTTP/filesystem failure paths and
+real Chromium browser/context cancellation, including late fulfillment. Actual
+WebAuthn bootstrap remains in the full local Playwright suite.
 This bounded local extraction is implemented and locally tested; independent
 task review passed on 2026-10-08 for this local Task 7b scope.
 It adds no cloud target or login, Access wiring or provider authority. See the
@@ -118,15 +137,48 @@ order, and idempotency identifiers are run-scoped. A mode-0600 manifest in
 `tests/e2e/.runs` records every created ID and its owner. The run proof,
 cookies, and tokens are separate private files. Independent scenarios share
 one suite bootstrap but not tenant state or browser contexts. Playwright uses
-two bounded workers; API tests carry detailed assertions while one browser
-spec exercises real UI interactions. The measured local baseline on
+two bounded workers; API tests carry detailed business assertions, one browser
+spec exercises real Promo UI interactions, and another checks controlled local
+routing. The measured local baseline on
 2026-09-25 was 5 Playwright tests in 23.9 seconds, including bootstrap,
 two concurrent full scenarios, browser smoke, and two simultaneous independent
-Worker/Auth D1 instances. CI may select `--project=api` or
-`--project=browser`, or shard with Playwright's `--shard` flag; each shard
-starts its own isolated stack.
+Worker/Auth D1 instances. The PR CI job runs every project and all six tests
+without selection or sharding. For focused local diagnosis, Playwright accepts
+`--project=api`, `--project=browser`, or `--shard`; each shard starts its own
+isolated stack.
 
 ## Cleanup and recovery
+
+The independent-stack test registers its fixture owner before simultaneous
+startup. Normal test timeout teardown cancels pending and ready stacks without
+waiting indefinitely for startup fulfillment. Setup commands and Workers belong
+to dedicated POSIX process groups pinned by live IPC supervisors. Only each live
+supervisor signals its own group and inheriting descendants; the parent never
+signals a remembered group ID after supervisor exit. Late temporary resources, browsers and contexts are
+disposed before use, and cancellation prevents root-state publication. Successful
+tests still await both starts and all stops; cleanup failures are reported with
+the original test failure preserved.
+
+Setup commands and passkey bootstrap have 45-second cancellation deadlines;
+pending browser acquisition plus close has a 10-second cleanup bound, as do
+resource cleanup and supervisor IPC shutdown. Owned groups receive TERM then
+KILL after five seconds; numeric membership inspection excludes the supervisor
+and its completed inspector. Inspection failure triggers best-effort self-group
+termination and remains an incomplete cleanup, not success. Late browser close
+failure or acquisition deadline reaches both caller and fixture owner. The suite's test
+timeout, retry count, concurrency and assertions are unchanged. Fixture teardown
+supports normal Playwright test interruption, not uncatchable OS termination
+such as SIGKILL or descendants that escape their owned process group.
+Managed diagnostics emit fixed phases before awaits and every ten seconds,
+bounded elapsed milliseconds, known failure hints and launcher exit/signal
+values, never raw private logs or error content. Unknown text is not reflected.
+Passkey substeps identify launch, context/page/CDP initialization, navigation,
+activation, recovery, sign-in, server verification, state snapshot, cleanup and
+publication. Nested context cleanup precedes its enclosing browser close;
+both share the existing ten-second total bound. A failed or never-settling
+nested cleanup still attempts browser close and reports safe incompleteness,
+without waiting for arbitrary bootstrap work or publishing after cancellation.
+CI's best-effort capacity summaries contain only bounded system numbers.
 
 The scenario runner previews and disposes its claimed tenant in `finally`,
 then reopens a root read-only inventory to assert **zero Product and Auth

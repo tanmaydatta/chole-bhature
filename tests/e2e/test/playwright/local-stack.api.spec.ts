@@ -1,18 +1,21 @@
-import { test, expect } from '@playwright/test';
+import { test as base, expect } from '@playwright/test';
 import { stat } from 'node:fs/promises';
 import { OperatorSessionViewSchema } from '@incentives/contracts';
 
 import { loadTarget } from '../../src/config.js';
-import { startManagedLocalStack } from '../../src/local-stack.js';
+import { createLocalStackOwner, startManagedLocalStack, withLocalStackFixture,
+  withLocalStackPair } from '../../src/local-stack.js';
 import { openOperatorClient } from '../../src/operator-client.js';
 
-test('two local bootstrap instances have isolated health, root sessions and Auth D1', async ({ browser }) => {
+const test = base.extend<{ localStackOwner: ReturnType<typeof createLocalStackOwner> }>({
+  // Playwright requires a destructured fixture parameter to resolve dependencies.
+  // eslint-disable-next-line no-empty-pattern
+  localStackOwner: async ({}, use) => withLocalStackFixture(use),
+});
+
+test('two local bootstrap instances have isolated health, root sessions and Auth D1', async ({ browser, localStackOwner }) => {
   test.skip(loadTarget(process.env).kind !== 'local', 'Local stack isolation is local-only');
-  const [first, second] = await Promise.all([
-    startManagedLocalStack({ skipBuild: true }),
-    startManagedLocalStack({ skipBuild: true }),
-  ]);
-  try {
+  await withLocalStackPair(() => startManagedLocalStack({ skipBuild: true, owner: localStackOwner }), async ([first, second]) => {
     expect(first.operatorOrigin).not.toBe(second.operatorOrigin);
     expect(first.apiOrigin).not.toBe(second.apiOrigin);
     expect(first.directory).not.toBe(second.directory);
@@ -45,7 +48,5 @@ test('two local bootstrap instances have isolated health, root sessions and Auth
     await expect(openOperatorClient({ kind: 'local',
       operatorOrigin: first.operatorOrigin, apiOrigin: first.apiOrigin },
     { E2E_OPERATOR_STORAGE_STATE: second.storageState })).rejects.toThrow();
-  } finally {
-    await Promise.all([first.stop(), second.stop()]);
-  }
+  });
 });
