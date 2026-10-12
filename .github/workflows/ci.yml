@@ -16,6 +16,8 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      E2E_BROWSER_CHANNEL: chromium
     steps:
       - uses: actions/checkout@v6
       - uses: pnpm/action-setup@v6
@@ -26,6 +28,8 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Install pinned Chromium and Linux dependencies
+        run: pnpm --filter @incentives/e2e exec playwright install --with-deps chromium
       - run: pnpm build
       - run: pnpm lint
       - name: Install PTY test dependency

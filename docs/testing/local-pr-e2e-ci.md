@@ -12,6 +12,19 @@ All six tests and their assertions remain enabled, the existing single CI
 retry is unchanged, and genuine failures continue to block CI. No case is
 quarantined or disabled, and no timeout or concurrency limit is relaxed.
 
+The [post-merge `dev` run 38229971480](https://github.com/tanmaydatta/chole-bhature/actions/runs/38229971480)
+on [merge commit 520f342](https://github.com/tanmaydatta/chole-bhature/commit/520f342a55fb5a681e56fb698edabb53ecbdb386)
+passed build and lint but failed `verify` during `pnpm test`: 213 of 214 E2E
+unit-package cases passed, and the real-browser passkey substep case timed out
+at its unchanged 5,000 ms limit. The log does not identify its stalled
+operation. The PR-only `local-e2e` job was skipped on this `dev` push, so the
+run supplies no new full-suite failure. The preceding [PR run 38229371879](https://github.com/tanmaydatta/chole-bhature/actions/runs/38229371879)
+on [head 3dcea37](https://github.com/tanmaydatta/chole-bhature/commit/3dcea37d95eb8464700cb06dde65865383f3154a)
+passed all 1,767 Vitest cases (including all 214 E2E unit-package cases), nine
+Node fixture cases and all six full E2E cases with two workers in 39.8 seconds,
+without reported skips, retries or flakiness. The merged head's baseline is
+currently red; neither run proves the original activation flake eliminated.
+
 The [Ubuntu run 37955992809](https://github.com/tanmaydatta/chole-bhature/actions/runs/37955992809),
 executed on 2026-10-09 for [harness commit bab7e8ad](https://github.com/tanmaydatta/chole-bhature/commit/bab7e8adf086ad33f2578279b86bf57b23914ad5)
 in [PR #21](https://github.com/tanmaydatta/chole-bhature/pull/21), passed both
@@ -33,8 +46,8 @@ The context-before-browser cleanup and fixed passkey phase amendment received
 independent scoped review. An independent local check on 2026-10-09 passed all
 six cases with two workers in 22.5 seconds, without retries or skips, on the
 same harness commit. This is local evidence, separate from the Ubuntu result.
-The historical failures below remain evidence for earlier heads, not the
-current hosted gate status.
+The historical failures below remain evidence for earlier heads; the current
+merged-head baseline status is recorded above.
 
 Protected owner-run manual staging acceptance follows a separately approved
 deployment; this closeout performs neither deployment nor staging acceptance.
@@ -48,8 +61,8 @@ asset/session target name, upload hash semantics and asset completion scope.
 |---|---|
 | Trigger | Pull requests opened, reopened or updated by a push, for any target branch; the head repository must equal this repository. External forks skip the local E2E job. |
 | Superseded runs | The existing workflow/ref concurrency group cancels older runs for the same PR ref, including its baseline and local E2E jobs. |
-| Baseline | The existing build, lint and unit-test `verify` job still runs. Pushes to `dev` run that baseline; the local E2E job is PR-only. |
-| Runtime | Ubuntu, Node 22.18.0, pnpm 11.14.0, frozen lockfile installation, Corepack networking disabled (`COREPACK_ENABLE_NETWORK=0`), dependency verification required (`pnpm_config_verify_deps_before_run=error`) and global virtual store disabled (`pnpm_config_enable_global_virtual_store=false`); project-pinned Playwright Chromium with Linux system dependencies, then workspace build. |
+| Baseline | The existing build, lint and unit-test `verify` job still runs. Pushes to `dev` run that baseline; the local E2E job is PR-only. Its Node 22 setup now installs project-pinned Playwright Chromium and Linux dependencies after the frozen install and selects that browser for real-browser unit cases. |
+| Local E2E runtime | Ubuntu, Node 22.18.0, pnpm 11.14.0, frozen lockfile installation, Corepack networking disabled (`COREPACK_ENABLE_NETWORK=0`), dependency verification required (`pnpm_config_verify_deps_before_run=error`) and global virtual store disabled (`pnpm_config_enable_global_virtual_store=false`); the same project-pinned Playwright Chromium with Linux system dependencies, then workspace build. |
 | Suite | `pnpm e2e:local`, both API and browser projects, all six tests, two workers, no filtering or sharding; the existing one CI retry remains. |
 | Authority | `contents: read`; checkout credentials are not persisted for the local E2E job. No staging session, Cloudflare token, repository secret or privileged GitHub write token is supplied to the suite. |
 | Isolation | Fresh root/passkey identity, unique loopback ports and Worker names, private temporary Product/Auth D1 stores, and independently scoped scenario tenants. A test-scoped owner registers before both concurrent starts and cancels pending/ready stacks during normal timeout teardown. Late acquisitions are disposed before use; cleanup failures preserve the test failure. |
@@ -109,8 +122,24 @@ Passkey progress additionally identifies browser launch, context/page and CDP
 virtual-authenticator initialization, page navigation, root activation, recovery
 confirmation, passkey sign-in, server verification, state snapshot, context and
 browser close, and state publication. These labels contain no origins, paths,
-root identities, activation grants, cookies or raw errors. Failures report
-per-Worker known failure hints and the owned Wrangler launcher's exit/signal state. Classification
+root identities, activation grants, cookies or raw errors.
+The real-browser passkey unit case also emits fixed stage labels and elapsed
+milliseconds bounded to 0–3,600,000 before browser launch, navigation,
+cancellation/cleanup, and fixture teardown awaits. Unknown phase values become
+`unknown`; no private inputs, origins, paths or raw errors enter this output.
+This can localize a future unit timeout but cannot retroactively determine the
+stage of run 38229971480. In a 2026-10-12 macOS comparison, the first focused
+system-Chrome run spent 4,187 ms before context initialization and finished
+fixture teardown at 4,844 ms, close to the unchanged five-second unit bound.
+The same case with pinned Chromium finished teardown at 391 ms. A subsequent
+system-Chrome E2E unit-package run passed 214/214 with warm launch and finished
+that case's teardown at 540 ms. These results support cold browser startup as a
+possible contributor, not a proven cause of the Ubuntu timeout. This
+workflow change aligns `verify` with the pinned Chromium already used by
+`local-e2e`; a fresh hosted run is required to establish its effect on Ubuntu.
+
+Managed failures report per-Worker known failure hints and the owned Wrangler
+launcher's exit/signal state. Classification
 scans the complete private Worker log, including an early native error followed
 by a long backtrace, but emits only closed labels: resource unavailable, address
 in use, too many open files, out of memory, native check failed or segmentation

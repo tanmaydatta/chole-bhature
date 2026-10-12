@@ -12,7 +12,18 @@ CI retry. Pre/post workerd processes, threads and RSS were zero.
 This is a usable foundation, not fully stable or finished E2E acceptance.
 All six tests remain enabled and genuine failures block CI. Further flake
 diagnosis is capped at two hours; product work proceeds without waiting for
-perfect flake elimination. See [Local PR E2E CI](../../docs/testing/local-pr-e2e-ci.md)
+perfect flake elimination. The later [post-merge `dev` run 38229971480](https://github.com/tanmaydatta/chole-bhature/actions/runs/38229971480)
+on [merge commit 520f342](https://github.com/tanmaydatta/chole-bhature/commit/520f342a55fb5a681e56fb698edabb53ecbdb386)
+passed build/lint but failed one of 214 E2E unit-package cases at its unchanged
+five-second timeout. The PR-only full E2E job was skipped on that `dev` push;
+the exact stalled unit operation is not known. The pre-merge PR run had passed
+both jobs. This diagnostic change records only closed stage labels and bounded
+elapsed milliseconds around that real-browser unit's launch, navigation,
+cancellation, cleanup and fixture teardown. Both CI jobs now select the same
+project-pinned Chromium and install its Linux dependencies, removing the
+baseline job's reliance on the runner's system Chrome. Local headed commands
+still use system Chrome. This change does not claim the earlier timeout's exact
+cause or a fresh hosted pass. See [Local PR E2E CI](../../docs/testing/local-pr-e2e-ci.md)
 for exact evidence, historical failures and remaining boundaries. Staging
 remains protected owner-run manual acceptance after a separately approved
 deployment; per-PR cloud environments and guarded upload remain parked and
@@ -178,6 +189,9 @@ publication. Nested context cleanup precedes its enclosing browser close;
 both share the existing ten-second total bound. A failed or never-settling
 nested cleanup still attempts browser close and reports safe incompleteness,
 without waiting for arbitrary bootstrap work or publishing after cancellation.
+The passkey phase unit also emits only fixed stage names and bounded elapsed
+milliseconds before its browser and teardown awaits, so a future five-second
+unit timeout can be attributed to a narrower lifecycle boundary.
 CI's best-effort capacity summaries contain only bounded system numbers.
 
 The scenario runner previews and disposes its claimed tenant in `finally`,
