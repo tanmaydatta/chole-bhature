@@ -100,6 +100,40 @@ it fails before any write on old/mixed Workers or missing lifecycle migrations.
 The storage-state **path** is safe to place in the shell command; keep the
 file and its containing directory private.
 
+## Control lease foundation
+
+Version 2 control leases and SQL write fences provide a foundation for future
+preauthenticated product tests. The control endpoints, controller account
+issuance, session resolution and routine harness are not wired or deployed;
+the existing commands continue to use the version 1 ROOT flow.
+
+Version 2 fixture accounts require controller-owned synthetic reservations.
+Ordinary invitation acceptance for a version 2 fixture organization refuses
+before any writes. Manual tenants and version 1 ROOT runs keep their existing
+invitation and account flows. Permanent fixture markers refuse business writes
+when the matching control ledger is missing, expired or fenced.
+
+Local capture for a version 2 synthetic invitation address requires an explicit
+control runtime and exact live pending-invitation ownership. The capture INSERT
+uses the same atomic SQL write fence; stale or ambiguous ownership refuses even
+after tenant deletion. Reserved controller account addresses remain no-email.
+Ordinary shared recipients are not inferred to be fixture-owned from invitations;
+manual/version 1 capture and Resend behavior are unchanged. Runtime factory
+wiring is still part of the future integration, not this foundation.
+
+Creation leases last 15 minutes from reservation, with eight live leases per
+target and a default quota of three accounts per run. Exact-run cleanup
+invocations last five minutes and grant only fencing and disposal authority.
+The [preauthenticated product E2E contract](../../docs/superpowers/specs/2026-10-12-preauthenticated-product-e2e-design.md)
+records the remaining integration and rollout boundaries.
+
+Code references:
+
+- Product lease and fence schema: [Product migration](../../apps/api/migrations/0009_e2e_control_leases.sql).
+- Auth lease, account and session constraints: [Auth migration](../../apps/identity/migrations/0007_e2e_control_leases.sql).
+- Invitation acceptance boundary: [invitation service](../../apps/identity/src/services/invitations.ts).
+- Explicit-runtime local capture boundary: [email adapters](../../apps/identity/src/email.ts).
+
 ## Check the local cloud helper groundwork
 
 Cloud candidate and Access routing checks run on controlled local fixtures;

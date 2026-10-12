@@ -21,8 +21,9 @@ import {
   normalizeDistinctPromoCodes,
   normalizePromoCode,
   type VariableDefinition,
+  type E2eControlRuntime,
 } from '@incentives/contracts';
-import { and, asc, desc, eq } from 'drizzle-orm';
+import { and, asc, desc, eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
 
 import { createDatabase } from '../db/client.js';
@@ -40,6 +41,7 @@ import {
   schemaVersions,
   variableDefinitions,
 } from '../db/schema.js';
+import { withProductBusinessWrite } from './e2e-write-fence.js';
 import type { Env } from '../env.js';
 import { MerchantIdentityConflictError } from '../errors/merchant-errors.js';
 import { canonicalJson } from '../json.js';
@@ -1016,7 +1018,10 @@ async function verifiedRedemptionFromRows(
   return redemption;
 }
 
-export function createRepositories(env: Env): Repositories {
+export function createRepositories(env: Env, runtime?: E2eControlRuntime): Repositories {
+  const businessWrite = (merchantId: string, statements: D1PreparedStatement[]) =>
+    withProductBusinessWrite(env.DB, runtime, merchantId, statements);
+  const compiled = (query: { sql: string; params: unknown[] }) => env.DB.prepare(query.sql).bind(...query.params);
   const db = createDatabase(env);
 
   function programProjection(revision: 'working' | 'active' = 'working'): string {
@@ -1181,14 +1186,22 @@ export function createRepositories(env: Env): Repositories {
     snapshot: z.infer<typeof CustomerSnapshotSchema>,
     updatedAt: string,
   ): Promise<CustomerRecord> {
-    const row = await db.insert(customers).values({
+    const query = db.insert(customers).values({
       id: crypto.randomUUID(),
       merchantId,
       externalRef: snapshot.externalRef,
       attributesJson: canonicalJson(snapshot.attributes),
       version: 1,
       updatedAt,
-    }).returning().get();
+    }).returning({
+      id: customers.id, merchantId: sql<string>`${customers.merchantId}`.as('merchantId'),
+      externalRef: sql<string>`${customers.externalRef}`.as('externalRef'),
+      attributesJson: sql<string>`${customers.attributesJson}`.as('attributesJson'),
+      version: customers.version, updatedAt: sql<string>`${customers.updatedAt}`.as('updatedAt'),
+    }).toSQL();
+    const [result] = await businessWrite(merchantId, [compiled(query)]);
+    const row = z.object({ id: z.string(), merchantId: z.string(), externalRef: z.string(),
+      attributesJson: z.string(), version: z.number(), updatedAt: z.string() }).parse(result?.results[0]);
     return customerFromRow(row);
   }
 
@@ -1255,7 +1268,7 @@ export function createRepositories(env: Env): Repositories {
         }
         const existing = await env.DB.prepare(`
           SELECT id, name, status, provisioning_id AS provisioningId,
-            created_at AS createdAt, updated_at AS updatedAt
+            created_at AS createdAt, updated_at AS updatedAt, e2e_control_run_id AS e2eControlRunId
           FROM merchants
           WHERE id = ?1 OR provisioning_id = ?2
         `).bind(parsed.id, parsed.provisioningId).first<{
@@ -1265,6 +1278,7 @@ export function createRepositories(env: Env): Repositories {
           provisioningId: string | null;
           createdAt: string;
           updatedAt: string | null;
+          e2eControlRunId: string | null;
         }>();
         if (existing === null) {
           throw new Error('Merchant provisioning did not produce a readable merchant');
@@ -1274,6 +1288,7 @@ export function createRepositories(env: Env): Repositories {
           name: existing.name,
           status: existing.status,
           provisioningId: existing.provisioningId,
+          e2eControlRunId: existing.e2eControlRunId,
           createdAt: existing.createdAt,
           updatedAt: existing.updatedAt,
         });
@@ -1333,7 +1348,7 @@ export function createRepositories(env: Env): Repositories {
           targetId: parsed.view.id,
           actorId: parsed.view.createdBy,
         });
-        await env.DB.batch([
+        await businessWrite(parsed.view.merchantId, [
           env.DB.prepare(`
             INSERT INTO api_credentials (
               id, merchant_id, name, environment, kind, scopes_json,
@@ -1433,7 +1448,7 @@ export function createRepositories(env: Env): Repositories {
           targetId: parsedId,
           actorId: parsedRevokedBy,
         });
-        await env.DB.batch([
+        await businessWrite(parsedMerchantId, [
           env.DB.prepare(`
             UPDATE api_credentials
             SET status = 'revoked', revoked_at = ?1, revoked_by = ?2
@@ -1481,9 +1496,11 @@ export function createRepositories(env: Env): Repositories {
       },
 
       async markUsed(id, usedAt) {
-        await env.DB.prepare(`
+        const credential = await env.DB.prepare('SELECT merchant_id AS merchantId FROM api_credentials WHERE id=?1')
+          .bind(id).first<{ merchantId: string }>();
+        await businessWrite(credential?.merchantId ?? '', [env.DB.prepare(`
           UPDATE api_credentials SET last_used_at = ?1 WHERE id = ?2 AND status = 'active'
-        `).bind(DateTimeSchema.parse(usedAt), z.string().min(1).parse(id)).run();
+        `).bind(DateTimeSchema.parse(usedAt), z.string().min(1).parse(id))]);
       },
 
       async consumePublishableRateLimit(credentialId, requestsPerMinute, windowStartedAt) {
@@ -1495,7 +1512,9 @@ export function createRepositories(env: Env): Repositories {
           value => value % 60_000 === 0,
           'Rate-limit window must align to a minute',
         ).parse(windowStartedAt);
-        const result = await env.DB.prepare(`
+        const credential = await env.DB.prepare('SELECT merchant_id AS merchantId FROM api_credentials WHERE id=?1')
+          .bind(parsedCredentialId).first<{ merchantId: string }>();
+        const [result] = await businessWrite(credential?.merchantId ?? '', [env.DB.prepare(`
           INSERT INTO credential_rate_limit_windows (
             credential_id, window_started_at, request_count
           ) VALUES (?1, ?2, 1)
@@ -1512,8 +1531,8 @@ export function createRepositories(env: Env): Repositories {
           parsedCredentialId,
           parsedWindowStartedAt,
           parsedRequestsPerMinute,
-        ).run();
-        return result.meta.changes === 1;
+        )]);
+        return result?.meta.changes === 1;
       },
     },
 
@@ -1568,7 +1587,7 @@ export function createRepositories(env: Env): Repositories {
           ];
 
           try {
-            await env.DB.batch(statements);
+            await businessWrite(merchantId, statements);
             return {
               merchantId,
               version,
@@ -1589,7 +1608,7 @@ export function createRepositories(env: Env): Repositories {
         const expectedJson = definitionsJson(expectedDefinitions);
         const nextJson = definitionsJson(nextDefinitions);
         try {
-          const [insertResult, versionResult] = await env.DB.batch([
+          const [insertResult, versionResult] = await businessWrite(parsed.merchantId, [
             conditionalDefinitionInsert(parsed, expectedJson),
             env.DB.prepare(`
               UPDATE schema_versions SET definitions_json = ?1
@@ -1642,7 +1661,7 @@ export function createRepositories(env: Env): Repositories {
         const expectedJson = definitionsJson(definitions);
         const nextJson = definitionsJson(nextDefinitions);
         try {
-          const [versionResult, definitionResult] = await env.DB.batch([
+          const [versionResult, definitionResult] = await businessWrite(merchantId, [
             env.DB.prepare(`
               UPDATE schema_versions SET definitions_json = ?1
               WHERE merchant_id = ?2 AND version = ?3
@@ -1757,7 +1776,7 @@ export function createRepositories(env: Env): Repositories {
         const existingDefinition = existing.definition;
         const expectedJson = definitionsJson(definitions);
         const nextJson = definitionsJson(nextDefinitions);
-        const [versionResult, definitionResult] = await env.DB.batch([
+        const [versionResult, definitionResult] = await businessWrite(merchantId, [
           env.DB.prepare(`
             UPDATE schema_versions SET definitions_json = ?1
             WHERE merchant_id = ?2 AND version = ?3
@@ -1854,7 +1873,7 @@ export function createRepositories(env: Env): Repositories {
           definitions: expectedDefinitions,
         });
         const expectedJson = definitionsJson(parsed.definitions);
-        const [versionResult, definitionsResult] = await env.DB.batch([
+        const [versionResult, definitionsResult] = await businessWrite(merchantId, [
           env.DB.prepare(`
             UPDATE schema_versions
             SET state = 'published', published_at = ?1
@@ -2033,13 +2052,13 @@ export function createRepositories(env: Env): Repositories {
               key: string;
             }>();
         if (draft === null || draftRecords === null || draftRecords.results.length === 0) {
-          const result = await env.DB.prepare(`
+          const [result] = await businessWrite(merchantId, [env.DB.prepare(`
             UPDATE variable_definitions
             SET state = 'deprecated', deprecated_at = ?1, deprecated_by = ?2
             WHERE merchant_id = ?3 AND id = ?4 AND schema_version = ?5
               AND state = 'published'
-          `).bind(deprecatedAt, deprecatedBy, merchantId, id, schemaVersion).run();
-          if (result.meta.changes !== 1) throw new SchemaRevisionConflictError();
+          `).bind(deprecatedAt, deprecatedBy, merchantId, id, schemaVersion)]);
+          if (result?.meta.changes !== 1) throw new SchemaRevisionConflictError();
           return;
         }
         const expectedJson = definitionsJson(draft.definitions);
@@ -2047,7 +2066,7 @@ export function createRepositories(env: Env): Repositories {
           definition.key !== published.definition.key
         ));
         try {
-          await env.DB.batch([
+          await businessWrite(merchantId, [
             env.DB.prepare(`
               UPDATE variable_definitions
               SET state = 'deprecated', deprecated_at = ?1, deprecated_by = ?2
@@ -2136,7 +2155,7 @@ export function createRepositories(env: Env): Repositories {
         }
 
         const expectedVersion = PositiveIntegerSchema.parse(input.expectedVersion);
-        const row = await db.update(customers).set({
+        const query = db.update(customers).set({
           attributesJson: canonicalJson(snapshot.attributes),
           version: expectedVersion + 1,
           updatedAt,
@@ -2144,9 +2163,16 @@ export function createRepositories(env: Env): Repositories {
           eq(customers.merchantId, input.merchantId),
           eq(customers.externalRef, input.externalRef),
           eq(customers.version, expectedVersion),
-        )).returning().get();
-
-        if (row === undefined) throw new OptimisticVersionConflictError();
+        )).returning({
+          id: customers.id, merchantId: sql<string>`${customers.merchantId}`.as('merchantId'),
+          externalRef: sql<string>`${customers.externalRef}`.as('externalRef'),
+          attributesJson: sql<string>`${customers.attributesJson}`.as('attributesJson'),
+          version: customers.version, updatedAt: sql<string>`${customers.updatedAt}`.as('updatedAt'),
+        }).toSQL();
+        const [result] = await businessWrite(input.merchantId, [compiled(query)]);
+        if (result?.results[0] === undefined) throw new OptimisticVersionConflictError();
+        const row = z.object({ id: z.string(), merchantId: z.string(), externalRef: z.string(),
+          attributesJson: z.string(), version: z.number(), updatedAt: z.string() }).parse(result.results[0]);
         return customerFromRow(row);
       },
 
@@ -2169,7 +2195,7 @@ export function createRepositories(env: Env): Repositories {
 
         if (input.expectedVersion === undefined) {
           try {
-            results = await env.DB.batch([
+            results = await businessWrite(merchantId, [
               env.DB.prepare(`
                 INSERT INTO customers (
                   id, merchant_id, external_ref, attributes_json, version, updated_at
@@ -2188,7 +2214,7 @@ export function createRepositories(env: Env): Repositories {
           }
         } else {
           const expectedVersion = PositiveIntegerSchema.parse(input.expectedVersion);
-          results = await env.DB.batch([
+          results = await businessWrite(merchantId, [
             env.DB.prepare(`
               UPDATE customers
               SET attributes_json = ?1, version = ?2, updated_at = ?3
@@ -2217,7 +2243,7 @@ export function createRepositories(env: Env): Repositories {
         const id = crypto.randomUUID();
         const isDraft = parsedProgram.status === 'draft';
         try {
-          const [logicalResult, revisionResult, counterResult] = await env.DB.batch([
+          const [logicalResult, revisionResult, counterResult] = await businessWrite(merchantId, [
             env.DB.prepare(`
             INSERT INTO programs (
               id, merchant_id, external_ref, type, name, status, config_json,
@@ -2411,7 +2437,7 @@ export function createRepositories(env: Env): Repositories {
           const configJson = storedProgramJson(parsedProgram);
           if (logical.draftRevision === null) {
             const nextRevision = Math.max(logical.activeRevision, 0) + 1;
-            const [revisionResult, logicalResult] = await env.DB.batch([
+            const [revisionResult, logicalResult] = await businessWrite(merchantId, [
               env.DB.prepare(`
                 INSERT INTO program_revisions (
                   program_id, merchant_id, revision, config_json, created_at, created_by,
@@ -2459,7 +2485,7 @@ export function createRepositories(env: Env): Repositories {
           } else {
             let results: D1Result[];
             try {
-              results = await env.DB.batch([
+              results = await businessWrite(merchantId, [
                 env.DB.prepare(`
                   UPDATE program_revisions SET config_json = ?1
                   WHERE merchant_id = ?2 AND program_id = ?3 AND revision = ?4
@@ -2515,7 +2541,7 @@ export function createRepositories(env: Env): Repositories {
           return stored;
         }
 
-        const result = await env.DB.prepare(`
+        const [result] = await businessWrite(merchantId, [env.DB.prepare(`
           UPDATE programs SET
             type = ?1, name = ?2, status = ?3, config_json = ?4,
             priority = ?5, max_uses = ?6, budget_remaining = ?7, updated_at = ?8
@@ -2559,11 +2585,11 @@ export function createRepositories(env: Env): Repositories {
           schema?.state ?? null,
           schema === null ? null : JSON.stringify(schema.definitions),
           parsedProgram.status,
-        ).run();
+        )]);
 
         // D1 may include rows written by the owned revision/counter sync triggers.
         // The merchant/external-ref unique key still limits the CAS target to one parent row.
-        if (result.meta.changes < 1) {
+        if (!result || result.meta.changes < 1) {
           throw new ProgramConflictError('Only draft programs can be edited');
         }
         const stored = await getProgramByExternalRef(merchantId, externalRef);
@@ -2694,7 +2720,7 @@ export function createRepositories(env: Env): Repositories {
         const claimId = crypto.randomUUID();
         let results: D1Result[];
         try {
-          results = await env.DB.batch([
+          results = await businessWrite(merchantId, [
             env.DB.prepare(`
               INSERT INTO promo_code_claims (
                 id, merchant_id, program_id, program_ref, active_revision,
@@ -2951,7 +2977,7 @@ export function createRepositories(env: Env): Repositories {
         const updatedAt = nextProgramTimestamp(current.updatedAt, candidateUpdatedAt);
         let results: D1Result[];
         try {
-          results = await env.DB.batch([
+          results = await businessWrite(merchantId, [
             env.DB.prepare(`
               UPDATE programs
               SET status = ?1,
@@ -3112,7 +3138,7 @@ export function createRepositories(env: Env): Repositories {
           createdAt: parsed.createdAt,
         };
         await d1DependencyOperation(() => (
-          db.insert(evaluationDecisions).values(values).run()
+          businessWrite(parsed.merchantId, [compiled(db.insert(evaluationDecisions).values(values).toSQL())])
         ));
       },
 
@@ -3131,7 +3157,7 @@ export function createRepositories(env: Env): Repositories {
       async create(input) {
         const parsed = parseRedemption(input);
         const totals = redemptionTotals(parsed);
-        await env.DB.batch([
+        await businessWrite(parsed.merchantId, [
           env.DB.prepare(`
             INSERT INTO redemptions (
               id, merchant_id, external_order_ref, idempotency_key, evaluation_id,
@@ -3324,7 +3350,8 @@ export function createRepositories(env: Env): Repositories {
       async append(input) {
         canonicalJson(input);
         const entry = AuditEntrySchema.parse(input);
-        await db.insert(productAudit).values({
+        const scope = entry.merchantId ?? (entry.targetType === 'merchant' ? entry.targetId : '');
+        await businessWrite(scope, [compiled(db.insert(productAudit).values({
           id: entry.id,
           occurredAt: entry.occurredAt,
           actorKind: entry.actorKind,
@@ -3336,7 +3363,7 @@ export function createRepositories(env: Env): Repositories {
           outcome: entry.outcome,
           correlationId: entry.correlationId,
           metadataJson: entry.metadata === undefined ? null : canonicalJson(entry.metadata),
-        }).run();
+        }).toSQL())]);
       },
 
       async list(merchantId) {

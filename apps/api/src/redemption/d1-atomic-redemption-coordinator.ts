@@ -3,10 +3,12 @@ import {
   type CommerceReward,
   type IncentiveDecision,
   type PromoProgram,
+  type E2eControlRuntime,
 } from '@incentives/contracts';
 import { calculateMerchandisePriceBreakdown } from '@incentives/engine';
 import { z } from 'zod';
 
+import { withProductBusinessWrite } from '../repositories/e2e-write-fence.js';
 import type { Env } from '../env.js';
 import { canonicalJson } from '../json.js';
 import {
@@ -152,8 +154,11 @@ function countersMatchConfiguration(
 
 export function createD1AtomicRedemptionCoordinator(
   env: Env,
+  runtime?: E2eControlRuntime,
 ): AtomicRedemptionCoordinator {
-  const repositories = createRepositories(env);
+  const repositories = createRepositories(env, runtime);
+  const businessWrite = (merchantId: string, statements: D1PreparedStatement[]) =>
+    withProductBusinessWrite(env.DB, runtime, merchantId, statements);
 
   async function loadOperationByKey(
     merchantId: string,
@@ -253,7 +258,7 @@ export function createD1AtomicRedemptionCoordinator(
         || bundle.evaluationId !== input.evaluation.evaluationId
       ) return { kind: 'conflict' };
       if (operation.state === 'pending') {
-        await env.DB.prepare(`
+        await businessWrite(input.merchantId, [env.DB.prepare(`
           UPDATE redemption_operations
           SET state = 'committed', redemption_id = ?1, updated_at = ?2
           WHERE merchant_id = ?3 AND idempotency_key = ?4
@@ -264,7 +269,7 @@ export function createD1AtomicRedemptionCoordinator(
           input.merchantId,
           input.idempotencyKey,
           input.requestDigest,
-        ).run();
+        )]);
       }
       return { kind: 'exact_retry', bundle };
     }
@@ -280,7 +285,7 @@ export function createD1AtomicRedemptionCoordinator(
     if (await hasOneSidedLegacyIdentifierCollision(input)) {
       return { kind: 'conflict' };
     }
-    await env.DB.prepare(`
+    await businessWrite(input.merchantId, [env.DB.prepare(`
       INSERT INTO redemption_operations (
         merchant_id, idempotency_key, external_order_ref, evaluation_id,
         request_digest, state, terminal_error_code, retryable, redemption_id,
@@ -294,7 +299,7 @@ export function createD1AtomicRedemptionCoordinator(
       input.evaluation.evaluationId,
       input.requestDigest,
       input.committedAt,
-    ).run();
+    )]);
 
     const [byKey, byOrder] = await Promise.all([
       loadOperationByKey(input.merchantId, input.idempotencyKey),
@@ -318,7 +323,7 @@ export function createD1AtomicRedemptionCoordinator(
     code: TerminalRedemptionErrorCode,
     signingSecret: string,
   ): Promise<CommitRedemptionBundleResult> {
-    const persisted = await env.DB.prepare(`
+    const [persisted] = await businessWrite(input.merchantId, [env.DB.prepare(`
       UPDATE redemption_operations
       SET state = 'rejected', terminal_error_code = ?1, retryable = 0,
         updated_at = ?2
@@ -333,9 +338,9 @@ export function createD1AtomicRedemptionCoordinator(
       input.externalOrderRef,
       input.evaluation.evaluationId,
       input.requestDigest,
-    ).run();
+    )]);
     const exhaustion = ExhaustionReasonCodeSchema.safeParse(code);
-    if (persisted.meta.changes === 1 && exhaustion.success) {
+    if (persisted?.meta.changes === 1 && exhaustion.success) {
       return { kind: 'exhausted', reasonCode: exhaustion.data };
     }
     const current = await loadOperationByKey(input.merchantId, input.idempotencyKey);
@@ -654,9 +659,9 @@ export function createD1AtomicRedemptionCoordinator(
         ),
         env.DB.prepare(`
           INSERT INTO redemption_commit_guards (
-            redemption_id, position, changed_rows
-          ) VALUES (?1, ?2, changes())
-        `).bind(redemptionId, child.position * 2),
+            redemption_id, position, changed_rows, merchant_id
+          ) VALUES (?1, ?2, changes(), ?3)
+        `).bind(redemptionId, child.position * 2, input.merchantId),
         env.DB.prepare(`
           UPDATE programs
           SET usage_count = (
@@ -677,9 +682,9 @@ export function createD1AtomicRedemptionCoordinator(
         ),
         env.DB.prepare(`
           INSERT INTO redemption_commit_guards (
-            redemption_id, position, changed_rows
-          ) VALUES (?1, ?2, changes())
-        `).bind(redemptionId, child.position * 2 + 1),
+            redemption_id, position, changed_rows, merchant_id
+          ) VALUES (?1, ?2, changes(), ?3)
+        `).bind(redemptionId, child.position * 2 + 1, input.merchantId),
       );
     }
 
@@ -734,16 +739,16 @@ export function createD1AtomicRedemptionCoordinator(
       ),
       env.DB.prepare(`
         INSERT INTO redemption_commit_guards (
-          redemption_id, position, changed_rows
-        ) VALUES (?1, ?2, changes())
-      `).bind(redemptionId, children.length * 2),
+          redemption_id, position, changed_rows, merchant_id
+        ) VALUES (?1, ?2, changes(), ?3)
+      `).bind(redemptionId, children.length * 2, input.merchantId),
       env.DB.prepare(`
         DELETE FROM redemption_commit_guards WHERE redemption_id = ?1
       `).bind(redemptionId),
     );
 
     try {
-      await env.DB.batch(statements);
+      await businessWrite(input.merchantId, statements);
     } catch {
       const operation = await loadOperationByKey(input.merchantId, input.idempotencyKey);
       if (operation !== null) {

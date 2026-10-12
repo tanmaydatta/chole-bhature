@@ -11,10 +11,12 @@ import {
   type MerchantProvisionResult,
   type OperatorCallContext,
   type OperatorPrincipal,
+  type E2eControlRuntime,
 } from '@incentives/contracts';
 
 import { authorize } from '../authorization/authorize.js';
 import { permissionsForRole, type FixedRole } from '../authorization/registry.js';
+import { withAuthBusinessWrite } from './e2e-write-fence.js';
 
 export interface CoreMerchantProvisioningClient {
   provisionMerchant(
@@ -30,6 +32,7 @@ export interface CoreMerchantProvisioningClient {
 export interface OrganizationServiceOptions extends IdentityServiceAssociation {
   core?: CoreMerchantProvisioningClient;
   appEnv?: string | undefined;
+  controlRuntime?: E2eControlRuntime;
 }
 
 export interface ProvisionClientInput {
@@ -624,7 +627,7 @@ export function createOrganizationService(options: OrganizationServiceOptions) {
         throw new OrganizationOperationError('Member operation is forbidden');
       }
       const now = Date.now();
-      const results = await database.batch([
+      const results = await withAuthBusinessWrite(database, options.controlRuntime, target.organizationId, [
         database.prepare(`
           UPDATE memberships SET status = 'removed', updated_at = ?1
           WHERE id = ?2 AND status = 'active' AND (
@@ -671,7 +674,7 @@ export function createOrganizationService(options: OrganizationServiceOptions) {
         throw new OrganizationOperationError('Invalid role');
       }
       const now = Date.now();
-      const results = await database.batch([
+      const results = await withAuthBusinessWrite(database, options.controlRuntime, target.organizationId, [
         database.prepare(`
           UPDATE memberships SET role = ?1, updated_at = ?2
           WHERE id = ?3 AND status = 'active' AND (
