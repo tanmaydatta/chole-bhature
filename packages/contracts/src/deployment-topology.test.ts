@@ -18,11 +18,11 @@ const identityWrangler = readFileSync(
 const apiPackage = JSON.parse(readFileSync(
   new URL('../../../apps/api/package.json', import.meta.url),
   'utf8',
-)) as { scripts: Record<string, string> };
+)) as { scripts: Record<string, string>; dependencies: Record<string, string> };
 const identityPackage = JSON.parse(readFileSync(
   new URL('../../../apps/identity/package.json', import.meta.url),
   'utf8',
-)) as { scripts: Record<string, string> };
+)) as { scripts: Record<string, string>; dependencies: Record<string, string> };
 const operatorPackage = JSON.parse(readFileSync(
   new URL('../../../apps/operator-web/package.json', import.meta.url),
   'utf8',
@@ -119,6 +119,8 @@ describe('local and staging worker topology', () => {
 
   test('provides local and non-interactive staging commands without declaring production', () => {
     expect(apiPackage.scripts).toMatchObject({
+      'build:dependencies':
+        'pnpm --filter @incentives/contracts --filter @incentives/engine --filter @incentives/module-kit --filter @incentives/promo --filter @incentives/worker-runtime build',
       'predev:local': 'pnpm run build:dependencies',
       'dev:local': 'wrangler dev --config wrangler.toml',
       'predeploy:staging': 'pnpm run build:dependencies',
@@ -129,15 +131,21 @@ describe('local and staging worker topology', () => {
         'node ../../scripts/staging-wrangler-runner.mjs api migrate',
     });
     expect(identityPackage.scripts).toMatchObject({
-      'predev:local': 'pnpm --filter @incentives/contracts build',
+      'build:dependencies':
+        'pnpm --filter @incentives/contracts --filter @incentives/worker-runtime build',
+      prebuild: 'pnpm run build:dependencies',
+      pretest: 'pnpm run build:dependencies',
+      'predev:local': 'pnpm run build:dependencies',
       'dev:local': 'wrangler dev --config wrangler.toml',
-      'predeploy:staging': 'pnpm --filter @incentives/contracts build',
+      'predeploy:staging': 'pnpm run build:dependencies',
       'deploy:staging': 'node ../../scripts/staging-wrangler-runner.mjs identity deploy',
       'db:migrate:local':
         'wrangler d1 migrations apply incentives-auth-local --local --config wrangler.toml',
       'db:migrate:staging':
         'node ../../scripts/staging-wrangler-runner.mjs identity migrate',
     });
+    expect(apiPackage.dependencies).toHaveProperty('@incentives/worker-runtime', 'workspace:*');
+    expect(identityPackage.dependencies).toHaveProperty('@incentives/worker-runtime', 'workspace:*');
     expect(operatorPackage.scripts).toMatchObject({
       'predev:local':
         'pnpm --filter @incentives/contracts build && pnpm --filter @incentives/dashboard build',

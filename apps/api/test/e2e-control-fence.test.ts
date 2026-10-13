@@ -296,6 +296,37 @@ describe('execution-time Product lease fencing in migrated D1', () => {
       }
     }
   });
+  test.each(['live same tuple','live fresh tenant IDs','disposed same tuple','disposed fresh tenant IDs'] as const)(
+    'FIX1 v1 collision: Product %s refuses before any durable v2 reservation', async scenario => {
+      const original=lease(),repositories=createRepositories({ DB:env.DB,APP_ENV:'staging' });
+      await repositories.merchants.provision({ id:original.merchantId,provisioningId:original.provisioningId,name:original.runId+'_merchant',
+        e2eRun:{ runId:original.runId,proofHash:original.proofHash } });
+      await repositories.merchants.activate({ id:original.merchantId,provisioningId:original.provisioningId },occurredAt);
+      await repositories.customers.create(original.merchantId,{ externalRef:'legacy-buyer',attributes:{ tier:'gold' } });
+      const identity={ runId:original.runId,merchantId:original.merchantId,provisioningId:original.provisioningId,proofHash:original.proofHash };
+      const lifecycle=createProductE2eLifecycle({ DB:env.DB,APP_ENV:'staging' });
+      if (scenario.startsWith('disposed')) expect((await lifecycle.dispose(identity)).status).toBe('disposed');
+      const before=await snapshot(original.merchantId);
+      const claim=await env.DB.prepare('SELECT * FROM e2e_run_claims WHERE run_id=?1').bind(original.runId).first();
+      const proposed=scenario.endsWith('fresh tenant IDs') ? { ...original,merchantId:crypto.randomUUID(),provisioningId:crypto.randomUUID() } : original;
+      await expect(createProductControlStore(env.DB).mirror(proposed)).rejects.toThrow();
+      expect(await env.DB.prepare(`SELECT
+        (SELECT COUNT(*) FROM e2e_control_runs WHERE run_id=?1 OR merchant_id=?2 OR provisioning_id=?3) AS runs,
+        (SELECT COUNT(*) FROM e2e_control_requests WHERE run_id=?1) AS requests,
+        (SELECT COUNT(*) FROM e2e_run_claims WHERE run_id=?1) AS claims`)
+        .bind(original.runId,proposed.merchantId,proposed.provisioningId).first()).toEqual({ runs:0,requests:0,claims:1 });
+      expect(await env.DB.prepare('SELECT * FROM e2e_run_claims WHERE run_id=?1').bind(original.runId).first()).toEqual(claim);
+      expect(await snapshot(original.merchantId)).toEqual(before);
+      if (scenario.endsWith('fresh tenant IDs')) expect(await repositories.merchants.get(proposed.merchantId)).toBeNull();
+      if (scenario.startsWith('disposed')) expect(await repositories.merchants.get(original.merchantId)).toBeNull();
+      else expect(await repositories.merchants.get(original.merchantId)).toMatchObject({ id:original.merchantId,status:'active',name:original.runId+'_merchant' });
+      if (scenario.startsWith('live')) {
+        await repositories.customers.upsert({ merchantId:original.merchantId,externalRef:'legacy-buyer',expectedVersion:1,attributes:{ tier:'silver' } });
+        expect(await repositories.customers.get(original.merchantId,'legacy-buyer')).toMatchObject({ version:2,attributes:{ tier:'silver' } });
+      }
+      const disposed=await lifecycle.dispose(identity);
+      expect(disposed.status).toBe('disposed'); expect(Object.values(disposed.counts).every(n=>n===0)).toBe(true);
+    });
 
   test.each(['last-used credential','rate-limit window','customer Drizzle insert','customer optimistic audit'] as const)(
     'real %s mutation reaches its batch before a fence and rolls back', async boundary => {

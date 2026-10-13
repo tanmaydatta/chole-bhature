@@ -113,6 +113,14 @@ before any writes. Manual tenants and version 1 ROOT runs keep their existing
 invitation and account flows. Permanent fixture markers refuse business writes
 when the matching control ledger is missing, expired or fenced.
 
+Reservations refuse collisions with retained version 1 claims without changing
+legacy business or disposal rows. Fixture organizations require the exact
+reserved tenant tuple and permanent marker. Membership writes check both the
+organization and retained user ownership, including missing account ledgers;
+new memberships also require the matching marked user, not an existing manual
+identity. Product and Auth share one atomic batch engine while keeping their
+own tenant scope lookups.
+
 Local capture for a version 2 synthetic invitation address requires an explicit
 control runtime and exact live pending-invitation ownership. The capture INSERT
 uses the same atomic SQL write fence; stale or ambiguous ownership refuses even
@@ -131,6 +139,7 @@ Code references:
 
 - Product lease and fence schema: [Product migration](../../apps/api/migrations/0009_e2e_control_leases.sql).
 - Auth lease, account and session constraints: [Auth migration](../../apps/identity/migrations/0007_e2e_control_leases.sql).
+- Shared atomic write boundary: [Workers batch engine](../../packages/worker-runtime/src/e2e-control-write-batch.ts).
 - Invitation acceptance boundary: [invitation service](../../apps/identity/src/services/invitations.ts).
 - Explicit-runtime local capture boundary: [email adapters](../../apps/identity/src/email.ts).
 

@@ -6,7 +6,7 @@
   "exports": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "scripts": {
-    "build:dependencies": "pnpm --filter @incentives/contracts --filter @incentives/engine --filter @incentives/module-kit --filter @incentives/promo build",
+    "build:dependencies": "pnpm --filter @incentives/contracts --filter @incentives/engine --filter @incentives/module-kit --filter @incentives/promo --filter @incentives/worker-runtime build",
     "prebuild": "pnpm run build:dependencies",
     "build": "tsc -p tsconfig.json",
     "db:check": "drizzle-kit check",
@@ -37,6 +37,7 @@
     "@incentives/contracts": "workspace:*",
     "@incentives/engine": "workspace:*",
     "@incentives/promo": "workspace:*",
+    "@incentives/worker-runtime": "workspace:*",
     "drizzle-orm": "^0.45.2",
     "hono": "^4.12.30",
     "zod": "^4.4.3"

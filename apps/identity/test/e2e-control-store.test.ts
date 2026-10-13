@@ -140,7 +140,100 @@ function reservation(targetId = 'b'.repeat(64)): Omit<StoredControlLease, 'issue
   };
 }
 
+async function corruptedMembershipFixture(missing:'account'|'account and run',operation:string) {
+  const lease=await activeOrganization(),member=await account(lease);
+  const manualOrganization=crypto.randomUUID(),manualMerchant=crypto.randomUUID(),manualProvisioning=crypto.randomUUID(),manualUser=crypto.randomUUID();
+  const foreignMembership=crypto.randomUUID(),now=Date.now();
+  await env.AUTH_DB.batch([
+    env.AUTH_DB.prepare(`INSERT INTO client_provisionings
+      (provisioning_id,merchant_id,organization_id,name,status,current_step,retryable,attempt_count,created_at,updated_at,correlation_id)
+      VALUES (?1,?2,?3,'Manual','active','complete',0,1,?4,?4,'manual-membership')`)
+      .bind(manualProvisioning,manualMerchant,manualOrganization,now),
+    env.AUTH_DB.prepare(`INSERT INTO organizations (id,merchant_id,provisioning_id,name,status,created_at,updated_at)
+      VALUES (?1,?2,?3,'Manual','active',?4,?4)`).bind(manualOrganization,manualMerchant,manualProvisioning,now),
+    env.AUTH_DB.prepare(`INSERT INTO user (id,name,email,emailVerified,createdAt,updatedAt)
+      VALUES (?1,'Manual',?2,0,?3,?3)`).bind(manualUser,manualUser+'@example.test',now),
+  ]);
+  if (operation==='insert active') await createOrganizationService({ database:env.AUTH_DB,controlRuntime:runtime })
+    .removeMember(rootPrincipal(lease),{ membershipId:member.membershipId,correlationId:'prepare-active' });
+  const retained=missing==='account' ? ['e2e_control_account_retained']
+    : ['e2e_control_account_retained','e2e_control_request_retained','e2e_control_run_retained'];
+  const retainedSql=await Promise.all(retained.map(async name=>{
+    const row=await env.AUTH_DB.prepare("SELECT sql FROM sqlite_schema WHERE type='trigger' AND name=?1").bind(name).first<{ sql:string }>();
+    if (!row) throw new Error('Missing production trigger '+name);
+    return row.sql;
+  }));
+  for (const name of retained) await env.AUTH_DB.prepare('DROP TRIGGER '+name).run();
+  try {
+    await env.AUTH_DB.prepare('DELETE FROM e2e_control_accounts WHERE run_id=?1').bind(lease.runId).run();
+    if (missing==='account and run') await env.AUTH_DB.batch([
+      env.AUTH_DB.prepare('DELETE FROM e2e_control_requests WHERE run_id=?1').bind(lease.runId),
+      env.AUTH_DB.prepare('DELETE FROM e2e_control_runs WHERE run_id=?1').bind(lease.runId),
+    ]);
+  } finally { for (const sql of retainedSql) await env.AUTH_DB.prepare(sql).run(); }
+  if (!operation.startsWith('insert')) {
+    // Seed the corrupt association only in local setup, then restore ALL
+    // production INSERT/tuple predicates before testing UPDATE or DELETE.
+    const classifiers=['e2e_control_memberships_insert','e2e_control_membership_tuple'];
+    const classifierSql=await Promise.all(classifiers.map(async name=>{
+      const row=await env.AUTH_DB.prepare("SELECT sql FROM sqlite_schema WHERE type='trigger' AND name=?1").bind(name).first<{ sql:string }>();
+      if (!row) throw new Error('Missing production trigger '+name);
+      return row.sql;
+    }));
+    for (const name of classifiers) await env.AUTH_DB.prepare('DROP TRIGGER '+name).run();
+    try {
+      await env.AUTH_DB.prepare(`INSERT INTO memberships (id,organization_id,user_id,role,status,created_at,updated_at)
+        VALUES (?1,?2,?3,'viewer','removed',?4,?4)`)
+        .bind(foreignMembership,manualOrganization,operation==='update NEW user' ? manualUser : member.userId,now).run();
+    } finally { for (const sql of classifierSql) await env.AUTH_DB.prepare(sql).run(); }
+  }
+  const rows=async()=> ({
+    users:(await env.AUTH_DB.prepare('SELECT * FROM user WHERE id IN (?1,?2) ORDER BY id').bind(member.userId,manualUser).all()).results,
+    memberships:(await env.AUTH_DB.prepare('SELECT * FROM memberships WHERE user_id IN (?1,?2) OR id=?3 ORDER BY id')
+      .bind(member.userId,manualUser,foreignMembership).all()).results,
+    organizations:(await env.AUTH_DB.prepare('SELECT * FROM organizations WHERE id IN (?1,?2) ORDER BY id')
+      .bind(lease.organizationId,manualOrganization).all()).results,
+    audit:(await env.AUTH_DB.prepare('SELECT * FROM identity_audit WHERE merchant_id IN (?1,?2) ORDER BY rowid')
+      .bind(lease.merchantId,manualMerchant).all()).results,
+  });
+  const statement=operation.startsWith('insert') ? env.AUTH_DB.prepare(`INSERT INTO memberships
+    (id,organization_id,user_id,role,status,created_at,updated_at) VALUES (?1,?2,?3,'viewer',?4,?5,?5)`)
+    .bind(foreignMembership,manualOrganization,member.userId,operation==='insert active' ? 'active' : 'removed',now)
+    : operation==='update OLD user' ? env.AUTH_DB.prepare('UPDATE memberships SET user_id=?1 WHERE id=?2').bind(manualUser,foreignMembership)
+      : operation==='update NEW user' ? env.AUTH_DB.prepare('UPDATE memberships SET user_id=?1 WHERE id=?2').bind(member.userId,foreignMembership)
+        : operation==='guarded role update' ? env.AUTH_DB.prepare("UPDATE memberships SET role='operator' WHERE id=?1").bind(foreignMembership)
+          : env.AUTH_DB.prepare('DELETE FROM memberships WHERE id=?1').bind(foreignMembership);
+  expect(await env.AUTH_DB.prepare('SELECT e2e_control_run_id FROM user WHERE id=?1').bind(member.userId).first()).toEqual({ e2e_control_run_id:lease.runId });
+  expect(await env.AUTH_DB.prepare('SELECT COUNT(*) AS n FROM e2e_control_accounts WHERE run_id=?1').bind(lease.runId).first()).toEqual({ n:0 });
+  return { lease,rows,statements:[env.AUTH_DB.prepare("UPDATE organizations SET name='Changed' WHERE id=?1").bind(manualOrganization),statement] };
+}
+
 describe('durable Identity reservations in migrated D1', () => {
+  test('FIX1 reserved membership cannot convert an existing unmarked user into a fixture account', async () => {
+    const lease=await activeOrganization(),userId=crypto.randomUUID(),membershipId=crypto.randomUUID(),now=Date.now();
+    await env.AUTH_DB.prepare('INSERT INTO user (id,name,email,emailVerified,createdAt,updatedAt) VALUES (?1,\'Manual\',?2,0,?3,?3)')
+      .bind(userId,userId+'@example.test',now).run();
+    await env.AUTH_DB.prepare(`INSERT INTO e2e_control_accounts (run_id,slug,user_id,membership_id,generation,role,state)
+      VALUES (?1,'manual',?2,?3,?4,'viewer','reserved')`).bind(lease.runId,userId,membershipId,lease.generation).run();
+    const before=(await env.AUTH_DB.prepare('SELECT * FROM user WHERE id=?1').bind(userId).all()).results;
+    await expect(withControlWrite(env.AUTH_DB,runtime,lease,'provision',[
+      env.AUTH_DB.prepare(`INSERT INTO identity_audit
+        (id,action,merchant_id,actor_kind,actor_id,target_type,target_id,outcome,correlation_id,occurred_at)
+        VALUES (?1,'e2e.fixture.account_created',?2,'system','fixture','user',?3,'succeeded','manual-conversion',?4)`)
+        .bind(crypto.randomUUID(),lease.merchantId,userId,now),
+      env.AUTH_DB.prepare(`INSERT INTO memberships (id,organization_id,user_id,role,status,created_at,updated_at)
+        VALUES (?1,?2,?3,'viewer','active',?4,?4)`).bind(membershipId,lease.organizationId,userId,now),
+    ])).rejects.toThrow();
+    expect((await env.AUTH_DB.prepare('SELECT * FROM user WHERE id=?1').bind(userId).all()).results).toEqual(before);
+    expect(await env.AUTH_DB.prepare('SELECT COUNT(*) AS n FROM memberships WHERE id=?1').bind(membershipId).first()).toEqual({ n:0 });
+    expect(await env.AUTH_DB.prepare("SELECT COUNT(*) AS n FROM identity_audit WHERE correlation_id='manual-conversion'").first()).toEqual({ n:0 });
+    expect(await env.AUTH_DB.prepare('SELECT COUNT(*) AS n FROM e2e_control_write_guards').first()).toEqual({ n:0 });
+    const marked=await account(lease,'marked');
+    expect(await env.AUTH_DB.prepare('SELECT e2e_control_run_id FROM user WHERE id=?1').bind(marked.userId).first())
+      .toEqual({ e2e_control_run_id:lease.runId });
+    expect(await env.AUTH_DB.prepare('SELECT user_id FROM memberships WHERE id=?1').bind(marked.membershipId).first())
+      .toEqual({ user_id:marked.userId });
+  });
   afterEach(async () => {
     await env.AUTH_DB.batch([
       env.AUTH_DB.prepare("UPDATE e2e_control_runs SET phase='fencing' WHERE phase IN ('reserved','product-provisioned','auth-provisioned','active','quarantined')"),
@@ -543,6 +636,52 @@ describe('durable Identity reservations in migrated D1', () => {
       .bind(targetId).first()).toEqual({ n: 8 });
     expect(await store.reserve(reservation('2'.repeat(64)))).toMatchObject({ phase: 'reserved' });
   });
+  test.each(['live same tuple','live fresh tenant IDs','disposed same tuple','disposed fresh tenant IDs'] as const)(
+    'FIX1 v1 collision: Auth %s refuses before any durable v2 reservation', async scenario => {
+      const input=reservation(),now=Date.now(),original={ ...input,organizationId:crypto.randomUUID(),issuedAt:now,expiresAt:now+900000,phase:'active' as const };
+      const userId=crypto.randomUUID(),membershipId=crypto.randomUUID();
+      await env.AUTH_DB.batch([
+        env.AUTH_DB.prepare(`INSERT INTO client_provisionings
+          (provisioning_id,merchant_id,organization_id,name,status,current_step,retryable,attempt_count,created_at,updated_at,correlation_id)
+          VALUES (?1,?2,?3,?4,'active','complete',0,1,?5,?5,'legacy-collision')`)
+          .bind(input.provisioningId,input.merchantId,original.organizationId,input.runId+'_merchant',now),
+        env.AUTH_DB.prepare(`INSERT INTO organizations (id,merchant_id,provisioning_id,name,status,created_at,updated_at)
+          VALUES (?1,?2,?3,?4,'active',?5,?5)`).bind(original.organizationId,input.merchantId,input.provisioningId,input.runId+'_merchant',now),
+        env.AUTH_DB.prepare(`INSERT INTO e2e_run_claims (run_id,merchant_id,provisioning_id,proof_hash,status,created_at)
+          VALUES (?1,?2,?3,?4,'active',?5)`).bind(input.runId,input.merchantId,input.provisioningId,input.proofHash,now),
+        env.AUTH_DB.prepare(`INSERT INTO user (id,name,email,emailVerified,createdAt,updatedAt)
+          VALUES (?1,'Legacy',?2,0,?3,?3)`).bind(userId,`e2e+${input.runId}_legacy@e2e.invalid`,now),
+        env.AUTH_DB.prepare("INSERT INTO auth_profile (user_id,subject_kind,status,email_login_enabled) VALUES (?1,'employee','active',0)").bind(userId),
+        env.AUTH_DB.prepare(`INSERT INTO memberships (id,organization_id,user_id,role,status,created_at,updated_at)
+          VALUES (?1,?2,?3,'viewer','active',?4,?4)`).bind(membershipId,original.organizationId,userId,now),
+      ]);
+      let productDisposed=false;
+      const lifecycle=createIdentityE2eLifecycle({ database:env.AUTH_DB,appEnv:'staging',core:{
+        async preview() { return { status:productDisposed ? 'disposed' : 'active',counts:{ merchants:productDisposed ? 0 : 1 } }; },
+        async dispose() { productDisposed=true; return { status:'disposed',counts:{ merchants:0 } }; },
+      } });
+      const identity={ runId:input.runId,merchantId:input.merchantId,provisioningId:input.provisioningId,proofHash:input.proofHash };
+      if (scenario.startsWith('disposed')) expect((await lifecycle.dispose(identity,'fixture-root','legacy-collision')).status).toBe('disposed');
+      const before=await snapshot(original),claim=await env.AUTH_DB.prepare('SELECT * FROM e2e_run_claims WHERE run_id=?1').bind(input.runId).first();
+      const proposed=scenario.endsWith('fresh tenant IDs') ? { ...input,merchantId:crypto.randomUUID(),provisioningId:crypto.randomUUID() } : input;
+      await expect(createIdentityControlStore(env.AUTH_DB).reserve(proposed)).rejects.toThrow();
+      expect(await env.AUTH_DB.prepare(`SELECT
+        (SELECT COUNT(*) FROM e2e_control_runs WHERE run_id=?1 OR merchant_id=?2 OR provisioning_id=?3) AS runs,
+        (SELECT COUNT(*) FROM e2e_control_requests WHERE run_id=?1) AS requests,
+        (SELECT COUNT(*) FROM e2e_run_claims WHERE run_id=?1 OR merchant_id=?2 OR provisioning_id=?3) AS claims`)
+        .bind(input.runId,proposed.merchantId,proposed.provisioningId).first()).toEqual({ runs:0,requests:0,claims:1 });
+      expect(await env.AUTH_DB.prepare('SELECT * FROM e2e_run_claims WHERE run_id=?1').bind(input.runId).first()).toEqual(claim);
+      expect(await snapshot(original)).toEqual(before);
+      if (scenario.endsWith('fresh tenant IDs')) expect(await env.AUTH_DB.prepare(`SELECT
+        (SELECT COUNT(*) FROM organizations WHERE merchant_id=?1) AS organizations,
+        (SELECT COUNT(*) FROM client_provisionings WHERE merchant_id=?1) AS provisionings`).bind(proposed.merchantId).first()).toEqual({ organizations:0,provisionings:0 });
+      if (scenario.startsWith('live')) {
+        expect(await createOrganizationService({ database:env.AUTH_DB }).changeMemberRole(rootPrincipal(original),{
+          membershipId,role:'operator',correlationId:'legacy-compatible' })).toMatchObject({ role:'operator' });
+      }
+      const disposed=await lifecycle.dispose(identity,'fixture-root','legacy-collision');
+      expect(disposed.status).toBe('disposed'); expect(Object.values(disposed.auth).every(n=>n===0)).toBe(true);
+    });
 
   test('an identical retry preserves the original organization, issuance and deadline', async () => {
     const store = createIdentityControlStore(env.AUTH_DB);
@@ -553,6 +692,32 @@ describe('durable Identity reservations in migrated D1', () => {
     expect(first.expiresAt - first.issuedAt).toBe(900_000);
     expect(await env.AUTH_DB.prepare('SELECT COUNT(*) AS n FROM e2e_control_runs WHERE run_id = ?1')
       .bind(input.runId).first()).toEqual({ n: 1 });
+  });
+  test('FIX1 reserved organization rejects an FK-valid foreign tuple and rolls provisioning back', async () => {
+    const lease=await createIdentityControlStore(env.AUTH_DB).reserve(reservation());
+    const foreignMerchant=crypto.randomUUID(),foreignProvisioning=crypto.randomUUID();
+    const provisioning=(merchantId:string,provisioningId:string) => env.AUTH_DB.prepare(`INSERT INTO client_provisionings
+      (provisioning_id,merchant_id,organization_id,name,status,current_step,retryable,attempt_count,created_at,updated_at,correlation_id)
+      VALUES (?1,?2,?3,'Reserved','provisioning','identity_organization',0,1,?4,?4,'reserved-org')`)
+      .bind(provisioningId,merchantId,lease.organizationId,lease.issuedAt);
+    const organization=(merchantId:string,provisioningId:string,marker:string|null) => env.AUTH_DB.prepare(`INSERT INTO organizations
+      (id,merchant_id,provisioning_id,name,status,created_at,updated_at,e2e_control_run_id)
+      VALUES (?1,?2,?3,'Reserved','provisioning',?4,?4,?5)`)
+      .bind(lease.organizationId,merchantId,provisioningId,lease.issuedAt,marker);
+    await expect(withControlWrite(env.AUTH_DB,runtime,lease,'provision',[
+      provisioning(foreignMerchant,foreignProvisioning),organization(foreignMerchant,foreignProvisioning,null),
+    ])).rejects.toThrow();
+    expect(await env.AUTH_DB.prepare(`SELECT
+      (SELECT COUNT(*) FROM client_provisionings WHERE provisioning_id=?1 OR merchant_id=?2) AS provisionings,
+      (SELECT COUNT(*) FROM organizations WHERE id=?3 OR merchant_id=?2) AS organizations,
+      (SELECT COUNT(*) FROM e2e_control_write_guards WHERE run_id=?4) AS guards`)
+      .bind(foreignProvisioning,foreignMerchant,lease.organizationId,lease.runId).first()).toEqual({ provisionings:0,organizations:0,guards:0 });
+    await withControlWrite(env.AUTH_DB,runtime,lease,'provision',[
+      provisioning(lease.merchantId,lease.provisioningId),organization(lease.merchantId,lease.provisioningId,lease.runId),
+    ]);
+    expect(await env.AUTH_DB.prepare('SELECT merchant_id,provisioning_id,e2e_control_run_id FROM organizations WHERE id=?1')
+      .bind(lease.organizationId).first()).toEqual({ merchant_id:lease.merchantId,provisioning_id:lease.provisioningId,e2e_control_run_id:lease.runId });
+    expect(await env.AUTH_DB.prepare('SELECT COUNT(*) AS n FROM e2e_control_write_guards WHERE run_id=?1').bind(lease.runId).first()).toEqual({ n:0 });
   });
   test('Auth durable identities and deadlines are immutable and phase/quarantine cannot reopen', async () => {
     const store=createIdentityControlStore(env.AUTH_DB),reserved=await store.reserve(reservation());
@@ -702,6 +867,21 @@ describe('durable Identity reservations in migrated D1', () => {
       } finally {
         for (const name of retained) await env.AUTH_DB.prepare(triggerDDL(name)).run();
       }
+    });
+  test.each([
+    ['account','insert removed'],['account','insert active'],['account','update OLD user'],['account','update NEW user'],['account','delete'],
+    ['account and run','insert removed'],['account and run','insert active'],['account and run','update OLD user'],['account and run','update NEW user'],['account and run','delete'],
+  ] as const)('FIX1 retained membership %s missing: %s refuses and preserves manual rows', async (missing,operation) => {
+    const fixture=await corruptedMembershipFixture(missing,operation),before=await fixture.rows();
+    await expect(env.AUTH_DB.batch(fixture.statements)).rejects.toThrow();
+    expect(await fixture.rows()).toEqual(before);
+  });
+  test.each(['guarded role update','guarded delete'] as const)(
+    'FIX1 retained membership missing account: %s cannot borrow its original live guard', async operation => {
+      const fixture=await corruptedMembershipFixture('account',operation),before=await fixture.rows();
+      await expect(withAuthBusinessWrite(env.AUTH_DB,runtime,fixture.lease.organizationId!,fixture.statements)).rejects.toThrow();
+      expect(await fixture.rows()).toEqual(before);
+      expect(await env.AUTH_DB.prepare('SELECT COUNT(*) AS n FROM e2e_control_write_guards WHERE run_id=?1').bind(fixture.lease.runId).first()).toEqual({ n:0 });
     });
 
   test.each(['session','user','run','merchant','issuedAt'] as const)

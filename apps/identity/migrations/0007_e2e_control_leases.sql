@@ -71,7 +71,7 @@ CREATE VIEW e2e_control_valid_write_guards AS
 CREATE TRIGGER e2e_control_admission BEFORE INSERT ON e2e_control_runs
 WHEN NOT EXISTS(SELECT 1 FROM e2e_control_runs WHERE run_id=NEW.run_id)
 BEGIN
- SELECT CASE WHEN EXISTS(SELECT 1 FROM e2e_run_claims WHERE control_version=2 AND (run_id=NEW.run_id OR merchant_id=NEW.merchant_id OR provisioning_id=NEW.provisioning_id))
+ SELECT CASE WHEN EXISTS(SELECT 1 FROM e2e_run_claims WHERE run_id=NEW.run_id OR merchant_id=NEW.merchant_id OR provisioning_id=NEW.provisioning_id)
   OR NEW.phase <> 'reserved' OR NEW.expires_at <= CAST(unixepoch('subsec') * 1000 AS INTEGER)
   OR NEW.issued_at > CAST(unixepoch('subsec') * 1000 AS INTEGER)
   OR (SELECT COUNT(*) FROM e2e_control_runs
@@ -193,6 +193,11 @@ CREATE VIEW e2e_control_user_scopes AS
  WHERE u.e2e_control_run_id IS NOT NULL
  UNION SELECT a.user_id,a.run_id,c.merchant_id FROM e2e_control_accounts a
  LEFT JOIN e2e_run_claims c ON c.run_id=a.run_id AND c.control_version=2;
+-- Retained account/run tuples remain available during authorized parent cascades.
+CREATE VIEW e2e_control_membership_reservations AS
+ SELECT a.membership_id,a.user_id,a.role,r.organization_id,r.run_id
+ FROM e2e_control_accounts a JOIN e2e_control_valid_runs r ON r.run_id=a.run_id
+ WHERE a.generation=r.generation;
 CREATE VIEW e2e_control_merchant_scopes AS
  SELECT merchant_id,run_id FROM e2e_run_claims WHERE control_version=2
  UNION SELECT merchant_id,run_id FROM e2e_control_runs
@@ -250,6 +255,7 @@ BEGIN SELECT RAISE(ABORT,'E2E_CONTROL_MARKER_IMMUTABLE'); END;
 CREATE TRIGGER e2e_control_organization_reservation BEFORE INSERT ON organizations
 WHEN NEW.e2e_control_run_id IS NOT NULL OR (EXISTS(SELECT 1 FROM e2e_run_claims c WHERE c.merchant_id=NEW.merchant_id AND c.control_version=2)
  OR EXISTS(SELECT 1 FROM e2e_control_runs r WHERE r.merchant_id=NEW.merchant_id)
+ OR EXISTS(SELECT 1 FROM e2e_control_organization_scopes scope WHERE scope.organization_id=NEW.id)
  )
 BEGIN SELECT CASE WHEN NOT EXISTS(SELECT 1 FROM e2e_control_runs r WHERE r.run_id=NEW.e2e_control_run_id
  AND r.organization_id=NEW.id AND r.merchant_id=NEW.merchant_id AND r.provisioning_id=NEW.provisioning_id)
@@ -292,6 +298,9 @@ CREATE TRIGGER e2e_control_memberships_insert BEFORE INSERT ON memberships
 WHEN EXISTS(SELECT 1 FROM e2e_control_organization_scopes scope WHERE scope.organization_id=NEW.organization_id
   AND NOT EXISTS(SELECT 1 FROM e2e_control_valid_write_guards g WHERE g.run_id=scope.run_id
    AND g.merchant_id=scope.merchant_id AND g.intent IN ('provision')))
+ OR EXISTS(SELECT 1 FROM e2e_control_user_scopes scope WHERE scope.user_id=NEW.user_id
+  AND NOT EXISTS(SELECT 1 FROM e2e_control_valid_write_guards g WHERE g.run_id=scope.run_id
+   AND g.merchant_id=scope.merchant_id AND g.intent='provision'))
 BEGIN SELECT RAISE(ABORT,'E2E_CONTROL_ROW_FENCED'); END;
 CREATE TRIGGER e2e_control_memberships_update BEFORE UPDATE ON memberships
 WHEN EXISTS(SELECT 1 FROM e2e_control_organization_scopes scope WHERE scope.organization_id=OLD.organization_id
@@ -299,9 +308,18 @@ WHEN EXISTS(SELECT 1 FROM e2e_control_organization_scopes scope WHERE scope.orga
    AND g.merchant_id=scope.merchant_id AND g.intent IN ('business'))) OR EXISTS(SELECT 1 FROM e2e_control_organization_scopes scope WHERE scope.organization_id=NEW.organization_id
   AND NOT EXISTS(SELECT 1 FROM e2e_control_valid_write_guards g WHERE g.run_id=scope.run_id
    AND g.merchant_id=scope.merchant_id AND g.intent IN ('business')))
+ OR EXISTS(SELECT 1 FROM e2e_control_user_scopes scope WHERE scope.user_id=OLD.user_id
+  AND NOT EXISTS(SELECT 1 FROM e2e_control_valid_write_guards g WHERE g.run_id=scope.run_id
+   AND g.merchant_id=scope.merchant_id AND g.intent='business'))
+ OR EXISTS(SELECT 1 FROM e2e_control_user_scopes scope WHERE scope.user_id=NEW.user_id
+  AND NOT EXISTS(SELECT 1 FROM e2e_control_valid_write_guards g WHERE g.run_id=scope.run_id
+   AND g.merchant_id=scope.merchant_id AND g.intent='business'))
 BEGIN SELECT RAISE(ABORT,'E2E_CONTROL_ROW_FENCED'); END;
 CREATE TRIGGER e2e_control_memberships_delete BEFORE DELETE ON memberships
 WHEN EXISTS(SELECT 1 FROM e2e_control_organization_scopes scope WHERE scope.organization_id=OLD.organization_id
+  AND NOT EXISTS(SELECT 1 FROM e2e_control_valid_write_guards g WHERE g.run_id=scope.run_id
+   AND g.merchant_id=scope.merchant_id AND g.intent IN ('business','dispose')))
+ OR EXISTS(SELECT 1 FROM e2e_control_user_scopes scope WHERE scope.user_id=OLD.user_id
   AND NOT EXISTS(SELECT 1 FROM e2e_control_valid_write_guards g WHERE g.run_id=scope.run_id
    AND g.merchant_id=scope.merchant_id AND g.intent IN ('business','dispose')))
 BEGIN SELECT RAISE(ABORT,'E2E_CONTROL_ROW_FENCED'); END;
@@ -367,18 +385,26 @@ BEGIN SELECT CASE WHEN NOT EXISTS(SELECT 1 FROM e2e_control_accounts a
  AND NEW.email='e2e+'||a.run_id||'_'||a.slug||'@e2e.invalid' AND NEW.emailVerified=0)
  THEN RAISE(ABORT,'E2E_CONTROL_MARKER_REQUIRED') END; END;
 CREATE TRIGGER e2e_control_membership_tuple BEFORE INSERT ON memberships
-WHEN EXISTS(SELECT 1 FROM e2e_control_accounts WHERE user_id=NEW.user_id)
- OR EXISTS(SELECT 1 FROM organizations WHERE id=NEW.organization_id AND e2e_control_run_id IS NOT NULL)
-BEGIN SELECT CASE WHEN NOT EXISTS(SELECT 1 FROM e2e_control_accounts a
- JOIN e2e_control_runs r ON r.run_id=a.run_id JOIN user u ON u.id=a.user_id
- WHERE a.user_id=NEW.user_id AND a.membership_id=NEW.id AND r.organization_id=NEW.organization_id
- AND u.e2e_control_run_id=r.run_id AND a.generation=r.generation AND NEW.role=a.role)
+WHEN EXISTS(SELECT 1 FROM e2e_control_user_scopes WHERE user_id=NEW.user_id)
+ OR EXISTS(SELECT 1 FROM e2e_control_organization_scopes WHERE organization_id=NEW.organization_id)
+BEGIN SELECT CASE WHEN NOT EXISTS(SELECT 1 FROM e2e_control_membership_reservations a
+ WHERE a.user_id=NEW.user_id AND a.membership_id=NEW.id AND a.organization_id=NEW.organization_id
+ AND NEW.role=a.role
+ AND EXISTS(SELECT 1 FROM user u WHERE u.id=a.user_id AND u.e2e_control_run_id=a.run_id))
  THEN RAISE(ABORT,'E2E_CONTROL_MEMBERSHIP_TUPLE') END; END;
 CREATE TRIGGER e2e_control_membership_identity BEFORE UPDATE ON memberships
-WHEN (EXISTS(SELECT 1 FROM e2e_control_accounts WHERE user_id=OLD.user_id) OR
- EXISTS(SELECT 1 FROM organizations WHERE id=OLD.organization_id AND e2e_control_run_id IS NOT NULL))
- AND (NEW.id<>OLD.id OR NEW.user_id<>OLD.user_id OR NEW.organization_id<>OLD.organization_id)
-BEGIN SELECT RAISE(ABORT,'E2E_CONTROL_MARKER_IMMUTABLE'); END;
+WHEN EXISTS(SELECT 1 FROM e2e_control_user_scopes WHERE user_id IN (OLD.user_id,NEW.user_id))
+ OR EXISTS(SELECT 1 FROM e2e_control_organization_scopes WHERE organization_id IN (OLD.organization_id,NEW.organization_id))
+BEGIN SELECT CASE WHEN NEW.id<>OLD.id OR NEW.user_id<>OLD.user_id OR NEW.organization_id<>OLD.organization_id
+ OR NOT EXISTS(SELECT 1 FROM e2e_control_membership_reservations a
+ WHERE a.user_id=OLD.user_id AND a.membership_id=OLD.id AND a.organization_id=OLD.organization_id)
+ THEN RAISE(ABORT,'E2E_CONTROL_MEMBERSHIP_TUPLE') END; END;
+CREATE TRIGGER e2e_control_membership_delete_tuple BEFORE DELETE ON memberships
+WHEN EXISTS(SELECT 1 FROM e2e_control_user_scopes WHERE user_id=OLD.user_id)
+ OR EXISTS(SELECT 1 FROM e2e_control_organization_scopes WHERE organization_id=OLD.organization_id)
+BEGIN SELECT CASE WHEN NOT EXISTS(SELECT 1 FROM e2e_control_membership_reservations a
+ WHERE a.user_id=OLD.user_id AND a.membership_id=OLD.id AND a.organization_id=OLD.organization_id)
+ THEN RAISE(ABORT,'E2E_CONTROL_MEMBERSHIP_TUPLE') END; END;
 CREATE TRIGGER e2e_control_profile_invariant BEFORE INSERT ON auth_profile
 WHEN EXISTS(SELECT 1 FROM e2e_control_user_scopes WHERE user_id=NEW.user_id)
  AND (NEW.subject_kind<>'employee' OR NEW.status<>'active' OR NEW.email_login_enabled<>0)

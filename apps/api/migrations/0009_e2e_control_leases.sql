@@ -71,7 +71,7 @@ CREATE VIEW e2e_control_valid_write_guards AS
 CREATE TRIGGER e2e_control_admission BEFORE INSERT ON e2e_control_runs
 WHEN NOT EXISTS(SELECT 1 FROM e2e_control_runs WHERE run_id=NEW.run_id)
 BEGIN
- SELECT CASE WHEN EXISTS(SELECT 1 FROM e2e_run_claims WHERE control_version=2 AND (run_id=NEW.run_id OR merchant_id=NEW.merchant_id OR provisioning_id=NEW.provisioning_id))
+ SELECT CASE WHEN EXISTS(SELECT 1 FROM e2e_run_claims WHERE run_id=NEW.run_id OR merchant_id=NEW.merchant_id OR provisioning_id=NEW.provisioning_id)
   OR NEW.phase <> 'reserved' OR NEW.expires_at <= CAST(unixepoch('subsec') * 1000 AS INTEGER)
   OR NEW.issued_at > CAST(unixepoch('subsec') * 1000 AS INTEGER)
   OR (SELECT COUNT(*) FROM e2e_control_runs
