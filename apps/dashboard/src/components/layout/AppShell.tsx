@@ -7,6 +7,7 @@ import { useProgramStore } from '../../data/store';
 const titleMap: Record<string, string> = {
   '/': 'Overview',
   '/promo': 'Promo Codes',
+  '/playground': 'Evaluation Playground',
   '/affiliates': 'Affiliates',
   '/referrals': 'Referrals',
   '/loyalty': 'Loyalty',
@@ -35,7 +36,7 @@ function usePageTitle(pathname: string): string {
   return titleMap[pathname] ?? 'Incentives';
 }
 
-const liveRoutes = new Set(['/promo', '/variables', '/customers', '/platform/clients', '/settings/team', '/settings/credentials']);
+const liveRoutes = new Set(['/promo', '/playground', '/variables', '/customers', '/platform/clients', '/settings/team', '/settings/credentials']);
 
 export function AppShell({
   session,

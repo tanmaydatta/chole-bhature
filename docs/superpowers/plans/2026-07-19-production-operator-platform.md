@@ -2,8 +2,9 @@
 
 **Status:** In progress — Tasks 1–9 and Gates A/B/C are complete. The
 clean-break Promo correction is merged, migrated, deployed, and fully verified
-in staging. The Evaluation Playground remains deferred until the approved
-Promo pricing/cap correction is complete.
+in staging. The evaluate-only Evaluation Playground slice is implemented
+and verified locally as of 2026-10-14, with independent ROOT review complete. Full
+Task 10 and Gate D remain open; this slice has not been deployed to staging.
 
 **Notion parent:** [Plans](https://app.notion.com/p/Plans-390e5c7c2b8e8165b7f7d77392eab088)
 
@@ -278,6 +279,32 @@ in `GAP-016`. The broader Voucherify-parity list in `GAP-032` remains deferred
 until a client requires it.
 
 ### Task 10: Build the Evaluation Playground
+
+**2026-10-14 bounded implementation:** The newer approval delivers only
+evaluation at `/playground` through the normal permission-checked private
+Operator BFF/Core RPC and existing evaluation service. It supports
+anonymous/stored-customer references, published typed context/cart/line fields,
+automatic/coded decisions, reasons/revisions/expiry and exact merchandise
+allocations. Input edits invalidate results and old asynchronous responses.
+Evaluation persists its normal signed snapshot without redemption or spending.
+Focused dashboard/BFF/Core tests and real managed-local browser scenarios
+cover this slice; browser scenarios use disposable ROOT and normal client
+selection, while member authorization and persistence are checked at service
+boundaries. The E2E rewrite remains parked. See
+[Evaluate a basket in the Playground](../../integration/evaluation-playground.md).
+
+The reviewed local checkpoint passed build/lint, 1,805 Vitest cases plus nine
+Node tests, and all nine headless local Playwright cases in 49.3 seconds. The
+2026-10-14 publication approval covers the feature branch/PR into `dev` and
+scoped status synchronization to the existing Notion plan, roadmap and Plans
+index. It does not authorize a merge or staging deployment.
+
+This approval supersedes the historical evaluate/commit implementation steps
+below for this slice: no commit controls, environment-capability route,
+credential template, simulator CLI or staging deployment is part of the product
+slice. The original unchecked steps remain historical broader scope, not a
+claim of Task 10 completion. Checkpoint commit/push, feature PR and scoped
+Notion status publication are separately approved as described above.
 
 **Files:**
 - Create: `apps/dashboard/src/pages/playground/EvaluationPlayground.tsx`
