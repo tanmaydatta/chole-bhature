@@ -36,7 +36,7 @@ pnpm e2e:local:headed
 ```
 
 This opens system Chrome so you can watch the Promo draft, save, refresh, detail,
-and publish flow. `pnpm e2e:local` runs all six API/browser tests headlessly
+and publish flow and the evaluate-only Playground scenarios. `pnpm e2e:local` runs all nine API/browser tests headlessly
 with two workers. No pre-existing root session, ports, `.dev.vars`, or local D1
 state is needed: Playwright builds the dashboard/dependencies once, allocates
 unique loopback ports and Worker names, migrates two private temporary D1
@@ -125,6 +125,33 @@ groundwork. No cloud login or runtime cloud command is supplied. See the
 [dated local evidence](../../docs/testing/per-pr-cloud-e2e.md#local-candidate-and-access-routing-groundwork-2026-10-08)
 and remaining deployment gates before extending these helpers.
 
+## Check the evaluate-only Playground
+
+The three Playground browser scenarios use real local Workers, canonical
+responses, fresh ROOT browser contexts and normal merchant selection. They
+verify anonymous/stored-customer evaluation, required typed live fields,
+published revision authority, exact capped and per-line stacked discounts,
+input-change invalidation, code diagnostics, empty selection and free
+shipping's zero merchandise saving. Every scenario checks run disposal and
+zero Product/Auth rows, including after assertion failure. Core Workers/D1
+tests separately prove persisted snapshot HMAC integrity, unchanged budgets
+and counters, and zero redemption rows; the browser suite adds no privileged
+snapshot-inspection endpoint and performs no redemption for the Playground.
+
+For a focused local run from the repository root:
+
+```sh
+CI=true E2E_BROWSER_CHANNEL=chromium pnpm e2e:local playground.browser.spec.ts
+```
+
+Run `CI=true E2E_BROWSER_CHANNEL=chromium pnpm e2e:local` for the full gate.
+The existing local account recipes remain staging-only, so these browser
+checks do not claim member sign-in coverage. BFF tests preserve the existing
+Admin/Operator/Viewer evaluation permissions. No staging deployment or
+acceptance is claimed. The E2E rewrite remains parked; no framework, authority,
+startup, retry, timeout or worker-setting change is required by this slice.
+See [Evaluate a basket in the Playground](../../docs/integration/evaluation-playground.md).
+
 ## Recipes and ownership
 
 `pnpm recipe:e2e <recipe> --input /absolute/path/input.json [--run e2e_...]`
@@ -148,12 +175,12 @@ order, and idempotency identifiers are run-scoped. A mode-0600 manifest in
 `tests/e2e/.runs` records every created ID and its owner. The run proof,
 cookies, and tokens are separate private files. Independent scenarios share
 one suite bootstrap but not tenant state or browser contexts. Playwright uses
-two bounded workers; API tests carry detailed business assertions, one browser
-spec exercises real Promo UI interactions, and another checks controlled local
-routing. The measured local baseline on
+two bounded workers; API tests carry detailed business assertions, and browser
+specs exercise real Promo UI interactions, the evaluate-only Playground and
+controlled local routing. The measured local baseline on
 2026-09-25 was 5 Playwright tests in 23.9 seconds, including bootstrap,
 two concurrent full scenarios, browser smoke, and two simultaneous independent
-Worker/Auth D1 instances. The PR CI job runs every project and all six tests
+Worker/Auth D1 instances. The PR CI job runs every project and all nine tests
 without selection or sharding. For focused local diagnosis, Playwright accepts
 `--project=api`, `--project=browser`, or `--shard`; each shard starts its own
 isolated stack.

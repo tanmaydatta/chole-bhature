@@ -2,10 +2,13 @@ import {
   ApiCredentialCreateInputSchema,
   ApiCredentialCreateResultSchema,
   ApiCredentialViewSchema,
+  ApiErrorSchema,
   CoreMerchantActivationResultSchema,
   CoreMerchantProvisionResultSchema,
   CustomerPatchRequestSchema,
   CustomerRecordSchema,
+  EvaluationRequestSchema,
+  EvaluationResponseSchema,
   ProductE2eCapabilitiesSchema,
   E2eTenantIdentitySchema,
   E2eInspectionQuerySchema,
@@ -26,7 +29,10 @@ import {
   SchemaPublicationResultSchema,
   VariableDefinitionSchema,
   type ApiCredentialCreateInput,
+  type ApiError,
   type CustomerPatchRequest,
+  type EvaluationRequest,
+  type EvaluationResponse,
   type MerchantActivationRequest,
   type MerchantProvisionRequest,
   type OperatorCallContext,
@@ -42,6 +48,7 @@ import { createApp } from './app.js';
 import { assertCiStack } from './ci-stack.js';
 import { productE2eCapabilities } from './services/e2e-capabilities.js';
 import { MerchantIdentityConflictError } from './errors/merchant-errors.js';
+import { NotFoundError } from './errors.js';
 import { requireOperatorContext } from './auth/operator-context.js';
 import type { Env } from './env.js';
 import { createRepositories } from './repositories/d1-repositories.js';
@@ -77,6 +84,7 @@ import {
 } from './services/customer-service.js';
 import { createProductE2eLifecycle } from './services/e2e-lifecycle.js';
 import { inspectProductE2eRun } from './services/e2e-inspection.js';
+import { createEvaluationService } from './services/evaluation-service.js';
 
 function coreMerchantFailure(error: unknown) {
   if (error instanceof MerchantIdentityConflictError) {
@@ -101,7 +109,31 @@ function coreMerchantFailure(error: unknown) {
 
 const app = createApp();
 
+function operatorEvaluationFailure(error: unknown, correlationId: string): ApiError {
+  const missing = error instanceof NotFoundError;
+  const invalid = error instanceof z.ZodError;
+  return ApiErrorSchema.parse({ error: {
+    code: missing ? 'NOT_FOUND' : invalid ? 'INVALID_REQUEST' : 'CORE_UNAVAILABLE',
+    message: missing ? 'The requested resource was not found'
+      : invalid ? 'Request validation failed' : 'Core is temporarily unavailable',
+    correlationId, retryable: !missing && !invalid,
+  } });
+}
+
 export class CoreOperatorService extends WorkerEntrypoint<Env> {
+  async evaluate(context: OperatorCallContext, input: EvaluationRequest): Promise<EvaluationResponse | ApiError> {
+    assertCiStack(this.env);
+    const operator = requireOperatorContext(OperatorCallContextSchema.parse(context), 'evaluations:run');
+    const request = EvaluationRequestSchema.parse(input);
+    try {
+      return EvaluationResponseSchema.parse(await createEvaluationService(
+        createRepositories(this.env), this.env,
+      ).evaluate(operator.merchantId, request, operator.correlationId));
+    } catch (error) {
+      return operatorEvaluationFailure(error, operator.correlationId);
+    }
+  }
+
   async getE2eCapabilities(context: { actorUserId: string;
     actorKind: 'root' | 'member'; correlationId: string }) {
     assertCiStack(this.env);
@@ -251,10 +283,13 @@ export class CoreOperatorService extends WorkerEntrypoint<Env> {
 
   async getPublishedSchema(context: OperatorCallContext) {
     assertCiStack(this.env);
-    return PublishedSchemaResponseSchema.parse(await getPublishedSchema(
-      this.env,
-      OperatorCallContextSchema.parse(context),
-    ));
+    const operator = requireOperatorContext(OperatorCallContextSchema.parse(context), 'schemas:read');
+    try {
+      return PublishedSchemaResponseSchema.parse(await getPublishedSchema(this.env, operator));
+    } catch (error) {
+      if (!(error instanceof NotFoundError)) throw error;
+      return operatorEvaluationFailure(error, operator.correlationId);
+    }
   }
 
   async createSchemaDefinition(context: OperatorCallContext, input: VariableDefinition) {

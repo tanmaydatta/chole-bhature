@@ -17,6 +17,22 @@ const session = {
 afterEach(() => vi.restoreAllMocks());
 
 describe('same-origin BFF client', () => {
+  test('evaluates a canonical basket using same-origin session authority and exact response validation', async () => {
+    const input = { cart: { currency: 'GBP', subtotal: 1000, items: [] } };
+    const output = { evaluationId: 'eval-a', schemaVersion: 1, expiresAt: '2026-10-14T12:05:00.000Z', decisions: [],
+      priceBreakdown: { currency: 'GBP', originalMerchandiseSubtotal: 1000, discountAllocations: [],
+        totalDiscount: 0, discountedMerchandiseSubtotal: 1000 } };
+    const fetcher = vi.fn(async () => Response.json(output));
+    await expect(createBffClient(fetcher).evaluate(input)).resolves.toEqual(output);
+    expect(fetcher).toHaveBeenCalledWith('/operator/v1/playground/evaluate', {
+      method: 'POST', credentials: 'include', headers: { accept: 'application/json', 'content-type': 'application/json' },
+      body: JSON.stringify(input),
+    });
+    await expect(createBffClient(async () => Response.json({ ...output, secret: 'private' })).evaluate(input)).rejects.toMatchObject({ code: 'INVALID_RESPONSE' });
+    await expect(createBffClient(fetcher).evaluate({ ...input, merchantId: 'foreign' } as typeof input)).rejects.toMatchObject({ name: 'ZodError' });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
   test('includes browser credentials and parses canonical successful responses', async () => {
     const fetcher = vi.fn(async () => Response.json(session));
     const client = createBffClient(fetcher);

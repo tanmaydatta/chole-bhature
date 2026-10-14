@@ -15,6 +15,10 @@ import {
   OperatorSessionViewSchema,
   OperatorTeamResponseSchema,
   CustomerRecordSchema,
+  EvaluationRequestSchema,
+  EvaluationResponseSchema,
+  type EvaluationRequest,
+  type EvaluationResponse,
   OperatorCustomerPatchRequestSchema,
   OperatorProgramDraftRequestSchema,
   OperatorProgramListResponseSchema,
@@ -325,6 +329,7 @@ export interface BffClient {
   revokeCredential(credentialId: string): Promise<ApiCredentialView>;
   schemaDefinitions(): Promise<SchemaDefinitionsResponse>;
   publishedSchema(): Promise<PublishedSchemaResponse>;
+  evaluate(input: EvaluationRequest): Promise<EvaluationResponse>;
   createSchemaDefinition(input: VariableDefinition): Promise<SchemaDefinitionView>;
   updateSchemaDefinition(id: string, input: VariableDefinition): Promise<SchemaDefinitionView>;
   deleteSchemaDefinition(id: string): Promise<void>;
@@ -475,6 +480,11 @@ export function createBffClient(
     publishedSchema: () => send(
       fetcher, '/operator/v1/schema/published', PublishedSchemaResponseSchema,
     ),
+    async evaluate(input) {
+      return send(fetcher, '/operator/v1/playground/evaluate', EvaluationResponseSchema, {
+        method: 'POST', body: EvaluationRequestSchema.parse(input),
+      });
+    },
     createSchemaDefinition(input) {
       const body = OperatorSchemaDefinitionRequestSchema.parse(input);
       return send(fetcher, '/operator/v1/schema/definitions', SchemaDefinitionViewSchema, {

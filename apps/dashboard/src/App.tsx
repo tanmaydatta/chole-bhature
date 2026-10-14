@@ -24,6 +24,7 @@ import CustomerLookup from './pages/customers/CustomerLookup';
 import LivePromoEditor from './pages/promo/LivePromoEditor';
 import LivePromoList from './pages/promo/LivePromoList';
 import LivePromoDetail from './pages/promo/LivePromoDetail';
+import EvaluationPlayground from './pages/playground/EvaluationPlayground';
 
 function AuthenticatedRoute() {
   return <AuthenticatedApp><RootContextBanner /><Outlet /></AuthenticatedApp>;
@@ -59,6 +60,9 @@ export default function App() {
             <Route path="/promo/:id/edit" element={<LivePromoEditor />} />
           </Route>
           <Route element={<AuthenticatedShell />}>
+            <Route element={<MerchantRoute permission="evaluations:run" />}>
+              <Route path="/playground" element={<EvaluationPlayground />} />
+            </Route>
             <Route element={<MerchantRoute permission="programs:read" />}>
               <Route index element={<Overview />} />
               <Route path="/promo" element={<LivePromoList />} />
