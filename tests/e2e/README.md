@@ -125,16 +125,39 @@ groundwork. No cloud login or runtime cloud command is supplied. See the
 [dated local evidence](../../docs/testing/per-pr-cloud-e2e.md#local-candidate-and-access-routing-groundwork-2026-10-08)
 and remaining deployment gates before extending these helpers.
 
+## Staging outcome — 2026-10-14
+
+The separately approved API/Operator rollout from PR #23 merge
+`1d25ef36d06fb7b44b288bd85c3a92d61999983d` passed the full headless staging
+suite: **7 passed, 2 intended local-only skipped, 0 failed**, two workers,
+1.0 minute (63.450 seconds command time), no reported retry/flake. All three
+Playground cases passed. Eight run-owned tenants were disposed, all 53 recorded
+resources were cleaned and final protected inventories confirmed zero
+Product/Auth rows. Identity, migrations, secrets, production and the demo were
+unchanged. See the [dated staging verification](../../docs/testing/evaluation-playground-staging-2026-10-14.md)
+for deployed versions, runtime transformations and evidence boundaries.
+
+```sh
+CI=true E2E_BROWSER_CHANNEL=chromium \
+  E2E_OPERATOR_STORAGE_STATE=/absolute/private/current-root-state.json \
+  pnpm e2e:staging
+```
+
+This uses an existing authorized owner session and performs the protected
+prewrite handshake. It does not authorize a future deployment or login bypass.
+`local-stack.api.spec.ts` and `cloud-access.browser.spec.ts` remain local-only;
+their staging skips do not skip product coverage.
+
 ## Check the evaluate-only Playground
 
-The three Playground browser scenarios use real local Workers, canonical
+The three Playground browser scenarios use real local/staging Workers, canonical
 responses, fresh ROOT browser contexts and normal merchant selection. They
 verify anonymous/stored-customer evaluation, required typed live fields,
 published revision authority, exact capped and per-line stacked discounts,
 input-change invalidation, code diagnostics, empty selection and free
 shipping's zero merchandise saving. Every scenario checks run disposal and
 zero Product/Auth rows, including after assertion failure. Core Workers/D1
-tests separately prove persisted snapshot HMAC integrity, unchanged budgets
+tests locally and separately prove persisted snapshot HMAC integrity, unchanged budgets
 and counters, and zero redemption rows; the browser suite adds no privileged
 snapshot-inspection endpoint and performs no redemption for the Playground.
 
@@ -145,10 +168,10 @@ CI=true E2E_BROWSER_CHANNEL=chromium pnpm e2e:local playground.browser.spec.ts
 ```
 
 Run `CI=true E2E_BROWSER_CHANNEL=chromium pnpm e2e:local` for the full gate.
-The existing local account recipes remain staging-only, so these browser
+Member-account fixture recipes remain staging-only; these ROOT browser
 checks do not claim member sign-in coverage. BFF tests preserve the existing
-Admin/Operator/Viewer evaluation permissions. No staging deployment or
-acceptance is claimed. The E2E rewrite remains parked; no framework, authority,
+Admin/Operator/Viewer evaluation permissions. The dated staging outcome above
+accepts only this evaluate-only slice, not full Task 10/Gate D. The E2E rewrite remains parked; no framework, authority,
 startup, retry, timeout or worker-setting change is required by this slice.
 See [Evaluate a basket in the Playground](../../docs/integration/evaluation-playground.md).
 

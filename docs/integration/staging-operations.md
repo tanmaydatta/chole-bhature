@@ -287,6 +287,27 @@ acceptance, a headed staging run, the whole migration ledger, or production.
 Per-PR cloud provisioning remains groundwork and live **NO-GO**; no CI/CD,
 per-PR resources, demo, or production activation was included.
 
+### Completed evaluate-only Playground rollout — 2026-10-14
+
+The separately approved release deployed only API then Operator Web/dashboard
+from merged source `1d25ef36d06fb7b44b288bd85c3a92d61999983d`.
+API `565fa15a-0eed-4af9-97a9-a7da821b75e8` and Operator
+`21227fa1-725f-4f97-9286-58a092c5526e` each receive 100% traffic.
+Identity, migrations, secrets, production and the demo were unchanged.
+The existing owner ROOT/capability checks, fresh build/packaging, exact
+before/after vars/bindings/runtime, API health/OpenAPI and served dashboard
+checks passed. Raw HTML includes two validated Cloudflare additions; the
+application markup and dashboard script match the build. Exhaustive live
+route/exposure inventory is not established by version metadata.
+
+The full headless staging suite passed **7 tests, 2 intended local-only skips,
+0 failures**, in **1.0 minute** (63.450 seconds command time), including all
+three Playground cases. Final protected inventories confirmed eight disposed
+runs, all 53 recorded resources cleaned and zero run-owned Product/Auth rows.
+See the [dated staging verification](../testing/evaluation-playground-staging-2026-10-14.md)
+for exact versions, cases and limits. This one-time approval does not change
+the default owner-reviewed procedure or complete full Task 10/Gate D.
+
 ### User-controlled Cloudflare activation
 
 The owner-run procedure below is the default for future cutovers: the owner runs one command,

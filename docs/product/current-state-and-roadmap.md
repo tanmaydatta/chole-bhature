@@ -9,18 +9,28 @@ in staging and PR #15 merged into `dev` at
 or D1 migration is part of that cutover.
 
 **2026-10-14 product slice:** The evaluate-only [Evaluation Playground](../integration/evaluation-playground.md)
-is implemented, locally verified and independently reviewed on a fresh branch
-from verified `dev` commit `8ecc09b5eb84a1525e11bc3ba5f6a779a1c64e2e`.
+is implemented, independently reviewed and merged through
+[PR #23](https://github.com/tanmaydatta/chole-bhature/pull/23) at
+`1d25ef36d06fb7b44b288bd85c3a92d61999983d`.
 Build/lint, 1,805 Vitest cases plus nine Node tests, and all nine headless local
 Playwright cases (49.3 seconds) passed. It supports anonymous/stored-customer baskets, published typed
 live fields, automatic/coded selection and authoritative merchandise pricing
 through the existing private Operator/Core evaluation path. Evaluation saves
 the normal signed snapshot; it exposes no redemption or spending action.
-This does not complete full Task 10 or claim a staging deployment. The E2E
+The separately approved API/Operator staging rollout passed all seven
+applicable headless cases, with two existing local-only skips and zero
+failures; all three Playground cases passed. Final inventories confirmed eight
+disposed runs, 53 cleaned resources and zero run-owned Product/Auth rows.
+Exact versions and evidence limits are in the
+[dated staging verification](../testing/evaluation-playground-staging-2026-10-14.md).
+Identity, migrations, secrets, production and the demo were unchanged.
+This does not complete full Task 10 or Gate D. The E2E
 rewrite is parked; the existing managed local suite remains available.
 The Notion mirror below describes the dated 2026-10-07 checkpoint. The
-evaluate-only feature PR and scoped 2026-10-14 Notion status checkpoint form a
-separate publication boundary; neither merges nor deploys this slice.
+verified feature-merge status checkpoint and the separately approved staging
+receipt are distinct from that historical whole-page mirror checkpoint.
+Release publication synchronizes scoped current-status evidence, not a
+wholesale replacement of historical pages.
 
 The dated approved per-PR Cloud E2E checkpoint work was implemented on
 `feat/per-pr-cloud-e2e`, based on `origin/dev` commit
@@ -73,15 +83,15 @@ deferred issue remains in the
 
 | Question | Current answer |
 |---|---|
-| Overall phase | Post-Gate-C client readiness; evaluate-only Playground locally verified and reviewed |
-| Current activity | Publish the reviewed evaluate-only Playground checkpoint through a feature PR and scoped existing Notion status updates. E2E rewrite parked; the existing managed local suite remains available. Dated Cloud E2E checkpoint evidence remains below; Worker writes remain blocked. |
-| Current repository baseline | Playground branch starts at freshly verified `dev` commit `8ecc09b5eb84a1525e11bc3ba5f6a779a1c64e2e` on 2026-10-14. The earlier Cloud E2E checkpoint at `9408704`, scoped-reviewed through `3da30f3`, remains separate dated history. |
-| Current product-code baseline | PR #15 merge commit `0c5e5f1a068d942af8f091ab0fc4b7ff8bf44e9d` |
+| Overall phase | Post-Gate-C client readiness; evaluate-only Playground merged and verified in staging |
+| Current activity | Publish the dated two-Worker staging outcome and scoped existing Notion status updates. E2E rewrite parked; managed-local testing remains available. Dated Cloud E2E work below still has no live provisioning authority. |
+| Current repository baseline | Freshly verified `dev` at PR #23 merge `1d25ef36d06fb7b44b288bd85c3a92d61999983d` on 2026-10-14; the release/docs checkout uses that exact source. Earlier Cloud E2E evidence remains separate dated history. |
+| Current product-code baseline | PR #23 merge commit `1d25ef36d06fb7b44b288bd85c3a92d61999983d` |
 | Local feature state | Authoritative merchandise pricing and the E2E platform are merged, with the dated staging evidence retained. Cloud E2E foundation/packaging/diagnostics/CI admission/local bootstrap are locally accepted; fresh correction verification passes 337 cloud, 1,683 Vitest cases plus nine separate Node script tests and five local Playwright cases (23.4 s), build/lint. Public Worker writes still refuse before transport. |
-| Current deployment state | The 2026-09-28 Product/Auth/API/Identity/Operator rollout remains in staging. On 2026-09-29, existing-store Secrets Store bindings deployed to Identity and Operator only; no API/Core/D1 migration occurred |
-| Current release decision | PR #15 merged into `dev` at `0c5e5f1a068d942af8f091ab0fc4b7ff8bf44e9d` after staging validation from source head `df05d8d`; old per-Worker secrets are retained |
+| Current deployment state | API `565fa15a-0eed-4af9-97a9-a7da821b75e8` and Operator `21227fa1-725f-4f97-9286-58a092c5526e` receive 100% staging traffic after the 2026-10-14 rollout. Identity, migrations and secrets were unchanged. |
+| Current release decision | Evaluate-only staging verification passed: 7 headless cases, 2 intended local-only skips, zero failures; eight owned runs fully disposed. No production/demo deployment or full Task 10/Gate D acceptance. |
 | Gate C finish line | Complete — all mandatory clean-break selection, redemption, tenant-isolation, concurrency, and observability cases passed |
-| Next plan work | Review the feature PR for the bounded Playground checkpoint. Broader Task 10, simulator work and staging deployment are not completed by this slice. Notion status publication preserves historical content and child pages; the parked Cloud E2E gates still require separate authorization. |
+| Next plan work | Review/publish the five-file staging outcome documentation. Broader Task 10, simulator and Gate D remain open. Scoped Notion publication preserves history/children; parked Cloud E2E gates require separate authorization. |
 
 ## Source-of-truth map
 
@@ -136,12 +146,12 @@ test observations to make the current state look cleaner.
   merchant credentials exist.
 - Schema, exact customer, and immutable Promo revision workflows are connected
   to live tenant-scoped staging data.
-- The evaluate-only Playground is implemented locally at `/playground`, with
+- The evaluate-only Playground is implemented and verified in staging at `/playground`, with
   `evaluations:run` authorization, typed published live fields, exact discount
   allocations and code diagnostics. Its local browser evidence uses ROOT and
   normal client selection; member role authorization and signed snapshot
-  persistence are verified at the BFF/Core boundaries. It has not been deployed
-  to staging and does not close full Task 10.
+  persistence are verified at the BFF/Core boundaries. Three ROOT browser
+  scenarios also passed in staging; this does not close full Task 10.
 - Staging uses `api.staging.wastd.dev` and
   `operator.staging.wastd.dev`; Identity remains private.
 - API, Identity, and Operator Web persist staging logs at 100% sampling.
@@ -157,6 +167,12 @@ test observations to make the current state look cleaner.
   or rollback was needed.
 
 ## What is verified in staging
+
+The [2026-10-14 evaluate-only staging record](../testing/evaluation-playground-staging-2026-10-14.md)
+adds the three Playground browser cases and repeats the existing applicable
+API/Promo suite: seven passed, two local-only skips, zero failures. All eight
+run inventories ended with zero Product/Auth owned rows. Browser authority is
+ROOT; member sign-in/email/passkey acceptance is not claimed by this run.
 
 The dated run report contains the full evidence. The following has passed
 manually:
@@ -253,8 +269,10 @@ The existing evaluation service and calculator remain authoritative. Stored
 customer attributes are resolved by Core, request bodies carry no merchant or
 actor authority, and input changes invalidate results. Local verification and
 independent ROOT review are complete. The approved publication checkpoint is a
-feature PR plus scoped existing Notion status updates; merge and deployment
-remain outside this execution.
+merged feature PR #23, followed by separately approved two-Worker deployment
+and seven applicable headless staging passes. The current bounded follow-up is
+publication of its matching outcome docs and scoped existing Notion status.
+Full Task 10, Gate D, production and cloud provisioning remain outside the slice.
 
 Staging proved the existing credential, schema, customer, Promo lifecycle,
 redemption-idempotency, and cap behavior. It also exposed a deeper product
@@ -478,7 +496,7 @@ clear. Its execution does not silently expand Gate C.
 
 After the approved Promo financial corrections above, continue in this order:
 
-1. Task 10 — the evaluate-only Playground slice is implemented locally;
+1. Task 10 — the evaluate-only Playground slice is merged and verified in staging;
    broader historical Task 10 scope remains open, with no redemption controls
    authorized by this slice.
 2. Task 11 — public-contract CLI simulator.
