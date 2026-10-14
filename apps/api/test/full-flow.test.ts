@@ -1091,6 +1091,10 @@ describe('integration-ready runtime', () => {
       'GET /v1/openapi.json': {
         security: 'public', success: ['200', 'OpenApiDocument'], errors: [],
       },
+      'GET /v1/runtime-capabilities': {
+        security: 'secret', success: ['200', 'RuntimeCapabilitiesResponse'],
+        errors: ['401', '403', '503'],
+      },
       'GET /v1/schema/published': {
         security: 'publishable', success: ['200', 'PublishedSchemaResponse'],
         errors: ['401', '404', '429', '503'],

@@ -333,6 +333,20 @@ Notion status publication are separately approved as described above.
 
 ### Task 11: Build the public-contract CLI simulator
 
+**2026-10-14 bounded implementation:** Public-contract CLI and the separately
+approved canonical secret/schema:read runtime-capabilities prerequisite are
+implemented locally from docs PR#24 merge `edda1577b4887128b687053bab3ebc7ce93f9fe2`.
+Only explicit server local/staging configuration allows simulator mutations;
+actual production integration redemption is unchanged. This supplies the CLI
+marker only, not Task10 commit controls. Build/lint, 1,864 Vitest cases plus nine
+Node tests and all ten headless local Playwright cases pass (26.3 seconds),
+including real D1 accepted/retry/usage-cap exhaustion/repricing and zero owned
+rows. ROOT non-author review is complete; commit/push/PR publication is separately
+approved. PR CI and merge remain pending; deployment and Notion sync are not
+authorized by this publication approval.
+The [checkout how-to](../../integration/integration-simulator.md) records preseeded
+schema/Promo/customer requirements, merchandise authority and safe diagnostics.
+
 **Files:**
 - Create: `apps/integration-simulator/package.json`
 - Create: `apps/integration-simulator/src/client.ts`
@@ -344,13 +358,16 @@ Notion status publication are separately approved as described above.
 **Interfaces:**
 - Produces `runScenario(config)` and `pnpm --filter @incentives/integration-simulator start`; imports contracts/connector-kit only.
 
-- [ ] Write HTTP-boundary tests for published-fixture validation, customer update, evaluation/mapping, redeem-before-capture, retry, exhaustion/reprice, sanitized trace, and production refusal.
-- [ ] Run simulator tests; expect missing implementation.
-- [ ] Implement fake native `shopper_id`/`total_pence`/`sku` mapping and parse canonical error responses, including `409 EXHAUSTED`.
-- [ ] Run simulator and connector conformance tests plus a real local-D1 flow; expect exit 0.
-- [ ] Commit with `git commit -m "feat: add canonical integration simulator"`.
+- [x] Write HTTP-boundary tests for published-fixture validation, customer update, evaluation/mapping, redeem-before-capture, retry, exhaustion/reprice, sanitized trace, and production refusal.
+- [x] Run simulator tests; expect missing implementation.
+- [x] Implement fake native `shopper_id`/`total_pence`/`sku` mapping and parse canonical error responses, including HTTP409 and the existing exact exhaustion-code family (generic `EXHAUSTED`, usage/budget/per-customer variants).
+- [x] Run simulator and connector conformance tests plus a real local-D1 flow; expect exit 0.
+- [x] Commit with `git commit -m "feat: add canonical integration simulator"`.
 
 **Gate D review:** Prove the dashboard and CLI agree on canonical requests/decisions and that neither simulator can redeem in production.
+
+Task11 local evidence does not complete full Task10/GateD or staging/production
+acceptance. Playground remains evaluate-only; no simulator commit BFF is added.
 
 ---
 

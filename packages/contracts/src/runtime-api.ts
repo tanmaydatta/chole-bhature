@@ -10,6 +10,17 @@ export const HealthResponseSchema = z.object({
   status: z.literal('ok'),
 }).strict();
 
+// Unknown/missing deployment configuration fails closed without exposing its raw value.
+export const RuntimeCapabilitiesResponseSchema = z.discriminatedUnion('environment', [
+  z.object({ environment: z.literal('local'), simulatorAllowed: z.literal(true) }).strict(),
+  z.object({ environment: z.literal('staging'), simulatorAllowed: z.literal(true) }).strict(),
+  z.object({ environment: z.literal('production'), simulatorAllowed: z.literal(false) }).strict(),
+  z.object({ environment: z.literal('ci'), simulatorAllowed: z.literal(false) }).strict(),
+  z.object({ environment: z.literal('unknown'), simulatorAllowed: z.literal(false) }).strict(),
+]);
+
+export type RuntimeCapabilitiesResponse = z.infer<typeof RuntimeCapabilitiesResponseSchema>;
+
 export const OperatorEvaluationRequestSchema = z.object({
   operatorContext: OperatorCallContextSchema,
   request: EvaluationRequestSchema,

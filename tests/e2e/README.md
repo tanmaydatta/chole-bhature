@@ -36,7 +36,7 @@ pnpm e2e:local:headed
 ```
 
 This opens system Chrome so you can watch the Promo draft, save, refresh, detail,
-and publish flow and the evaluate-only Playground scenarios. `pnpm e2e:local` runs all nine API/browser tests headlessly
+and publish flow and the evaluate-only Playground scenarios. `pnpm e2e:local` runs all ten API/browser tests headlessly
 with two workers. No pre-existing root session, ports, `.dev.vars`, or local D1
 state is needed: Playwright builds the dashboard/dependencies once, allocates
 unique loopback ports and Worker names, migrates two private temporary D1
@@ -46,6 +46,15 @@ temporary files/processes. System Chrome must be installed; set
 `E2E_BROWSER_CHANNEL=chromium` on the underlying Playwright command if you
 have installed its pinned browser instead. The headed script intentionally
 selects the browser project; the headless script runs all projects.
+
+The local-only [checkout simulator case](../../docs/integration/integration-simulator.md)
+uses existing run-owned ROOT/operator recipes to publish two capped coded
+Promos, schema and customer, then calls CLI runtime through public merchant
+credentials. It proves preflight-before-update, versions, exact allocations,
+accepted/retry identity, actual HTTP409 usage exhaustion, repricing, one fake
+capture and zero owned Product/Auth rows after disposal. No harness settings,
+authority/controller changes or remote simulator writes are introduced. The
+CLI/capabilities source is locally verified, not deployed to staging.
 
 The local passkey bootstrap helper accepts only exact HTTP loopback origins
 with an explicit port. Before saving state it checks the server session against
@@ -203,7 +212,7 @@ specs exercise real Promo UI interactions, the evaluate-only Playground and
 controlled local routing. The measured local baseline on
 2026-09-25 was 5 Playwright tests in 23.9 seconds, including bootstrap,
 two concurrent full scenarios, browser smoke, and two simultaneous independent
-Worker/Auth D1 instances. The PR CI job runs every project and all nine tests
+Worker/Auth D1 instances. The PR CI job runs every project and all ten tests
 without selection or sharding. For focused local diagnosis, Playwright accepts
 `--project=api`, `--project=browser`, or `--shard`; each shard starts its own
 isolated stack.

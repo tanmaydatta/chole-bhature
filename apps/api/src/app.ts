@@ -13,6 +13,7 @@ import { createEvaluationRoutes } from './routes/evaluate.js';
 import { createOpenApiRoutes } from './routes/openapi.js';
 import { createRedemptionRoutes } from './routes/redemptions.js';
 import { createSchemaRoutes } from './routes/schemas.js';
+import { createRuntimeCapabilitiesRoutes } from './routes/runtime-capabilities.js';
 
 const SAFE_CORRELATION_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/u;
 
@@ -45,6 +46,7 @@ export function createApp(): Hono<AppEnvironment> {
   app.notFound((context) => apiErrorResponse(context, new NotFoundError()));
 
   app.get('/v1/health', (context) => context.json({ status: 'ok' }));
+  app.route('/v1/runtime-capabilities', createRuntimeCapabilitiesRoutes());
   app.route('/v1/customers', createCustomerRoutes());
   app.route('/v1/schema', createSchemaRoutes());
   app.route('/v1/evaluate', createEvaluationRoutes());

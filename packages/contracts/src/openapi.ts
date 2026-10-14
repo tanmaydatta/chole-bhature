@@ -33,6 +33,7 @@ import {
   OpenApiDocumentResponseSchema,
   ProgramListResponseSchema,
   PublishedSchemaResponseSchema,
+  RuntimeCapabilitiesResponseSchema,
   SchemaDefinitionViewSchema,
   SchemaDefinitionsResponseSchema,
 } from './runtime-api.js';
@@ -88,6 +89,7 @@ export function buildOpenApiDocument(): OpenApiDocument {
   registry.register('ReferralProgram', ReferralProgramSchema);
   registry.register('LoyaltyProgram', LoyaltyProgramSchema);
   const healthResponse = registry.register('HealthResponse', HealthResponseSchema);
+  const runtimeCapabilities = registry.register('RuntimeCapabilitiesResponse', RuntimeCapabilitiesResponseSchema);
   registry.register('SchemaDefinitionView', SchemaDefinitionViewSchema);
   registry.register(
     'SchemaDefinitionsResponse',
@@ -135,6 +137,18 @@ export function buildOpenApiDocument(): OpenApiDocument {
     summary: 'Check runtime health',
     responses: {
       200: { description: 'Runtime is available', content: jsonContent(healthResponse) },
+    },
+  });
+  registry.registerPath({
+    method: 'get',
+    path: '/v1/runtime-capabilities',
+    summary: 'Read server-derived simulator safety capabilities (secret schema:read scope)',
+    security: secretSecurity,
+    responses: {
+      200: { description: 'Explicit local/staging simulator permission; production/ci/unknown deny', content: jsonContent(runtimeCapabilities) },
+      401: errors[401],
+      403: errors[403],
+      503: errors[503],
     },
   });
   registry.registerPath({
