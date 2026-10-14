@@ -16,6 +16,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@incentives/integration-simulator": "workspace:*",
     "@playwright/test": "^1.56.1",
     "@types/node": "24.13.3",
     "oxlint": "^1.69.0",

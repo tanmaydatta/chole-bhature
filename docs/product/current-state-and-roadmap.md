@@ -32,6 +32,18 @@ receipt are distinct from that historical whole-page mirror checkpoint.
 Release publication synchronizes scoped current-status evidence, not a
 wholesale replacement of historical pages.
 
+**2026-10-14 local Task11 slice:** The public-contract
+[checkout CLI simulator](../integration/integration-simulator.md) is implemented
+from docs PR#24 merge `edda1577b4887128b687053bab3ebc7ce93f9fe2`.
+Its separately approved authenticated read-only capabilities marker derives
+simulator permission only from explicit server local/staging configuration.
+Focused tests, build/lint, 1,864 Vitest cases plus nine Node tests and all ten
+headless local Playwright cases pass (26.3 seconds). The real managed-local D1
+flow proves accepted/retry/exhaustion/repricing and zero owned rows. ROOT
+non-author review is complete; commit/push/PR publication is separately approved.
+PR CI, merge, CLI/capabilities staging deployment, Notion sync and full
+Task10/GateD acceptance remain pending and are not claimed.
+
 The dated approved per-PR Cloud E2E checkpoint work was implemented on
 `feat/per-pr-cloud-e2e`, based on `origin/dev` commit
 `f189f5a2ef53a8999969344338f68a2f1117899b` (cached local reference, not a fresh
@@ -84,14 +96,14 @@ deferred issue remains in the
 | Question | Current answer |
 |---|---|
 | Overall phase | Post-Gate-C client readiness; evaluate-only Playground merged and verified in staging |
-| Current activity | Publish the dated two-Worker staging outcome and scoped existing Notion status updates. E2E rewrite parked; managed-local testing remains available. Dated Cloud E2E work below still has no live provisioning authority. |
-| Current repository baseline | Freshly verified `dev` at PR #23 merge `1d25ef36d06fb7b44b288bd85c3a92d61999983d` on 2026-10-14; the release/docs checkout uses that exact source. Earlier Cloud E2E evidence remains separate dated history. |
+| Current activity | Task11 local verification and ROOT non-author review are complete; commit/push/PR publication is approved. E2E rewrite/cloud provisioning remain parked. |
+| Current repository baseline | Freshly verified `dev` at docs PR#24 merge `edda1577b4887128b687053bab3ebc7ce93f9fe2` on2026-10-14; Task11 starts from that exact tree. Playground source remains PR#23 merge1d25. |
 | Current product-code baseline | PR #23 merge commit `1d25ef36d06fb7b44b288bd85c3a92d61999983d` |
 | Local feature state | Authoritative merchandise pricing and the E2E platform are merged, with the dated staging evidence retained. Cloud E2E foundation/packaging/diagnostics/CI admission/local bootstrap are locally accepted; fresh correction verification passes 337 cloud, 1,683 Vitest cases plus nine separate Node script tests and five local Playwright cases (23.4 s), build/lint. Public Worker writes still refuse before transport. |
 | Current deployment state | API `565fa15a-0eed-4af9-97a9-a7da821b75e8` and Operator `21227fa1-725f-4f97-9286-58a092c5526e` receive 100% staging traffic after the 2026-10-14 rollout. Identity, migrations and secrets were unchanged. |
 | Current release decision | Evaluate-only staging verification passed: 7 headless cases, 2 intended local-only skips, zero failures; eight owned runs fully disposed. No production/demo deployment or full Task 10/Gate D acceptance. |
 | Gate C finish line | Complete — all mandatory clean-break selection, redemption, tenant-isolation, concurrency, and observability cases passed |
-| Next plan work | Review/publish the five-file staging outcome documentation. Broader Task 10, simulator and Gate D remain open. Scoped Notion publication preserves history/children; parked Cloud E2E gates require separate authorization. |
+| Next plan work | Publish the frozen, reviewed Task11 slice for PR CI and review. Merge, full Task10/GateD and CLI staging acceptance remain open. |
 
 ## Source-of-truth map
 
@@ -263,15 +275,24 @@ The 2026-09-29 cutover likewise does not verify email delivery or a headed run.
 
 ## Current work
 
-The current bounded product change is the evaluate-only Playground described
+The current bounded product change is the
+[public-contract checkout CLI](../integration/integration-simulator.md) plus its
+approved canonical read-only capabilities prerequisite. It validates published
+fixtures before customer updates, maps canonical merchandise pricing, commits
+before fake capture, verifies retry and reprices real capacity exhaustion.
+Only public contracts/connector-kit are runtime dependencies. Local preseed and
+cleanup use existing run-owned fixtures; there is no new E2E/auth framework.
+No staging/provider writes or deployment are part of this implementation.
+
+The previously delivered evaluate-only Playground is described
 in [Evaluate a basket in the Playground](../integration/evaluation-playground.md).
 The existing evaluation service and calculator remain authoritative. Stored
 customer attributes are resolved by Core, request bodies carry no merchant or
 actor authority, and input changes invalidate results. Local verification and
 independent ROOT review are complete. The approved publication checkpoint is a
 merged feature PR #23, followed by separately approved two-Worker deployment
-and seven applicable headless staging passes. The current bounded follow-up is
-publication of its matching outcome docs and scoped existing Notion status.
+and seven applicable headless staging passes. Its matching docs PR#24 is now
+merged, and four scoped existing Notion status paragraphs were synchronized.
 Full Task 10, Gate D, production and cloud provisioning remain outside the slice.
 
 Staging proved the existing credential, schema, customer, Promo lifecycle,

@@ -16,10 +16,28 @@ The current first-client runtime uses persisted, show-once merchant API credenti
 - An `sk_…` **secret credential** is required for customer reads/writes and redemption. Scoped public runtime routes require `schema:read`, `customers:write`, `evaluations:write`, or `redemptions:write` as applicable.
 - Schema definition authoring/publication and immutable Promo revision publication are operator workflows behind the session-authenticated BFF, not public credential endpoints.
 - `GET /v1/health` and `GET /v1/openapi.json` are public.
+- `GET /v1/runtime-capabilities` requires a secret credential with the existing
+  `schema:read` scope; it is a read-only simulator safety marker.
 
 Send a token as `Authorization: Bearer <token>`. Only its digest is persisted after the show-once handoff. Each credential resolves to exactly one merchant; the API never accepts `merchantId` from the request. Every schema, customer, program, evaluation, and redemption query derives its merchant from the authenticated credential. A reference belonging to another merchant behaves as not found.
 
 Publishable tokens belong only in trusted storefront evaluation calls where exposure is acceptable. Secret tokens must remain on a client-controlled server and must never be shipped in browser or mobile code.
+
+## Simulator runtime capabilities
+
+The authenticated `GET /v1/runtime-capabilities` response is canonical and
+strict. Explicit server `APP_ENV=local` or `staging` returns that environment
+with `simulatorAllowed: true`. Production and CI return their environment with
+`false`; absent/unrecognized configuration returns `unknown` with `false`.
+The response is `Cache-Control: no-store`; it exposes no credentials, resource
+IDs or raw configuration. Normal authentication may update credential last-used
+metadata; no customer/program/counter mutation occurs.
+
+Only a matching local/staging marker permits the
+[checkout CLI simulator](integration-simulator.md). Flags and URL text cannot
+supply authority; inconsistent markers are invalid. This is a fail-closed
+configuration safety check, not signed deployment attestation. Real production
+integration redemptions remain unchanged, and health stays `{ "status": "ok" }`.
 
 ## 1. Define and publish typed data
 
