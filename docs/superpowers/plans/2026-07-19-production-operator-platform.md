@@ -3,8 +3,8 @@
 **Status:** In progress — Tasks 1–9 and Gates A/B/C are complete. The
 clean-break Promo correction is merged, migrated, deployed, and fully verified
 in staging. The evaluate-only Evaluation Playground slice is implemented
-and verified locally as of 2026-10-14, with independent ROOT review complete. Full
-Task 10 and Gate D remain open; this slice has not been deployed to staging.
+and verified locally and in staging as of 2026-10-14, with independent ROOT
+review complete. Full Task 10 and Gate D remain open.
 
 **Notion parent:** [Plans](https://app.notion.com/p/Plans-390e5c7c2b8e8165b7f7d77392eab088)
 
@@ -297,12 +297,21 @@ The reviewed local checkpoint passed build/lint, 1,805 Vitest cases plus nine
 Node tests, and all nine headless local Playwright cases in 49.3 seconds. The
 2026-10-14 publication approval covers the feature branch/PR into `dev` and
 scoped status synchronization to the existing Notion plan, roadmap and Plans
-index. It does not authorize a merge or staging deployment.
+index. Later explicit approvals merged [PR #23](https://github.com/tanmaydatta/chole-bhature/pull/23)
+into `dev` at `1d25ef36d06fb7b44b288bd85c3a92d61999983d`, then deployed only
+API and Operator Web/dashboard to existing staging. The full headless suite
+passed seven cases, including all three Playground scenarios, with two
+intended local-only skips and zero failures (63.450 seconds command time).
+All eight owned runs were disposed, with 53 cleaned resources and zero
+Product/Auth run-owned rows. Identity, migrations, secrets, production and
+the demo were unchanged. Exact versions and evidence limits are in the
+[dated staging verification](../../testing/evaluation-playground-staging-2026-10-14.md).
 
 This approval supersedes the historical evaluate/commit implementation steps
 below for this slice: no commit controls, environment-capability route,
-credential template, simulator CLI or staging deployment is part of the product
-slice. The original unchecked steps remain historical broader scope, not a
+credential template or simulator CLI is part of the product slice. Staging
+deployment required the later separate approval above. The original unchecked
+steps remain historical broader scope, not a
 claim of Task 10 completion. Checkpoint commit/push, feature PR and scoped
 Notion status publication are separately approved as described above.
 
