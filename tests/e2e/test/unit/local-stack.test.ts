@@ -6,14 +6,100 @@ import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setImmediate, setTimeout as delay } from 'node:timers/promises';
+import { createServer } from 'node:http';
 
 import { localStackConfiguration, summarizeLocalWorkerFailure,
-  createLocalStackOwner, withLocalStackFixture, withLocalStackPair } from '../../src/local-stack.js';
+  createLocalStackOwner, withLocalStackFixture, withLocalStackPair,
+  waitForLocalWorkers } from '../../src/local-stack.js';
 
 const ports = { core: 20101, identity: 20102, operator: 20103,
   coreInspector: 20104, identityInspector: 20105, operatorInspector: 20106 };
 
+async function controlledWorker(status: number, gate: Promise<void> = Promise.resolve()) {
+  const requested = deferred();
+  const server = createServer(async (_request, response) => {
+    requested.resolve();
+    await gate;
+    response.writeHead(status).end();
+  });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  if (!address || typeof address === 'string') throw new Error('Controlled server address unavailable');
+  return { origin: `http://127.0.0.1:${address.port}`, requested: requested.promise,
+    async close() {
+      server.closeAllConnections();
+      await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+    } };
+}
+
+describe('fixture Worker readiness barrier', () => {
+  test('waits for actual Core and Identity responses even when Operator already responds', async () => {
+    const releaseIdentity = deferred();
+    const core = await controlledWorker(404);
+    const identity = await controlledWorker(400, releaseIdentity.promise);
+    const operator = await controlledWorker(200);
+    const cancellation = new AbortController();
+    const ready = waitForLocalWorkers([core.origin, identity.origin, operator.origin], [], cancellation.signal);
+    const outcome = ready.then(() => 'ready');
+    try {
+      expect(await Promise.race([
+        Promise.all([core.requested, identity.requested]).then(() => 'all-requested'), outcome,
+      ])).toBe('all-requested');
+      expect(await Promise.race([outcome, setImmediate().then(() => 'pending')])).toBe('pending');
+      releaseIdentity.resolve();
+      await ready;
+    } finally {
+      releaseIdentity.resolve(); cancellation.abort(); await ready.catch(() => {});
+      await Promise.all([core.close(), identity.close(), operator.close()]);
+    }
+  });
+
+  test('cancels a pending real HTTP readiness request without waiting for its response', async () => {
+    const release = deferred();
+    const worker = await controlledWorker(200, release.promise);
+    const cancellation = new AbortController();
+    const outcome = waitForLocalWorkers([worker.origin], [], cancellation.signal).catch(error => error);
+    try {
+      await worker.requested;
+      cancellation.abort();
+      expect(String(await outcome)).toMatch(/readiness cancelled/iu);
+    } finally { release.resolve(); cancellation.abort(); await outcome; await worker.close(); }
+  });
+
+  test('refuses readiness when an owned Worker has exited', async () => {
+    const worker = await controlledWorker(200);
+    const child = spawn(process.execPath, ['-e', 'process.exit(0)'], { stdio: 'ignore' });
+    await new Promise<void>(resolve => child.once('exit', () => resolve()));
+    try {
+      await expect(waitForLocalWorkers([worker.origin], [child], new AbortController().signal))
+        .rejects.toThrow(/stopped before readiness/iu);
+    } finally { await worker.close(); }
+  });
+
+  test('bounds a responding but unavailable Worker by the existing readiness deadline', async () => {
+    const worker = await controlledWorker(503);
+    let clock = 1_000;
+    const now = vi.spyOn(Date, 'now').mockImplementation(() => clock);
+    const outcome = waitForLocalWorkers([worker.origin], [], new AbortController().signal).catch(error => error);
+    try {
+      await worker.requested;
+      clock += 45_001;
+      expect(String(await outcome)).toMatch(/did not become ready/iu);
+    } finally { now.mockRestore(); await outcome; await worker.close(); }
+  });
+});
+
 describe('isolated local Worker stack', () => {
+  test('opt-in fixture metadata binds all three local Workers without embedding setup authority', () => {
+    const config=localStackConfiguration('/repo','/private/tmp/fixture','e2e_aaaaaaaaaaaaaaaaaaaaaaaa',ports,'local',
+      {generation:'a'.repeat(40),targetId:'b'.repeat(64)});
+    for(const worker of [config.coreConfig,config.identityConfig,config.operatorConfig]) {
+      expect(worker.vars).toMatchObject({APP_ENV:'local',E2E_LOCAL_TEST_MODE:'1',E2E_CONTROL_ENABLED:'1',
+        E2E_CONTROL_GENERATION:'a'.repeat(40),E2E_CONTROL_TARGET_ID:'b'.repeat(64),PUBLIC_APP_ORIGIN:'http://localhost:20103'});
+      expect(worker.vars).not.toHaveProperty('E2E_SETUP_SECRET');
+    }
+    expect(localStackConfiguration('/repo','/private/tmp/passkey','e2e_bbbbbbbbbbbbbbbbbbbbbbbb',ports).coreConfig.vars).not.toHaveProperty('E2E_CONTROL_ENABLED');
+  });
   test('namespaces names, origins, D1 persistence and secrets per suite', () => {
     const first = localStackConfiguration('/repo', '/private/tmp/first',
       'e2e_aaaaaaaaaaaaaaaaaaaaaaaa', ports);

@@ -41,6 +41,8 @@ import { WorkerEntrypoint } from 'cloudflare:workers';
 import { createApp } from './app.js';
 import { assertCiStack } from './ci-stack.js';
 import { productE2eCapabilities } from './services/e2e-capabilities.js';
+import { createProductE2eControl } from './services/e2e-control.js';
+import type { CoreControlCall, CoreControlReply } from '@incentives/contracts';
 import { MerchantIdentityConflictError } from './errors/merchant-errors.js';
 import { requireOperatorContext } from './auth/operator-context.js';
 import type { Env } from './env.js';
@@ -102,6 +104,9 @@ function coreMerchantFailure(error: unknown) {
 const app = createApp();
 
 export class CoreOperatorService extends WorkerEntrypoint<Env> {
+  async e2eControl(call: CoreControlCall): Promise<CoreControlReply> {
+    return createProductE2eControl(this.env).execute(call);
+  }
   async getE2eCapabilities(context: { actorUserId: string;
     actorKind: 'root' | 'member'; correlationId: string }) {
     assertCiStack(this.env);

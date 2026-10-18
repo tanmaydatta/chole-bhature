@@ -1,6 +1,10 @@
 import { passkey } from '@better-auth/passkey';
-import { betterAuth, type BetterAuthPlugin } from 'better-auth';
+import { betterAuth, type BetterAuthPlugin, type BetterAuthOptions } from 'better-auth';
 import { magicLink, testUtils } from 'better-auth/plugins';
+import { makeSignature } from 'better-auth/crypto';
+import type { StoredControlLease, E2eControlAccount, E2eControlRuntime } from '@incentives/contracts';
+import { businessControlRuntime, controlRuntime } from './e2e-control-runtime.js';
+import { withControlWrite } from './services/e2e-write-fence.js';
 
 import { createIdentityEmailAdapter, type EmailAdapter } from './email.js';
 import {
@@ -18,6 +22,7 @@ export type AuthenticationMethod = 'magic-link' | 'passkey' | 'recovery' | 'e2e-
 export interface IdentityAuth {
   createFixtureSession(input: { userId: string; runId: string; merchantId: string }): Promise<{
     sessionId: string; cookieHeader: string;
+    cookieAttributes?: E2eControlAccount['cookieAttributes'];
   }>;
   handler(request: Request, executionContext?: ExecutionContext): Promise<Response>;
   getSession(headers: Headers): Promise<{
@@ -33,6 +38,7 @@ export interface IdentityAuth {
 }
 
 export interface IdentityAuthDependencies {
+  controlGrant?: Readonly<{ userId: string; sessionId: string; lease: StoredControlLease }>;
   emailAdapter?: EmailAdapter;
   afterPasskeyAuthorization?: (
     input: { credentialId: string; userId: string },
@@ -380,9 +386,37 @@ async function isPasskeyAuthorizationCurrent(
   ).first() !== null;
 }
 
+export async function isControlSession(db: D1Database, sessionId: string): Promise<boolean> {
+  const columns = (await db.prepare('PRAGMA table_info(user)').all<{ name:string }>()).results;
+  if (columns.some(column => column.name === 'e2e_control_run_id') && await db.prepare(`SELECT 1 FROM session s
+    JOIN user u ON u.id=s.userId WHERE s.id=?1 AND u.e2e_control_run_id IS NOT NULL`).bind(sessionId).first()) return true;
+  const accounts = await db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='e2e_control_accounts'").first();
+  return accounts !== null && await db.prepare(`SELECT 1 FROM e2e_control_accounts a JOIN session s ON s.userId=a.user_id
+    WHERE s.id=?1 OR a.session_id=?1`).bind(sessionId).first() !== null;
+}
+
+export async function controlSessionIsCurrent(db: D1Database, sessionId: string, runtime: E2eControlRuntime | undefined): Promise<boolean> {
+  if (!await isControlSession(db,sessionId)) return true;
+  if (!runtime?.enabled) return false;
+  try {
+    return await db.prepare(`SELECT 1 FROM e2e_control_accounts a
+      JOIN e2e_control_valid_runs r ON r.run_id=a.run_id JOIN session s ON s.id=a.session_id AND s.userId=a.user_id
+      JOIN user u ON u.id=a.user_id JOIN memberships m ON m.id=a.membership_id JOIN organizations o ON o.id=m.organization_id
+      JOIN e2e_fixture_sessions f ON f.session_id=s.id
+      WHERE a.session_id=?1 AND a.state='issued' AND a.generation=r.generation AND r.generation=?2 AND r.target_id=?3
+        AND r.phase='active' AND r.claim_status='active' AND r.expires_at>CAST(unixepoch('subsec')*1000 AS INTEGER)
+        AND u.e2e_control_run_id=r.run_id AND o.e2e_control_run_id=r.run_id AND o.id=r.organization_id
+        AND o.merchant_id=r.merchant_id AND o.provisioning_id=r.provisioning_id AND m.user_id=a.user_id AND m.role=a.role
+        AND m.status='active' AND o.status='active' AND f.run_id=r.run_id AND f.user_id=a.user_id AND f.merchant_id=r.merchant_id
+        AND s.createdAt=f.issued_at AND s.expiresAt<=r.expires_at AND s.expiresAt<=f.hard_expires_at
+        AND f.hard_expires_at=f.issued_at+900000 AND f.hard_expires_at>CAST(unixepoch('subsec')*1000 AS INTEGER)`)
+      .bind(sessionId,runtime.generation,runtime.targetId).first() !== null;
+  } catch { return false; }
+}
+
 export async function getSessionAccess(env: Env, sessionId: string): Promise<SessionAccess | null> {
   assertCiStack(env);
-  return env.AUTH_DB.prepare(`
+  const access = await env.AUTH_DB.prepare(`
     SELECT session.id AS sessionId, session.userId AS userId,
       auth_profile.subject_kind AS subjectKind,
       session.authenticationMethod, session.authenticatedAt,
@@ -419,7 +453,7 @@ export async function getSessionAccess(env: Env, sessionId: string): Promise<Ses
         )
         OR (
           session.authenticationMethod = 'e2e-fixture'
-          AND ?3 IN ('staging', 'ci')
+          AND ?3 IN ('staging', 'ci', 'managed-local')
           AND session.recoveryOnly = 0
           AND auth_profile.subject_kind = 'employee'
           AND auth_profile.email_login_enabled = 0
@@ -473,7 +507,12 @@ export async function getSessionAccess(env: Env, sessionId: string): Promise<Ses
           )
         )
       )
-  `).bind(sessionId, Date.now(), env.APP_ENV).first<SessionAccess>();
+  `).bind(sessionId, Date.now(), env.APP_ENV === 'local' && businessControlRuntime(env) ? 'managed-local' : env.APP_ENV).first<SessionAccess>();
+  if (!access || access.authenticationMethod !== 'e2e-fixture') return access;
+  const marked = await isControlSession(env.AUTH_DB,sessionId);
+  if (!marked) return env.APP_ENV === 'local' ? null : access;
+  const runtime = businessControlRuntime(env);
+  return await controlSessionIsCurrent(env.AUTH_DB,sessionId,runtime) ? access : null;
 }
 
 function isPasskeyManagementPath(pathname: string): boolean {
@@ -597,6 +636,16 @@ export function createIdentityAuth(
   // createIdentityAuth is instantiated per private RPC invocation. This grant is
   // held only across one Better Auth testUtils.login call and never exposed as a route.
   let fixtureUserGrant: string | null = null;
+  // The native SQLite adapter defaults to ISO dates. Only the immutable control
+  // grant writes millisecond session dates required by the existing v2 triggers;
+  // ordinary sessions keep their current encoding. Both encodings resolve to Date.
+  const sessionDate = {
+    type:'date',required:true,input:false,
+    transform:{
+      input(value) { return dependencies.controlGrant && value instanceof Date ? value.getTime() : value; },
+      output(value) { return typeof value==='number' || typeof value==='string' ? new Date(value) : value; },
+    },
+  } satisfies NonNullable<NonNullable<BetterAuthOptions['session']>['additionalFields']>[string];
   const auth = betterAuth({
     appName: 'Incentives Operator',
     database: env.AUTH_DB,
@@ -609,6 +658,9 @@ export function createIdentityAuth(
       storeSessionInDatabase: true,
       cookieCache: { enabled: false },
       additionalFields: {
+        createdAt:{ ...sessionDate,defaultValue:() => new Date() },
+        updatedAt:{ ...sessionDate,onUpdate:() => new Date() },
+        expiresAt:sessionDate,
         authenticationMethod: {
           type: 'string', required: true, input: false, returned: true,
         },
@@ -647,7 +699,8 @@ export function createIdentityAuth(
       session: {
         create: {
           before: async (session, context) => {
-            const method = fixtureUserGrant === session.userId && (env.APP_ENV === 'staging' || env.APP_ENV === 'ci')
+            const grant = dependencies.controlGrant;
+            const method = fixtureUserGrant === session.userId && (env.APP_ENV === 'staging' || env.APP_ENV === 'ci' || (grant && businessControlRuntime(env)))
               ? 'e2e-fixture' : authenticationMethodForPath(context?.path ?? '');
             const allowed = method === 'passkey'
               ? await isPasskeyAuthorizationCurrent(env, passkeyAuthorization, session.userId)
@@ -660,7 +713,7 @@ export function createIdentityAuth(
               data: {
                 ...session,
                 ...(method === 'e2e-fixture'
-                  ? { expiresAt: new Date(session.createdAt.getTime() + 900_000) } : {}),
+                  ? { ...(grant ? { id: grant.sessionId } : {}), expiresAt: new Date(Math.min(session.createdAt.getTime() + 900_000, grant?.lease.expiresAt ?? Infinity)) } : {}),
                 authenticationMethod: method,
                 authenticatedAt: method === 'passkey'
                   ? Math.max(Date.now(), (passkeyAuthorization?.recoveryFence ?? 0) + 1)
@@ -797,7 +850,15 @@ export function createIdentityAuth(
     session: CurrentSession;
     invalid: boolean;
   }> => {
-    const session = await auth.api.getSession({ headers });
+    const context = await auth.$context;
+    const signed = (headers.get('cookie') ?? '').split(';').map(part => part.trim()).find(part => part.startsWith(context.authCookies.sessionToken.name+'='));
+    const token = signed?.slice(context.authCookies.sessionToken.name.length+1).split('.')[0];
+    const presented = token ? await env.AUTH_DB.prepare('SELECT id FROM session WHERE token=?1').bind(token).first<{ id:string }>() : null;
+    const controlled = presented && await isControlSession(env.AUTH_DB,presented.id) ? presented : null;
+    if (controlled && !await getSessionAccess(env,controlled.id)) return { session:null,invalid:true };
+    let session;
+    try { session = await auth.api.getSession({ headers, ...(controlled ? { query: { disableRefresh: true } } : {}) }); }
+    catch (error) { if (controlled) return { session:null,invalid:true }; throw error; }
     if (!session) return { session: null, invalid: false };
     const current = session as unknown as NonNullable<CurrentSession>;
     const access = await getSessionAccess(env, current.session.id);
@@ -812,6 +873,7 @@ export function createIdentityAuth(
         user: current.user,
       } };
     }
+    if (controlled) return { session:null,invalid:true };
     await env.AUTH_DB.prepare('DELETE FROM session WHERE id = ?1')
       .bind(current.session.id).run();
     await writeAudit(env, crypto.randomUUID(), {
@@ -830,7 +892,8 @@ export function createIdentityAuth(
     getSession,
     async createFixtureSession(input) {
       assertCiStack(env);
-      if (env.APP_ENV !== 'ci' && env.APP_ENV !== 'staging') throw new Error('E2E fixture sessions are staging-only');
+      const grant = dependencies.controlGrant;
+      if (env.APP_ENV !== 'ci' && env.APP_ENV !== 'staging' && !(grant && businessControlRuntime(env))) throw new Error('E2E fixture sessions are staging-only');
       if (fixtureUserGrant !== null) throw new Error('E2E fixture session creation is busy');
       const owned = await env.AUTH_DB.prepare(`
         SELECT memberships.id
@@ -851,6 +914,21 @@ export function createIdentityAuth(
       if (!owned) throw new Error('E2E fixture session user is not run-owned');
       fixtureUserGrant = input.userId;
       try {
+        if (grant) {
+          if (grant.userId !== input.userId || grant.lease.runId !== input.runId || grant.lease.merchantId !== input.merchantId) throw new Error('E2E_CONTROL_FORBIDDEN');
+          const context = await auth.$context;
+          const session = await context.internalAdapter.createSession(input.userId);
+          if (!session || session.id !== grant.sessionId) throw new Error('E2E_CONTROL_SESSION');
+          const issuedAt = session.createdAt.getTime();
+          await withControlWrite(env.AUTH_DB,controlRuntime(env),grant.lease,'provision',[
+            env.AUTH_DB.prepare(`INSERT INTO e2e_fixture_sessions (session_id,user_id,run_id,merchant_id,issued_at,hard_expires_at)
+              VALUES (?1,?2,?3,?4,?5,?6)`).bind(session.id,input.userId,input.runId,input.merchantId,issuedAt,issuedAt+900000),
+          ]);
+          const cookie = context.authCookies.sessionToken;
+          if (cookie.attributes.path !== '/' || cookie.attributes.httpOnly !== true || cookie.attributes.sameSite !== 'lax' || cookie.attributes.domain !== undefined) throw new Error('E2E_CONTROL_INCOMPATIBLE');
+          return { sessionId:session.id,cookieHeader:cookie.name+'='+session.token+'.'+await makeSignature(session.token,context.secret),
+            cookieAttributes:{ name:cookie.name,path:'/',httpOnly:true,secure:cookie.attributes.secure === true,sameSite:'Lax',expiresAt:Math.min(grant.lease.expiresAt,issuedAt+900000) } };
+        }
         const context = await auth.$context as typeof auth.$context extends Promise<infer T>
           ? T & { test?: { login(input: { userId: string }): Promise<{
             session: { id: string } | null; headers: Headers;
@@ -937,7 +1015,18 @@ export function createIdentityAuth(
         });
       }
 
-      const response = await auth.handler(request);
+      const controlledSession = current && access?.authenticationMethod === 'e2e-fixture'
+        && await isControlSession(env.AUTH_DB,current.session.id);
+      let authRequest = request;
+      if (controlledSession && pathname === '/auth/get-session') {
+        const url = new URL(request.url);
+        url.searchParams.set('disableRefresh','true');
+        authRequest = new Request(url,request);
+      }
+      const response = await auth.handler(authRequest);
+      if (controlledSession && current && !await getSessionAccess(env,current.session.id)) {
+        return errorResponse(id,401,'SESSION_INVALID','The session is invalid.');
+      }
       const passkeyAuthorizationCurrent =
         pathname === '/auth/passkey/verify-authentication'
         && !response.ok

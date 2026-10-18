@@ -49,6 +49,9 @@ import { createOrganizationService } from './services/organizations.js';
 import { createIdentityE2eLifecycle, type E2eTenantIdentity } from './services/e2e-lifecycle.js';
 import { assertAuthE2eMigrations } from './services/e2e-capabilities.js';
 import { createIdentityE2eFixtures } from './services/e2e-fixtures.js';
+import { createIdentityE2eControl } from './services/e2e-control.js';
+import { businessControlRuntime } from './e2e-control-runtime.js';
+import type { IdentityControlCall, E2eControlReply, CoreControlCall, CoreControlReply } from '@incentives/contracts';
 import type { OperatorCallContext } from '@incentives/contracts';
 
 interface CoreE2eLifecycleClient {
@@ -71,6 +74,12 @@ export interface Env {
   APP_ENV: 'local' | 'staging' | 'ci';
   CI_STACK_KEY?: string;
   E2E_LOCAL_TEST_MODE?: string;
+  E2E_CONTROL_ENABLED?: string;
+  E2E_CONTROL_GENERATION?: string;
+  E2E_CONTROL_TARGET_ID?: string;
+  E2E_CONTROL_ACCOUNT_QUOTA?: string;
+  E2E_CONTROL_CLEANUP_GENERATIONS?: string;
+  E2E_SETUP_SECRET?: string;
   PUBLIC_APP_ORIGIN: string;
   COOKIE_PREFIX: string;
   EMAIL_MODE: 'local-capture' | 'resend';
@@ -82,7 +91,9 @@ export interface Env {
   PASSKEY_RP_NAME: string;
   RESEND_API_KEY?: string;
   RESEND_FROM?: string;
-  CORE: CoreMerchantProvisioningClient & CoreE2eLifecycleClient;
+  CORE: CoreMerchantProvisioningClient & CoreE2eLifecycleClient & {
+    e2eControl?(call: CoreControlCall): Promise<CoreControlReply>;
+  };
 }
 
 function withCorrelationId(request: Request, correlationId: string): Request {
@@ -130,6 +141,7 @@ function allowedRecipients(env: Env): ReadonlySet<string> {
 
 function operatorService(env: Env) {
   assertCiStack(env);
+  const runtime = businessControlRuntime(env);
   return createIdentityOperatorService({
     database: env.AUTH_DB,
     ciEnv: env,
@@ -138,16 +150,21 @@ function operatorService(env: Env) {
       mode: env.EMAIL_MODE,
       database: env.AUTH_DB,
       allowedRecipients: allowedRecipients(env),
+      ...(runtime === undefined ? {} : { controlRuntime:runtime }),
       ...(env.RESEND_API_KEY === undefined ? {} : { resendApiKey: env.RESEND_API_KEY }),
       ...(env.RESEND_FROM === undefined ? {} : { resendFrom: env.RESEND_FROM }),
     }),
     publicOrigin: env.PUBLIC_APP_ORIGIN,
     appEnv: env.APP_ENV,
     localTestMode: env.E2E_LOCAL_TEST_MODE,
+    ...(runtime === undefined ? {} : { controlRuntime:runtime }),
   });
 }
 
 export class IdentityOperatorService extends WorkerEntrypoint<IdentityWorkerEnv> {
+  async e2eControl(call: IdentityControlCall): Promise<E2eControlReply> {
+    return createIdentityE2eControl(this.env).execute(call);
+  }
   async getE2eCapabilities(input: unknown) {
     await resolveIdentitySecrets(this.env);
     const parsed = input && typeof input === 'object'

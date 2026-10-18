@@ -103,9 +103,20 @@ file and its containing directory private.
 ## Control lease foundation
 
 Version 2 control leases and SQL write fences provide a foundation for future
-preauthenticated product tests. The control endpoints, controller account
-issuance, session resolution and routine harness are not wired or deployed;
-the existing commands continue to use the version 1 ROOT flow.
+preauthenticated product tests. The parked runtime candidate includes dedicated
+control endpoints, controller account issuance and member-session resolution;
+the routine harness and protected staging integration remain incomplete. The
+default commands continue to use the version 1 ROOT flow. The opt-in local
+Promo check below is the first bounded version 2 product-flow proof.
+
+The 2026-10-16 candidate boundary correction makes a disabled Operator refuse
+bootstrap and controller calls before forwarding, while preserving separately
+authenticated setup capability checks and exact-proof status/disposal recovery.
+Controller authority becomes available only after the initial Admin cookie and
+principal verify and bootstrap completion is durably recorded within the
+creation lease. Issuance alone does not grant readiness. These local boundary
+checks alone do not establish a preauthenticated headless product flow or staging
+acceptance; see [Staging Worker operations](../../docs/integration/staging-operations.md#preauthenticated-control-candidate--2026-10-16).
 
 Version 2 fixture accounts require controller-owned synthetic reservations.
 Ordinary invitation acceptance for a version 2 fixture organization refuses
@@ -126,8 +137,8 @@ control runtime and exact live pending-invitation ownership. The capture INSERT
 uses the same atomic SQL write fence; stale or ambiguous ownership refuses even
 after tenant deletion. Reserved controller account addresses remain no-email.
 Ordinary shared recipients are not inferred to be fixture-owned from invitations;
-manual/version 1 capture and Resend behavior are unchanged. Runtime factory
-wiring is still part of the future integration, not this foundation.
+manual/version 1 capture and Resend behavior are unchanged. Full harness conversion
+and protected staging configuration wiring remain pending.
 
 Creation leases last 15 minutes from reservation, with eight live leases per
 target and a default quota of three accounts per run. Exact-run cleanup
@@ -142,6 +153,24 @@ Code references:
 - Shared atomic write boundary: [Workers batch engine](../../packages/worker-runtime/src/e2e-control-write-batch.ts).
 - Invitation acceptance boundary: [invitation service](../../apps/identity/src/services/invitations.ts).
 - Explicit-runtime local capture boundary: [email adapters](../../apps/identity/src/email.ts).
+
+## Experimental one-flow local preauth check
+
+As of 2026-10-16, `CI=true E2E_BROWSER_CHANNEL=chromium pnpm e2e:local:preauth`
+passed the existing exact capped-Promo browser case headlessly on its first
+attempt (14.3s). An ordinary fixture Admin authored, saved, refreshed and
+published the Promo; no ROOT CLI, passkey bootstrap or platform selection was
+used. All four run-owned resources were cleaned and the protected final status
+verified zero Product/Auth rows before retiring that run's capability/member
+files. Earlier failed recovery records remain private and unchanged.
+
+Fixture mode now waits for actual HTTP responses from all three local Workers
+before the capability handshake, within the existing shared 45-second readiness
+budget. HTTP readiness is not business-health acceptance. No server/auth guard
+was relaxed. See [Experimental local preauthenticated Promo check](../../docs/testing/preauth-local-promo.md)
+for exact evidence and limits. This is one opt-in local proof, not full suite
+conversion or staging readiness. The default/full local command and its
+ROOT/passkey setup, assertions, timeouts, retries and two workers remain intact.
 
 ## Check the local cloud helper groundwork
 
@@ -182,9 +211,10 @@ recipe saves its token to a private file and prints only its location.
 run-exclusive synthetic accounts in an E2E-owned merchant and verify actual
 Better Auth session identity and permissions. They do **not** test invitation
 email delivery or acceptance; local Identity tests cover ordinary email auth.
-Fixture sessions have an immutable 15-minute issuance cap and are invalid
-outside staging. `set-role` uses the authorized operator API. No recipe writes
-remote D1 directly.
+These version 1 member-account recipes remain staging-only; the version 2
+candidate additionally admits explicitly managed local stacks. Fixture sessions
+retain their immutable 15-minute issuance cap. `set-role` uses the authorized
+operator API. No recipe writes remote D1 directly.
 
 Each run gets a random 96-bit `e2e_` ID; merchant, user, Promo/code, customer,
 order, and idempotency identifiers are run-scoped. A mode-0600 manifest in

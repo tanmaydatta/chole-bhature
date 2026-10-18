@@ -22,6 +22,7 @@ import {
 } from '@incentives/contracts';
 
 import { proxyAuth } from './routes/auth.js';
+import { handleE2eControl } from './routes/e2e-control.js';
 import { credentialRoutes } from './routes/credentials.js';
 import { customerRoutes } from './routes/customers.js';
 import { platformRoutes } from './routes/platform.js';
@@ -616,6 +617,7 @@ export function createOperatorWebWorker(): ExportedHandler<OperatorWebWorkerEnv>
       const url = new URL(request.url);
       try {
         assertCiStack(workerEnv);
+        if (url.pathname.startsWith('/operator/v1/e2e-control')) return await handleE2eControl(request,workerEnv,id);
         if (
           !url.pathname.startsWith('/auth/')
           && !url.pathname.startsWith('/internal/')

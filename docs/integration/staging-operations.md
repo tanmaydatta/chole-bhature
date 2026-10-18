@@ -123,6 +123,24 @@ audit tombstones. Any exceptional database restore requires the separate
 quiet-window/owner-approved recovery procedure below, not a direct E2E
 client SQL command.
 
+### Preauthenticated control candidate — 2026-10-16
+
+The parked version 2 candidate is not staging-ready; the existing staging
+commands still require the normal ROOT session. Its control boundary refuses
+bootstrap and controller calls when the Operator disables creation, while
+retaining separately authenticated setup capability checks and exact-proof
+status/disposal recovery. Initial Admin issuance does not enable the controller:
+the cookie and principal must verify before durable bootstrap completion,
+under the existing immutable lease fence. Failed verification leaves setup
+recovery available without publishing controller authority or replaying cookies.
+
+This is a local candidate behavior checkpoint, not deployment or acceptance
+evidence. Harness conversion, staging readiness/configuration and separately
+approved credential, migration and deployment work remain pending. Continue
+using the existing headless local suite for product work. See the
+[control lease foundation](../../tests/e2e/README.md#control-lease-foundation)
+and [preauthenticated product E2E contract](../superpowers/specs/2026-10-12-preauthenticated-product-e2e-design.md).
+
 ### Prepare the ignored environment file
 
 Copy `.env.staging.example` to `.env.staging` with owner-only permissions. Replace the two D1
@@ -281,7 +299,7 @@ with 1 local-only skip and 0 failures**, using two workers in **37.0 seconds**
 (38.182 seconds including the command wrapper). All five scenario-owned
 tenants asserted zero run-owned Product and Auth rows after disposal; all 31
 recorded resources were marked cleaned. Sanitized disposal/audit tombstones
-remain. The [dated E2E record](../testing/gap-030-031-e2e.md#manual-staging-rollout-result-2026-10-07)
+remain. The [dated E2E record](../testing/gap-030-031-e2e.md#manual-staging-rollout-result--2026-10-07)
 contains run IDs and coverage. This does not verify email delivery, invitation
 acceptance, a headed staging run, the whole migration ledger, or production.
 Per-PR cloud provisioning remains groundwork and live **NO-GO**; no CI/CD,

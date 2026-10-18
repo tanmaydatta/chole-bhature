@@ -1,16 +1,12 @@
 import { OperatorProgramViewSchema } from '@incentives/contracts';
-import { test, expect } from '@playwright/test';
+import { test, expect } from '../support/promo-fixtures.js';
 
 import { executeRecipe } from '../../src/execution.js';
 import { cappedPromo } from '../../src/gap-scenario.js';
-import { requireOperatorStorageState } from '../../src/operator-client.js';
-import { assertRunDisposed, withScenarioRun } from '../../src/scenario-run.js';
 
-test('browser authors and persists the exact capped Promo, then publishes it', async ({ browser }) => {
-  const runId = await withScenarioRun(async ctx => {
-    const merchant = await executeRecipe(ctx, 'add-merchant', {
-      name: 'Browser authoring shop',
-    }) as { merchantId: string };
+test('browser authors and persists the exact capped Promo, then publishes it', async ({ browser, promoScenario }) => {
+  const runId = await promoScenario.run(async ctx => {
+    const merchant = await promoScenario.merchant(ctx);
     await executeRecipe(ctx, 'add-schema', { slug: 'browser_marker', definition: {
       key: 'context.placeholder', label: 'Browser marker', source: 'context',
       type: 'string', required: false,
@@ -20,15 +16,17 @@ test('browser authors and persists the exact capped Promo, then publishes it', a
     }) as { configuration: { id: string } };
     const id = draft.configuration.id;
     const context = await browser.newContext({
-      storageState: requireOperatorStorageState(process.env),
+      storageState: promoScenario.storageState(ctx),
     });
     try {
-      const selected = await context.request.post(
+      if (promoScenario.selectMerchant) {
+        const selected = await context.request.post(
         `${ctx.target.operatorOrigin}/operator/v1/platform/merchant-selection`,
         { data: { merchantId: merchant.merchantId },
           headers: { origin: ctx.target.operatorOrigin } },
       );
-      expect(selected.status()).toBe(204);
+        expect(selected.status()).toBe(204);
+      }
       const page = await context.newPage();
       await page.goto(`${ctx.target.operatorOrigin}/promo/${encodeURIComponent(id)}/edit`);
       await expect(page.getByRole('heading', { name: 'Edit Promo draft' })).toBeVisible();
@@ -66,5 +64,5 @@ test('browser authors and persists the exact capped Promo, then publishes it', a
     }
     return ctx.manifest.runId;
   });
-  await assertRunDisposed(runId);
+  await promoScenario.assertDisposed(runId);
 });

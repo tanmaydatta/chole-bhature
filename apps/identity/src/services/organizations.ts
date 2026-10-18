@@ -17,6 +17,8 @@ import {
 import { authorize } from '../authorization/authorize.js';
 import { permissionsForRole, type FixedRole } from '../authorization/registry.js';
 import { withAuthBusinessWrite } from './e2e-write-fence.js';
+import { controlSessionIsCurrent } from '../auth.js';
+import { businessControlRuntime } from '../e2e-control-runtime.js';
 
 export interface CoreMerchantProvisioningClient {
   provisionMerchant(
@@ -298,7 +300,7 @@ export function createOrganizationService(options: OrganizationServiceOptions) {
             (session.authenticationMethod = 'magic-link'
               AND auth_profile.email_login_enabled = 1)
             OR (session.authenticationMethod = 'e2e-fixture'
-              AND ?3 IN ('staging', 'ci') AND auth_profile.email_login_enabled = 0
+              AND ?3 IN ('staging', 'ci', 'managed-local') AND auth_profile.email_login_enabled = 0
               AND EXISTS (
                 SELECT 1 FROM e2e_run_claims
                 JOIN e2e_fixture_sessions
@@ -317,7 +319,7 @@ export function createOrganizationService(options: OrganizationServiceOptions) {
               ))
           )
           AND memberships.status = 'active' AND organizations.status = 'active'
-      `).bind(sessionId, now, options.appEnv ?? '').first<{
+      `).bind(sessionId, now, options.appEnv === 'local' && options.ciEnv && businessControlRuntime(options.ciEnv) ? 'managed-local' : options.appEnv ?? '').first<{
         sessionId: string;
         userId: string;
         authenticationMethod: string;
@@ -328,6 +330,8 @@ export function createOrganizationService(options: OrganizationServiceOptions) {
         merchantId: string;
       }>();
       if (!member || (selectedMerchantId && selectedMerchantId !== member.merchantId)) return null;
+      if (member.authenticationMethod === 'e2e-fixture' && !await controlSessionIsCurrent(database,sessionId,
+        options.controlRuntime ?? (options.ciEnv ? businessControlRuntime(options.ciEnv) : undefined))) return null;
       return {
         userId: member.userId,
         sessionId: member.sessionId,

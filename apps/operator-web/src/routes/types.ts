@@ -19,6 +19,8 @@ import type {
   PermissionKey,
   PromoProgram,
   VariableDefinition,
+  IdentityControlCall,
+  E2eControlReply,
 } from '@incentives/contracts';
 
 export interface RuntimeSchema<T = unknown> {
@@ -26,6 +28,7 @@ export interface RuntimeSchema<T = unknown> {
 }
 
 export interface IdentityRpcService {
+  e2eControl?(call: IdentityControlCall): Promise<E2eControlReply>;
   getE2eCapabilities(input: { sessionId: string; correlationId: string }): Promise<unknown>;
   resolveBrowserPrincipal(input: IdentityResolveBrowserPrincipalRequest): Promise<unknown>;
   listClients(input: IdentityRootBrowserRequest): Promise<unknown>;
@@ -98,6 +101,11 @@ export interface OperatorWebEnv {
   APP_ENV: 'local' | 'staging' | 'ci';
   CI_STACK_KEY?: string;
   E2E_LOCAL_TEST_MODE?: string;
+  E2E_CONTROL_ENABLED?: string;
+  E2E_CONTROL_GENERATION?: string;
+  E2E_CONTROL_TARGET_ID?: string;
+  E2E_CONTROL_ACCOUNT_QUOTA?: string;
+  E2E_CONTROL_CLEANUP_GENERATIONS?: string;
   PUBLIC_APP_ORIGIN: string;
   OPERATOR_SELECTION_SECRET: string;
   IDENTITY_AUTH: { fetch(request: Request): Promise<Response> };

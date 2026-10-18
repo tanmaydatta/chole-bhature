@@ -8,7 +8,19 @@ export type IdentityWorkerEnv = Omit<Env, 'AUTH_SECRET' | 'RESEND_API_KEY' | 'RE
   AUTH_SECRET_STORE?: SecretsStoreSecret;
   RESEND_API_KEY_STORE?: SecretsStoreSecret;
   RESEND_FROM_STORE?: SecretsStoreSecret;
+  E2E_SETUP_SECRET_STORE?: SecretsStoreSecret;
 };
+
+/** Dedicated setup authority is resolved only by the private control service. */
+export async function resolveSetupSecret(env: IdentityWorkerEnv): Promise<string> {
+  if (env.APP_ENV === 'staging') {
+    if (env.E2E_SETUP_SECRET !== undefined) throw new Error('E2E_CONTROL_INCOMPATIBLE');
+    return requiredSecret(env.E2E_SETUP_SECRET_STORE,'E2E_SETUP_SECRET');
+  }
+  if (env.APP_ENV !== 'local' || env.E2E_LOCAL_TEST_MODE !== '1' || env.E2E_SETUP_SECRET_STORE !== undefined
+    || typeof env.E2E_SETUP_SECRET !== 'string' || !env.E2E_SETUP_SECRET.trim()) throw new Error('E2E_CONTROL_UNAVAILABLE');
+  return env.E2E_SETUP_SECRET;
+}
 
 async function requiredSecret(binding: SecretsStoreSecret | undefined, name: string): Promise<string> {
   if (!binding || typeof binding.get !== 'function') {

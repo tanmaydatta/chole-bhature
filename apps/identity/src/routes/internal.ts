@@ -22,6 +22,7 @@ import {
   OperatorPrincipalSchema,
   type ApiError,
   type OperatorPrincipal,
+  type E2eControlRuntime,
 } from '@incentives/contracts';
 
 import type { IdentityWorkerEnv } from '../staging-secrets.js';
@@ -46,6 +47,7 @@ export interface IdentityOperatorServiceOptions {
   publicOrigin: string;
   appEnv?: string;
   localTestMode?: string | undefined;
+  controlRuntime?: E2eControlRuntime;
 }
 
 type RpcFailureCode =
@@ -111,11 +113,13 @@ export function createIdentityOperatorService(options: IdentityOperatorServiceOp
     core: options.core,
     appEnv: options.appEnv,
     localTestMode: options.localTestMode,
+    ...(options.controlRuntime === undefined ? {} : { controlRuntime:options.controlRuntime }),
   });
   const invitations = createInvitationService({
     database: options.database,
     email: options.email,
     publicOrigin: options.publicOrigin,
+    ...(options.controlRuntime === undefined ? {} : { controlRuntime:options.controlRuntime }),
   });
 
   async function principalFor(

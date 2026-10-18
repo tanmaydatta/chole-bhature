@@ -7,6 +7,7 @@ import {
 } from '@incentives/contracts';
 import { calculateMerchandisePriceBreakdown } from '@incentives/engine';
 import { z } from 'zod';
+import { businessControlRuntime } from '../e2e-control-runtime.js';
 
 import { withProductBusinessWrite } from '../repositories/e2e-write-fence.js';
 import type { Env } from '../env.js';
@@ -154,7 +155,7 @@ function countersMatchConfiguration(
 
 export function createD1AtomicRedemptionCoordinator(
   env: Env,
-  runtime?: E2eControlRuntime,
+  runtime: E2eControlRuntime | undefined = businessControlRuntime(env),
 ): AtomicRedemptionCoordinator {
   const repositories = createRepositories(env, runtime);
   const businessWrite = (merchantId: string, statements: D1PreparedStatement[]) =>

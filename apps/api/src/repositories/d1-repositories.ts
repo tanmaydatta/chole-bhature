@@ -25,6 +25,7 @@ import {
 } from '@incentives/contracts';
 import { and, asc, desc, eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
+import { businessControlRuntime } from '../e2e-control-runtime.js';
 
 import { createDatabase } from '../db/client.js';
 import {
@@ -1018,7 +1019,7 @@ async function verifiedRedemptionFromRows(
   return redemption;
 }
 
-export function createRepositories(env: Env, runtime?: E2eControlRuntime): Repositories {
+export function createRepositories(env: Env, runtime: E2eControlRuntime | undefined = businessControlRuntime(env)): Repositories {
   const businessWrite = (merchantId: string, statements: D1PreparedStatement[]) =>
     withProductBusinessWrite(env.DB, runtime, merchantId, statements);
   const compiled = (query: { sql: string; params: unknown[] }) => env.DB.prepare(query.sql).bind(...query.params);
