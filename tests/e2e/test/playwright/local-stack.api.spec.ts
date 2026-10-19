@@ -70,6 +70,12 @@ test('two local fixture stacks isolate Admin sessions and Auth D1 with protected
             merchantId: entry.admin!.merchantId, membershipId: entry.admin!.membershipId,
             authenticationMethods: ['e2e-fixture'], merchantSelectionRequired: false });
           expect(session.platformRole).toBeUndefined();
+          expect(session.display).toEqual({
+            user: { name: entry.runId + '_admin', email: entry.admin!.email }, role: entry.admin!.role,
+            client: { merchantId: entry.admin!.merchantId, organizationId: entry.admin!.organizationId,
+              name: entry.runId + '_merchant' },
+          });
+          expect(session).not.toHaveProperty('sessionId');
           expect(session.permissions).toContain('members:manage');
           const page = await context.newPage();
           await page.goto(stack.operatorOrigin);

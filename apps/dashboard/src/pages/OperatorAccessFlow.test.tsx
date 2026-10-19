@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
@@ -7,6 +7,11 @@ import { INVITATION_ACCEPT_PATH, invitationAcceptanceUrl } from '@incentives/con
 import App from '../App';
 import { ThemeProvider } from '../theme/ThemeProvider';
 import { ToastProvider } from '../components/common/Toast';
+import { AuthProvider } from '../auth/AuthProvider';
+import { useAuth } from '../auth/AuthContext';
+import { AuthenticatedApp } from '../auth/AuthenticatedApp';
+import { AccountContextStrip } from '../auth/RouteAccess';
+import { BffClientError } from '../lib/bff-client';
 
 const originalCredentialsDescriptor = Object.getOwnPropertyDescriptor(navigator, 'credentials');
 
@@ -23,6 +28,8 @@ const sessions = {
     authenticatedAt: '2026-07-20T10:00:00.000Z', organizationId: 'org-a',
     merchantId: 'merchant-a', membershipId: 'membership-admin',
     permissions: allPermissions, merchantSelectionRequired: false,
+    display: { user: { name: 'Alice Admin', email: 'alice@example.test' }, role: 'admin',
+      client: { merchantId: 'merchant-a', organizationId: 'org-a', name: 'Client A' } },
   },
   operator: {
     userId: 'user-operator', authenticationMethods: ['magic-link'],
@@ -33,6 +40,8 @@ const sessions = {
       'customers:manage', 'programs:read', 'programs:manage', 'programs:publish',
       'evaluations:run', 'redemptions:commit', 'audit:read',
     ], merchantSelectionRequired: false,
+    display: { user: { name: 'Olivia Operator', email: 'olivia@example.test' }, role: 'operator',
+      client: { merchantId: 'merchant-a', organizationId: 'org-a', name: 'Client A' } },
   },
   viewer: {
     userId: 'user-viewer', authenticationMethods: ['magic-link'],
@@ -40,16 +49,21 @@ const sessions = {
     merchantId: 'merchant-a', membershipId: 'membership-viewer',
     permissions: ['schemas:read', 'programs:read', 'evaluations:run', 'audit:read'],
     merchantSelectionRequired: false,
+    display: { user: { name: 'Victor Viewer', email: 'victor@example.test' }, role: 'viewer',
+      client: { merchantId: 'merchant-a', organizationId: 'org-a', name: 'Client A' } },
   },
   root: {
     userId: 'user-root', authenticationMethods: ['passkey'],
     authenticatedAt: '2026-07-20T10:00:00.000Z', platformRole: 'root',
     permissions: [], merchantSelectionRequired: true,
+    display: { user: { name: 'Platform Root', email: 'root@example.test' }, role: 'root', client: null },
   },
   rootSelected: {
     userId: 'user-root', authenticationMethods: ['passkey'],
     authenticatedAt: '2026-07-20T10:00:00.000Z', platformRole: 'root',
-    merchantId: 'merchant-a', permissions: [], merchantSelectionRequired: false,
+    merchantId: 'merchant-a', organizationId: 'org-a', permissions: [], merchantSelectionRequired: false,
+    display: { user: { name: 'Platform Root', email: 'root@example.test' }, role: 'root',
+      client: { merchantId: 'merchant-a', organizationId: 'org-a', name: 'Client A' } },
   },
 };
 
@@ -149,7 +163,9 @@ function installFetch(session: object | null, overrides: Record<string, unknown>
       provisioningId: 'provision-failed', merchantId: 'merchant-failed', organizationId: 'org-failed', name: 'Failed client', status: 'active', failedStep: null, retryable: false,
     });
     if (path === '/operator/v1/platform/merchant-selection') {
-      liveSession = { ...sessions.root, merchantId: body.merchantId, merchantSelectionRequired: false };
+      liveSession = { ...sessions.rootSelected, merchantId: body.merchantId,
+        display: { ...sessions.rootSelected.display,
+          client: { merchantId: body.merchantId, organizationId: 'org-a', name: 'Client A' } } };
       return new Response(null, { status: 204 });
     }
     if (path === '/operator/v1/team') return json(team);
@@ -214,6 +230,20 @@ function renderApp(path = '/') {
   return render(<ThemeProvider><ToastProvider><MemoryRouter initialEntries={[path]}><App /></MemoryRouter></ToastProvider></ThemeProvider>);
 }
 
+function AuthRefreshProbe() {
+  const auth = useAuth();
+  return <>
+    <button onClick={() => void auth.refresh()}>Refresh account</button>
+    <button onClick={() => auth.handleError(new BffClientError(401, 'UNAUTHORIZED', 'Authentication is required', false, 'expired'))}>Expire account</button>
+    <button onClick={() => void auth.signOut()}>Sign out account</button>
+    <AuthenticatedApp><AccountContextStrip /></AuthenticatedApp>
+  </>;
+}
+
+function renderRefreshProbe() {
+  return render(<MemoryRouter><AuthProvider><AuthRefreshProbe /></AuthProvider></MemoryRouter>);
+}
+
 function installWebAuthn() {
   const credential = {
     id: 'credential-a',
@@ -261,6 +291,59 @@ afterEach(() => {
 });
 
 describe('operator access flow', () => {
+  test.each([
+    ['admin', 'Alice Admin', 'alice@example.test', 'Admin'],
+    ['operator', 'Olivia Operator', 'olivia@example.test', 'Operator'],
+    ['viewer', 'Victor Viewer', 'victor@example.test', 'Viewer'],
+  ] as const)('shows own accessible account context for %s without an extra client-directory lookup', async (role, name, email, label) => {
+    const { calls } = installFetch(sessions[role]);
+    renderApp('/promo');
+    const context = await screen.findByRole('region', { name: 'Account context' });
+    expect(within(context).getByText(name)).toBeVisible();
+    expect(within(context).getByText(email)).toBeVisible();
+    expect(within(context).getByText(label)).toBeVisible();
+    expect(within(context).getByText('Email link')).toBeVisible();
+    expect(within(context).getByText('Client A')).toBeVisible();
+    expect(context).not.toHaveTextContent('merchant-a');
+    expect(calls.filter(call => call.path === '/operator/v1/platform/clients')).toHaveLength(0);
+  });
+
+  test.each(['/promo/new', '/promo/promo-draft-1/edit'])('keeps account context visible in full-page editor %s', async path => {
+    installFetch(sessions.admin);
+    renderApp(path);
+    const context = await screen.findByRole('region', { name: 'Account context' });
+    expect(within(context).getByText('Alice Admin')).toBeVisible();
+    expect(within(context).getByText('Client A')).toBeVisible();
+    expect(await screen.findByLabelText('Promo name')).toBeVisible();
+  });
+
+  test.each([
+    [null, ['e2e-fixture'], 'Test fixture'],
+    ['   ', ['future-auth'], 'Authenticated session'],
+    [null, ['constructor'], 'Authenticated session'],
+    [null, ['toString'], 'Authenticated session'],
+    [null, ['__proto__'], 'Authenticated session'],
+  ])('uses email for blank names and neutral explicit authentication labels: %#', async (name, methods, label) => {
+    installFetch({ ...sessions.admin, authenticationMethods: methods,
+      display: { ...sessions.admin.display, user: { name, email: 'fallback@example.test' } } });
+    renderApp('/promo');
+    const context = await screen.findByRole('region', { name: 'Account context' });
+    expect(within(context).getByText('fallback@example.test')).toBeVisible();
+    expect(within(context).getByText(label as string)).toBeVisible();
+  });
+
+  test('renders long and HTML-like persisted names as wrapping text', async () => {
+    const name = '<img src=x onerror=alert(1)> ' + 'Long user '.repeat(30);
+    const client = '<script>unsafe</script> ' + 'Long client '.repeat(10);
+    installFetch({ ...sessions.admin, display: { ...sessions.admin.display,
+      user: { name, email: 'long@example.test' }, client: { ...sessions.admin.display.client, name: client } } });
+    renderApp('/promo');
+    const context = await screen.findByRole('region', { name: 'Account context' });
+    expect(context).toHaveTextContent('<img src=x onerror=alert(1)>');
+    expect(context).toHaveTextContent('<script>unsafe</script>');
+    expect(context.querySelector('img,script')).toBeNull();
+  });
+
   test('shows loading, neutral passwordless sign-in confirmation, authenticated refresh, and sign-out', async () => {
     const { calls } = installFetch(null);
     renderApp('/');
@@ -442,30 +525,31 @@ describe('operator access flow', () => {
     });
   });
 
-  test('never carries merchant A name across an authoritative A to B session refresh', async () => {
-    let selectedMerchantId = 'merchant-a';
-    let clientReads = 0;
-    let rejectMerchantBClients: ((reason?: unknown) => void) | undefined;
-    const merchantBClients = new Promise<Response>((_resolve, reject) => {
-      rejectMerchantBClients = reject;
-    });
+  test('clears client A when selection of B succeeds but refresh fails, then retries authoritative B metadata', async () => {
+    let sessionReads = 0, clientReads = 0;
+    let finishRefresh!: (response: Response) => void;
+    const pendingRefresh = new Promise<Response>(resolve => { finishRefresh = resolve; });
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const path = String(input);
       const method = init?.method ?? 'GET';
-      if (path === '/operator/v1/session') return json({
-        ...sessions.rootSelected, merchantId: selectedMerchantId,
-      });
+      if (path === '/operator/v1/session') {
+        sessionReads += 1;
+        if (sessionReads === 1) return json(sessions.rootSelected);
+        if (sessionReads === 2) return pendingRefresh;
+        return json({ ...sessions.rootSelected, merchantId: 'merchant-b', organizationId: 'org-b',
+          display: { ...sessions.rootSelected.display,
+            client: { merchantId: 'merchant-b', organizationId: 'org-b', name: 'Client B' } } });
+      }
       if (path === '/operator/v1/platform/merchant-selection') {
-        selectedMerchantId = 'merchant-b';
+        expect(JSON.parse(String(init?.body))).toEqual({ merchantId: 'merchant-b' });
         return new Response(null, { status: 204 });
       }
       if (path === '/operator/v1/platform/clients') {
         clientReads += 1;
-        if (clientReads <= 2) return json({ clients: [
+        return json({ clients: [
           { provisioningId: 'provision-a', merchantId: 'merchant-a', organizationId: 'org-a', name: 'Client A', status: 'active', failedStep: null, retryable: false },
           { provisioningId: 'provision-b', merchantId: 'merchant-b', organizationId: 'org-b', name: 'Client B', status: 'active', failedStep: null, retryable: false },
         ] });
-        return merchantBClients;
       }
       throw new Error(`Unexpected BFF call: ${method} ${path}`);
     }));
@@ -473,17 +557,53 @@ describe('operator access flow', () => {
     renderApp('/platform/clients');
     expect(await screen.findByText('Root access · Client A')).toBeInTheDocument();
     await userEvent.click(await screen.findByRole('button', { name: 'Select Client B' }));
-    await waitFor(() => expect(clientReads).toBe(3));
-    rejectMerchantBClients?.(new Error('client directory unavailable'));
-    expect(await screen.findByText('The operator service is temporarily unavailable')).toBeInTheDocument();
-    expect(screen.getByText('Root access · merchant-b')).toBeInTheDocument();
+    expect(await screen.findByText('Checking your session…')).toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Account context' })).not.toBeInTheDocument();
+    await act(async () => finishRefresh(canonicalError(503, 'IDENTITY_UNAVAILABLE', 'Identity is temporarily unavailable', true)));
+    expect(await screen.findByText('Identity is temporarily unavailable')).toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Account context' })).not.toBeInTheDocument();
     expect(screen.queryByText('Root access · Client A')).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    const context = await screen.findByRole('region', { name: 'Account context' });
+    expect(within(context).getByText('Client B')).toBeVisible();
+    expect(context).not.toHaveTextContent('Client A');
+    expect(clientReads).toBe(2); // One page directory load per successful mount; no auth lookup.
+  });
 
-    cleanup();
-    renderApp('/');
-    expect(await screen.findByText('The operator service is temporarily unavailable')).toBeInTheDocument();
-    expect(screen.getByText('Root access · merchant-b')).toBeInTheDocument();
-    expect(screen.queryByText('Root access · Client A')).not.toBeInTheDocument();
+  test('keeps the newest account metadata when refreshes complete out of order', async () => {
+    let reads = 0;
+    let finishOld!: (response: Response) => void, finishNew!: (response: Response) => void;
+    const oldResponse = new Promise<Response>(resolve => { finishOld = resolve; });
+    const newResponse = new Promise<Response>(resolve => { finishNew = resolve; });
+    installFetch(sessions.admin, { 'GET /operator/v1/session': () => {
+      reads += 1;
+      return reads === 1 ? json(sessions.admin) : reads === 2 ? oldResponse : newResponse;
+    } });
+    renderRefreshProbe();
+    await screen.findByRole('region', { name: 'Account context' });
+    await userEvent.click(screen.getByRole('button', { name: 'Refresh account' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Refresh account' }));
+    await act(async () => finishNew(json({ ...sessions.admin,
+      display: { ...sessions.admin.display, user: { name: 'Newest Name', email: 'newest@example.test' } } })));
+    expect(await screen.findByText('Newest Name')).toBeVisible();
+    await act(async () => finishOld(json(sessions.admin)));
+    expect(screen.getByText('Newest Name')).toBeVisible();
+    expect(screen.queryByText('Alice Admin')).not.toBeInTheDocument();
+  });
+
+  test.each(['Expire account', 'Sign out account'])('does not resurrect account context from an in-flight refresh after %s', async action => {
+    let reads = 0;
+    let finishRefresh!: (response: Response) => void;
+    const pending = new Promise<Response>(resolve => { finishRefresh = resolve; });
+    installFetch(sessions.admin, { 'GET /operator/v1/session': () => ++reads === 1 ? json(sessions.admin) : pending });
+    renderRefreshProbe();
+    await screen.findByRole('region', { name: 'Account context' });
+    await userEvent.click(screen.getByRole('button', { name: 'Refresh account' }));
+    await userEvent.click(screen.getByRole('button', { name: action }));
+    await screen.findByLabelText('Work email');
+    await act(async () => finishRefresh(json(sessions.admin)));
+    expect(screen.queryByRole('region', { name: 'Account context' })).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Work email')).toBeVisible();
   });
 
   test.each([
@@ -539,6 +659,12 @@ describe('operator access flow', () => {
     renderApp('/affiliates/new');
 
     expect(await screen.findByText('Root access · No client selected')).toBeInTheDocument();
+    const context = screen.getByRole('region', { name: 'Account context' });
+    expect(within(context).getByText('ROOT')).toBeVisible();
+    expect(within(context).getByText('Platform Root')).toBeVisible();
+    expect(within(context).getByText('root@example.test')).toBeVisible();
+    expect(within(context).getByText('Passkey')).toBeVisible();
+    expect(within(context).getByText('No client selected')).toBeVisible();
     expect(screen.getByText('Demo data')).toBeInTheDocument();
     expect(screen.getByText('Select a client before using merchant settings.')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Select a client' })).toHaveAttribute('href', '/platform/clients');
@@ -552,6 +678,7 @@ describe('operator access flow', () => {
 
     expect(await screen.findByText('Root access · Client A')).toBeInTheDocument();
     expect(screen.getByText('Demo data')).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Account context' })).not.toHaveTextContent('Demo data');
     expect(screen.getByText('New program')).toBeInTheDocument();
   });
 

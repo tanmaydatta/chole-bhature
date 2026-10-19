@@ -336,6 +336,28 @@ export class IdentityOperatorService extends WorkerEntrypoint<IdentityWorkerEnv>
     return this.resolveBrowserPrincipalWithEnv(input, env);
   }
 
+  async resolveBrowserSession(input: IdentityResolveBrowserPrincipalRequest) {
+    const env = await resolveIdentitySecrets(this.env);
+    const principal = await this.resolveBrowserPrincipalWithEnv(input, env);
+    if ('error' in principal) return principal;
+    try {
+      const projection = await createOrganizationService({
+        database: env.AUTH_DB, appEnv: env.APP_ENV, ciEnv: env,
+        localTestMode: env.E2E_LOCAL_TEST_MODE,
+      }).resolveSessionProjection(principal);
+      if (projection) return projection;
+      return ApiErrorSchema.parse({ error: {
+        code: 'UNAUTHORIZED', message: 'Authentication is required',
+        correlationId: input.correlationId, retryable: false,
+      } });
+    } catch {
+      return ApiErrorSchema.parse({ error: {
+        code: 'IDENTITY_UNAVAILABLE', message: 'Identity is temporarily unavailable',
+        correlationId: input.correlationId, retryable: true,
+      } });
+    }
+  }
+
   private async resolveBrowserPrincipalWithEnv(input: IdentityResolveBrowserPrincipalRequest, env: Env) {
     const parsed = IdentityResolveBrowserPrincipalRequestSchema.safeParse(input);
     const correlationId = parsed.success && parsed.data.correlationId

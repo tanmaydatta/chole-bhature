@@ -34,6 +34,51 @@ export const OperatorPrincipalSchema = z.object({
   permissions: z.array(PermissionKeySchema),
 }).strict();
 
+export const OperatorSessionDisplaySchema = z.object({
+  user: z.object({
+    name: z.string().nullable(),
+    email: z.email(),
+  }).strict(),
+  role: z.enum(['root', 'admin', 'operator', 'viewer']),
+  client: z.object({
+    merchantId: z.string().min(1),
+    organizationId: z.string().min(1),
+    name: z.string().min(1).max(200),
+  }).strict().nullable(),
+}).strict();
+
+// Private Identity-to-BFF envelope: the principal's sessionId must never be
+// included in the public browser session projection.
+export const IdentityBrowserSessionProjectionSchema = z.object({
+  principal: OperatorPrincipalSchema,
+  display: OperatorSessionDisplaySchema,
+}).strict().superRefine(refineOperatorSessionScope);
+
+// Shared by the private Identity envelope and the credential-free public view.
+export function refineOperatorSessionScope(
+  { principal, display }: {
+    principal: Omit<OperatorPrincipal, 'sessionId'>;
+    display: OperatorSessionDisplay;
+  },
+  context: z.RefinementCtx,
+) {
+  const root = principal.platformRole === 'root';
+  if (root !== (display.role === 'root')) {
+    context.addIssue({ code: 'custom', path: ['display', 'role'], message: 'Role does not match principal' });
+  }
+  if (!root && !principal.membershipId) {
+    context.addIssue({ code: 'custom', path: ['principal', 'membershipId'], message: 'Member scope is required' });
+  }
+  if (display.client === null) {
+    if (!root || principal.merchantId || principal.organizationId) {
+      context.addIssue({ code: 'custom', path: ['display', 'client'], message: 'Client scope does not match principal' });
+    }
+  } else if (display.client.merchantId !== principal.merchantId
+    || display.client.organizationId !== principal.organizationId) {
+    context.addIssue({ code: 'custom', path: ['display', 'client'], message: 'Client scope does not match principal' });
+  }
+}
+
 export const OperatorCallContextSchema = z.object({
   correlationId: z.string().min(1),
   actorUserId: z.string().min(1),
@@ -319,6 +364,8 @@ export const IdentityRpcErrorSchema = ApiErrorSchema;
 export type PermissionKey = z.infer<typeof PermissionKeySchema>;
 export type OperatorActorKind = z.infer<typeof OperatorActorKindSchema>;
 export type OperatorPrincipal = z.infer<typeof OperatorPrincipalSchema>;
+export type OperatorSessionDisplay = z.infer<typeof OperatorSessionDisplaySchema>;
+export type IdentityBrowserSessionProjection = z.infer<typeof IdentityBrowserSessionProjectionSchema>;
 export type OperatorCallContext = z.infer<typeof OperatorCallContextSchema>;
 export type MerchantProvisionRequest = z.infer<typeof MerchantProvisionRequestSchema>;
 export type MerchantProvisionResult = z.infer<typeof MerchantProvisionResultSchema>;

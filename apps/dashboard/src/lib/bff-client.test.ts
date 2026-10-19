@@ -12,11 +12,21 @@ const session = {
   membershipId: 'membership-admin',
   permissions: ['members:read', 'members:manage', 'credentials:read', 'credentials:manage'],
   merchantSelectionRequired: false,
+  display: { user: { name: 'Alice Admin', email: 'alice@example.test' }, role: 'admin',
+    client: { merchantId: 'merchant-a', organizationId: 'org-a', name: 'Client A' } },
 };
 
 afterEach(() => vi.restoreAllMocks());
 
 describe('same-origin BFF client', () => {
+  test('rejects missing, credential-bearing and cross-scope display metadata', async () => {
+    const { display: _display, ...missing } = session;
+    for (const value of [missing, { ...session, sessionId: 'private' },
+      { ...session, display: { ...session.display, token: 'secret' } },
+      { ...session, display: { ...session.display, client: { ...session.display.client, merchantId: 'foreign' } } }]) {
+      await expect(createBffClient(async () => Response.json(value)).session()).rejects.toMatchObject({ code: 'INVALID_RESPONSE' });
+    }
+  });
   test('evaluates a canonical basket using same-origin session authority and exact response validation', async () => {
     const input = { cart: { currency: 'GBP', subtotal: 1000, items: [] } };
     const output = { evaluationId: 'eval-a', schemaVersion: 1, expiresAt: '2026-10-14T12:05:00.000Z', decisions: [],

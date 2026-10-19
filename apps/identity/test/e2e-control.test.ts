@@ -124,6 +124,37 @@ function managed(release=generation) {
 }
 
 describe('Identity dedicated setup authority', () => {
+  test('projects fixture metadata from its own run and refuses cross-run selection and cancelled leases', async () => {
+    const config = managed() as Parameters<typeof createIdentityE2eControl>[0];
+    const control = createIdentityE2eControl(config), firstInput = bootstrap();
+    const secondInput = bootstrap({ proof: 'C'.repeat(42) + 'A', controllerToken: 'D'.repeat(42) + 'A' });
+    const first = E2eControlBootstrapResultSchema.parse(await control.execute({ authorization: { kind: 'setup', value: setup }, input: firstInput }));
+    const second = E2eControlBootstrapResultSchema.parse(await control.execute({ authorization: { kind: 'setup', value: setup }, input: secondInput }));
+    const rpc = new IdentityOperatorService(createExecutionContext(), config);
+    expect(rpc.resolveBrowserSession).toBeTypeOf('function');
+    const input = { cookieHeader: first.admin.cookieHeader, correlationId: 'fixture-display' };
+    expect(await rpc.resolveBrowserSession(input)).toMatchObject({
+      principal: { userId: first.admin.userId, sessionId: first.admin.sessionId, authenticationMethods: ['e2e-fixture'] },
+      display: { user: { name: `${firstInput.runId}_admin`, email: `e2e+${firstInput.runId}_admin@e2e.invalid` }, role: 'admin',
+        client: { merchantId: first.admin.merchantId, organizationId: first.admin.organizationId, name: `${firstInput.runId}_merchant` } },
+    });
+    expect(await rpc.resolveBrowserSession({ ...input, selectedMerchantId: second.admin.merchantId })).toHaveProperty('error');
+    for (const role of ['operator', 'viewer'] as const) {
+      const account = E2eControlAccountSchema.parse(await control.execute({ authorization: { kind: 'controller', value: controllerToken },
+        input: { operation: 'account', envelope: envelope(), runId: firstInput.runId, proof, slug: role, role } }));
+      expect(await rpc.resolveBrowserSession({ cookieHeader: account.cookieHeader, correlationId: `fixture-${role}` })).toMatchObject({
+        principal: { userId: account.userId, authenticationMethods: ['e2e-fixture'] },
+        display: { user: { name: `${firstInput.runId}_${role}`, email: `e2e+${firstInput.runId}_${role}@e2e.invalid` }, role,
+          client: { merchantId: first.admin.merchantId, organizationId: first.admin.organizationId, name: `${firstInput.runId}_merchant` } },
+      });
+    }
+    expect(await control.execute({ authorization: { kind: 'controller', value: controllerToken },
+      input: { operation: 'cancel', envelope: envelope(), runId: firstInput.runId, proof } })).not.toHaveProperty('error');
+    expect(await rpc.resolveBrowserSession(input)).toHaveProperty('error');
+    expect(await rpc.resolveBrowserSession({ cookieHeader: second.admin.cookieHeader, correlationId: 'other-live-run' }))
+      .toHaveProperty('display.user.email', `e2e+${secondInput.runId}_admin@e2e.invalid`);
+  });
+
   test.each(['cancel','expire'])('native Better Auth issuance paused at actual INSERT refuses a concurrent %s and publishes no cookie', async boundary => {
     const paused=pausedDatabase(sql=>/insert into "session"/iu.test(sql)),config=managed() as Parameters<typeof createIdentityE2eControl>[0],input=bootstrap();
     E2eControlBootstrapResultSchema.parse(await createIdentityE2eControl(config).execute({ authorization:{ kind:'setup',value:setup },input }));

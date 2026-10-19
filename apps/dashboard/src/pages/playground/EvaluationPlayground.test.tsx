@@ -143,14 +143,17 @@ describe('Evaluation Playground', () => {
     vi.stubGlobal('fetch', vi.fn(async (path: RequestInfo | URL) => String(path) === '/operator/v1/session'
       ? Response.json({ userId: 'viewer-a', authenticationMethods: ['magic-link'], authenticatedAt: '2026-10-14T12:00:00.000Z',
         merchantId: 'merchant-a', membershipId: 'member-a', organizationId: 'org-a', permissions: ['evaluations:run', 'schemas:read'],
-        merchantSelectionRequired: false }) : Response.json(published)));
+        merchantSelectionRequired: false, display: { user: { name: 'Viewer', email: 'viewer@example.test' }, role: 'viewer',
+          client: { merchantId: 'merchant-a', organizationId: 'org-a', name: 'Client A' } } }) : Response.json(published)));
     const view = render(<ThemeProvider><MemoryRouter initialEntries={['/playground']}><App /></MemoryRouter></ThemeProvider>);
     await screen.findByLabelText('Product reference 1');
     expect(screen.getByRole('link', { name: 'Evaluation Playground' })).toHaveAttribute('href', '/playground');
     expect(screen.queryByText('Demo data')).not.toBeInTheDocument();
     view.unmount();
     vi.stubGlobal('fetch', vi.fn(async () => Response.json({ userId: 'denied', authenticationMethods: ['magic-link'],
-      authenticatedAt: '2026-10-14T12:00:00.000Z', merchantId: 'merchant-a', permissions: [], merchantSelectionRequired: false })));
+      authenticatedAt: '2026-10-14T12:00:00.000Z', merchantId: 'merchant-a', organizationId: 'org-a', membershipId: 'denied-membership', permissions: [], merchantSelectionRequired: false,
+      display: { user: { name: 'Denied Viewer', email: 'denied@example.test' }, role: 'viewer',
+        client: { merchantId: 'merchant-a', organizationId: 'org-a', name: 'Client A' } } })));
     render(<ThemeProvider><MemoryRouter initialEntries={['/playground']}><App /></MemoryRouter></ThemeProvider>);
     await screen.findByText('You do not have permission to view this page.');
     expect(screen.queryByRole('link', { name: 'Evaluation Playground' })).not.toBeInTheDocument();

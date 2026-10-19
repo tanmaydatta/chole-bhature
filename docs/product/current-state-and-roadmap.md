@@ -57,6 +57,22 @@ Deployment and staging verification remain pending; full Task 10 and Gate D
 remain open. This closeout changes status only; the next client-readiness
 feature requires a separate file/test plan and approval.
 
+**2026-10-19 local product slice — GAP-003:** The separately approved
+account/client indicator is implemented locally. Identity owns name/email,
+fixed role and validated client name; the strict BFF session display omits the
+private session ID. A shared accessible strip covers authenticated shell pages
+and full-page Promo editors, with distinct ROOT/no-selection and Test fixture
+labels. Full build/lint, 2,369 Vitest cases plus nine Node tests, the exact Admin
+preauth case (14.1s) and all ten headless cases (23.4s) pass locally. Real scroll
+and hit checks verify headers/editor actions, bottom navigation and separate
+demo labeling; owned Product/Auth cleanup passed. Publication, merge,
+deployment, staging verification and scoped Notion sync remain pending.
+Next client-readiness planning is GAP-004 (live tenant-scoped Overview or an
+unambiguous empty state), with its own plan and approval. The
+[account contract](../integration/core-contracts.md#operator-account-and-client-display)
+records the future additive Identity-first, matching BFF/Dashboard rollout.
+This changes no Core API, migration or secret and does not close Task10/GateD.
+
 **2026-10-19 Task11 baseline:** The public-contract
 [checkout CLI simulator](../integration/integration-simulator.md) is implemented
 from docs PR#24 merge `edda1577b4887128b687053bab3ebc7ce93f9fe2`.
@@ -102,6 +118,9 @@ distinct PR/post-merge CI results are synchronized to the existing Notion page.
 This is a scoped status update; the historical whole-page checkpoint below and
 all unrelated content remain unchanged.
 
+The local GAP-003 account/scope update has not been published to Notion;
+its scoped synchronization awaits publication authority.
+
 **Mirror state (2026-10-07):** The reviewed nonsecret accumulated-checkpoint
 summary is synchronized to the existing roadmap, design, plan and Plans
 index. It identifies tested source `9408704`, scoped review
@@ -131,14 +150,14 @@ deferred issue remains in the
 | Question | Current answer |
 |---|---|
 | Overall phase | Post-Gate-C client readiness; evaluate-only Playground merged and verified in staging |
-| Current activity | GAP-023 percentage authoring and fixture-based paired isolation are merged through PR #27; PR and post-merge CI are green with the distinct E2E results above. Task 11 is merged; E2E rewrite/cloud provisioning remain parked. |
+| Current activity | GAP-003 account/client context is implemented and locally verified under its separately approved plan; publication/rollout is pending. GAP-023 is merged with the distinct CI evidence above. Task 11 is merged; E2E rewrite/cloud provisioning remain parked. |
 | Current repository baseline | Fresh provider read confirms `dev` at PR #27 merge `60656f42b35f61ed8d075aed7ab567b853243b87` on 2026-10-19, tree `451247ff43b4bc08945daaa426de3c41f7366462`. |
 | Current product-code baseline | GAP-023 merged through PR #27 at `60656f42b35f61ed8d075aed7ab567b853243b87`, following CLI/capabilities PR #25 and local preauth checkpoint PR #26. The deployed Playground remains the dated PR #23 staging rollout below; PR #27 is not deployed. |
-| Local feature state | Authoritative merchandise pricing and the E2E platform are merged, with the dated staging evidence retained. Cloud E2E foundation/packaging/diagnostics/CI admission/local bootstrap are locally accepted; fresh correction verification passes 337 cloud, 1,683 Vitest cases plus nine separate Node script tests and five local Playwright cases (23.4 s), build/lint. Public Worker writes still refuse before transport. |
+| Local feature state | GAP-003 account/client context is implemented and locally verified, not merged/deployed. Authoritative merchandise pricing and the E2E platform are merged, with dated staging evidence retained. Cloud E2E foundation/packaging/diagnostics/CI admission/local bootstrap are locally accepted; its dated correction verification passes 337 cloud, 1,683 Vitest cases plus nine separate Node script tests and five local Playwright cases (23.4 s), build/lint. Public Worker writes still refuse before transport. |
 | Current deployment state | API `565fa15a-0eed-4af9-97a9-a7da821b75e8` and Operator `21227fa1-725f-4f97-9286-58a092c5526e` receive 100% staging traffic after the 2026-10-14 rollout. Identity, migrations and secrets were unchanged. |
 | Current release decision | Evaluate-only staging verification passed: 7 headless cases, 2 intended local-only skips, zero failures; eight owned runs fully disposed. No production/demo deployment or full Task 10/Gate D acceptance. |
 | Gate C finish line | Complete — all mandatory clean-break selection, redemption, tenant-isolation, concurrency, and observability cases passed |
-| Next plan work | Prepare a separate file/test plan for GAP-003 (account/scope indicator) and obtain approval before implementation. CLI/capabilities staging deployment and full Task 10/Gate D acceptance remain open. |
+| Next plan work | Publish/roll out GAP-003 only with separate authority; next feature planning is GAP-004 (live Overview or an unambiguous empty state), with its own approval. CLI/capabilities staging deployment and full Task 10/Gate D acceptance remain open. |
 
 ## Source-of-truth map
 
@@ -311,8 +330,11 @@ The 2026-09-29 cutover likewise does not verify email delivery or a headed run.
 ## Current work
 
 GAP-023 is merged with the local, PR and post-merge evidence recorded above;
-this closeout updates status without a deployment or another product change.
-The next client-readiness feature is not authorized by that closeout.
+that closeout authorized no further feature. GAP-003 subsequently received its
+own plan/approval and is now implemented and locally verified, including real
+browser account/scope and scroll checks. Its local evidence does not claim
+publication, deployment or staging acceptance. GAP-004 is the next separate
+client-readiness planning candidate.
 
 The [public-contract checkout CLI](../integration/integration-simulator.md) and its
 approved canonical read-only capabilities prerequisite are already merged
@@ -580,8 +602,8 @@ those integrations.
 The [Product Follow-up Register](./follow-up-register.md) is authoritative and
 must be updated whenever a finding changes state. It currently preserves:
 
-- client-readiness UX gaps, including signed-in identity/scope, demo data on
-  Overview, and live-page styling;
+- publication/rollout of the locally implemented signed-in identity/scope
+  indicator, plus demo data on Overview and live-page styling;
 - member passkeys/MFA and safer invitation account handoff;
 - schema deprecation, stale impact state, and lifecycle presentation;
 - Promo active-vs-draft full comparison, revision history/rollback, deliberate

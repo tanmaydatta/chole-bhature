@@ -17,6 +17,8 @@ const session = {
   authenticatedAt: '2026-07-20T10:00:00.000Z', organizationId: 'org-a',
   merchantId: 'merchant-a', membershipId: 'membership-a', permissions,
   merchantSelectionRequired: false,
+  display: { user: { name: 'Alice Admin', email: 'alice@example.test' }, role: 'admin',
+    client: { merchantId: 'merchant-a', organizationId: 'org-a', name: 'Client A' } },
 };
 const publishedDefinitions = [
   { key: 'customer.age', label: 'Age', source: 'customer', type: 'number', required: true },

@@ -20,12 +20,13 @@ export function TestAuth({
     authenticatedAt: '2026-07-20T10:00:00.000Z', organizationId: 'test-org',
     merchantId: 'test-merchant', membershipId: 'test-membership', permissions,
     merchantSelectionRequired: false,
+    display: { user: { name: 'Test Operator', email: 'operator@example.test' }, role: 'operator',
+      client: { merchantId: 'test-merchant', organizationId: 'test-org', name: 'Test Client' } },
   };
   const value: AuthContextValue = {
     loading: false,
     session,
     error: null,
-    rootMerchantName: null,
     async refresh() {},
     async signOut() {},
     async retryError() {},

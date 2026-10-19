@@ -7,7 +7,6 @@ export interface AuthContextValue {
   loading: boolean;
   session: OperatorSessionView | null;
   error: BffClientError | null;
-  rootMerchantName: string | null;
   refresh(): Promise<void>;
   signOut(): Promise<void>;
   retryError(): Promise<void>;

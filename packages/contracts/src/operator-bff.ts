@@ -7,6 +7,8 @@ import {
   InvitationViewSchema,
   OperatorMemberViewSchema,
   OperatorPrincipalSchema,
+  OperatorSessionDisplaySchema,
+  refineOperatorSessionScope,
 } from './operator.js';
 import { ProgramLifecycleSchema, PromoProgramSchema } from './programs.js';
 import { VariableDefinitionSchema } from './variables.js';
@@ -15,8 +17,15 @@ import { z } from './zod.js';
 export const OperatorSessionViewSchema = OperatorPrincipalSchema.omit({
   sessionId: true,
 }).extend({
+  display: OperatorSessionDisplaySchema,
   merchantSelectionRequired: z.boolean(),
-}).strict();
+}).strict().superRefine((view, context) => {
+  refineOperatorSessionScope({ principal: view, display: view.display }, context);
+  if (view.merchantSelectionRequired !== (view.platformRole === 'root' && !view.merchantId)) {
+    context.addIssue({ code: 'custom', path: ['merchantSelectionRequired'],
+      message: 'Selection requirement does not match principal scope' });
+  }
+});
 
 export const OperatorMerchantSelectionRequestSchema = z.object({
   merchantId: z.string().min(1).max(200),

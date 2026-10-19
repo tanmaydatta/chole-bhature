@@ -40,6 +40,7 @@ import {
   operatorContext,
   principalForOperation,
   resolveBrowserPrincipal,
+  resolveBrowserSession,
   selectedMerchant,
   selectionCookie,
 } from './session.js';
@@ -202,26 +203,29 @@ async function handleSession(
   id: string,
 ): Promise<Response> {
   const cookieHeader = request.headers.get('cookie') ?? '';
-  const principal = await resolveBrowserPrincipal(env, cookieHeader, id);
-  if ('error' in principal) return errorResponse(principal);
-  let livePrincipal = principal;
-  if (principal.platformRole === 'root') {
-    const merchantId = await selectedMerchant(env, cookieHeader, principal);
+  const base = await resolveBrowserSession(env, cookieHeader, id);
+  if ('error' in base) return errorResponse(base);
+  let live = base;
+  if (base.principal.platformRole === 'root') {
+    const merchantId = await selectedMerchant(env, cookieHeader, base.principal);
     if (merchantId) {
-      const selected = await resolveBrowserPrincipal(env, cookieHeader, id, merchantId);
+      const selected = await resolveBrowserSession(env, cookieHeader, id, merchantId);
       if ('error' in selected) return errorResponse(selected);
       if (
-        selected.platformRole === 'root'
-        && selected.sessionId === principal.sessionId
-        && selected.merchantId === merchantId
-      ) livePrincipal = selected;
+        selected.principal.platformRole !== 'root'
+        || selected.principal.userId !== base.principal.userId
+        || selected.principal.sessionId !== base.principal.sessionId
+        || selected.principal.merchantId !== merchantId
+      ) return errorResponse(apiError(id, 'FORBIDDEN', 'Operation is not permitted'));
+      live = selected;
     }
   }
-  const { sessionId: privateSessionId, ...browserPrincipal } = livePrincipal;
+  const { sessionId: privateSessionId, ...browserPrincipal } = live.principal;
   void privateSessionId;
   const view = OperatorSessionViewSchema.parse({
     ...browserPrincipal,
-    merchantSelectionRequired: livePrincipal.platformRole === 'root' && !livePrincipal.merchantId,
+    display: live.display,
+    merchantSelectionRequired: live.principal.platformRole === 'root' && !live.principal.merchantId,
   });
   return new Response(JSON.stringify(view), { status: 200, headers: responseHeaders(id) });
 }

@@ -45,6 +45,7 @@ interface TestEnv {
   OPERATOR_SELECTION_SECRET_STORE?: { get(): Promise<string> };
   IDENTITY_AUTH: { fetch: RpcMock };
   IDENTITY: {
+    resolveBrowserSession: RpcMock;
     resolveBrowserPrincipal: RpcMock;
     listClients: RpcMock;
     getProvisioningForRoot: RpcMock;
@@ -126,6 +127,14 @@ function rpc(value: unknown): RpcMock {
   return vi.fn(async () => structuredClone(value));
 }
 
+function projection(principal: Principal, role: 'root' | 'admin' | 'operator' | 'viewer' = 'admin') {
+  return { principal, display: {
+    user: { name: 'Own Name', email: 'own@example.test' }, role,
+    client: principal.merchantId ? { merchantId: principal.merchantId,
+      organizationId: principal.organizationId, name: 'Client A' } : null,
+  } };
+}
+
 function createEnv(principal: Principal | ReturnType<typeof apiError> = admin): TestEnv {
   return {
     APP_ENV: 'local',
@@ -144,6 +153,9 @@ function createEnv(principal: Principal | ReturnType<typeof apiError> = admin): 
       })),
     },
     IDENTITY: {
+      resolveBrowserSession: rpc('error' in principal ? principal : projection(principal,
+        principal.platformRole === 'root' ? 'root' : principal.userId === 'user-viewer' ? 'viewer'
+          : principal.userId === 'user-operator' ? 'operator' : 'admin')),
       resolveBrowserPrincipal: rpc(principal),
       listClients: rpc({ clients: [] }),
       getProvisioningForRoot: rpc({
@@ -567,6 +579,65 @@ describe('canonical Operator Web contracts', () => {
 });
 
 describe('live session and tenant boundary', () => {
+  test('returns owned display with no private session or credentials and uses only session RPC', async () => {
+    const handler = await worker(), env = createEnv(admin);
+    const response = await handler?.fetch(request('/operator/v1/session'), env);
+    expect(response?.status).toBe(200);
+    expect(response?.headers.get('cache-control')).toBe('no-store');
+    expect(response?.headers.get('x-correlation-id')).toBe(correlationId);
+    const value = await json(response);
+    expect(value).toMatchObject({ display: { user: { name: 'Own Name', email: 'own@example.test' },
+      role: 'admin', client: { merchantId: 'merchant-a', organizationId: 'org-a', name: 'Client A' } } });
+    expect(value).not.toHaveProperty('sessionId');
+    expect(value).not.toHaveProperty('token');
+    expect(env.IDENTITY.resolveBrowserSession).toHaveBeenCalledExactlyOnceWith({ cookieHeader: sessionCookie, correlationId });
+    expect(env.IDENTITY.resolveBrowserPrincipal).not.toHaveBeenCalled();
+  });
+
+  test.each([
+    admin,
+    { ...projection(admin), credential: 'private' },
+    { ...projection(admin), display: { ...projection(admin).display, token: 'private' } },
+    { ...projection(admin), display: { ...projection(admin).display, role: 'root' } },
+    { ...projection(admin), display: { ...projection(admin).display,
+      client: { merchantId: 'foreign', organizationId: 'org-a', name: 'Wrong Client' } } },
+    apiError('UNAUTHORIZED', 'Authentication is required', false, 'wrong-correlation'),
+  ])('fails closed on an incompatible private session projection: %#', async malformed => {
+    const handler = await worker(), env = createEnv(admin);
+    env.IDENTITY.resolveBrowserSession.mockResolvedValue(malformed);
+    const response = await handler?.fetch(request('/operator/v1/session'), env);
+    expect(response?.status).toBe(503);
+    expect(await json(response)).toEqual(apiError('IDENTITY_UNAVAILABLE', 'Identity is temporarily unavailable', true));
+    expect(response?.headers.get('cache-control')).toBe('no-store');
+  });
+
+  test('preserves canonical session expiry errors and refuses a missing new RPC', async () => {
+    const handler = await worker(), env = createEnv(admin);
+    env.IDENTITY.resolveBrowserSession.mockResolvedValue(apiError('UNAUTHORIZED', 'Authentication is required'));
+    expect((await handler?.fetch(request('/operator/v1/session'), env))?.status).toBe(401);
+    Reflect.set(env.IDENTITY, 'resolveBrowserSession', undefined);
+    const response = await handler?.fetch(request('/operator/v1/session'), env);
+    expect(response?.status).toBe(503);
+    expect(await json(response)).toEqual(apiError('IDENTITY_UNAVAILABLE', 'Identity is temporarily unavailable', true));
+  });
+
+  test.each([
+    { ...rootForMerchant, sessionId: 'other-session' },
+    { ...rootForMerchant, userId: 'other-user' },
+    { ...rootForMerchant, merchantId: 'merchant-b' },
+    admin,
+  ])('rejects a selected projection that changed session, user, ROOT or merchant: %#', async selectedPrincipal => {
+    const handler = await worker(), env = createEnv(root);
+    const cookie = await selectMerchant(handler, env);
+    env.IDENTITY.resolveBrowserSession.mockResolvedValueOnce(projection(root, 'root'))
+      .mockResolvedValueOnce(projection(selectedPrincipal, selectedPrincipal.platformRole === 'root' ? 'root' : 'admin'));
+    const response = await handler?.fetch(request('/operator/v1/session', {}, cookie), env);
+    expect(response?.status).toBe(403);
+    expect(await json(response)).toEqual(apiError('FORBIDDEN', 'Operation is not permitted'));
+    expect(env.IDENTITY.resolveBrowserSession).toHaveBeenCalledTimes(2);
+    expect(env.CORE.listCredentials).not.toHaveBeenCalled();
+  });
+
   test.each([
     ['POST', '/operator/v1/invitations/accept'],
     ['POST', '/operator/v1/platform/merchant-selection'],
@@ -819,15 +890,17 @@ describe('live session and tenant boundary', () => {
     const handler = await worker();
     const env = createEnv(root);
     const cookie = await selectMerchant(handler, env);
-    env.IDENTITY.resolveBrowserPrincipal
-      .mockResolvedValueOnce(root)
-      .mockResolvedValueOnce(rootForMerchant);
+    env.IDENTITY.resolveBrowserSession
+      .mockResolvedValueOnce(projection(root, 'root'))
+      .mockResolvedValueOnce(projection(rootForMerchant, 'root'));
     const selected = await handler?.fetch(request('/operator/v1/session', {}, cookie), env);
     expect(await json(selected)).toMatchObject({
       platformRole: 'root', merchantId: 'merchant-a', merchantSelectionRequired: false,
+      display: { role: 'root', client: { merchantId: 'merchant-a', organizationId: 'org-a', name: 'Client A' } },
     });
+    expect(env.IDENTITY.resolveBrowserSession).toHaveBeenCalledTimes(2);
 
-    env.IDENTITY.resolveBrowserPrincipal.mockResolvedValueOnce(root);
+    env.IDENTITY.resolveBrowserSession.mockResolvedValueOnce(projection(root, 'root'));
     const invalid = await handler?.fetch(request(
       '/operator/v1/session',
       {},
@@ -835,15 +908,35 @@ describe('live session and tenant boundary', () => {
     ), env);
     expect(await json(invalid)).toMatchObject({
       platformRole: 'root', merchantSelectionRequired: true,
+      display: { role: 'root', client: null },
     });
+  });
+
+  test.each(['new session', 'expired selection'])('does not display a selected client from %s cookie state', async mode => {
+    const handler = await worker(), env = createEnv(root);
+    const cookie = await selectMerchant(handler, env);
+    const now = Date.now();
+    const clock = mode === 'expired selection' ? vi.spyOn(Date, 'now').mockReturnValue(now + 9 * 60 * 60 * 1000) : undefined;
+    env.IDENTITY.resolveBrowserSession.mockResolvedValue(projection(
+      mode === 'new session' ? { ...root, sessionId: 'new-private-session' } : root, 'root',
+    ));
+    try {
+      const response = await handler?.fetch(request('/operator/v1/session', {}, cookie), env);
+      expect(response?.status).toBe(200);
+      const value = await json(response);
+      expect(value).toMatchObject({ merchantSelectionRequired: true, display: { role: 'root', client: null } });
+      expect(value).not.toHaveProperty('merchantId');
+      expect(value).not.toHaveProperty('sessionId');
+      expect(env.IDENTITY.resolveBrowserSession).toHaveBeenCalledExactlyOnceWith({ cookieHeader: cookie, correlationId });
+    } finally { clock?.mockRestore(); }
   });
 
   test('fails closed when Identity cannot revalidate a selected root merchant', async () => {
     const handler = await worker();
     const env = createEnv(root);
     const cookie = await selectMerchant(handler, env);
-    env.IDENTITY.resolveBrowserPrincipal
-      .mockResolvedValueOnce(root)
+    env.IDENTITY.resolveBrowserSession
+      .mockResolvedValueOnce(projection(root, 'root'))
       .mockRejectedValueOnce(new Error('rpc unavailable'));
 
     const response = await handler?.fetch(request('/operator/v1/session', {}, cookie), env);

@@ -19,39 +19,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<OperatorSessionView | null>(null);
   const [error, setError] = useState<BffClientError | null>(null);
   const [errorAction, setErrorAction] = useState<'refresh' | 'signOut'>('refresh');
-  const [rootMerchantLabel, setRootMerchantLabel] = useState<{
-    merchantId: string;
-    name: string | null;
-  } | null>(null);
   const refreshSequence = useRef(0);
 
   const refresh = useCallback(async () => {
     const sequence = ++refreshSequence.current;
     setLoading(true);
+    setSession(null);
     setError(null);
     setErrorAction('refresh');
     try {
       const current = await bffClient.session();
       if (sequence !== refreshSequence.current) return;
       setSession(current);
-      if (current.platformRole === 'root' && current.merchantId) {
-        const merchantId = current.merchantId;
-        setRootMerchantLabel({ merchantId, name: null });
-        const clients = await bffClient.clients();
-        if (sequence !== refreshSequence.current) return;
-        setRootMerchantLabel({
-          merchantId,
-          name: clients.find(client => client.merchantId === merchantId)?.name ?? null,
-        });
-      } else {
-        setRootMerchantLabel(null);
-      }
     } catch (cause) {
       if (sequence !== refreshSequence.current) return;
       const next = normalized(cause);
+      setSession(null);
       if (next.status === 401) {
-        setSession(null);
-        setRootMerchantLabel(null);
+        setError(null);
       } else {
         setError(next);
         setErrorAction('refresh');
@@ -66,8 +51,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const handleError = useCallback((cause: unknown) => {
     const next = normalized(cause);
     if (next.status === 401) {
+      ++refreshSequence.current;
+      setLoading(false);
       setSession(null);
-      setRootMerchantLabel(null);
       setError(null);
     }
     return next;
@@ -76,8 +62,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const signOut = useCallback(async () => {
     try {
       await bffClient.signOut();
+      ++refreshSequence.current;
+      setLoading(false);
       setSession(null);
-      setRootMerchantLabel(null);
       setError(null);
     } catch (cause) {
       setError(normalized(cause));
@@ -90,18 +77,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     else await refresh();
   }, [errorAction, refresh, signOut]);
 
-  const rootMerchantName = session?.platformRole === 'root'
-    && session.merchantId
-    && rootMerchantLabel?.merchantId === session.merchantId
-    ? rootMerchantLabel.name
-    : null;
-
   const value = useMemo<AuthContextValue>(() => ({
-    loading, session, error, rootMerchantName, refresh, signOut, retryError, handleError,
+    loading, session, error, refresh, signOut, retryError, handleError,
     hasPermission(permission) {
       return session?.platformRole === 'root' || session?.permissions.includes(permission) === true;
     },
-  }), [error, handleError, loading, refresh, retryError, rootMerchantName, session, signOut]);
+  }), [error, handleError, loading, refresh, retryError, session, signOut]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

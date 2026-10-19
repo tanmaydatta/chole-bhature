@@ -4,6 +4,8 @@ import {
   CoreMerchantActivationResultSchema,
   CoreMerchantProvisionResultSchema,
   E2eRunProofSchema,
+  IdentityBrowserSessionProjectionSchema,
+  type IdentityBrowserSessionProjection,
   type MerchantActivationRequest,
   type CoreMerchantActivationResult,
   type CoreMerchantProvisionResult,
@@ -342,6 +344,55 @@ export function createOrganizationService(options: OrganizationServiceOptions) {
         membershipId: member.membershipId,
         permissions: permissionsForRole(member.role),
       };
+    },
+
+    async resolveSessionProjection(
+      authenticatedPrincipal: OperatorPrincipal,
+    ): Promise<IdentityBrowserSessionProjection | null> {
+      // Reuse the session/lifecycle checks and derive the user from that session,
+      // never from an independently supplied user identifier.
+      const principal = await this.resolvePrincipal(
+        authenticatedPrincipal.sessionId, authenticatedPrincipal.merchantId,
+      );
+      if (!principal || principal.userId !== authenticatedPrincipal.userId
+        || principal.sessionId !== authenticatedPrincipal.sessionId
+        || principal.platformRole !== authenticatedPrincipal.platformRole
+        || principal.merchantId !== authenticatedPrincipal.merchantId
+        || principal.organizationId !== authenticatedPrincipal.organizationId
+        || principal.membershipId !== authenticatedPrincipal.membershipId) return null;
+
+      const user = await database.prepare(`
+        SELECT name, email FROM user WHERE id = ?1
+      `).bind(principal.userId).first<{ name: string | null; email: string }>();
+      if (!user) return null;
+
+      let client: { merchantId: string; organizationId: string; name: string } | null = null;
+      let role: 'root' | FixedRole = 'root';
+      if (principal.platformRole === 'root') {
+        if (principal.merchantId || principal.organizationId) {
+          client = await database.prepare(`
+            SELECT merchant_id AS merchantId, id AS organizationId, name
+            FROM organizations WHERE id = ?1 AND merchant_id = ?2 AND status = 'active'
+          `).bind(principal.organizationId ?? '', principal.merchantId ?? '').first<typeof client>();
+          if (!client) return null;
+        }
+      } else {
+        const member = await database.prepare(`
+          SELECT memberships.role, organizations.merchant_id AS merchantId,
+            organizations.id AS organizationId, organizations.name
+          FROM memberships
+          JOIN organizations ON organizations.id = memberships.organization_id
+          WHERE memberships.id = ?1 AND memberships.user_id = ?2
+            AND memberships.organization_id = ?3 AND memberships.status = 'active'
+            AND organizations.merchant_id = ?4 AND organizations.status = 'active'
+        `).bind(principal.membershipId ?? '', principal.userId,
+          principal.organizationId ?? '', principal.merchantId ?? '')
+          .first<{ role: FixedRole; merchantId: string; organizationId: string; name: string }>();
+        if (!member) return null;
+        role = member.role;
+        client = { merchantId: member.merchantId, organizationId: member.organizationId, name: member.name };
+      }
+      return IdentityBrowserSessionProjectionSchema.parse({ principal, display: { user, role, client } });
     },
 
     async provisionClient(

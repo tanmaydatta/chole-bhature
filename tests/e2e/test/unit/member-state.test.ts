@@ -18,7 +18,9 @@ async function fixture(platformRole?: 'root') {
     res.setHeader('content-type', 'application/json');
     if (req.url === '/operator/v1/session')
       res.end(JSON.stringify({ userId: 'user-1', authenticationMethods: ['e2e-fixture'], authenticatedAt: '2026-10-16T00:00:00.000Z',
-        organizationId: 'org-1', merchantId: 'merchant-1', membershipId: 'member-1', permissions, merchantSelectionRequired: false, ...(platformRole ? { platformRole } : {}) }));
+        organizationId: 'org-1', merchantId: 'merchant-1', membershipId: 'member-1', permissions, merchantSelectionRequired: false,
+        display: { user: { name: 'Fixture Admin', email: 'fixture@e2e.invalid' }, role: platformRole ?? 'admin',
+          client: { merchantId: 'merchant-1', organizationId: 'org-1', name: 'Fixture Client' } }, ...(platformRole ? { platformRole } : {}) }));
     else if (req.url === '/operator/v1/team')
       res.end(JSON.stringify({ members: [{ id: 'member-1', organizationId: 'org-1', userId: 'user-1', role: 'admin', status: 'active', email: 'fixture@e2e.invalid' }], invitations: [] }));
     else {

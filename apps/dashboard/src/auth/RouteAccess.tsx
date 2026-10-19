@@ -40,14 +40,26 @@ export function MerchantRoute({ permission }: { permission?: PermissionKey }) {
   return <Outlet />;
 }
 
-export function RootContextBanner() {
-  const { session, rootMerchantName } = useAuth();
-  if (session?.platformRole !== 'root') return null;
+export function AccountContextStrip() {
+  const { session } = useAuth();
+  if (!session) return null;
+  const { user, role, client } = session.display;
+  const name = user.name?.trim() || user.email;
+  const roleLabel = { root: 'ROOT', admin: 'Admin', operator: 'Operator', viewer: 'Viewer' }[role];
+  const methodLabels = new Map([
+    ['passkey', 'Passkey'], ['magic-link', 'Email link'], ['e2e-fixture', 'Test fixture'],
+  ]);
+  const methods = [...new Set(session.authenticationMethods.map(method => methodLabels.get(method) ?? 'Authenticated session'))];
+  const clientLabel = client?.name ?? 'No client selected';
   return (
-    <div className="sticky top-0 z-[80] bg-[#4f46e5] px-[26px] py-2 text-center text-[12px] font-bold text-white">
-      Root access · {session.merchantSelectionRequired || !session.merchantId
-        ? 'No client selected'
-        : (rootMerchantName ?? session.merchantId)}
-    </div>
+    <section aria-label="Account context" className="z-[80] min-w-0 shrink-0 border-b border-[var(--border)] bg-[var(--panel)] px-4 py-3 text-[12px] text-[var(--ink)] sm:px-[26px]">
+      {role === 'root' && <p aria-label="ROOT access warning" className="mb-2 rounded bg-[#4f46e5] px-3 py-2 font-bold text-white [overflow-wrap:anywhere]">Root access · {clientLabel}</p>}
+      <dl className="flex min-w-0 flex-wrap gap-x-8 gap-y-2 [overflow-wrap:anywhere]">
+        <div className="min-w-0 max-w-full"><dt className="text-[var(--muted)]">Account</dt><dd className="font-semibold"><span>{name}</span>{name !== user.email && <span className="block font-normal">{user.email}</span>}</dd></div>
+        <div className="min-w-0"><dt className="text-[var(--muted)]">Role</dt><dd className="font-semibold">{roleLabel}</dd></div>
+        <div className="min-w-0"><dt className="text-[var(--muted)]">Signed in with</dt><dd>{methods.join(', ')}</dd></div>
+        <div className="min-w-0 max-w-full"><dt className="text-[var(--muted)]">Client</dt><dd className="font-semibold">{clientLabel}</dd></div>
+      </dl>
+    </section>
   );
 }
