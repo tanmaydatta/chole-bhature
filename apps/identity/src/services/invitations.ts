@@ -1,8 +1,9 @@
-import { invitationAcceptanceUrl, type OperatorPrincipal } from '@incentives/contracts';
+import { invitationAcceptanceUrl, type E2eControlRuntime, type OperatorPrincipal } from '@incentives/contracts';
 
 import { authorize } from '../authorization/authorize.js';
 import type { FixedRole } from '../authorization/registry.js';
 import { sha256 } from '../recovery.js';
+import { withAuthBusinessWrite } from './e2e-write-fence.js';
 
 export interface InvitationEmailAdapter {
   send(message: { to: string; subject: string; text: string }): Promise<void>;
@@ -13,6 +14,7 @@ export interface InvitationServiceOptions {
   email: InvitationEmailAdapter;
   publicOrigin: string;
   now?: () => number;
+  controlRuntime?: E2eControlRuntime;
 }
 
 export interface CreateInvitationInput {
@@ -163,7 +165,7 @@ async function deliver(
   }
   const updatedAt = (options.now ?? Date.now)();
   try {
-    await options.database.batch([
+    await withAuthBusinessWrite(options.database, options.controlRuntime, row.organizationId, [
       options.database.prepare(`
         UPDATE invitations SET status = ?1, updated_at = ?2
         WHERE id = ?3 AND token_hash = ?4 AND status = 'pending'
@@ -192,6 +194,8 @@ async function deliver(
 export function createInvitationService(options: InvitationServiceOptions) {
   const database = options.database;
   const clock = options.now ?? Date.now;
+  const businessWrite = (organizationId: string, statements: D1PreparedStatement[]) =>
+    withAuthBusinessWrite(database, options.controlRuntime, organizationId, statements);
 
   return {
     async createInvitation(
@@ -244,11 +248,11 @@ export function createInvitationService(options: InvitationServiceOptions) {
           AND invitations.status IN ('pending', 'sent', 'delivery_failed')
       `).bind(organizationId, email).first<InvitationRow>();
       if (existingInvite && existingInvite.expiresAt <= now) {
-        await database.prepare(`
+        await businessWrite(organizationId, [database.prepare(`
           UPDATE invitations SET status = 'expired', updated_at = ?1
           WHERE id = ?2 AND expires_at <= ?1
             AND status IN ('pending', 'sent', 'delivery_failed')
-        `).bind(now, existingInvite.id).run();
+        `).bind(now, existingInvite.id)]);
         existingInvite = null;
       }
       if (existingInvite) {
@@ -262,7 +266,7 @@ export function createInvitationService(options: InvitationServiceOptions) {
       const tokenHash = await sha256(token);
       const invitationId = crypto.randomUUID();
       try {
-        await database.batch([
+        await businessWrite(organizationId, [
           database.prepare(`
             INSERT INTO invitations (
               id, organization_id, email, role, token_hash, status, invited_by,
@@ -321,7 +325,7 @@ export function createInvitationService(options: InvitationServiceOptions) {
       }
       const token = randomToken();
       const tokenHash = await sha256(token);
-      const rotation = await database.batch([
+      const rotation = await businessWrite(row.organizationId, [
         database.prepare(`
           UPDATE invitations SET token_hash = ?1, status = 'pending', updated_at = ?2
           WHERE id = ?3 AND token_hash = ?4 AND status = ?5
@@ -352,6 +356,14 @@ export function createInvitationService(options: InvitationServiceOptions) {
       if (!TOKEN_PATTERN.test(input.token)) throw new InvitationInvalidError('Invitation is invalid');
       const tokenHash = await sha256(input.token);
       const row = await invitationByToken(database, tokenHash);
+      // Fixture accounts are exclusively controller-reserved synthetic identities.
+      // Refuse before expiry housekeeping or any ordinary acceptance write.
+      if (row && await database.prepare(`SELECT 1 FROM organizations
+          WHERE id=?1 AND e2e_control_run_id IS NOT NULL
+        UNION ALL SELECT 1 FROM e2e_control_runs WHERE organization_id=?1 LIMIT 1`)
+        .bind(row.organizationId).first()) {
+        throw new InvitationInvalidError('Invitation is invalid');
+      }
       const now = clock();
       if (
         !row
@@ -360,10 +372,10 @@ export function createInvitationService(options: InvitationServiceOptions) {
         || row.expiresAt <= now
       ) {
         if (row && row.expiresAt <= now) {
-          await database.prepare(`
+          await businessWrite(row.organizationId, [database.prepare(`
             UPDATE invitations SET status = 'expired', updated_at = ?1
             WHERE id = ?2 AND status = 'sent'
-          `).bind(now, row.id).run();
+          `).bind(now, row.id)]);
         }
         throw new InvitationInvalidError('Invitation is invalid');
       }
@@ -375,7 +387,7 @@ export function createInvitationService(options: InvitationServiceOptions) {
       const userId = crypto.randomUUID();
       const membershipId = crypto.randomUUID();
       try {
-        const results = await database.batch([
+        const results = await businessWrite(row.organizationId, [
           database.prepare(`
             UPDATE invitations SET status = 'accepted', accepted_at = ?1, updated_at = ?1
             WHERE id = ?2 AND token_hash = ?3 AND email = ?4

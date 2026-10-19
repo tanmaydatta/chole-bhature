@@ -1,5 +1,5 @@
-import { randomBytes } from 'node:crypto';
-import { spawn, type ChildProcess, type SpawnOptions } from 'node:child_process';
+import { createHash, randomBytes } from 'node:crypto';
+import { execFileSync, spawn, type ChildProcess, type SpawnOptions } from 'node:child_process';
 import { createServer } from 'node:net';
 import { chmod, mkdir, mkdtemp, open, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -275,7 +275,8 @@ export interface LocalPorts {
 }
 
 export function localStackConfiguration(repo: string, directory: string, runId: string,
-  ports: LocalPorts, target: 'local' | 'staging' = 'local') {
+  ports: LocalPorts, target: 'local' | 'staging' = 'local',
+  control?: { generation: string; targetId: string }) {
   if (target !== 'local') throw new Error('Managed stack is local only');
   RunIdSchema.parse(runId);
   const suffix = runId.replaceAll('_', '-');
@@ -284,10 +285,19 @@ export function localStackConfiguration(repo: string, directory: string, runId: 
   const operatorName = `incentives-operator-${suffix}`;
   const operatorOrigin = `http://localhost:${ports.operator}`;
   const persistTo = join(directory, 'state');
+  if (control && (!/^[a-f0-9]{40}$/u.test(control.generation)
+    || !/^[a-f0-9]{64}$/u.test(control.targetId))) {
+    throw new Error('Invalid local control identity');
+  }
+  const controlVars: Record<string, string> = control ? {
+    PUBLIC_APP_ORIGIN: operatorOrigin, E2E_CONTROL_ENABLED: '1',
+    E2E_CONTROL_GENERATION: control.generation, E2E_CONTROL_TARGET_ID: control.targetId,
+    E2E_CONTROL_CLEANUP_GENERATIONS: '[]',
+  } : {};
   const coreConfig = {
     name: coreName, main: join(repo, 'apps/api/src/worker.ts'),
     compatibility_date: '2026-07-18', workers_dev: false, preview_urls: false,
-    vars: { APP_ENV: 'local', E2E_LOCAL_TEST_MODE: '1' },
+    vars: { ...controlVars, APP_ENV: 'local', E2E_LOCAL_TEST_MODE: '1' },
     d1_databases: [{ binding: 'DB', database_name: 'incentives-dev',
       database_id: '00000000-0000-0000-0000-000000000000',
       migrations_dir: join(repo, 'apps/api/migrations') }],
@@ -296,7 +306,7 @@ export function localStackConfiguration(repo: string, directory: string, runId: 
     name: identityName, main: join(repo, 'apps/identity/src/worker.ts'),
     compatibility_date: '2026-07-20', compatibility_flags: ['nodejs_compat'],
     workers_dev: false, preview_urls: false,
-    vars: { APP_ENV: 'local', E2E_LOCAL_TEST_MODE: '1', PUBLIC_APP_ORIGIN: operatorOrigin,
+    vars: { ...controlVars, APP_ENV: 'local', E2E_LOCAL_TEST_MODE: '1', PUBLIC_APP_ORIGIN: operatorOrigin,
       COOKIE_PREFIX: `incentives-${suffix}`, EMAIL_MODE: 'local-capture',
       MAGIC_LINK_TTL_SECONDS: '300', EMAIL_RATE_LIMIT_MAX: '3',
       EMAIL_RATE_LIMIT_WINDOW_SECONDS: '60', STAGING_ALLOWED_RECIPIENTS: '[]',
@@ -309,7 +319,7 @@ export function localStackConfiguration(repo: string, directory: string, runId: 
   const operatorConfig = {
     name: operatorName, main: join(repo, 'apps/operator-web/src/worker.ts'),
     compatibility_date: '2026-07-20', workers_dev: false, preview_urls: false,
-    vars: { APP_ENV: 'local', E2E_LOCAL_TEST_MODE: '1', PUBLIC_APP_ORIGIN: operatorOrigin },
+    vars: { ...controlVars, APP_ENV: 'local', E2E_LOCAL_TEST_MODE: '1', PUBLIC_APP_ORIGIN: operatorOrigin },
     services: [
       { binding: 'IDENTITY_AUTH', service: identityName },
       { binding: 'IDENTITY', service: identityName, entrypoint: 'IdentityOperatorService' },
@@ -354,8 +364,8 @@ function wrangler(app: string): string {
   return join(repositoryRoot, `apps/${app}/node_modules/wrangler/bin/wrangler.js`);
 }
 
-async function waitFor(origin: string, children: ChildProcess[], signal: AbortSignal): Promise<void> {
-  const until = Date.now() + 45_000;
+async function waitFor(origin: string, children: ChildProcess[], signal: AbortSignal,
+  until = Date.now() + 45_000): Promise<void> {
   while (Date.now() < until) {
     if (signal.aborted) throw new Error('Local readiness cancelled');
     if (children.some(child => child.exitCode !== null || child.signalCode !== null)) {
@@ -370,9 +380,28 @@ async function waitFor(origin: string, children: ChildProcess[], signal: AbortSi
   throw new Error(`Local Worker did not become ready at ${origin}`);
 }
 
-export async function startManagedLocalStack(options: { skipBuild?: boolean;
-  owner?: ReturnType<typeof createLocalStackOwner> } = {}): Promise<{ stop(): Promise<void>;
-  operatorOrigin: string; apiOrigin: string; storageState: string; directory: string; rootUserId: string }> {
+export async function waitForLocalWorkers(origins: readonly string[], children: ChildProcess[],
+  signal: AbortSignal): Promise<void> {
+  const until = Date.now() + 45_000;
+  await Promise.all(origins.map(origin => waitFor(origin, children, signal, until)));
+}
+
+interface LocalStackBase {
+  stop(): Promise<void>;
+  operatorOrigin: string;
+  apiOrigin: string;
+  directory: string;
+}
+export interface FixtureLocalStack extends LocalStackBase {
+  control: { generation: string; targetId: string; setupSecret: string };
+}
+interface PasskeyLocalStack extends LocalStackBase { storageState: string; rootUserId: string }
+interface StackOptions { skipBuild?: boolean; owner?: ReturnType<typeof createLocalStackOwner> }
+export function startManagedLocalStack(options: StackOptions & { authMode: 'fixture' }): Promise<FixtureLocalStack>;
+export function startManagedLocalStack(options?: StackOptions & { authMode?: 'passkey' }): Promise<PasskeyLocalStack>;
+export async function startManagedLocalStack(
+  options: StackOptions & { authMode?: 'passkey' | 'fixture' } = {},
+): Promise<FixtureLocalStack | PasskeyLocalStack> {
   const runId: RunId = newRunId();
   options.owner?.check();
   const owner = createLocalStackOwner();
@@ -391,7 +420,17 @@ export async function startManagedLocalStack(options: { skipBuild?: boolean;
     owner.check();
     const ports = await localPorts();
     owner.check();
-    const config = localStackConfiguration(repositoryRoot, directory, runId, ports);
+    const baseConfig = localStackConfiguration(repositoryRoot, directory, runId, ports);
+    const control = options.authMode === 'fixture' ? {
+      generation: execFileSync('/usr/bin/git', ['rev-parse', 'HEAD'], { cwd: repositoryRoot, encoding: 'utf8' }).trim(),
+      targetId: createHash('sha256').update(JSON.stringify({
+        runId, directory, origins: [baseConfig.operatorOrigin, baseConfig.apiOrigin],
+        names: [baseConfig.coreConfig.name, baseConfig.identityConfig.name, baseConfig.operatorConfig.name],
+        persistTo: baseConfig.persistTo,
+      })).digest('hex'),
+      setupSecret: randomBytes(32).toString('base64url'),
+    } : undefined;
+    const config = control ? localStackConfiguration(repositoryRoot, directory, runId, ports, 'local', control) : baseConfig;
     for (const app of workerNames) { owner.check(); await mkdir(join(directory, app), { mode: 0o700 }); }
     owner.check();
     const configPaths = Object.fromEntries(workerNames.map(app =>
@@ -404,7 +443,7 @@ export async function startManagedLocalStack(options: { skipBuild?: boolean;
     owner.check();
     const authSecret = randomBytes(32).toString('hex');
     await Promise.all([
-      writeFile(join(directory, 'identity/.dev.vars'), `AUTH_SECRET=${authSecret}\n`,
+      writeFile(join(directory, 'identity/.dev.vars'), `AUTH_SECRET=${authSecret}\n${control ? `E2E_SETUP_SECRET=${control.setupSecret}\n` : ''}`,
         { mode: 0o600, flag: 'wx' }),
       writeFile(join(directory, 'operator/.dev.vars'),
         `OPERATOR_SELECTION_SECRET=${randomBytes(32).toString('hex')}\n`,
@@ -425,15 +464,18 @@ export async function startManagedLocalStack(options: { skipBuild?: boolean;
         'd1', 'migrations', 'apply', database, '--local', '--config', configPaths[app],
         '--persist-to', config.persistTo], repositoryRoot);
     }
-    stage('root-bootstrap');
-    const rootEmail = `root+${runId}@e2e.invalid`;
-    const bootstrap = await owner.run(process.execPath,
-      [join(repositoryRoot, 'apps/identity/src/cli/bootstrap-root-runner.mjs'),
-        '--environment', 'local', '--email', rootEmail], repositoryRoot,
-      { ...process.env, AUTH_SECRET: authSecret,
-        E2E_LOCAL_WRANGLER_CONFIG: configPaths.identity,
-        E2E_LOCAL_PERSIST_TO: config.persistTo });
-    const expectedRoot = parseLocalRootBootstrapResult(bootstrap);
+    let expectedRoot: ReturnType<typeof parseLocalRootBootstrapResult> | undefined;
+    if (!control) {
+      stage('root-bootstrap');
+      const rootEmail = `root+${runId}@e2e.invalid`;
+      const bootstrap = await owner.run(process.execPath,
+        [join(repositoryRoot, 'apps/identity/src/cli/bootstrap-root-runner.mjs'),
+          '--environment', 'local', '--email', rootEmail], repositoryRoot,
+        { ...process.env, AUTH_SECRET: authSecret,
+          E2E_LOCAL_WRANGLER_CONFIG: configPaths.identity,
+          E2E_LOCAL_PERSIST_TO: config.persistTo });
+      expectedRoot = parseLocalRootBootstrapResult(bootstrap);
+    }
     stage('worker-readiness');
     for (const [app, port, inspector] of [
       ['core', ports.core, ports.coreInspector],
@@ -452,15 +494,24 @@ export async function startManagedLocalStack(options: { skipBuild?: boolean;
           WRANGLER_SEND_METRICS: 'false' }, stdio: ['ignore', log.fd, log.fd] });
       children.push(child);
     }
-    await waitFor(config.operatorOrigin, children, owner.signal);
+    if (control) {
+      await waitForLocalWorkers([config.apiOrigin, `http://localhost:${ports.identity}`,
+        config.operatorOrigin], children, owner.signal);
+    } else {
+      await waitFor(config.operatorOrigin, children, owner.signal);
+    }
+    if (control) {
+      stage('ready');
+      return { stop, operatorOrigin: config.operatorOrigin, apiOrigin: config.apiOrigin, directory, control };
+    }
     stage('passkey-bootstrap');
     const storageState = await bootstrapLocalRootPasskey({ operatorOrigin: config.operatorOrigin,
-      expectedRootUserId: expectedRoot.userId, activationGrant: expectedRoot.activationGrant,
+      expectedRootUserId: expectedRoot!.userId, activationGrant: expectedRoot!.activationGrant,
       storageStatePath: join(directory, 'root-storage-state.json'),
       signal: AbortSignal.any([owner.signal, AbortSignal.timeout(45_000)]), owner });
     stage('ready');
     return { stop, operatorOrigin: config.operatorOrigin, apiOrigin: config.apiOrigin,
-      storageState, directory, rootUserId: expectedRoot.userId };
+      storageState, directory, rootUserId: expectedRoot!.userId };
   } catch {
     const diagnostic = (await Promise.all(workerNames.map(async app => {
       let output = '';

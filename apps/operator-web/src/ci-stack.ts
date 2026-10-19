@@ -29,6 +29,8 @@ export function assertCiStack(env: OperatorWebWorkerEnv, expectedMarker?: string
     fail('expected marker does not match CI_STACK_KEY');
   }
   if (env.E2E_LOCAL_TEST_MODE !== undefined) fail('local-test mode is forbidden');
+  if (env.E2E_CONTROL_ENABLED !== undefined || env.E2E_CONTROL_GENERATION !== undefined || env.E2E_CONTROL_TARGET_ID !== undefined
+    || env.E2E_CONTROL_ACCOUNT_QUOTA !== undefined || env.E2E_CONTROL_CLEANUP_GENERATIONS !== undefined) fail('v2 control is forbidden');
   let origin: URL;
   try { origin = new URL(env.PUBLIC_APP_ORIGIN ?? ''); }
   catch { fail('PUBLIC_APP_ORIGIN must be a canonical HTTPS workers.dev origin'); }

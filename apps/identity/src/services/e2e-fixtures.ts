@@ -1,6 +1,7 @@
 import { assertIdentityServiceEnvironment, type IdentityServiceAssociation } from '../ci-stack.js';
 
-import { E2eTenantIdentitySchema, FixedOperatorRoleSchema } from '@incentives/contracts';
+import { E2eTenantIdentitySchema, FixedOperatorRoleSchema, type E2eControlRuntime, type StoredControlLease, type E2eControlAccount } from '@incentives/contracts';
+import { withControlWrite } from './e2e-write-fence.js';
 import { z } from 'zod';
 
 const AccountInputSchema = E2eTenantIdentitySchema.extend({
@@ -126,4 +127,37 @@ export function createIdentityE2eFixtures(options: Options) {
         sessionId: session.sessionId, cookieHeader: session.cookieHeader };
     },
   };
+}
+
+/** One durable issuance attempt. No session or cookie is reconstructed on retry. */
+export async function issueControlAccount(db: D1Database, runtime: E2eControlRuntime, lease: StoredControlLease,
+  slug: string, role: 'admin' | 'operator' | 'viewer', requestId: string, payloadHash: string,
+  createSession: (grant: Readonly<{ userId:string; sessionId:string; lease:StoredControlLease }>) => Promise<{
+    sessionId:string; cookieHeader:string; cookieAttributes?:E2eControlAccount['cookieAttributes'];
+  }>): Promise<E2eControlAccount> {
+  const userId = crypto.randomUUID(), membershipId = crypto.randomUUID(), sessionId = crypto.randomUUID();
+  const email = `e2e+${lease.runId}_${slug}@e2e.invalid`, now = Date.now();
+  await withControlWrite(db,runtime,lease,'provision',[
+    db.prepare(`INSERT INTO e2e_control_requests (run_id,request_id,action,payload_hash,status)
+      VALUES (?1,?2,?3,?4,'reserved')`).bind(lease.runId,requestId,'account:'+slug,payloadHash),
+    db.prepare(`INSERT INTO e2e_control_accounts (run_id,slug,user_id,membership_id,generation,role,state)
+      VALUES (?1,?2,?3,?4,?5,?6,'reserved')`).bind(lease.runId,slug,userId,membershipId,lease.generation,role),
+    db.prepare(`INSERT INTO user (id,name,email,emailVerified,createdAt,updatedAt,e2e_control_run_id)
+      VALUES (?1,?2,?3,0,?4,?4,?5)`).bind(userId,lease.runId+'_'+slug,email,now,lease.runId),
+    db.prepare("INSERT INTO auth_profile (user_id,subject_kind,status,email_login_enabled) VALUES (?1,'employee','active',0)").bind(userId),
+    db.prepare(`INSERT INTO memberships (id,organization_id,user_id,role,status,created_at,updated_at)
+      VALUES (?1,?2,?3,?4,'active',?5,?5)`).bind(membershipId,lease.organizationId,userId,role,now),
+    db.prepare("UPDATE e2e_control_accounts SET state='issuing',session_id=?1 WHERE run_id=?2 AND slug=?3")
+      .bind(sessionId,lease.runId,slug),
+  ]);
+  const session = await createSession(Object.freeze({ userId,sessionId,lease }));
+  if (session.sessionId !== sessionId || !session.cookieAttributes) throw new Error('E2E_CONTROL_SESSION');
+  await withControlWrite(db,runtime,lease,'provision',[
+    db.prepare("UPDATE e2e_control_accounts SET state='issued' WHERE run_id=?1 AND slug=?2 AND state='issuing' AND session_id=?3")
+      .bind(lease.runId,slug,sessionId),
+    db.prepare("UPDATE e2e_control_requests SET status='completed' WHERE run_id=?1 AND request_id=?2 AND action=?3")
+      .bind(lease.runId,requestId,'account:'+slug),
+  ]);
+  return { runId:lease.runId,merchantId:lease.merchantId,organizationId:lease.organizationId!,
+    userId,membershipId,email,role,sessionId,cookieHeader:session.cookieHeader,cookieAttributes:session.cookieAttributes };
 }

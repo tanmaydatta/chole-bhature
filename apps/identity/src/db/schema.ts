@@ -15,6 +15,11 @@ export const authTableNames = [
   'organizations',
   'memberships',
   'invitations',
+  'e2e_control_runs',
+  'e2e_control_requests',
+  'e2e_control_cleanup',
+  'e2e_control_write_guards',
+  'e2e_control_accounts',
 ] as const;
 
 export type FixedRole = 'admin' | 'operator' | 'viewer';
@@ -25,6 +30,7 @@ export interface OrganizationRow {
   provisioningId: string;
   name: string;
   status: 'provisioning' | 'active';
+  e2eControlRunId?: string | null;
 }
 
 export interface MembershipRow {
@@ -52,6 +58,18 @@ export interface IdentitySessionPrimitive {
   authenticationMethod: AuthenticationMethod;
   authenticatedAt: number;
   recoveryOnly: boolean;
+}
+
+/** Control identities remain in the ledger after the business rows are disposed. */
+export interface E2eControlAccountRow {
+  runId: string;
+  slug: string;
+  userId: string;
+  membershipId: string;
+  sessionId: string | null;
+  generation: string;
+  role: FixedRole;
+  state: 'reserved' | 'issuing' | 'issued' | 'revoked';
 }
 
 export type AuthenticationMethod = 'magic-link' | 'passkey' | 'recovery';

@@ -47,6 +47,8 @@ import { WorkerEntrypoint } from 'cloudflare:workers';
 import { createApp } from './app.js';
 import { assertCiStack } from './ci-stack.js';
 import { productE2eCapabilities } from './services/e2e-capabilities.js';
+import { createProductE2eControl } from './services/e2e-control.js';
+import type { CoreControlCall, CoreControlReply } from '@incentives/contracts';
 import { MerchantIdentityConflictError } from './errors/merchant-errors.js';
 import { NotFoundError } from './errors.js';
 import { requireOperatorContext } from './auth/operator-context.js';
@@ -121,6 +123,10 @@ function operatorEvaluationFailure(error: unknown, correlationId: string): ApiEr
 }
 
 export class CoreOperatorService extends WorkerEntrypoint<Env> {
+  async e2eControl(call: CoreControlCall): Promise<CoreControlReply> {
+    return createProductE2eControl(this.env).execute(call);
+  }
+
   async evaluate(context: OperatorCallContext, input: EvaluationRequest): Promise<EvaluationResponse | ApiError> {
     assertCiStack(this.env);
     const operator = requireOperatorContext(OperatorCallContextSchema.parse(context), 'evaluations:run');

@@ -7,9 +7,10 @@
     "build": "tsc -p tsconfig.json",
     "test": "vitest run test/unit",
     "test:e2e": "playwright test",
+    "test:preauth": "E2E_TARGET=local E2E_PREAUTH_LOCAL_FLOW=1 playwright test --config playwright.preauth.config.ts",
     "recipe": "tsx src/cli.ts",
     "login:staging": "tsx src/staging-login-runner.ts",
-    "lint": "oxlint src test playwright.config.ts"
+    "lint": "oxlint src test playwright.config.ts playwright.preauth.config.ts"
   },
   "dependencies": {
     "@incentives/contracts": "workspace:*",

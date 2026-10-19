@@ -8,6 +8,7 @@
     "test": "pnpm -r test && node --test scripts/staging-vault-to-env.test.mjs scripts/staging-secret-transfer.test.mjs",
     "test:e2e": "pnpm --filter @incentives/e2e test:e2e",
     "e2e:local": "E2E_TARGET=local pnpm --filter @incentives/e2e exec playwright test",
+    "e2e:local:preauth": "pnpm --filter @incentives/e2e test:preauth",
     "e2e:local:headed": "E2E_TARGET=local E2E_BROWSER_CHANNEL=chrome pnpm --filter @incentives/e2e exec playwright test --project=browser --headed",
     "e2e:staging": "E2E_TARGET=staging E2E_ENABLE_STAGING=1 pnpm --filter @incentives/e2e exec playwright test",
     "e2e:staging:headed": "E2E_TARGET=staging E2E_ENABLE_STAGING=1 E2E_BROWSER_CHANNEL=chrome pnpm --filter @incentives/e2e exec playwright test --project=browser --headed",

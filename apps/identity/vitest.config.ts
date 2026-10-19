@@ -15,6 +15,7 @@ export default defineConfig(async () => {
     'utf8',
   );
   const schemaSource = await readFile(path.join(__dirname, 'src/db/schema.ts'), 'utf8');
+  const controlMigration = await readFile(path.join(__dirname, 'migrations/0007_e2e_control_leases.sql'), 'utf8');
 
   return {
     plugins: [
@@ -26,6 +27,7 @@ export default defineConfig(async () => {
           },
           bindings: {
             TEST_MIGRATIONS: migrations,
+            E2E_CONTROL_MIGRATION_TEXT: controlMigration,
             AUTH_SECRET: 'identity-test-secret-at-least-thirty-two-characters',
             PUBLIC_APP_ORIGIN: 'https://operator.example.test',
             PASSKEY_RP_ID: 'operator.example.test',

@@ -13,3 +13,8 @@ test('builds the production invitation acceptance URL with only the opaque token
   expect([...link.searchParams.keys()]).toEqual(['token']);
   expect(link.searchParams.get('token')).toBe('a'.repeat(43));
 });
+
+test('keeps control URLs under a dedicated operator prefix', () => {
+  const url = new URL(`${paths.E2E_CONTROL_PREFIX}/capabilities`, 'https://operator.example.test');
+  expect(url.pathname).toBe('/operator/v1/e2e-control/capabilities');
+});

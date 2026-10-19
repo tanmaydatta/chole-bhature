@@ -10,11 +10,50 @@ import {
   uniqueIndex,
 } from 'drizzle-orm/sqlite-core';
 
+/** Durable v2 control tables are deliberately independent of disposable merchant rows. */
+export const e2eControlRuns = sqliteTable('e2e_control_runs', {
+  runId: text('run_id').primaryKey().notNull(),
+  merchantId: text('merchant_id').notNull(),
+  provisioningId: text('provisioning_id').notNull(),
+  organizationId: text('organization_id'),
+  generation: text('generation').notNull(),
+  targetId: text('target_id').notNull(),
+  issuedAt: integer('issued_at').notNull(),
+  expiresAt: integer('expires_at').notNull(),
+  phase: text('phase').notNull(),
+  proofHash: text('proof_hash').notNull(),
+  controllerHash: text('controller_hash').notNull(),
+  requestId: text('request_id').notNull(),
+  payloadHash: text('payload_hash').notNull(),
+  accountQuota: integer('account_quota').notNull(),
+}, table => [index('e2e_control_live_admission').on(table.targetId, table.expiresAt)
+  .where(sql`${table.phase} <> 'disposed'`)]);
+export const e2eControlRequests = sqliteTable('e2e_control_requests', {
+  runId: text('run_id').notNull(), requestId: text('request_id').notNull(),
+  action: text('action').notNull(), payloadHash: text('payload_hash').notNull(),
+  status: text('status').notNull(),
+}, table => [primaryKey({ columns: [table.runId, table.requestId, table.action] })]);
+export const e2eControlCleanup = sqliteTable('e2e_control_cleanup', {
+  id: text('id').primaryKey(), runId: text('run_id').notNull(),
+  proofHash: text('proof_hash').notNull(), currentGeneration: text('current_generation').notNull(),
+  requestId: text('request_id').notNull(), issuedAt: integer('issued_at').notNull(),
+  expiresAt: integer('expires_at').notNull(),
+});
+export const e2eControlWriteGuards = sqliteTable('e2e_control_write_guards', {
+  id: text('id').primaryKey(), runId: text('run_id').notNull(), merchantId: text('merchant_id').notNull(),
+  provisioningId: text('provisioning_id').notNull(), organizationId: text('organization_id'),
+  generation: text('generation').notNull(), targetId: text('target_id').notNull(),
+  proofHash: text('proof_hash').notNull(), intent: text('intent').notNull(),
+  currentGeneration: text('current_generation').notNull(), cleanupId: text('cleanup_id'),
+  cleanupIssuedAt: integer('cleanup_issued_at'), cleanupExpiresAt: integer('cleanup_expires_at'),
+  checked: integer('checked').notNull().default(0),
+});
 export const merchants = sqliteTable('merchants', {
   id: text('id').primaryKey(),
   name: text('name').notNull(),
   status: text('status').notNull().default('active'),
   provisioningId: text('provisioning_id'),
+  e2eControlRunId: text('e2e_control_run_id'),
   createdAt: text('created_at').notNull(),
   updatedAt: text('updated_at'),
 }, table => [
