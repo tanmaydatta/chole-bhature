@@ -62,10 +62,17 @@ the root user ID returned by that suite's local bootstrap CLI, requires the
 strict session schema, root role and exactly `['passkey']`, and refuses HTTP
 errors or redirects. It keeps browser state in memory until its browser closes,
 then publishes a complete file created with mode 0600 without overwriting an
-existing file, symlink or directory. The existing two-stack Playwright case
-restores both saved files into fresh browser contexts and verifies their exact
-root identities, passkey sessions and signed-in UI, while retaining cross-state
-rejection. Vitest cases exercise real local HTTP/filesystem failure paths and
+existing file, symlink or directory. The two-stack isolation case now uses
+independent managed-local fixture Admins instead of repeating ROOT/passkey
+setup. It verifies distinct origins, directories and tenant/principal/session
+identities, exact typed own-stack sessions and signed-in browser UI, private
+0600 state files, and bidirectional cross-stack HTTP 401 `UNAUTHORIZED` replies.
+Both run capabilities are durably recorded before bootstrap. Even after setup
+or assertion failure, protected disposal and fresh complete Product/Auth
+zero-row inventories are attempted for every attempted bootstrap (both runs
+when both were attempted) before capability/member files are retired;
+cleanup failures retain recovery records and fail the case.
+Vitest cases exercise real local HTTP/filesystem failure paths and
 real Chromium browser/context cancellation, including late fulfillment. Actual
 WebAuthn bootstrap remains in the full local Playwright suite.
 This bounded local extraction is implemented and locally tested; independent
@@ -178,8 +185,13 @@ before the capability handshake, within the existing shared 45-second readiness
 budget. HTTP readiness is not business-health acceptance. No server/auth guard
 was relaxed. See [Experimental local preauthenticated Promo check](../../docs/testing/preauth-local-promo.md)
 for exact evidence and limits. This is one opt-in local proof, not full suite
-conversion or staging readiness. The default/full local command and its
-ROOT/passkey setup, assertions, timeouts, retries and two workers remain intact.
+conversion or staging readiness. The paired-stack isolation case also uses
+ordinary fixture Admins, as described above. The default/full local command
+still performs one global ROOT/passkey bootstrap for its legacy business
+recipes; its timeouts, retries and two workers remain intact. This bounded
+replacement does not diagnose or claim to fix the earlier paired-passkey
+activation failure, and does not establish shared-target concurrency or
+recovery acceptance.
 
 ## Check the local cloud helper groundwork
 
@@ -187,7 +199,8 @@ Cloud candidate and Access routing checks run on controlled local fixtures;
 `E2E_TARGET=cloud-ci` remains unavailable. With dependencies and the pinned
 browser already installed, run `pnpm --filter @incentives/e2e test`, then
 `E2E_BROWSER_CHANNEL=chromium pnpm e2e:local` from the repository root. The
-original five business/isolation/cleanup cases retain their assertions; a
+business/isolation/cleanup guarantees remain covered, with fixture Admins in
+the paired isolation case described above; a
 separate local-only browser case checks HTTP navigation, assets, subrequests,
 credential snapshots and refusal before foreign or redirected dispatch.
 Staging skips that controlled-fixture case.
@@ -309,7 +322,8 @@ KILL after five seconds; numeric membership inspection excludes the supervisor
 and its completed inspector. Inspection failure triggers best-effort self-group
 termination and remains an incomplete cleanup, not success. Late browser close
 failure or acquisition deadline reaches both caller and fixture owner. The suite's test
-timeout, retry count, concurrency and assertions are unchanged. Fixture teardown
+timeout, retry count and concurrency remain unchanged. The paired fixture case
+retains the session/tenant isolation checks described above. Fixture teardown
 supports normal Playwright test interruption, not uncatchable OS termination
 such as SIGKILL or descendants that escape their owned process group.
 Managed diagnostics emit fixed phases before awaits and every ten seconds,
