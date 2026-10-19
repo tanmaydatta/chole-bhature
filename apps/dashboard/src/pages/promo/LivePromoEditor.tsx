@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useId, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
   OperatorProgramDraftRequestSchema,
@@ -99,13 +99,38 @@ function rewardKind(reward: CommerceReward): string {
     : `${reward.type}_${reward.calculation}`;
 }
 
-function RewardFields({ reward, change }: { reward: CommerceReward; change: (next: CommerceReward) => void }) {
+function percentageBasisPoints(text: string): number | null {
+  if (!/^\d+(?:\.\d{0,2})?$/u.test(text)) return null;
+  const [whole, fraction = ''] = text.split('.');
+  const basisPoints = Number(whole) * 100 + Number(fraction.padEnd(2, '0'));
+  return basisPoints >= 1 && basisPoints <= 10_000 ? basisPoints : null;
+}
+
+function percentageText(basisPoints: number): string {
+  const fraction = basisPoints % 100;
+  return `${Math.floor(basisPoints / 100)}${fraction ? `.${String(fraction).padStart(2, '0').replace(/0$/u, '')}` : ''}`;
+}
+
+function programRewards(program: PromoProgram) {
+  return [...program.rewardRules, ...(program.fallbackReward ? [program.fallbackReward] : [])];
+}
+
+function RewardFields({ reward, change, text, changePercentage }: {
+  reward: CommerceReward; change: (next: CommerceReward) => void;
+  text?: string; changePercentage: (text: string) => void;
+}) {
+  const errorId = useId();
   if (reward.type === 'free_shipping') return <p>Free shipping has no amount fields.</p>;
+  const value = reward.calculation === 'percent' ? text ?? percentageText(reward.basisPoints) : '';
+  const invalid = reward.calculation === 'percent' && percentageBasisPoints(value) === null;
   return <div className="flex gap-2 flex-wrap">
     {reward.type === 'line_item_discount' && <label>Product reference<input value={reward.productRef} onChange={event => change({ ...reward, productRef: event.target.value })}/></label>}
     {reward.calculation === 'percent'
       ? <>
-        <label>Basis points<input type="number" min={1} max={10_000} value={reward.basisPoints} onChange={event => change({ ...reward, basisPoints: Number(event.target.value) })}/></label>
+        <label>Discount percentage<input type="text" inputMode="decimal" value={value}
+          aria-invalid={invalid} aria-describedby={invalid ? errorId : undefined}
+          onChange={event => changePercentage(event.target.value)}/></label>
+        {invalid && <span id={errorId} role="alert">Enter a percentage from 0.01 to 100 with at most two decimal places.</span>}
         {reward.maximumDiscountAmount === undefined
           ? <button type="button" onClick={() => change({
             ...reward,
@@ -136,7 +161,10 @@ function RewardFields({ reward, change }: { reward: CommerceReward; change: (nex
   </div>;
 }
 
-function RewardRules({ program, variables, change }: { program: PromoProgram; variables: ConditionBuilderVariable[]; change: (next: PromoProgram) => void }) {
+function RewardRules({ program, variables, change, percentageTexts, changePercentage }: {
+  program: PromoProgram; variables: ConditionBuilderVariable[]; change: (next: PromoProgram) => void;
+  percentageTexts: Map<string, string>; changePercentage: (id: string, text: string) => void;
+}) {
   function update(index: number, next: PromoRewardRule) {
     change({ ...program, rewardRules: program.rewardRules.map((rule, ruleIndex) => ruleIndex === index ? next : rule) });
   }
@@ -157,7 +185,8 @@ function RewardRules({ program, variables, change }: { program: PromoProgram; va
         <option value="line_item_discount_fixed">Line item fixed</option><option value="line_item_discount_percent">Line item percent</option>
         <option value="free_shipping">Free shipping</option>
       </select></label>
-      <RewardFields reward={rule.reward} change={reward => update(index, { ...rule, reward })}/>
+      <RewardFields reward={rule.reward} change={reward => update(index, { ...rule, reward })}
+        text={percentageTexts.get(rule.id)} changePercentage={text => changePercentage(rule.id, text)}/>
       <ConditionBuilder value={rule.conditions} variables={variables} onChange={conditions => update(index, { ...rule, conditions })}/>
       <button type="button" aria-label={`Move reward rule ${index + 1} up`} disabled={index === 0} onClick={() => move(index, -1)}>Move up</button>
       <button type="button" aria-label={`Move reward rule ${index + 1} down`} disabled={index === program.rewardRules.length - 1} onClick={() => move(index, 1)}>Move down</button>
@@ -173,7 +202,8 @@ function RewardRules({ program, variables, change }: { program: PromoProgram; va
       <label>Fallback type<select value={rewardKind(program.fallbackReward.reward)} onChange={event => change({ ...program, fallbackReward: { ...program.fallbackReward!, reward: changedReward(program.fallbackReward!.reward, event.target.value) } })}>
         <option value="order_discount_fixed">Order fixed</option><option value="order_discount_percent">Order percent</option><option value="line_item_discount_fixed">Line item fixed</option><option value="line_item_discount_percent">Line item percent</option><option value="free_shipping">Free shipping</option>
       </select></label>
-      <RewardFields reward={program.fallbackReward.reward} change={reward => change({ ...program, fallbackReward: { ...program.fallbackReward!, reward } })}/>
+      <RewardFields reward={program.fallbackReward.reward} change={reward => change({ ...program, fallbackReward: { ...program.fallbackReward!, reward } })}
+        text={percentageTexts.get(program.fallbackReward.id)} changePercentage={text => changePercentage(program.fallbackReward!.id, text)}/>
       <button type="button" onClick={() => change({ ...program, fallbackReward: undefined })}>Remove fallback</button>
     </fieldset> : <button type="button" onClick={() => change({ ...program, fallbackReward: { id: nextId('fallback'), name: 'Fallback', reward: { type: 'free_shipping' } } })}>Add fallback reward</button>}
   </section>;
@@ -184,6 +214,7 @@ export default function LivePromoEditor() {
   const navigate = useNavigate();
   const { id } = useParams<{ id: string }>();
   const [program, setProgram] = useState<PromoProgram>(() => minimal('', ''));
+  const [percentageTexts, setPercentageTexts] = useState(() => new Map<string, string>());
   const [variables, setVariables] = useState<ConditionBuilderVariable[]>([]);
   const [loading, setLoading] = useState(Boolean(id));
   const [loadError, setLoadError] = useState<BffClientError | null>(null);
@@ -194,6 +225,33 @@ export default function LivePromoEditor() {
   const [saving, setSaving] = useState(false);
   const [comparisonLoading, setComparisonLoading] = useState(false);
   const validation = useMemo(() => OperatorProgramDraftRequestSchema.safeParse(program), [program]);
+  const percentagesValid = programRewards(program).every(({ id: rewardId, reward }) => (
+    reward.type === 'free_shipping' || reward.calculation !== 'percent'
+    || percentageBasisPoints(percentageTexts.get(rewardId) ?? percentageText(reward.basisPoints)) !== null
+  ));
+
+  function changeProgram(next: PromoProgram) {
+    setPercentageTexts(previous => new Map(programRewards(next).flatMap(({ id: rewardId, reward }) => {
+      const before = programRewards(program).find(rule => rule.id === rewardId)?.reward;
+      return reward.type !== 'free_shipping' && reward.calculation === 'percent'
+        && before?.type === reward.type && before.calculation === 'percent'
+        && before.basisPoints === reward.basisPoints && previous.has(rewardId)
+        ? [[rewardId, previous.get(rewardId)!] as const] : [];
+    })));
+    setProgram(next);
+  }
+
+  function changePercentage(rewardId: string, text: string) {
+    setPercentageTexts(previous => new Map(previous).set(rewardId, text));
+    const basisPoints = percentageBasisPoints(text);
+    if (basisPoints === null) return;
+    const update = <T extends { id: string; reward: CommerceReward }>(rule: T): T => (
+      rule.id === rewardId && rule.reward.type !== 'free_shipping' && rule.reward.calculation === 'percent'
+        ? { ...rule, reward: { ...rule.reward, basisPoints } } : rule
+    );
+    setProgram(previous => ({ ...previous, rewardRules: previous.rewardRules.map(update),
+      ...(previous.fallbackReward ? { fallbackReward: update(previous.fallbackReward) } : {}) }));
+  }
   const budgetCurrencyInvalid = program.budget !== undefined
     && !/^[A-Z]{3}$/u.test(program.budget.currency);
   const budgetMinorUnitsInvalid = program.budget !== undefined
@@ -213,10 +271,10 @@ export default function LivePromoEditor() {
       if (current) setVariables(result.definitions.map(view => view.definition).filter(definition => definition.source !== 'event').map(localVariable));
     }).catch(cause => { if (current) setLoadError(auth.handleError(cause)); });
     if (id) void programApi.get(id).then(view => {
-      if (current) setProgram({
-        ...(view.draftConfiguration ?? view.configuration),
-        status: 'draft',
-      });
+      if (current) {
+        setPercentageTexts(new Map());
+        setProgram({ ...(view.draftConfiguration ?? view.configuration), status: 'draft' });
+      }
     }).catch(cause => { if (current) setLoadError(auth.handleError(cause)); }).finally(() => {
       if (current) setLoading(false);
     });
@@ -224,6 +282,7 @@ export default function LivePromoEditor() {
   }, [auth, id]);
 
   async function save() {
+    if (!percentagesValid) return;
     setSaveError(null);
     if (!id) setConflictReference(null);
     setSaving(true);
@@ -294,9 +353,10 @@ export default function LivePromoEditor() {
       <label><input type="radio" name="promo-trigger" checked={!program.autoApply} onChange={selectCodedTrigger}/>Code-triggered</label>
       {!program.autoApply && <label>Code<input value={program.code} onChange={event => setProgram({ ...program, code: event.target.value })}/></label>}
     </fieldset>
-    {!id && <button type="button" onClick={() => setProgram(example(program.id, program.name))}>Use complete authoring example</button>}
+    {!id && <button type="button" onClick={() => { setPercentageTexts(new Map()); setProgram(example(program.id, program.name)); }}>Use complete authoring example</button>}
     <section><h2>Eligibility</h2><ConditionBuilder value={program.eligibility} variables={variables} onChange={eligibility => setProgram({ ...program, eligibility })}/></section>
-    <RewardRules program={program} variables={variables} change={setProgram}/>
+    <RewardRules program={program} variables={variables} change={changeProgram}
+      percentageTexts={percentageTexts} changePercentage={changePercentage}/>
     <section className="grid grid-cols-2 gap-3"><h2 className="col-span-2">Limits, schedule, and stacking</h2>
       {program.budget
         ? <>
@@ -331,12 +391,13 @@ export default function LivePromoEditor() {
       <p>Server Promo name: <code>{comparison.name}</code></p>
       <p>Your authored draft remains in the editor. Replace it only after comparing.</p>
       <button type="button" onClick={() => {
+        setPercentageTexts(new Map());
         setProgram({ ...comparison, status: 'draft' });
         setComparison(null);
         setConflictReference(null);
         setSaveError(null);
       }}>Replace authored draft with server version</button>
     </section>}
-    <button type="button" disabled={!validation.success || !conditionsValid || freeShippingBudgetConflict || saving} onClick={() => void save()}>{saving ? 'Saving…' : 'Save draft'}</button>
+    <button type="button" disabled={!validation.success || !conditionsValid || !percentagesValid || freeShippingBudgetConflict || saving} onClick={() => void save()}>{saving ? 'Saving…' : 'Save draft'}</button>
   </main>;
 }

@@ -102,6 +102,16 @@ Every decision carries a program reference/type, effects, stable reason codes, a
 | `points_credit` | positive integer `points` |
 | `attribution` | non-empty `subjectRef` |
 
+The live Promo editor labels order, line-item, and fallback percentage rewards
+**Discount percentage**. Enter `20` for 20% or `12.34` for 12.34%; accepted values
+are 0.01 through 100 inclusive with at most two decimal places. The UI converts
+decimal text exactly to integer hundredths (`20` → `2000`, `12.34` → `1234`,
+`0.01` → `1`, `100` → `10000`) and shows a field error before saving invalid
+input. Persisted values render as percentages when editing again. API requests,
+stored programs, decisions, and calculations continue using integer
+`basisPoints`; percentage entry does not change `maximumDiscountAmount` or
+other monetary minor-unit fields, and is unrelated to Loyalty points.
+
 The executable qualified decision is:
 
 ```ts

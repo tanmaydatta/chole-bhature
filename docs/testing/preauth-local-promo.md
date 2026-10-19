@@ -22,6 +22,34 @@ bootstrap and performs no ROOT/platform selection. The default
 `pnpm e2e:local` command, its global setup, two workers, retries, timeouts and
 business assertions remain unchanged.
 
+## Additional managed-local stack isolation
+
+The existing paired-stack case now starts two independent fixture-mode stacks
+and verifies ordinary Admin sessions without ROOT/passkey setup in that case.
+Fresh browser contexts prove exact user, organization, merchant and membership
+identity, the `e2e-fixture` authentication method, no platform ROOT role or
+merchant-selection step, signed-in UI and private 0600 state. The two stacks
+have distinct origins, private directories and principals; each stack rejects
+the other's state with typed HTTP 401 `UNAUTHORIZED`, rather than a ROOT-only
+client rejecting otherwise valid members.
+
+Each independent control record is durable before bootstrap. Finally cleanup
+attempts protected disposal and fresh complete zero-row Product/Auth inventories
+for every attempted bootstrap, including partial setup and assertion failure;
+both runs are checked when both bootstraps were attempted. Capability/member
+files are retired only after successful inventory proof; incomplete cleanup
+retains private recovery records and fails the test. Only nonsecret outcome
+booleans/counts are retained for review.
+
+The earlier PR #27 CI failure occurred in the paired ROOT/passkey activation
+path; its underlying cause remains unknown. This test-only migration preserves
+isolation checks while removing that repeated authentication setup. The
+default full suite still has one global ROOT/passkey bootstrap for legacy
+business recipes. Neither this isolation check nor the single Promo flow is a
+full preauthenticated-suite conversion, staging acceptance, shared-target
+concurrency proof or recovery acceptance. Original timeout/retry policy and
+application authentication guards are unchanged.
+
 ## Readiness and authority
 
 Fixture startup waits concurrently for real HTTP responses from Core, Identity
