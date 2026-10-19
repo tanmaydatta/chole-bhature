@@ -1,12 +1,12 @@
 # Product Follow-up Register
 
-**Updated:** 2026-09-25
+**Updated:** 2026-10-19
 
 **Status:** Active
 
 **Notion mirror:** https://app.notion.com/p/Product-Follow-up-Register-3a6e5c7c2b8e81cebe96de50b64f3bbd
 
-**Mirror state:** Repository updated for GAP-030/031 on 2026-09-25; Notion synchronization pending.
+**Mirror state:** Repository updated for GAP-023 on 2026-10-19 and GAP-030/031 on 2026-09-25; Notion synchronization pending.
 
 **Evidence source:** [Staging activation run](../testing/staging-activation-run-2026-07-21.md)
 
@@ -40,7 +40,7 @@ recorded reason.
 | `GAP-013` | Deferred by design | Only one editable draft exists for a logical Promo. | Keep one draft for the first client. Revisit only if parallel proposal/approval workflows justify branching semantics. |
 | `GAP-014` | Done | A new Promo silently started with the complete sample configuration before the user chose the example action. | Task 8 now starts from an intentional minimal draft and loads the full example only through the explicit **Use complete authoring example** action. Dashboard regression coverage passes locally, and staging verified both the blank/minimal start and explicit example loading. |
 | `GAP-015` | Open | `productRef` is an opaque technical value with no merchant catalog lookup, mapping help, or integration-specific validation. | Preserve the canonical opaque reference, but add connector/catalog mapping and a searchable selector once an integration is chosen. |
-| `GAP-023` | Open | Percentage-discount authoring exposes integer basis points, so a client must enter `2000` instead of `20%`. | Present a percentage control with clear bounds and decimal precision, convert to exact basis points at the UI/contract boundary, and continue using integer basis points internally to avoid floating-point money errors. Do not conflate basis points with Loyalty points. |
+| `GAP-023` | Implemented and locally verified; merge/deployment/staging verification pending | Percentage-discount authoring historically exposed integer basis points, requiring `2000` instead of `20%`. | The live order, line-item, and fallback editor now accepts Discount percentage values from 0.01 through 100 with at most two decimal places and exact text-to-integer conversion (`20` → `2000`, `12.34` → `1234`). Invalid input remains visible with an accessible field error and blocks both Save and Retry save. Local build/lint, 2,306 Vitest cases plus nine Node tests, and the existing preauthenticated capped-Promo browser case pass, including percentage editing/reload, cap persistence and publication; all four owned resources were cleaned with zero Product/Auth rows. Contracts retain integer basis points; monetary caps and Loyalty points are unchanged. This is local implementation evidence, not deployment or staging acceptance. |
 | `GAP-025` | Done | Promo detail did not show whether the Promo was automatic or code-triggered, and an operator could not review its configured code before publishing. | Task 8 now shows application mode, authorized code visibility, stacking, priority, active/draft revision identity, and explicit publication review. Dashboard and operator-contract regressions pass locally; staging verified Automatic/Code trigger display plus retained priority and code before publication. Business codes remain permission-protected tenant configuration, not credential secrets. |
 
 ## Approved follow-on designs and deferred modules

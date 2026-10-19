@@ -30,6 +30,11 @@ test('browser authors and persists the exact capped Promo, then publishes it', a
       const page = await context.newPage();
       await page.goto(`${ctx.target.operatorOrigin}/promo/${encodeURIComponent(id)}/edit`);
       await expect(page.getByRole('heading', { name: 'Edit Promo draft' })).toBeVisible();
+      const percentage = page.getByLabel('Discount percentage');
+      await expect(percentage).toHaveValue('25');
+      await percentage.fill('12.34');
+      await expect(percentage).toHaveValue('12.34');
+      await percentage.fill('25');
       const maximum = page.getByLabel('Maximum discount minor units');
       await expect(maximum).toHaveValue('1500');
       await maximum.fill('1600');
@@ -38,6 +43,13 @@ test('browser authors and persists the exact capped Promo, then publishes it', a
       await expect(page).toHaveURL(new RegExp(`/promo/${encodeURIComponent(id)}$`, 'u'));
       await expect(page.getByText('25% off order (maximum GBP 15.00)')).toBeVisible();
       await page.reload();
+      await expect(page.getByText('25% off order (maximum GBP 15.00)')).toBeVisible();
+      await page.getByRole('link', { name: 'Edit Promo' }).click();
+      await expect(page.getByLabel('Discount percentage')).toHaveValue('25');
+      await expect(page.getByLabel('Maximum discount minor units')).toHaveValue('1500');
+      await page.reload();
+      await expect(page.getByLabel('Discount percentage')).toHaveValue('25');
+      await page.getByRole('button', { name: 'Save draft' }).click();
       await expect(page.getByText('25% off order (maximum GBP 15.00)')).toBeVisible();
       const persisted = OperatorProgramViewSchema.parse(await ctx.operator.request(
         'GET', `/operator/v1/programs/${encodeURIComponent(id)}`,

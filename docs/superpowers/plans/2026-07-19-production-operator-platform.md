@@ -341,9 +341,13 @@ actual production integration redemption is unchanged. This supplies the CLI
 marker only, not Task10 commit controls. Build/lint, 1,864 Vitest cases plus nine
 Node tests and all ten headless local Playwright cases pass (26.3 seconds),
 including real D1 accepted/retry/usage-cap exhaustion/repricing and zero owned
-rows. ROOT non-author review is complete; commit/push/PR publication is separately
-approved. PR CI and merge remain pending; deployment and Notion sync are not
-authorized by this publication approval.
+rows. ROOT non-author review is complete. PR #25 passed CI and merged into
+`dev` at `13d7259b6d2a9ffa9df2990e10b4d13c0ee51c31`. The subsequent bounded
+preauthenticated local Promo/control checkpoint merged through PR #26 at
+`04bf1cf5f9eb3a44a2a81340c9f135ab33b72b1d`; its preauthenticated acceptance
+covers one Promo flow, not conversion of the full E2E suite. CLI/capabilities
+staging deployment and Notion sync remain pending and were not authorized by
+the publication approval. These merges do not close full Task 10 or Gate D.
 The [checkout how-to](../../integration/integration-simulator.md) records preseeded
 schema/Promo/customer requirements, merchandise authority and safe diagnostics.
 

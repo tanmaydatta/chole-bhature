@@ -1,6 +1,6 @@
 # Product Current State and Roadmap
 
-**Updated:** 2026-10-14
+**Updated:** 2026-10-19
 
 **Status:** Active — Gate C complete; GAP-030/031 and the E2E platform are
 merged on `dev`. The separate Secrets Store cutover is deployed and verified
@@ -32,7 +32,22 @@ receipt are distinct from that historical whole-page mirror checkpoint.
 Release publication synchronizes scoped current-status evidence, not a
 wholesale replacement of historical pages.
 
-**2026-10-14 local Task11 slice:** The public-contract
+**2026-10-19 local product slice — GAP-023:** The live Promo editor now accepts
+human percentages for order, line-item, and fallback discounts. Values from
+0.01 through 100 with at most two decimal places convert exactly to integer
+basis points; invalid text stays visible with accessible guidance and blocks
+Save and Retry save. Existing monetary caps and condition authoring are
+preserved. Build/lint, 2,306 Vitest cases plus nine Node tests, and the existing
+preauthenticated capped-Promo browser case pass locally. The dashboard includes
+288 tests and 40 live journey cases. The browser proof checks percentage edits
+and edit/reload persistence alongside the exact GBP cap and active revision 1;
+all four owned resources were cleaned with zero Product/Auth rows. This slice
+is a local branch implementation on the PR #26 baseline below; merge,
+deployment, staging verification and Notion sync
+remain pending. Next, review and publish this bounded correction, then select
+the next client-readiness gap without expanding Task 10 or Gate D.
+
+**2026-10-19 Task11 baseline:** The public-contract
 [checkout CLI simulator](../integration/integration-simulator.md) is implemented
 from docs PR#24 merge `edda1577b4887128b687053bab3ebc7ce93f9fe2`.
 Its separately approved authenticated read-only capabilities marker derives
@@ -40,8 +55,13 @@ simulator permission only from explicit server local/staging configuration.
 Focused tests, build/lint, 1,864 Vitest cases plus nine Node tests and all ten
 headless local Playwright cases pass (26.3 seconds). The real managed-local D1
 flow proves accepted/retry/exhaustion/repricing and zero owned rows. ROOT
-non-author review is complete; commit/push/PR publication is separately approved.
-PR CI, merge, CLI/capabilities staging deployment, Notion sync and full
+non-author review is complete. [PR #25](https://github.com/tanmaydatta/chole-bhature/pull/25)
+merged into `dev` at `13d7259b6d2a9ffa9df2990e10b4d13c0ee51c31` after PR CI.
+[PR #26](https://github.com/tanmaydatta/chole-bhature/pull/26) then merged the
+bounded preauthenticated local Promo/control checkpoint at
+`04bf1cf5f9eb3a44a2a81340c9f135ab33b72b1d`.
+Its preauthenticated proof covers one Promo browser flow; it is not a full-suite
+conversion. CLI/capabilities staging deployment, Notion sync and full
 Task10/GateD acceptance remain pending and are not claimed.
 
 The dated approved per-PR Cloud E2E checkpoint work was implemented on
@@ -96,14 +116,14 @@ deferred issue remains in the
 | Question | Current answer |
 |---|---|
 | Overall phase | Post-Gate-C client readiness; evaluate-only Playground merged and verified in staging |
-| Current activity | Task11 local verification and ROOT non-author review are complete; commit/push/PR publication is approved. E2E rewrite/cloud provisioning remain parked. |
-| Current repository baseline | Freshly verified `dev` at docs PR#24 merge `edda1577b4887128b687053bab3ebc7ce93f9fe2` on2026-10-14; Task11 starts from that exact tree. Playground source remains PR#23 merge1d25. |
-| Current product-code baseline | PR #23 merge commit `1d25ef36d06fb7b44b288bd85c3a92d61999983d` |
+| Current activity | GAP-023 percentage authoring is implemented and locally verified on a feature branch, awaiting publication. Task 11 is merged; E2E rewrite/cloud provisioning remain parked. |
+| Current repository baseline | Freshly fetched `dev` at PR #26 merge `04bf1cf5f9eb3a44a2a81340c9f135ab33b72b1d` on 2026-10-19; this is the preauthenticated local Promo/control checkpoint and GAP-023 branch base. |
+| Current product-code baseline | Public-contract CLI/capabilities merged through PR #25 at `13d7259b6d2a9ffa9df2990e10b4d13c0ee51c31`; GAP-023 remains local. The deployed Playground remains the dated PR #23 staging rollout below. |
 | Local feature state | Authoritative merchandise pricing and the E2E platform are merged, with the dated staging evidence retained. Cloud E2E foundation/packaging/diagnostics/CI admission/local bootstrap are locally accepted; fresh correction verification passes 337 cloud, 1,683 Vitest cases plus nine separate Node script tests and five local Playwright cases (23.4 s), build/lint. Public Worker writes still refuse before transport. |
 | Current deployment state | API `565fa15a-0eed-4af9-97a9-a7da821b75e8` and Operator `21227fa1-725f-4f97-9286-58a092c5526e` receive 100% staging traffic after the 2026-10-14 rollout. Identity, migrations and secrets were unchanged. |
 | Current release decision | Evaluate-only staging verification passed: 7 headless cases, 2 intended local-only skips, zero failures; eight owned runs fully disposed. No production/demo deployment or full Task 10/Gate D acceptance. |
 | Gate C finish line | Complete — all mandatory clean-break selection, redemption, tenant-isolation, concurrency, and observability cases passed |
-| Next plan work | Publish the frozen, reviewed Task11 slice for PR CI and review. Merge, full Task10/GateD and CLI staging acceptance remain open. |
+| Next plan work | Review and publish the locally verified GAP-023 branch, then choose the next client-readiness gap. CLI/capabilities staging deployment and full Task 10/Gate D acceptance remain open. |
 
 ## Source-of-truth map
 
@@ -520,7 +540,8 @@ After the approved Promo financial corrections above, continue in this order:
 1. Task 10 — the evaluate-only Playground slice is merged and verified in staging;
    broader historical Task 10 scope remains open, with no redemption controls
    authorized by this slice.
-2. Task 11 — public-contract CLI simulator.
+2. Task 11 — public-contract CLI simulator merged through PR #25; staging
+   deployment and the full Gate D comparison remain pending.
 3. Task 12 — cross-service audit, safe observability, and retention.
 4. Task 13 — isolated deployments, CI/CD, smoke tests, and operator
    documentation.
@@ -546,7 +567,7 @@ must be updated whenever a finding changes state. It currently preserves:
 - schema deprecation, stale impact state, and lifecycle presentation;
 - Promo active-vs-draft full comparison, revision history/rollback, deliberate
   single-draft semantics, and catalog mapping for `productRef`;
-- client-facing percentage entry instead of exposing internal basis points;
+- deployment/staging verification of GAP-023 client-facing percentage entry;
 - the complete approved free-shipping financial-authority design;
 - future event ingestion/mapping and event-triggered Loyalty, Referral, and
   Affiliate behavior;

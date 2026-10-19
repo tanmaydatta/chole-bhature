@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
@@ -59,12 +59,12 @@ function error(status: number, code: string, message: string, retryable = false)
   return response({ error: { code, message, retryable, correlationId: 'corr-live-error' } }, status);
 }
 
-function programConfiguration(revisionName = 'Gold launch', capped = false) {
+function programConfiguration(revisionName = 'Gold launch', capped = false, firstRuleId = 'rule-one') {
   return {
     id: 'gold-launch', type: 'promo', name: revisionName, status: 'draft',
     eligibility: { match: 'ALL', conditions: [] },
     rewardRules: [{
-      id: 'rule-one', name: 'Large basket',
+      id: firstRuleId, name: 'Large basket',
       conditions: { match: 'ALL', conditions: [{
         id: 'large-basket', variable: 'cart.subtotal', operator: 'gte', value: 10_000,
       }] },
@@ -175,7 +175,9 @@ function installLiveBff(initialProgram = programConfiguration()) {
         program = body;
         lifecycle = {
           programRef: program.id, status: lifecycle.status,
-          activeRevision: lifecycle.activeRevision, draftRevision: 2, updatedAt: now,
+          activeRevision: lifecycle.activeRevision,
+          draftRevision: lifecycle.activeRevision === undefined ? 1 : lifecycle.activeRevision + 1,
+          updatedAt: now,
         };
         return response(operatorView());
       }
@@ -238,6 +240,107 @@ afterEach(() => {
 });
 
 describe('live operator authoring journey', () => {
+  test('loads and saves percentages for opaque prototype-named reward IDs', async () => {
+    const server = installLiveBff(programConfiguration('Gold launch', false, 'constructor'));
+    renderApp('/promo/gold-launch/edit');
+    const percentage = await screen.findByLabelText('Discount percentage');
+    expect(percentage).toHaveValue('20');
+    fireEvent.change(percentage, { target: { value: '12.34' } });
+    await userEvent.click(screen.getByRole('button', { name: 'Save draft' }));
+    await screen.findByRole('heading', { name: 'Gold launch' });
+    expect(server.calls.find(call => call.method === 'PUT')?.body).toMatchObject({
+      rewardRules: [{ id: 'constructor', reward: { basisPoints: 1234 } }, {}],
+    });
+  });
+
+  test.each([
+    ['20', 2000], ['12.34', 1234], ['0.29', 29], ['0.01', 1], ['100', 10000],
+  ])('submits percentage %s as exact integer basis points %s and reloads it', async (text, expected) => {
+    const server = installLiveBff(programConfiguration('Gold launch', true));
+    renderApp('/promo/gold-launch/edit');
+    const percentage = await screen.findByLabelText('Discount percentage');
+    expect(percentage).toHaveValue('20');
+    await userEvent.clear(percentage);
+    await userEvent.type(percentage, text);
+    await userEvent.click(screen.getByRole('button', { name: 'Save draft' }));
+    await screen.findByRole('heading', { name: 'Gold launch' });
+    expect(server.calls.find(call => call.method === 'PUT')?.body).toMatchObject({
+      rewardRules: [{ reward: { basisPoints: expected,
+        maximumDiscountAmount: { currency: 'GBP', minorUnits: 1500 } } }, {}],
+    });
+    cleanup();
+    renderApp('/promo/gold-launch/edit');
+    expect(await screen.findByLabelText('Discount percentage')).toHaveValue(text);
+  });
+
+  test.each(['', '0', '-1', '100.01', '101', '1.234', '0.001', 'abc', 'NaN', 'Infinity', '1e1', '1,5']) (
+    'preserves invalid percentage %j, blocks submission, and recovers after correction', async text => {
+      const server = installLiveBff();
+      renderApp('/promo/gold-launch/edit');
+      const percentage = await screen.findByLabelText('Discount percentage');
+      fireEvent.change(percentage, { target: { value: text } });
+      expect(percentage).toHaveValue(text);
+      expect(percentage).toHaveAttribute('aria-invalid', 'true');
+      expect(percentage).toHaveAccessibleDescription(/0\.01.*100.*two decimal places/i);
+      await userEvent.click(screen.getByRole('button', { name: 'Save draft' }));
+      expect(server.calls.filter(call => call.method === 'PUT')).toHaveLength(0);
+      fireEvent.change(percentage, { target: { value: '1.' } });
+      expect(percentage).toHaveValue('1.');
+      fireEvent.change(percentage, { target: { value: '12.34' } });
+      expect(percentage).toHaveAttribute('aria-invalid', 'false');
+      await userEvent.click(screen.getByRole('button', { name: 'Save draft' }));
+      await screen.findByRole('heading', { name: 'Gold launch' });
+      expect(server.calls.find(call => call.method === 'PUT')?.body).toMatchObject({
+        rewardRules: [{ reward: { basisPoints: 1234 } }, {}],
+      });
+    },
+  );
+
+  test('keeps percentage text with moved rules, shares exact conversion with line and fallback rewards, and clears removed invalidity', async () => {
+    const server = installLiveBff();
+    renderApp('/promo/gold-launch/edit');
+    const percentage = await screen.findByLabelText('Discount percentage');
+    fireEvent.change(percentage, { target: { value: '1.' } });
+    await userEvent.click(screen.getByRole('button', { name: 'Move reward rule 1 down' }));
+    expect(screen.getByLabelText('Discount percentage')).toHaveValue('1.');
+    const rules = screen.getAllByLabelText('Reward type');
+    await userEvent.selectOptions(rules[0]!, 'line_item_discount_percent');
+    const fields = screen.getAllByLabelText('Discount percentage');
+    fireEvent.change(fields[0]!, { target: { value: '0.29' } });
+    fireEvent.change(fields[1]!, { target: { value: '' } });
+    const invalidRule = fields[1]!.closest('fieldset')!;
+    await userEvent.click(within(invalidRule).getByRole('button', { name: 'Remove rule' }));
+    await userEvent.selectOptions(screen.getByLabelText('Fallback type'), 'order_discount_percent');
+    fireEvent.change(screen.getAllByLabelText('Discount percentage')[1]!, { target: { value: '12.34' } });
+    await userEvent.click(screen.getByRole('button', { name: 'Save draft' }));
+    await screen.findByRole('heading', { name: 'Gold launch' });
+    expect(server.calls.find(call => call.method === 'PUT')?.body).toMatchObject({
+      rewardRules: [{ reward: { type: 'line_item_discount', basisPoints: 29, productRef: 'product' } }],
+      fallbackReward: { reward: { basisPoints: 1234 } },
+    });
+  });
+
+  test('clears invalid percentage state when changing reward kind, removing fallback, or loading an example', async () => {
+    installLiveBff();
+    renderApp('/promo/new');
+    await userEvent.type(await screen.findByLabelText('External reference'), 'gold-launch');
+    await userEvent.type(screen.getByLabelText('Promo name'), 'Gold launch');
+    await userEvent.click(screen.getByRole('button', { name: 'Use complete authoring example' }));
+    fireEvent.change(screen.getByLabelText('Discount percentage'), { target: { value: '' } });
+    await userEvent.selectOptions(screen.getAllByLabelText('Reward type')[0]!, 'order_discount_fixed');
+    expect(screen.getByRole('button', { name: 'Save draft' })).toBeEnabled();
+    await userEvent.selectOptions(screen.getAllByLabelText('Reward type')[0]!, 'order_discount_percent');
+    expect(screen.getByLabelText('Discount percentage')).toHaveValue('10');
+    await userEvent.selectOptions(screen.getByLabelText('Fallback type'), 'line_item_discount_percent');
+    fireEvent.change(screen.getAllByLabelText('Discount percentage')[1]!, { target: { value: '' } });
+    await userEvent.click(screen.getByRole('button', { name: 'Remove fallback' }));
+    expect(screen.getByRole('button', { name: 'Save draft' })).toBeEnabled();
+    fireEvent.change(screen.getByLabelText('Discount percentage'), { target: { value: '' } });
+    await userEvent.click(screen.getByRole('button', { name: 'Use complete authoring example' }));
+    expect(screen.getByLabelText('Discount percentage')).toHaveValue('20');
+    expect(screen.getByRole('button', { name: 'Save draft' })).toBeEnabled();
+  });
+
   test('shows the exact monetary maximum on capped percentage rewards', async () => {
     installLiveBff(programConfiguration('Gold launch', true));
     renderApp('/promo/gold-launch');
@@ -820,9 +923,15 @@ describe('live operator authoring journey', () => {
     expect(puts).toHaveLength(2);
     expect(puts[0]).toMatchObject({ name: 'Unsaved authored Promo' });
     expect(puts[1]).toMatchObject({ name: 'Unsaved authored Promo' });
+    fireEvent.change(screen.getByLabelText('Discount percentage'), { target: { value: '' } });
+    await userEvent.click(screen.getByRole('button', { name: 'Retry save' }));
+    expect(puts).toHaveLength(2);
     await userEvent.click(screen.getByRole('button', { name: 'Reload server version for comparison' }));
     expect(await screen.findByText('Server Promo', { selector: 'code' })).toBeInTheDocument();
     expect(screen.getByLabelText('Promo name')).toHaveValue('Unsaved authored Promo');
+    await userEvent.click(screen.getByRole('button', { name: 'Replace authored draft with server version' }));
+    expect(screen.getByLabelText('Discount percentage')).toHaveValue('20');
+    expect(screen.getByRole('button', { name: 'Save draft' })).toBeEnabled();
   });
 
   test('compares a create-mode conflict by the submitted external reference without replacing the draft', async () => {
