@@ -1,18 +1,47 @@
-# Incentives Dashboard — Demo
+# Incentives Dashboard
 
-A static, front-end-only demo of an incentives and promotions management dashboard, built to validate customer demand. There is no backend and no authentication. All program/mock data is in-memory and resets on page reload; the only thing persisted is the light/dark theme preference (stored in `localStorage`).
+The authenticated operator dashboard uses the same-origin Operator BFF for
+live tenant workflows. Promo authoring, Variables, Customers, administration
+and the Evaluation Playground use server data. Future-module and analytics
+demo surfaces retain in-memory data that resets on reload; the theme
+preference is stored in `localStorage`.
 
 ## Quick start
 
 ```bash
-cd demo
-npm install
-npm run dev        # Vite dev server (http://localhost:5173)
-npm run test       # Vitest (single run)
-npm run build      # tsc -b && vite build (production bundle)
+pnpm install --frozen-lockfile
+pnpm build
+pnpm dev:local                           # ordinary local Workers and operator assets
+pnpm --filter @incentives/dashboard test # dashboard Vitest
+CI=true E2E_BROWSER_CHANNEL=chromium pnpm e2e:local # disposable local API/browser suite
 ```
 
-`npm run preview` serves the production build locally after `npm run build`.
+Run the commands above from the repository root with the pinned Node/pnpm and
+browser installed. A standalone Vite preview serves assets but does not supply
+the authenticated BFF.
+
+## Evaluation Playground
+
+Open **Evaluation Playground** in the sidebar or `/playground` after signing
+in with `evaluations:run` and selecting a client when using ROOT access. A
+published schema is required. Enter stable line/product references, quantity,
+integer unit-price minor units and currency, plus optional customer reference
+and Promo codes. Published context/cart/line fields use typed inputs; stored
+customer attributes are resolved by Core.
+
+The result shows authoritative decisions and revisions, code-specific reasons,
+per-Promo/per-line allocations, total discount, discounted merchandise
+subtotal, versions and expiry. Input changes clear the result. Evaluation
+persists a signed snapshot without redeeming or spending budgets/counters.
+Totals exclude tax, shipping charges and payment totals; free shipping has no
+merchandise saving. Follow [Evaluate a basket in the Playground](../../docs/integration/evaluation-playground.md)
+for prerequisites and an exact-price example.
+
+## Original demo surfaces
+
+The following retained descriptions concern the original demo components.
+The live Promo, Variables and Customer routes use the authenticated server
+workflows above rather than the original in-memory editors.
 
 ## The four program types
 
@@ -37,13 +66,14 @@ npm run build      # tsc -b && vite build (production bundle)
 ## Project layout
 
 ```
-demo/src/
+apps/dashboard/src/
   pages/
     Overview.tsx             # cross-program stat summary
     Analytics.tsx            # shallow chart placeholders
     _ProgramListPage.tsx     # shared list-page shell
     ProgramDetail.tsx        # shared detail page (all program types; affiliate: Codes panel)
     promo/                   # PromoList, PromoCreate
+    playground/              # live evaluate-only page and canonical basket builder
     affiliate/               # AffiliateList, AffiliateCreate
     referral/                # ReferralList, ReferralCreate
     loyalty/                 # LoyaltyList, LoyaltyCreate
@@ -77,7 +107,7 @@ demo/src/
     ThemeProvider.tsx  # light / dark via CSS variables
 ```
 
-Mock data lives in `demo/src/data/` (programs, variables, events). The Zustand store in `store.ts` initialises from those arrays and holds all runtime state.
+Mock data lives in `apps/dashboard/src/data/` (programs, variables, events). The demo Zustand store in `store.ts` initialises from those arrays and holds demo runtime state.
 
 ## Tangible interactions that actually work
 
@@ -108,17 +138,17 @@ As with all demo data, new entries and edits are held in-memory and reset on pag
 
 Status and usage values are generated client-side for illustration purposes and are not persisted.
 
-## Non-goals (explicit)
+## Original demo non-goals
 
-This demo does **not** include:
+The retained demo components do **not** supply:
 
 - A real promotions engine or evaluation API
-- Authentication or multi-tenant isolation
 - Real code redemption or wallet debit
 - Persistence of program/mock data (it is in-memory and resets on reload; only the theme preference is persisted, via `localStorage`)
 - Real analytics (the Analytics page shows placeholder charts)
 
-These are intentionally out of scope so the demo stays lightweight and deployable without any backend.
+Those capabilities come from the live Operator/Core/Identity workflows where
+implemented. Future-module runtimes and real analytics remain deferred.
 
 ## Design docs
 

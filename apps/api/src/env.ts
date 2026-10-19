@@ -3,7 +3,7 @@ import type { AtomicRedemptionCoordinator } from './redemption/atomic-redemption
 
 export interface Env {
   DB: D1Database;
-  APP_ENV?: 'local' | 'staging' | 'ci';
+  APP_ENV?: 'local' | 'staging' | 'ci' | 'production';
   CI_STACK_KEY?: string;
   PUBLIC_APP_ORIGIN?: string;
   E2E_LOCAL_TEST_MODE?: string;

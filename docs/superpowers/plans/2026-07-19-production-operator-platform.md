@@ -2,8 +2,9 @@
 
 **Status:** In progress — Tasks 1–9 and Gates A/B/C are complete. The
 clean-break Promo correction is merged, migrated, deployed, and fully verified
-in staging. The Evaluation Playground remains deferred until the approved
-Promo pricing/cap correction is complete.
+in staging. The evaluate-only Evaluation Playground slice is implemented
+and verified locally and in staging as of 2026-10-14, with independent ROOT
+review complete. Full Task 10 and Gate D remain open.
 
 **Notion parent:** [Plans](https://app.notion.com/p/Plans-390e5c7c2b8e8165b7f7d77392eab088)
 
@@ -279,6 +280,41 @@ until a client requires it.
 
 ### Task 10: Build the Evaluation Playground
 
+**2026-10-14 bounded implementation:** The newer approval delivers only
+evaluation at `/playground` through the normal permission-checked private
+Operator BFF/Core RPC and existing evaluation service. It supports
+anonymous/stored-customer references, published typed context/cart/line fields,
+automatic/coded decisions, reasons/revisions/expiry and exact merchandise
+allocations. Input edits invalidate results and old asynchronous responses.
+Evaluation persists its normal signed snapshot without redemption or spending.
+Focused dashboard/BFF/Core tests and real managed-local browser scenarios
+cover this slice; browser scenarios use disposable ROOT and normal client
+selection, while member authorization and persistence are checked at service
+boundaries. The E2E rewrite remains parked. See
+[Evaluate a basket in the Playground](../../integration/evaluation-playground.md).
+
+The reviewed local checkpoint passed build/lint, 1,805 Vitest cases plus nine
+Node tests, and all nine headless local Playwright cases in 49.3 seconds. The
+2026-10-14 publication approval covers the feature branch/PR into `dev` and
+scoped status synchronization to the existing Notion plan, roadmap and Plans
+index. Later explicit approvals merged [PR #23](https://github.com/tanmaydatta/chole-bhature/pull/23)
+into `dev` at `1d25ef36d06fb7b44b288bd85c3a92d61999983d`, then deployed only
+API and Operator Web/dashboard to existing staging. The full headless suite
+passed seven cases, including all three Playground scenarios, with two
+intended local-only skips and zero failures (63.450 seconds command time).
+All eight owned runs were disposed, with 53 cleaned resources and zero
+Product/Auth run-owned rows. Identity, migrations, secrets, production and
+the demo were unchanged. Exact versions and evidence limits are in the
+[dated staging verification](../../testing/evaluation-playground-staging-2026-10-14.md).
+
+This approval supersedes the historical evaluate/commit implementation steps
+below for this slice: no commit controls, environment-capability route,
+credential template or simulator CLI is part of the product slice. Staging
+deployment required the later separate approval above. The original unchecked
+steps remain historical broader scope, not a
+claim of Task 10 completion. Checkpoint commit/push, feature PR and scoped
+Notion status publication are separately approved as described above.
+
 **Files:**
 - Create: `apps/dashboard/src/pages/playground/EvaluationPlayground.tsx`
 - Create: `apps/dashboard/src/pages/playground/request-builder.ts`
@@ -297,6 +333,20 @@ until a client requires it.
 
 ### Task 11: Build the public-contract CLI simulator
 
+**2026-10-14 bounded implementation:** Public-contract CLI and the separately
+approved canonical secret/schema:read runtime-capabilities prerequisite are
+implemented locally from docs PR#24 merge `edda1577b4887128b687053bab3ebc7ce93f9fe2`.
+Only explicit server local/staging configuration allows simulator mutations;
+actual production integration redemption is unchanged. This supplies the CLI
+marker only, not Task10 commit controls. Build/lint, 1,864 Vitest cases plus nine
+Node tests and all ten headless local Playwright cases pass (26.3 seconds),
+including real D1 accepted/retry/usage-cap exhaustion/repricing and zero owned
+rows. ROOT non-author review is complete; commit/push/PR publication is separately
+approved. PR CI and merge remain pending; deployment and Notion sync are not
+authorized by this publication approval.
+The [checkout how-to](../../integration/integration-simulator.md) records preseeded
+schema/Promo/customer requirements, merchandise authority and safe diagnostics.
+
 **Files:**
 - Create: `apps/integration-simulator/package.json`
 - Create: `apps/integration-simulator/src/client.ts`
@@ -308,13 +358,16 @@ until a client requires it.
 **Interfaces:**
 - Produces `runScenario(config)` and `pnpm --filter @incentives/integration-simulator start`; imports contracts/connector-kit only.
 
-- [ ] Write HTTP-boundary tests for published-fixture validation, customer update, evaluation/mapping, redeem-before-capture, retry, exhaustion/reprice, sanitized trace, and production refusal.
-- [ ] Run simulator tests; expect missing implementation.
-- [ ] Implement fake native `shopper_id`/`total_pence`/`sku` mapping and parse canonical error responses, including `409 EXHAUSTED`.
-- [ ] Run simulator and connector conformance tests plus a real local-D1 flow; expect exit 0.
-- [ ] Commit with `git commit -m "feat: add canonical integration simulator"`.
+- [x] Write HTTP-boundary tests for published-fixture validation, customer update, evaluation/mapping, redeem-before-capture, retry, exhaustion/reprice, sanitized trace, and production refusal.
+- [x] Run simulator tests; expect missing implementation.
+- [x] Implement fake native `shopper_id`/`total_pence`/`sku` mapping and parse canonical error responses, including HTTP409 and the existing exact exhaustion-code family (generic `EXHAUSTED`, usage/budget/per-customer variants).
+- [x] Run simulator and connector conformance tests plus a real local-D1 flow; expect exit 0.
+- [x] Commit with `git commit -m "feat: add canonical integration simulator"`.
 
 **Gate D review:** Prove the dashboard and CLI agree on canonical requests/decisions and that neither simulator can redeem in production.
+
+Task11 local evidence does not complete full Task10/GateD or staging/production
+acceptance. Playground remains evaluate-only; no simulator commit BFF is added.
 
 ---
 

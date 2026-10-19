@@ -27,6 +27,7 @@ import { credentialRoutes } from './routes/credentials.js';
 import { customerRoutes } from './routes/customers.js';
 import { platformRoutes } from './routes/platform.js';
 import { programRoutes } from './routes/programs.js';
+import { playgroundRoutes } from './routes/playground.js';
 import { schemaRoutes } from './routes/schemas.js';
 import { teamRoutes } from './routes/team.js';
 import type { OperatorWebEnv, ProtectedRoute } from './routes/types.js';
@@ -50,6 +51,7 @@ const protectedRoutes = [
   ...schemaRoutes,
   ...customerRoutes,
   ...programRoutes,
+  ...playgroundRoutes,
 ] as const;
 
 function correlationId(request: Request): string {

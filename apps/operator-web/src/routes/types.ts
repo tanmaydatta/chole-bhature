@@ -1,6 +1,7 @@
 import type {
   ApiCredentialCreateInput,
   CustomerPatchRequest,
+  EvaluationRequest,
   IdentityAcceptInvitationRequest,
   IdentityChangeMemberRoleRequest,
   IdentityCreateInvitationRequest,
@@ -59,6 +60,7 @@ export interface IdentityRpcService {
 }
 
 export interface CoreRpcService {
+  evaluate(context: OperatorCallContext, input: EvaluationRequest): Promise<unknown>;
   createCredential(context: OperatorCallContext, input: ApiCredentialCreateInput): Promise<unknown>;
   listCredentials(context: OperatorCallContext): Promise<unknown>;
   revokeCredential(context: OperatorCallContext, credentialId: string): Promise<unknown>;

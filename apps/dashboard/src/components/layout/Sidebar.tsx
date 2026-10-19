@@ -13,6 +13,7 @@ const groups: { label?: string; items: NavItem[] }[] = [
     label: 'Incentives',
     items: [
       { label: 'Promo Codes', to: '/promo', icon: '◷', color: 'var(--promo)', permission: 'programs:read', merchantRequired: true },
+      { label: 'Evaluation Playground', to: '/playground', icon: '▷', permission: 'evaluations:run', merchantRequired: true },
       { label: 'Affiliates', to: '/affiliates', icon: '⊞', color: 'var(--aff)', permission: 'programs:read', merchantRequired: true },
       { label: 'Referrals', to: '/referrals', icon: '⇄', color: 'var(--ref)', permission: 'programs:read', merchantRequired: true },
       { label: 'Loyalty', to: '/loyalty', icon: '★', color: 'var(--loy)', permission: 'programs:read', merchantRequired: true },

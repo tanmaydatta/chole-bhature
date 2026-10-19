@@ -36,7 +36,7 @@ pnpm e2e:local:headed
 ```
 
 This opens system Chrome so you can watch the Promo draft, save, refresh, detail,
-and publish flow. `pnpm e2e:local` runs all six API/browser tests headlessly
+and publish flow and the evaluate-only Playground scenarios. `pnpm e2e:local` runs all ten API/browser tests headlessly
 with two workers. No pre-existing root session, ports, `.dev.vars`, or local D1
 state is needed: Playwright builds the dashboard/dependencies once, allocates
 unique loopback ports and Worker names, migrates two private temporary D1
@@ -46,6 +46,15 @@ temporary files/processes. System Chrome must be installed; set
 `E2E_BROWSER_CHANNEL=chromium` on the underlying Playwright command if you
 have installed its pinned browser instead. The headed script intentionally
 selects the browser project; the headless script runs all projects.
+
+The local-only [checkout simulator case](../../docs/integration/integration-simulator.md)
+uses existing run-owned ROOT/operator recipes to publish two capped coded
+Promos, schema and customer, then calls CLI runtime through public merchant
+credentials. It proves preflight-before-update, versions, exact allocations,
+accepted/retry identity, actual HTTP409 usage exhaustion, repricing, one fake
+capture and zero owned Product/Auth rows after disposal. No harness settings,
+authority/controller changes or remote simulator writes are introduced. The
+CLI/capabilities source is locally verified, not deployed to staging.
 
 The local passkey bootstrap helper accepts only exact HTTP loopback origins
 with an explicit port. Before saving state it checks the server session against
@@ -197,6 +206,56 @@ groundwork. No cloud login or runtime cloud command is supplied. See the
 [dated local evidence](../../docs/testing/per-pr-cloud-e2e.md#local-candidate-and-access-routing-groundwork-2026-10-08)
 and remaining deployment gates before extending these helpers.
 
+## Staging outcome — 2026-10-14
+
+The separately approved API/Operator rollout from PR #23 merge
+`1d25ef36d06fb7b44b288bd85c3a92d61999983d` passed the full headless staging
+suite: **7 passed, 2 intended local-only skipped, 0 failed**, two workers,
+1.0 minute (63.450 seconds command time), no reported retry/flake. All three
+Playground cases passed. Eight run-owned tenants were disposed, all 53 recorded
+resources were cleaned and final protected inventories confirmed zero
+Product/Auth rows. Identity, migrations, secrets, production and the demo were
+unchanged. See the [dated staging verification](../../docs/testing/evaluation-playground-staging-2026-10-14.md)
+for deployed versions, runtime transformations and evidence boundaries.
+
+```sh
+CI=true E2E_BROWSER_CHANNEL=chromium \
+  E2E_OPERATOR_STORAGE_STATE=/absolute/private/current-root-state.json \
+  pnpm e2e:staging
+```
+
+This uses an existing authorized owner session and performs the protected
+prewrite handshake. It does not authorize a future deployment or login bypass.
+`local-stack.api.spec.ts` and `cloud-access.browser.spec.ts` remain local-only;
+their staging skips do not skip product coverage.
+
+## Check the evaluate-only Playground
+
+The three Playground browser scenarios use real local/staging Workers, canonical
+responses, fresh ROOT browser contexts and normal merchant selection. They
+verify anonymous/stored-customer evaluation, required typed live fields,
+published revision authority, exact capped and per-line stacked discounts,
+input-change invalidation, code diagnostics, empty selection and free
+shipping's zero merchandise saving. Every scenario checks run disposal and
+zero Product/Auth rows, including after assertion failure. Core Workers/D1
+tests locally and separately prove persisted snapshot HMAC integrity, unchanged budgets
+and counters, and zero redemption rows; the browser suite adds no privileged
+snapshot-inspection endpoint and performs no redemption for the Playground.
+
+For a focused local run from the repository root:
+
+```sh
+CI=true E2E_BROWSER_CHANNEL=chromium pnpm e2e:local playground.browser.spec.ts
+```
+
+Run `CI=true E2E_BROWSER_CHANNEL=chromium pnpm e2e:local` for the full gate.
+Member-account fixture recipes remain staging-only; these ROOT browser
+checks do not claim member sign-in coverage. BFF tests preserve the existing
+Admin/Operator/Viewer evaluation permissions. The dated staging outcome above
+accepts only this evaluate-only slice, not full Task 10/Gate D. The E2E rewrite remains parked; no framework, authority,
+startup, retry, timeout or worker-setting change is required by this slice.
+See [Evaluate a basket in the Playground](../../docs/integration/evaluation-playground.md).
+
 ## Recipes and ownership
 
 `pnpm recipe:e2e <recipe> --input /absolute/path/input.json [--run e2e_...]`
@@ -221,12 +280,12 @@ order, and idempotency identifiers are run-scoped. A mode-0600 manifest in
 `tests/e2e/.runs` records every created ID and its owner. The run proof,
 cookies, and tokens are separate private files. Independent scenarios share
 one suite bootstrap but not tenant state or browser contexts. Playwright uses
-two bounded workers; API tests carry detailed business assertions, one browser
-spec exercises real Promo UI interactions, and another checks controlled local
-routing. The measured local baseline on
+two bounded workers; API tests carry detailed business assertions, and browser
+specs exercise real Promo UI interactions, the evaluate-only Playground and
+controlled local routing. The measured local baseline on
 2026-09-25 was 5 Playwright tests in 23.9 seconds, including bootstrap,
 two concurrent full scenarios, browser smoke, and two simultaneous independent
-Worker/Auth D1 instances. The PR CI job runs every project and all six tests
+Worker/Auth D1 instances. The PR CI job runs every project and all ten tests
 without selection or sharding. For focused local diagnosis, Playwright accepts
 `--project=api`, `--project=browser`, or `--shard`; each shard starts its own
 isolated stack.
