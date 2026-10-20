@@ -2,9 +2,49 @@
 
 **Notion mirror:** https://app.notion.com/p/Integration-Ready-Core-Contracts-3a1e5c7c2b8e81e4afe0ef82709f8d13
 
-**Mirror state:** Repository updated for GAP-030/031 on 2026-09-25; Notion synchronization pending.
+**Mirror state:** Repository updated for GAP-030/031 on 2026-09-25 and local GAP-003 account display on 2026-10-19; Notion synchronization pending.
 
 The foundation exposes platform-neutral TypeScript and Zod contracts for typed data, evaluation, decisions, modules, and connectors. It is deliberately independent of Shopify, a custom checkout, HTTP framework, database, and UI.
+
+## Operator account and client display
+
+The local account-display contract requires `display` on the strict public
+`GET /operator/v1/session` response. Publication, deployment and staging
+verification are pending as of 2026-10-19.
+
+| Field | Contract |
+|---|---|
+| `display.user.name` | Persisted own-user name or `null`; blank names display the email instead. |
+| `display.user.email` | Persisted own-user email. |
+| `display.role` | Actual `root`, `admin`, `operator` or `viewer` role. |
+| `display.client` | Validated `{ merchantId, organizationId, name }`, or `null` only for ROOT without client selection. |
+| `merchantSelectionRequired` | True exactly for ROOT without a selected client. |
+
+Identity owns names/emails, membership roles and organization names, resolved
+from the live session and exact active membership/client scope. Roles come
+from stored membership, never permissions; ROOT selection requires an active
+organization. Authentication renders as Passkey, Email link or Test fixture;
+unknown methods receive the neutral Authenticated session label.
+
+Display grants no authority. Operation principals, permission checks, session
+lifecycle and isolation remain separate. The private Identity-to-BFF envelope
+keeps the session ID for signed selection binding; the public view omits it
+and rejects credentials/unknown fields. The database-free BFF refuses missing
+or incompatible Identity projections with the existing unavailable error.
+Normal refresh/reload updates metadata without polling or a client-directory
+lookup; failed refresh clears the displayed account snapshot.
+
+Future rollout is dependency ordered: additive Identity session RPC first,
+then matching Operator BFF and bundled Dashboard. Required strict schemas
+fail closed on mixed payloads; existing tabs must reload the matching bundle.
+No Core API change, database migration or secret rotation is required, and
+this local slice authorizes no deployment.
+
+Code references:
+
+- Ownership: [Identity organizations](../../apps/identity/src/services/organizations.ts).
+- Schemas: [Operator contracts](../../packages/contracts/src/operator.ts) and [BFF contracts](../../packages/contracts/src/operator-bff.ts).
+- Public projection: [Operator Worker](../../apps/operator-web/src/worker.ts).
 
 ## Stored customer data is not evaluation context
 

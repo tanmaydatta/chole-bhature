@@ -24,7 +24,9 @@ async function origin(role: 'viewer' | 'admin') {
             'schemas:publish', 'customers:read', 'customers:manage', 'programs:read',
             'programs:manage', 'programs:publish', 'evaluations:run',
             'redemptions:commit', 'credentials:read', 'credentials:manage', 'audit:read'],
-        merchantSelectionRequired: false }));
+        merchantSelectionRequired: false,
+        display: { user: { name: 'Fixture Member', email: 'fixture@example.test' }, role,
+          client: { merchantId: 'merchant-1', organizationId: 'org-1', name: 'Fixture Client' } } }));
       return;
     }
     if (request.url === '/operator/v1/team') {

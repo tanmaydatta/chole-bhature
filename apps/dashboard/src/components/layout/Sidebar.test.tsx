@@ -7,6 +7,8 @@ test('sidebar shows all sections', () => {
     authenticatedAt: '2026-07-20T10:00:00.000Z', organizationId: 'test-org',
     merchantId: 'test-merchant', membershipId: 'test-membership',
     permissions: ['programs:read', 'schemas:read'], merchantSelectionRequired: false,
+    display: { user: { name: 'Test Viewer', email: 'viewer@example.test' }, role: 'viewer',
+      client: { merchantId: 'test-merchant', organizationId: 'test-org', name: 'Test Client' } },
   }}/></MemoryRouter>);
   ['Overview','Promo Codes','Affiliates','Referrals','Loyalty','Variables','Events','Analytics']
     .forEach(l => expect(screen.getByText(l)).toBeInTheDocument());

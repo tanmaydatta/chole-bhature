@@ -12,6 +12,8 @@ import { executeRecipe, type RecipeContext } from '../../src/execution.js';
 import { createManifest, recordResource } from '../../src/manifest.js';
 import { createRunStore } from '../../src/run-store.js';
 import type { RunId } from '../../src/config.js';
+export type PromoAccountDisplay = { role: 'root'; clientName: string }
+  | { role: 'admin'; name: string; email: string; clientName: string };
 interface PromoScenario {
   run<T>(callback: (context: RecipeContext) => Promise<T>): Promise<T>;
   merchant(context: RecipeContext): Promise<{
@@ -19,6 +21,7 @@ interface PromoScenario {
   }>;
   storageState(context: RecipeContext): string;
   selectMerchant: boolean;
+  accountDisplay(context: RecipeContext): PromoAccountDisplay;
   assertDisposed(runId: RunId): Promise<void>;
 }
 const enabled = () => process.env.E2E_PREAUTH_LOCAL_FLOW === '1';
@@ -49,15 +52,19 @@ export const test = base.extend<{
       await use({ run: withScenarioRun, merchant: async (ctx) => executeRecipe(ctx, 'add-merchant', { name: 'Browser authoring shop' }) as Promise<{
           merchantId: string;
         }>,
-        storageState: () => requireOperatorStorageState(process.env), selectMerchant: true, assertDisposed: assertRunDisposed });
+        storageState: () => requireOperatorStorageState(process.env), selectMerchant: true,
+        accountDisplay: ctx => ({ role: 'root', clientName: `${ctx.manifest.runId}_merchant Browser authoring shop` }), assertDisposed: assertRunDisposed });
       return;
     }
     const stack = fixtureStack, target = { kind: 'local' as const, operatorOrigin: stack.operatorOrigin, apiOrigin: stack.apiOrigin };
     const control = new ControlClient({ ...target, ...stack.control });
     const published = new WeakMap<RecipeContext, string>();
+    const expectedDisplay = new WeakMap<RecipeContext, PromoAccountDisplay>();
     const disposed = new Set<string>();
     await use({
       selectMerchant: false,
+      accountDisplay: ctx => { const display = expectedDisplay.get(ctx); if (!display)
+        throw new Error('Expected fixture account display unavailable'); return { ...display }; },
       storageState: ctx => { const state = published.get(ctx); if (!state)
         throw new Error('Verified member state unavailable'); return state; },
       merchant: async (ctx) => { const merchant = ctx.manifest.resources.find(resource => resource.kind === 'merchant'); if (!merchant)
@@ -88,6 +95,10 @@ export const test = base.extend<{
           const ctx: RecipeContext = { manifest, target, operator: member, selectedMerchantId: bootstrap.lease.merchantId,
             save: () => store.save(manifest), saveToken: (slug, token) => store.saveToken(slug, token) };
           published.set(ctx, state);
+          // Whitelist setup intent/account metadata only, never cookies, proof,
+          // session IDs, or values read from the session endpoint under test.
+          expectedDisplay.set(ctx, { role: bootstrap.admin.role, email: bootstrap.admin.email,
+            name: record.runId + '_admin', clientName: record.runId + '_merchant' });
           timings.bootstrapMs = Date.now() - began;
           console.log(`preauth-local phase=bootstrap; elapsed_ms=${timings.bootstrapMs}`);
           const scenarioBegan = Date.now();

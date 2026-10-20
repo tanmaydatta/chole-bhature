@@ -14,7 +14,11 @@ describe('operator authentication boundary', () => {
     const server = createServer((incoming, outgoing) => {
       paths.push(incoming.url ?? '');
       outgoing.setHeader('content-type', 'application/json');
-      outgoing.end(JSON.stringify({ userId: 'member', permissions: [], merchantSelectionRequired: false }));
+      outgoing.end(JSON.stringify({ userId: 'member', authenticationMethods: ['magic-link'],
+        authenticatedAt: '2026-10-19T12:00:00.000Z', organizationId: 'org-member', merchantId: 'merchant-member',
+        membershipId: 'membership-member', permissions: [], merchantSelectionRequired: false,
+        display: { user: { name: 'Member', email: 'member@example.test' }, role: 'viewer',
+          client: { merchantId: 'merchant-member', organizationId: 'org-member', name: 'Member Client' } } }));
     });
     await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
     try {

@@ -15,6 +15,7 @@ const rootSession = {
   userId: 'independently-issued-root', platformRole: 'root',
   authenticationMethods: ['passkey'], authenticatedAt: '2026-10-08T12:00:00Z',
   permissions: [], merchantSelectionRequired: true,
+  display: { user: { name: 'Local Root', email: 'root@example.test' }, role: 'root', client: null },
 };
 const snapshot = { cookies: [{ name: 'local-session', value: 'private-cookie-value',
   domain: 'localhost', path: '/', expires: -1, httpOnly: true, secure: false,
@@ -107,7 +108,10 @@ describe('local passkey root state publication', () => {
   // Removing the server identity/method guard must fail these tests with real state on disk.
   test.each([
     ['a different root identity', { ...rootSession, userId: 'another-root' }],
-    ['a member identity', { ...rootSession, platformRole: undefined }],
+    ['a member identity', { ...rootSession, platformRole: undefined, organizationId: 'org-member',
+      merchantId: 'merchant-member', membershipId: 'membership-member', merchantSelectionRequired: false,
+      display: { user: { name: 'Member', email: 'member@example.test' }, role: 'viewer',
+        client: { merchantId: 'merchant-member', organizationId: 'org-member', name: 'Member Client' } } }],
     ['a fixture login', { ...rootSession, authenticationMethods: ['e2e-fixture'] }],
     ['a recovery login', { ...rootSession, authenticationMethods: ['recovery'] }],
     ['a magic-link login', { ...rootSession, authenticationMethods: ['magic-link'] }],

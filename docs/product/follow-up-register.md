@@ -6,7 +6,7 @@
 
 **Notion mirror:** https://app.notion.com/p/Product-Follow-up-Register-3a6e5c7c2b8e81cebe96de50b64f3bbd
 
-**Mirror state:** The GAP-023 merge/CI checkpoint is synchronized to the existing Notion row on 2026-10-19. Broader GAP-030/031 mirror lag from 2026-09-25 is unchanged.
+**Mirror state:** The GAP-023 merge/CI checkpoint is synchronized to the existing Notion row on 2026-10-19. Local GAP-003 awaits separately authorized publication/Notion synchronization. Broader GAP-030/031 mirror lag from 2026-09-25 is unchanged.
 
 **Evidence source:** [Staging activation run](../testing/staging-activation-run-2026-07-21.md)
 
@@ -27,7 +27,7 @@ recorded reason.
 
 | ID | Status | Finding | Disposition |
 |---|---|---|---|
-| `GAP-003` | Open | The authenticated shell does not identify the signed-in user, role, authentication method, or selected client. | Add an account/scope indicator before client use. |
+| `GAP-003` | Implemented and locally verified; publication/merge/deployment/staging pending | Authenticated pages previously omitted signed-in user, fixed role, authentication method and selected client context. | Identity-owned metadata now feeds a strict credential-free public session display and accessible account/client strip, including full-page Promo editors. ROOT has explicit no-selection guidance; fixture auth is labelled Test fixture; demo markers remain separate. Full build/lint, 2,369 Vitest cases plus nine Node tests, the exact Admin preauth case (14.1s), and all ten headless cases (23.4s) pass locally. Real scroll/hit checks prove header/editor actions, bottom navigation and demo labeling usable; owned Product/Auth cleanup passed. No merge, deployment or staging acceptance is claimed. See [account contract](../integration/core-contracts.md#operator-account-and-client-display) and [local proof](../testing/preauth-local-promo.md#account-and-client-context-check--2026-10-19). |
 | `GAP-004` | Open | Overview statistics and program rows are hard-coded demo fixtures and can look like real tenant data. | Replace with live tenant-scoped data or an unambiguous empty state. |
 | `GAP-005` | Open | Live Variables, Customers, Promo forms, and detail pages use largely unstyled native controls even though the application shell stylesheet is present. | Bring live pages onto the established dashboard components before client use. |
 | `GAP-006` | Deferred | Invited employees cannot enroll or manage passkeys; the shared sign-in page still offers a passkey action that is currently root-only. | Make the current action explicitly root-only, then implement member passkeys/MFA as a separate security follow-up. |

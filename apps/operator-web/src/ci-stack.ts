@@ -48,7 +48,7 @@ export function assertCiStack(env: OperatorWebWorkerEnv, expectedMarker?: string
   if (env.OPERATOR_SELECTION_SECRET_STORE !== undefined) fail('staging secret bindings are forbidden');
   methods(env.IDENTITY_AUTH, ['fetch'], 'IDENTITY_AUTH');
   methods(env.ASSETS, ['fetch'], 'ASSETS');
-  methods(env.IDENTITY, ['getE2eCapabilities', 'resolveBrowserPrincipal', 'listClients',
+  methods(env.IDENTITY, ['getE2eCapabilities', 'resolveBrowserPrincipal', 'resolveBrowserSession', 'listClients',
     'getProvisioningForRoot', 'listMembers', 'listInvitations', 'provisionClient',
     'getProvisioning', 'createInvitation', 'retryInvitation', 'acceptInvitation',
     'removeMember', 'changeMemberRole', 'previewE2eRun', 'disposeE2eRun',

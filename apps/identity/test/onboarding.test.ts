@@ -1647,6 +1647,81 @@ describe('operations-only root bootstrap', () => {
 });
 
 describe('private Identity operator service boundary', () => {
+  test.each(['admin', 'operator', 'viewer'] as const)('projects own persisted user, client and %s membership role', async role => {
+    await seedOrganization();
+    await seedOrganization({ id: 'org-foreign', merchantId: 'merchant-foreign' });
+    await seedMember({ id: 'own-membership', userId: 'own-user', email: 'own@example.test', role });
+    await seedMember({ id: 'foreign-membership', userId: 'foreign-user', email: 'foreign@example.test', role: 'admin', organizationId: 'org-foreign' });
+    await testEnv.AUTH_DB.prepare("UPDATE user SET name = 'Own Persisted Name' WHERE id = 'own-user'").run();
+    const service = new IdentityOperatorService(createExecutionContext(), testEnv as unknown as Env);
+    expect(service.resolveBrowserSession).toBeTypeOf('function');
+    const cookieHeader = await signedSessionCookie('token-own-user-0');
+    const result = await service.resolveBrowserSession({ cookieHeader, correlationId: 'display-own' });
+    expect(result).toMatchObject({
+      principal: { userId: 'own-user', sessionId: 'session-own-user-0', membershipId: 'own-membership', authenticationMethods: ['magic-link'] },
+      display: { user: { name: 'Own Persisted Name', email: 'own@example.test' }, role,
+        client: { merchantId: 'merchant-a', organizationId: 'org-a', name: 'Organization org-a' } },
+    });
+    expect(Object.keys(result).sort()).toEqual(['display', 'principal']);
+    if ('error' in result) throw new Error('Expected own session projection');
+    expect(result.principal).not.toHaveProperty('display');
+    expect(result.principal).not.toHaveProperty('email');
+    expect(result.display).not.toHaveProperty('sessionId');
+    expect(await service.resolveBrowserSession({ cookieHeader, selectedMerchantId: 'merchant-foreign', correlationId: 'display-foreign' }))
+      .toHaveProperty('error.code', 'UNAUTHORIZED');
+    expect(await service.resolveBrowserSession({ cookieHeader, userId: 'foreign-user', correlationId: 'display-injected' } as never))
+      .toHaveProperty('error.code', 'INVALID_REQUEST');
+  });
+
+  test('projects ROOT without selection and only selects an existing active client', async () => {
+    await seedRoot();
+    await seedOrganization();
+    await seedOrganization({ id: 'org-pending', merchantId: 'merchant-pending', status: 'provisioning' });
+    const service = new IdentityOperatorService(createExecutionContext(), testEnv as unknown as Env);
+    expect(service.resolveBrowserSession).toBeTypeOf('function');
+    const cookieHeader = await signedSessionCookie('token-root-session');
+    expect(await service.resolveBrowserSession({ cookieHeader, correlationId: 'root-base' })).toMatchObject({
+      principal: { userId: 'root-1', platformRole: 'root', authenticationMethods: ['passkey'] },
+      display: { user: { name: 'Root', email: 'root@example.test' }, role: 'root', client: null },
+    });
+    expect(await service.resolveBrowserSession({ cookieHeader, selectedMerchantId: 'merchant-a', correlationId: 'root-selected' })).toMatchObject({
+      display: { user: { name: 'Root', email: 'root@example.test' }, role: 'root',
+        client: { merchantId: 'merchant-a', organizationId: 'org-a', name: 'Organization org-a' } },
+    });
+    for (const selectedMerchantId of ['merchant-pending', 'missing-merchant']) {
+      expect(await service.resolveBrowserSession({ cookieHeader, selectedMerchantId, correlationId: 'root-invalid' }))
+        .toHaveProperty('error.code', 'FORBIDDEN');
+    }
+  });
+
+  test('refreshes persisted role and metadata and refuses expired, revoked and inactive membership sessions', async () => {
+    await seedOrganization();
+    await seedMember({ id: 'own-membership', userId: 'own-user', email: 'own@example.test', role: 'admin' });
+    const service = new IdentityOperatorService(createExecutionContext(), testEnv as unknown as Env);
+    expect(service.resolveBrowserSession).toBeTypeOf('function');
+    const input = { cookieHeader: await signedSessionCookie('token-own-user-0'), correlationId: 'live-display' };
+    expect(await service.resolveBrowserSession(input)).toHaveProperty('display.role', 'admin');
+    await testEnv.AUTH_DB.batch([
+      testEnv.AUTH_DB.prepare("UPDATE memberships SET role = 'viewer' WHERE id = 'own-membership'"),
+      testEnv.AUTH_DB.prepare("UPDATE user SET name = 'Updated Name', email = 'updated@example.test' WHERE id = 'own-user'"),
+      testEnv.AUTH_DB.prepare("UPDATE organizations SET name = 'Updated Client' WHERE id = 'org-a'"),
+    ]);
+    expect(await service.resolveBrowserSession(input)).toMatchObject({
+      principal: { permissions: ['schemas:read', 'programs:read', 'evaluations:run', 'audit:read'] },
+      display: { user: { name: 'Updated Name', email: 'updated@example.test' }, role: 'viewer', client: { name: 'Updated Client' } },
+    });
+    await testEnv.AUTH_DB.prepare("UPDATE memberships SET status = 'removed' WHERE id = 'own-membership'").run();
+    expect(await service.resolveBrowserSession(input)).toHaveProperty('error');
+    await testEnv.AUTH_DB.prepare("UPDATE memberships SET status = 'active' WHERE id = 'own-membership'").run();
+    await testEnv.AUTH_DB.prepare("UPDATE organizations SET status = 'provisioning' WHERE id = 'org-a'").run();
+    expect(await service.resolveBrowserSession(input)).toHaveProperty('error');
+    await testEnv.AUTH_DB.prepare("UPDATE organizations SET status = 'active' WHERE id = 'org-a'").run();
+    await testEnv.AUTH_DB.prepare("UPDATE session SET expiresAt = ?1 WHERE id = 'session-own-user-0'").bind(Date.now() - 1).run();
+    expect(await service.resolveBrowserSession(input)).toHaveProperty('error.code', 'UNAUTHORIZED');
+    await testEnv.AUTH_DB.prepare("DELETE FROM session WHERE id = 'session-own-user-0'").run();
+    expect(await service.resolveBrowserSession(input)).toHaveProperty('error.code', 'UNAUTHORIZED');
+  });
+
   test('exposes the typed Task 7 principal, provisioning, invitation, and member methods privately', () => {
     const service = createIdentityOperatorService({
       database: testEnv.AUTH_DB,

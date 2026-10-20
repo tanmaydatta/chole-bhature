@@ -7,7 +7,7 @@ function valid(): OperatorWebWorkerEnv {
     PUBLIC_APP_ORIGIN: 'https://cb-e2e-0123456789abcdef0123-operator.trusted.workers.dev',
     OPERATOR_SELECTION_SECRET: 'disposable-ci-selection-secret-at-least-32-characters',
     IDENTITY_AUTH: { fetch() {} }, ASSETS: { fetch() {} },
-    IDENTITY: Object.fromEntries(['getE2eCapabilities', 'resolveBrowserPrincipal', 'listClients',
+    IDENTITY: Object.fromEntries(['getE2eCapabilities', 'resolveBrowserPrincipal', 'resolveBrowserSession', 'listClients',
       'getProvisioningForRoot', 'listMembers', 'listInvitations', 'provisionClient',
       'getProvisioning', 'createInvitation', 'retryInvitation', 'acceptInvitation', 'removeMember',
       'changeMemberRole', 'previewE2eRun', 'disposeE2eRun', 'inspectE2eRun', 'createE2eAccount']
@@ -78,7 +78,7 @@ describe('operator-web CI configuration admission', () => {
     const input = valid(); Reflect.set(input, binding, {});
     expect(() => assertCiStack(input)).toThrow(/CI/u);
   });
-  test.each(['getE2eCapabilities', 'resolveBrowserPrincipal', 'listClients', 'getProvisioningForRoot',
+  test.each(['getE2eCapabilities', 'resolveBrowserPrincipal', 'resolveBrowserSession', 'listClients', 'getProvisioningForRoot',
     'listMembers', 'listInvitations', 'provisionClient', 'getProvisioning', 'createInvitation',
     'retryInvitation', 'acceptInvitation', 'removeMember', 'changeMemberRole', 'previewE2eRun',
     'disposeE2eRun', 'inspectE2eRun', 'createE2eAccount'])

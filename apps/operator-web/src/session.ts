@@ -1,6 +1,8 @@
 import {
   ApiErrorSchema,
   IdentityResolveBrowserPrincipalRequestSchema,
+  IdentityBrowserSessionProjectionSchema,
+  type IdentityBrowserSessionProjection,
   OperatorCallContextSchema,
   OperatorPrincipalSchema,
   type ApiError,
@@ -182,6 +184,31 @@ export async function resolveBrowserPrincipal(
     return apiError(
       correlationId, 'IDENTITY_UNAVAILABLE', 'Identity is temporarily unavailable', true,
     );
+  }
+}
+
+export async function resolveBrowserSession(
+  env: OperatorWebEnv,
+  cookieHeader: string,
+  correlationId: string,
+  selectedMerchantId?: string,
+): Promise<IdentityBrowserSessionProjection | ApiError> {
+  try {
+    const input = IdentityResolveBrowserPrincipalRequestSchema.parse({
+      cookieHeader, correlationId,
+      ...(selectedMerchantId === undefined ? {} : { selectedMerchantId }),
+    });
+    const raw = await env.IDENTITY.resolveBrowserSession(input);
+    const failure = ApiErrorSchema.safeParse(raw);
+    if (failure.success) {
+      if (failure.data.error.correlationId !== correlationId) {
+        throw new Error('Identity returned an invalid correlation id');
+      }
+      return failure.data;
+    }
+    return IdentityBrowserSessionProjectionSchema.parse(raw);
+  } catch {
+    return apiError(correlationId, 'IDENTITY_UNAVAILABLE', 'Identity is temporarily unavailable', true);
   }
 }
 

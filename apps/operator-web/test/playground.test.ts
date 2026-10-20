@@ -38,6 +38,7 @@ function fixture(identity: unknown = principal, result: unknown = output) {
     OPERATOR_SELECTION_SECRET: 'playground-selection-test-secret-at-least-thirty-two',
     CORE: core, ASSETS: { fetch: unsupported }, IDENTITY_AUTH: { fetch: unsupported },
     IDENTITY: {
+      resolveBrowserSession: unsupported,
       resolveBrowserPrincipal: vi.fn(async () => identity),
       getE2eCapabilities: unsupported, listClients: unsupported, getProvisioningForRoot: unsupported,
       listMembers: unsupported, listInvitations: unsupported, provisionClient: unsupported,

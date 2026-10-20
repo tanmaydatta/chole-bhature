@@ -2,7 +2,33 @@
 
 The opt-in local Promo check proves one headless ordinary-Admin product flow without personal ROOT or passkey login, with protected run-owned cleanup.
 
-## Current result — 2026-10-16
+## Account and client context check — 2026-10-19
+
+Run the existing opt-in command below to check account/scope display alongside
+every existing percentage, cap, save, reload and publication assertion. The
+accessible Account context region checks the exact fixture Admin's seeded
+name, returned own-account email, Admin role, Test fixture method and
+Identity-owned client name on list, create/edit pages and reloads. Expected
+values come from setup intent/bootstrap metadata, never the session response
+under test. Local Promo fixture is the descriptive control request label;
+persisted organization name is `${runId}_merchant` and user name `${runId}_admin`.
+
+The same Promo spec in the full local or staging ROOT path checks ROOT,
+Passkey and the known newly created `${runId}_merchant Browser authoring shop`.
+The existing merchant recipe adds this run prefix. It does not invent
+the real owner's email or use a session-response oracle for it. Exact ordinary
+Admin identity proof belongs to the opt-in preauth path. Real scroll checks
+exercise header title/actions, bottom navigation and the separate demo badge.
+On 2026-10-19 the final opt-in case passed first attempt in 14.1s, with all four
+owned resources cleaned and fresh zero Product/Auth inventory before private
+capability/member retirement. The full local suite passed all ten cases in
+23.4s, including the paired Admin display/isolation case. Account and demo rows
+remain visible while their content scrolls independently; real hit tests prove
+uncovered header/title/actions and reachable bottom navigation, while normal
+editor saves/publication remain functional. This is local verification only,
+with no deployment or staging acceptance for the account-display slice.
+
+## Earlier accepted result — 2026-10-16
 
 The opt-in command is:
 
@@ -28,7 +54,9 @@ The existing paired-stack case now starts two independent fixture-mode stacks
 and verifies ordinary Admin sessions without ROOT/passkey setup in that case.
 Fresh browser contexts prove exact user, organization, merchant and membership
 identity, the `e2e-fixture` authentication method, no platform ROOT role or
-merchant-selection step, signed-in UI and private 0600 state. The two stacks
+merchant-selection step, signed-in UI and private 0600 state. Exact own seeded
+name/email, Admin role and client IDs/name are also checked in the strict
+public display, with no private session ID. The two stacks
 have distinct origins, private directories and principals; each stack rejects
 the other's state with typed HTTP 401 `UNAUTHORIZED`, rather than a ROOT-only
 client rejecting otherwise valid members.

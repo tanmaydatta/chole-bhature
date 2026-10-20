@@ -32,6 +32,7 @@ export interface IdentityRpcService {
   e2eControl?(call: IdentityControlCall): Promise<E2eControlReply>;
   getE2eCapabilities(input: { sessionId: string; correlationId: string }): Promise<unknown>;
   resolveBrowserPrincipal(input: IdentityResolveBrowserPrincipalRequest): Promise<unknown>;
+  resolveBrowserSession(input: IdentityResolveBrowserPrincipalRequest): Promise<unknown>;
   listClients(input: IdentityRootBrowserRequest): Promise<unknown>;
   getProvisioningForRoot(input: IdentityRootProvisioningRequest): Promise<unknown>;
   listMembers(input: IdentityListMembersRequest): Promise<unknown>;

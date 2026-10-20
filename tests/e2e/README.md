@@ -180,6 +180,21 @@ used. All four run-owned resources were cleaned and the protected final status
 verified zero Product/Auth rows before retiring that run's capability/member
 files. Earlier failed recovery records remain private and unchanged.
 
+The local account/scope slice additionally checks Account context on Promo
+list, create/edit and reloads: exact setup-derived fixture Admin name/email,
+Admin role, Test fixture and Identity client name. Seed intent names the
+organization `${runId}_merchant` and user `${runId}_admin`; Local Promo fixture
+is only the descriptive control request label. Expected values are whitelisted
+setup metadata, never a session-response oracle or private cookie/proof. The
+same spec's full ROOT path checks ROOT, Passkey and the recipe's exact
+`${runId}_merchant Browser authoring shop`,
+without inventing the real owner's email. Real scroll checks exercise header
+title/actions, bottom navigation and a separate demo badge. All existing
+percentage/cap/save/publish assertions and protected cleanup remain. On
+2026-10-19 the final opt-in case passed first attempt in 14.1s (four resources
+cleaned, zero Product/Auth rows), and all ten headless local cases passed in
+23.4s. These account-display results claim no deployment or staging acceptance.
+
 Fixture mode now waits for actual HTTP responses from all three local Workers
 before the capability handshake, within the existing shared 45-second readiness
 budget. HTTP readiness is not business-health acceptance. No server/auth guard

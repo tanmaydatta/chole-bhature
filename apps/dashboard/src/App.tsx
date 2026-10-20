@@ -18,7 +18,7 @@ import { InviteAcceptance } from './auth/InviteAcceptance';
 import Clients from './pages/platform/Clients';
 import Team from './pages/settings/Team';
 import Credentials from './pages/settings/Credentials';
-import { MerchantRoute, RootContextBanner, RootOnlyRoute } from './auth/RouteAccess';
+import { AccountContextStrip, MerchantRoute, RootOnlyRoute } from './auth/RouteAccess';
 import LiveVariables from './pages/setup/LiveVariables';
 import CustomerLookup from './pages/customers/CustomerLookup';
 import LivePromoEditor from './pages/promo/LivePromoEditor';
@@ -27,11 +27,17 @@ import LivePromoDetail from './pages/promo/LivePromoDetail';
 import EvaluationPlayground from './pages/playground/EvaluationPlayground';
 
 function AuthenticatedRoute() {
-  return <AuthenticatedApp><RootContextBanner /><Outlet /></AuthenticatedApp>;
+  return <AuthenticatedApp><div className="flex h-dvh flex-col overflow-hidden">
+    <AccountContextStrip />
+    <div className="min-h-0 flex-1 overflow-y-auto"><Outlet /></div>
+  </div></AuthenticatedApp>;
 }
 
 function DemoBuilderRoute() {
-  return <><div className="fixed right-4 top-12 z-50 rounded-full bg-[var(--accent-soft)] px-3 py-1 text-[11px] font-bold text-[var(--accent)]">Demo data</div><Outlet /></>;
+  return <div className="flex h-full flex-col">
+    <div className="shrink-0 bg-[var(--bg)] px-4 py-2 text-right"><span className="inline-flex rounded-full bg-[var(--accent-soft)] px-3 py-1 text-[11px] font-bold text-[var(--accent)]">Demo data</span></div>
+    <div className="min-h-0 flex-1 overflow-y-auto"><Outlet /></div>
+  </div>;
 }
 
 function AuthenticatedShell() {

@@ -3,6 +3,8 @@ import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { AppShell } from './AppShell';
 import { useProgramStore } from '../../data/store';
 import { PROGRAMS } from '../../data/programs';
+import { TestAuth } from '../../test/TestAuth';
+import { AccountContextStrip } from '../../auth/RouteAccess';
 
 beforeEach(() => {
   useProgramStore.setState({ programs: PROGRAMS.map(p => ({ ...p })) });
@@ -62,4 +64,16 @@ test('detail route with unknown id falls back to "Incentives"', () => {
   renderAtPath('/promo/does-not-exist');
   const h1 = screen.getByRole('heading', { level: 1 });
   expect(h1).toHaveTextContent('Incentives');
+});
+
+test('shared account context stays separate from shell demo labeling', () => {
+  render(<MemoryRouter><TestAuth><AccountContextStrip /><Routes><Route element={<AppShell />}>
+    <Route index element={<div>Demo overview</div>} />
+  </Route></Routes></TestAuth></MemoryRouter>);
+  const context = screen.getByRole('region', { name: 'Account context' });
+  expect(context).toHaveTextContent('Test Operator');
+  expect(context).toHaveTextContent('operator@example.test');
+  expect(context).toHaveTextContent('Test Client');
+  expect(context).not.toHaveTextContent('Demo data');
+  expect(screen.getByText('Demo data')).toBeVisible();
 });
