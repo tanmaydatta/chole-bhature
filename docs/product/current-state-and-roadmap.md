@@ -32,7 +32,7 @@ receipt are distinct from that historical whole-page mirror checkpoint.
 Release publication synchronizes scoped current-status evidence, not a
 wholesale replacement of historical pages.
 
-**2026-10-19 local product slice — GAP-023:** The live Promo editor now accepts
+**2026-10-19 merged product slice — GAP-023:** The live Promo editor now accepts
 human percentages for order, line-item, and fallback discounts. Values from
 0.01 through 100 with at most two decimal places convert exactly to integer
 basis points; invalid text stays visible with accessible guidance and blocks
@@ -41,11 +41,21 @@ preserved. Build/lint, 2,306 Vitest cases plus nine Node tests, and the existing
 preauthenticated capped-Promo browser case pass locally. The dashboard includes
 288 tests and 40 live journey cases. The browser proof checks percentage edits
 and edit/reload persistence alongside the exact GBP cap and active revision 1;
-all four owned resources were cleaned with zero Product/Auth rows. This slice
-is a local branch implementation on the PR #26 baseline below; merge,
-deployment, staging verification and Notion sync
-remain pending. Next, review and publish this bounded correction, then select
-the next client-readiness gap without expanding Task 10 or Gate D.
+all four owned resources were cleaned with zero Product/Auth rows.
+[PR #27](https://github.com/tanmaydatta/chole-bhature/pull/27) merged into `dev`
+at `60656f42b35f61ed8d075aed7ab567b853243b87`, with the exact tested tree
+`451247ff43b4bc08945daaa426de3c41f7366462`. The final local suite passed all
+ten cases in 30.2 seconds; [PR CI](https://github.com/tanmaydatta/chole-bhature/actions/runs/39267229449)
+passed `verify` and all ten headless cases in 58.1 seconds without retries.
+[Post-merge CI](https://github.com/tanmaydatta/chole-bhature/actions/runs/39268221950)
+passed `verify`; `local-e2e` was intentionally skipped on the `dev` push, not
+rerun. The paired isolation case now uses fixture Admins and proves both
+run-owned Product/Auth inventories zero before retiring capability/member
+files. The default full suite still has one global ROOT/passkey bootstrap;
+the earlier paired-passkey failure's underlying cause remains unknown.
+Deployment and staging verification remain pending; full Task 10 and Gate D
+remain open. This closeout changes status only; the next client-readiness
+feature requires a separate file/test plan and approval.
 
 **2026-10-19 Task11 baseline:** The public-contract
 [checkout CLI simulator](../integration/integration-simulator.md) is implemented
@@ -87,6 +97,11 @@ Cloudflare writes are disabled, and no live pilot has run.
 
 **Notion mirror:** https://app.notion.com/p/Product-Current-State-and-Roadmap-3a6e5c7c2b8e81f6b412c45a2bc7b344
 
+**Scoped mirror checkpoint (2026-10-19):** GAP-023/PR #27 merged status and the
+distinct PR/post-merge CI results are synchronized to the existing Notion page.
+This is a scoped status update; the historical whole-page checkpoint below and
+all unrelated content remain unchanged.
+
 **Mirror state (2026-10-07):** The reviewed nonsecret accumulated-checkpoint
 summary is synchronized to the existing roadmap, design, plan and Plans
 index. It identifies tested source `9408704`, scoped review
@@ -116,14 +131,14 @@ deferred issue remains in the
 | Question | Current answer |
 |---|---|
 | Overall phase | Post-Gate-C client readiness; evaluate-only Playground merged and verified in staging |
-| Current activity | GAP-023 percentage authoring is implemented and locally verified on a feature branch, awaiting publication. Task 11 is merged; E2E rewrite/cloud provisioning remain parked. |
-| Current repository baseline | Freshly fetched `dev` at PR #26 merge `04bf1cf5f9eb3a44a2a81340c9f135ab33b72b1d` on 2026-10-19; this is the preauthenticated local Promo/control checkpoint and GAP-023 branch base. |
-| Current product-code baseline | Public-contract CLI/capabilities merged through PR #25 at `13d7259b6d2a9ffa9df2990e10b4d13c0ee51c31`; GAP-023 remains local. The deployed Playground remains the dated PR #23 staging rollout below. |
+| Current activity | GAP-023 percentage authoring and fixture-based paired isolation are merged through PR #27; PR and post-merge CI are green with the distinct E2E results above. Task 11 is merged; E2E rewrite/cloud provisioning remain parked. |
+| Current repository baseline | Fresh provider read confirms `dev` at PR #27 merge `60656f42b35f61ed8d075aed7ab567b853243b87` on 2026-10-19, tree `451247ff43b4bc08945daaa426de3c41f7366462`. |
+| Current product-code baseline | GAP-023 merged through PR #27 at `60656f42b35f61ed8d075aed7ab567b853243b87`, following CLI/capabilities PR #25 and local preauth checkpoint PR #26. The deployed Playground remains the dated PR #23 staging rollout below; PR #27 is not deployed. |
 | Local feature state | Authoritative merchandise pricing and the E2E platform are merged, with the dated staging evidence retained. Cloud E2E foundation/packaging/diagnostics/CI admission/local bootstrap are locally accepted; fresh correction verification passes 337 cloud, 1,683 Vitest cases plus nine separate Node script tests and five local Playwright cases (23.4 s), build/lint. Public Worker writes still refuse before transport. |
 | Current deployment state | API `565fa15a-0eed-4af9-97a9-a7da821b75e8` and Operator `21227fa1-725f-4f97-9286-58a092c5526e` receive 100% staging traffic after the 2026-10-14 rollout. Identity, migrations and secrets were unchanged. |
 | Current release decision | Evaluate-only staging verification passed: 7 headless cases, 2 intended local-only skips, zero failures; eight owned runs fully disposed. No production/demo deployment or full Task 10/Gate D acceptance. |
 | Gate C finish line | Complete — all mandatory clean-break selection, redemption, tenant-isolation, concurrency, and observability cases passed |
-| Next plan work | Review and publish the locally verified GAP-023 branch, then choose the next client-readiness gap. CLI/capabilities staging deployment and full Task 10/Gate D acceptance remain open. |
+| Next plan work | Prepare a separate file/test plan for GAP-003 (account/scope indicator) and obtain approval before implementation. CLI/capabilities staging deployment and full Task 10/Gate D acceptance remain open. |
 
 ## Source-of-truth map
 
@@ -295,9 +310,13 @@ The 2026-09-29 cutover likewise does not verify email delivery or a headed run.
 
 ## Current work
 
-The current bounded product change is the
-[public-contract checkout CLI](../integration/integration-simulator.md) plus its
-approved canonical read-only capabilities prerequisite. It validates published
+GAP-023 is merged with the local, PR and post-merge evidence recorded above;
+this closeout updates status without a deployment or another product change.
+The next client-readiness feature is not authorized by that closeout.
+
+The [public-contract checkout CLI](../integration/integration-simulator.md) and its
+approved canonical read-only capabilities prerequisite are already merged
+through PR #25. The CLI validates published
 fixtures before customer updates, maps canonical merchandise pricing, commits
 before fake capture, verifies retry and reprices real capacity exhaustion.
 Only public contracts/connector-kit are runtime dependencies. Local preseed and
