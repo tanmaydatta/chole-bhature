@@ -161,12 +161,40 @@ the full schema. Incomplete required metadata, retained markers, database errors
 schema changes also have refusal checks. This is a local compatibility boundary,
 not a deployment or whole-release acceptance result.
 
-Staging remains **NO-GO** pending a separately reviewed source-to-runtime
+At this preflight checkpoint, staging remained **NO-GO** pending a separately reviewed source-to-runtime
 preflight. The read-only checkpoint found Auth `0007` and Product `0009` absent,
 no configured or saved staging ROOT state in the normal test run area, and
 unresolved Core source provenance.
 This correction applies no migrations, enables no preauth runtime and does not
 resolve those release prerequisites. The opt-in preauth proof remains local-only.
+
+### Completed limited account-context rollout — 2026-10-21
+
+The separately approved release deployed Identity first, then matching
+Operator Web/Dashboard from source `1852a13c1adf9d49971300a927a93fa4e54fc52e`,
+tree `efd0762bbd67d0c00d9a06e7108aca26638a6d11`, identical to PR #30 merge
+`a5d260cd7cf6574951bf081385c1f22fc84dc944`. PR #29's account/client display
+and the PR #30 Auth-through-`0006` compatibility correction are merged.
+Identity `ac888e12-3685-49c0-a981-02a0aaea38c6` and Operator
+`cf5e8d92-b159-48b0-b378-be065c883cfc` each receive 100% traffic. Core
+`e38ee573-5a56-444e-9707-ab6f73cb1490` stayed at 100%; its immutable source
+mapping remains unestablished.
+
+Fresh build, expected configuration/bindings/private Identity checks, API
+health, public Operator response and four exact served-asset hashes passed.
+Raw HTML differs by the same two validated Cloudflare additions recorded on
+2026-10-14; application markup otherwise matches the build. Unauthenticated
+session access returned typed HTTP 401 without a private session ID or
+application session cookie. See the
+[dated rollout record](../testing/account-context-staging-2026-10-21.md)
+for exact provenance, versions, fingerprints and evidence limits.
+
+This limited deployment supersedes the earlier preflight hold only for the
+two approved Workers. Auth `0007` and Product `0009` were not needed or
+applied; Core, migrations, databases, secrets and v2 preauth activation were
+unchanged. No login, authenticated account/client or Core RPC acceptance,
+Promo acceptance, E2E run or fixture write occurred. Full staging product
+acceptance, Task 10/Gate D and per-PR cloud activation remain open.
 
 ### Prepare the ignored environment file
 

@@ -1,6 +1,6 @@
 # Product Current State and Roadmap
 
-**Updated:** 2026-10-19
+**Updated:** 2026-10-21
 
 **Status:** Active — Gate C complete; GAP-030/031 and the E2E platform are
 merged on `dev`. The separate Secrets Store cutover is deployed and verified
@@ -53,24 +53,38 @@ rerun. The paired isolation case now uses fixture Admins and proves both
 run-owned Product/Auth inventories zero before retiring capability/member
 files. The default full suite still has one global ROOT/passkey bootstrap;
 the earlier paired-passkey failure's underlying cause remains unknown.
-Deployment and staging verification remain pending; full Task 10 and Gate D
+The editor is now included in the 2026-10-21 Operator deployment below;
+authenticated staging verification remains pending. Full Task 10 and Gate D
 remain open. This closeout changes status only; the next client-readiness
 feature requires a separate file/test plan and approval.
 
-**2026-10-19 local product slice — GAP-003:** The separately approved
-account/client indicator is implemented locally. Identity owns name/email,
+**2026-10-21 deployed product slice — GAP-003:** The separately approved
+account/client indicator is merged and deployed to staging Identity/Operator.
+Identity owns name/email,
 fixed role and validated client name; the strict BFF session display omits the
 private session ID. A shared accessible strip covers authenticated shell pages
 and full-page Promo editors, with distinct ROOT/no-selection and Test fixture
 labels. Full build/lint, 2,369 Vitest cases plus nine Node tests, the exact Admin
 preauth case (14.1s) and all ten headless cases (23.4s) pass locally. Real scroll
 and hit checks verify headers/editor actions, bottom navigation and separate
-demo labeling; owned Product/Auth cleanup passed. Publication, merge,
-deployment, staging verification and scoped Notion sync remain pending.
+demo labeling; owned Product/Auth cleanup passed. [PR #29](https://github.com/tanmaydatta/chole-bhature/pull/29)
+merged feature source `84c2fe7` at `57370166bf5975861e29c8248ed922556721b83c`.
+[PR #30](https://github.com/tanmaydatta/chole-bhature/pull/30) merged the
+Auth-through-`0006` compatibility correction at
+`a5d260cd7cf6574951bf081385c1f22fc84dc944`;
+[exact-tree CI](https://github.com/tanmaydatta/chole-bhature/actions/runs/39581835724)
+passed. The limited Identity-first/Operator release passed fresh build,
+configuration/privacy, public health/session and exact served-asset checks.
+Authenticated account/client and Core RPC/Promo acceptance remain pending;
+no login, E2E or fixture writes occurred. The
+[dated release record](../testing/account-context-staging-2026-10-21.md)
+records versions, provenance and limits. The scoped release status was
+synchronized to the existing three Notion pages and readback-verified on
+2026-10-21; historical checkpoints and unrelated content were preserved.
 Next client-readiness planning is GAP-004 (live tenant-scoped Overview or an
 unambiguous empty state), with its own plan and approval. The
 [account contract](../integration/core-contracts.md#operator-account-and-client-display)
-records the future additive Identity-first, matching BFF/Dashboard rollout.
+records the additive Identity-first, matching BFF/Dashboard contract.
 This changes no Core API, migration or secret and does not close Task10/GateD.
 
 **2026-10-19 Task11 baseline:** The public-contract
@@ -87,8 +101,9 @@ merged into `dev` at `13d7259b6d2a9ffa9df2990e10b4d13c0ee51c31` after PR CI.
 bounded preauthenticated local Promo/control checkpoint at
 `04bf1cf5f9eb3a44a2a81340c9f135ab33b72b1d`.
 Its preauthenticated proof covers one Promo browser flow; it is not a full-suite
-conversion. CLI/capabilities staging deployment, Notion sync and full
-Task10/GateD acceptance remain pending and are not claimed.
+conversion. The 2026-10-21 release includes matching Operator BFF code, but
+leaves Core unchanged. Complete CLI/capabilities staging verification and
+full Task10/GateD acceptance remain pending and are not claimed.
 
 The dated approved per-PR Cloud E2E checkpoint work was implemented on
 `feat/per-pr-cloud-e2e`, based on `origin/dev` commit
@@ -118,8 +133,11 @@ distinct PR/post-merge CI results are synchronized to the existing Notion page.
 This is a scoped status update; the historical whole-page checkpoint below and
 all unrelated content remain unchanged.
 
-The local GAP-003 account/scope update has not been published to Notion;
-its scoped synchronization awaits publication authority.
+**Scoped mirror checkpoint (2026-10-21):** GAP-003/PR #29, compatibility
+PR #30 and the limited Identity/Operator release status are synchronized to
+the existing three matching Notion pages with verified readback. This is a
+scoped status update, not whole-page mirror equality; unrelated content and
+the historical checkpoints below are preserved.
 
 **Mirror state (2026-10-07):** The reviewed nonsecret accumulated-checkpoint
 summary is synchronized to the existing roadmap, design, plan and Plans
@@ -150,14 +168,14 @@ deferred issue remains in the
 | Question | Current answer |
 |---|---|
 | Overall phase | Post-Gate-C client readiness; evaluate-only Playground merged and verified in staging |
-| Current activity | GAP-003 account/client context is implemented and locally verified under its separately approved plan; publication/rollout is pending. GAP-023 is merged with the distinct CI evidence above. Task 11 is merged; E2E rewrite/cloud provisioning remain parked. |
-| Current repository baseline | Fresh provider read confirms `dev` at PR #27 merge `60656f42b35f61ed8d075aed7ab567b853243b87` on 2026-10-19, tree `451247ff43b4bc08945daaa426de3c41f7366462`. |
-| Current product-code baseline | GAP-023 merged through PR #27 at `60656f42b35f61ed8d075aed7ab567b853243b87`, following CLI/capabilities PR #25 and local preauth checkpoint PR #26. The deployed Playground remains the dated PR #23 staging rollout below; PR #27 is not deployed. |
-| Local feature state | GAP-003 account/client context is implemented and locally verified, not merged/deployed. Authoritative merchandise pricing and the E2E platform are merged, with dated staging evidence retained. Cloud E2E foundation/packaging/diagnostics/CI admission/local bootstrap are locally accepted; its dated correction verification passes 337 cloud, 1,683 Vitest cases plus nine separate Node script tests and five local Playwright cases (23.4 s), build/lint. Public Worker writes still refuse before transport. |
-| Current deployment state | API `565fa15a-0eed-4af9-97a9-a7da821b75e8` and Operator `21227fa1-725f-4f97-9286-58a092c5526e` receive 100% staging traffic after the 2026-10-14 rollout. Identity, migrations and secrets were unchanged. |
-| Current release decision | Evaluate-only staging verification passed: 7 headless cases, 2 intended local-only skips, zero failures; eight owned runs fully disposed. No production/demo deployment or full Task 10/Gate D acceptance. |
+| Current activity | GAP-003 is merged and deployed with limited public smoke evidence; authenticated acceptance remains pending. GAP-004 is the next separate planning candidate, not approved implementation. E2E rewrite/cloud provisioning remain parked. |
+| Current repository baseline | Fresh provider read confirms `dev` at PR #30 merge `a5d260cd7cf6574951bf081385c1f22fc84dc944` on 2026-10-21, tree `efd0762bbd67d0c00d9a06e7108aca26638a6d11`, identical to deployed source `1852a13c1adf9d49971300a927a93fa4e54fc52e`. |
+| Current product-code baseline | GAP-003 PR #29 and compatibility PR #30 are merged after GAP-023 PR #27, Task 11 PR #25 and local preauth PR #26. Only matching Identity/Operator source deployed on 2026-10-21; full simulator/capabilities acceptance is unproved with unchanged Core. |
+| Local feature state | GAP-003 and Auth-through-0006 compatibility have local/CI evidence and are deployed; authenticated staging product acceptance remains open. Authoritative merchandise pricing and the E2E platform are merged, with dated staging evidence retained. Cloud E2E foundation/packaging/diagnostics/CI admission/local bootstrap are locally accepted; its dated correction verification passes 337 cloud, 1,683 Vitest cases plus nine separate Node script tests and five local Playwright cases (23.4 s), build/lint. Public Worker writes still refuse before transport. |
+| Current deployment state | Identity `ac888e12-3685-49c0-a981-02a0aaea38c6`, Operator `cf5e8d92-b159-48b0-b378-be065c883cfc` and unchanged Core `e38ee573-5a56-444e-9707-ab6f73cb1490` each receive 100% staging traffic. Core immutable source mapping remains unestablished. Migrations/secrets/v2 preauth are unchanged. |
+| Current release decision | Limited two-Worker deployment and public health/privacy/session/asset checks passed. No authenticated acceptance, login, E2E or fixture writes occurred. Historical 2026-10-14 browser results remain dated evidence; full Task 10/Gate D and production acceptance are open. |
 | Gate C finish line | Complete — all mandatory clean-break selection, redemption, tenant-isolation, concurrency, and observability cases passed |
-| Next plan work | Publish/roll out GAP-003 only with separate authority; next feature planning is GAP-004 (live Overview or an unambiguous empty state), with its own approval. CLI/capabilities staging deployment and full Task 10/Gate D acceptance remain open. |
+| Next plan work | Separately authorize authenticated staging acceptance. GAP-004 (live Overview or an unambiguous empty state) is next product planning, requiring its own approval. Full simulator/capabilities staging and Task 10/Gate D acceptance remain open. |
 
 ## Source-of-truth map
 
@@ -233,6 +251,11 @@ test observations to make the current state look cleaner.
   or rollback was needed.
 
 ## What is verified in staging
+
+The [2026-10-21 limited rollout](../testing/account-context-staging-2026-10-21.md)
+adds public health/privacy/session and exact asset checks for deployed
+Identity/Operator source. It adds no authenticated product/browser acceptance;
+the earlier staging cases below remain dated evidence.
 
 The [2026-10-14 evaluate-only staging record](../testing/evaluation-playground-staging-2026-10-14.md)
 adds the three Playground browser cases and repeats the existing applicable
@@ -329,12 +352,11 @@ The 2026-09-29 cutover likewise does not verify email delivery or a headed run.
 
 ## Current work
 
-GAP-023 is merged with the local, PR and post-merge evidence recorded above;
-that closeout authorized no further feature. GAP-003 subsequently received its
-own plan/approval and is now implemented and locally verified, including real
-browser account/scope and scroll checks. Its local evidence does not claim
-publication, deployment or staging acceptance. GAP-004 is the next separate
-client-readiness planning candidate.
+GAP-003 and the Identity compatibility correction are merged and deployed
+under the limited 2026-10-21 release. GAP-023 editor code is included in the
+Operator build. Public checks passed; authenticated account/client, Core RPC
+and Promo acceptance remain pending. GAP-004 is the next separate
+client-readiness planning candidate, not approved implementation.
 
 The [public-contract checkout CLI](../integration/integration-simulator.md) and its
 approved canonical read-only capabilities prerequisite are already merged
@@ -343,7 +365,9 @@ fixtures before customer updates, maps canonical merchandise pricing, commits
 before fake capture, verifies retry and reprices real capacity exhaustion.
 Only public contracts/connector-kit are runtime dependencies. Local preseed and
 cleanup use existing run-owned fixtures; there is no new E2E/auth framework.
-No staging/provider writes or deployment are part of this implementation.
+No staging/provider writes were part of that implementation checkpoint. The
+2026-10-21 Operator release includes its BFF changes; Core stays unchanged,
+and the complete simulator/capabilities staging contract is not accepted.
 
 The previously delivered evaluate-only Playground is described
 in [Evaluate a basket in the Playground](../integration/evaluation-playground.md).
@@ -581,8 +605,9 @@ After the approved Promo financial corrections above, continue in this order:
 1. Task 10 — the evaluate-only Playground slice is merged and verified in staging;
    broader historical Task 10 scope remains open, with no redemption controls
    authorized by this slice.
-2. Task 11 — public-contract CLI simulator merged through PR #25; staging
-   deployment and the full Gate D comparison remain pending.
+2. Task 11 — public-contract CLI simulator merged through PR #25; matching
+   Operator BFF code shipped on 2026-10-21 with Core unchanged. Complete
+   staging verification and the full Gate D comparison remain pending.
 3. Task 12 — cross-service audit, safe observability, and retention.
 4. Task 13 — isolated deployments, CI/CD, smoke tests, and operator
    documentation.
@@ -602,13 +627,13 @@ those integrations.
 The [Product Follow-up Register](./follow-up-register.md) is authoritative and
 must be updated whenever a finding changes state. It currently preserves:
 
-- publication/rollout of the locally implemented signed-in identity/scope
+- authenticated staging acceptance of the deployed signed-in identity/scope
   indicator, plus demo data on Overview and live-page styling;
 - member passkeys/MFA and safer invitation account handoff;
 - schema deprecation, stale impact state, and lifecycle presentation;
 - Promo active-vs-draft full comparison, revision history/rollback, deliberate
   single-draft semantics, and catalog mapping for `productRef`;
-- deployment/staging verification of GAP-023 client-facing percentage entry;
+- authenticated staging verification of the deployed GAP-023 percentage editor;
 - the complete approved free-shipping financial-authority design;
 - future event ingestion/mapping and event-triggered Loyalty, Referral, and
   Affiliate behavior;
