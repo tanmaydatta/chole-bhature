@@ -1,5 +1,7 @@
-import { render, screen, within, fireEvent } from '@testing-library/react';
-import { MemoryRouter, Routes, Route, useLocation } from 'react-router-dom';
+import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { MemoryRouter, Routes, Route } from 'react-router-dom';
+import type { PermissionKey } from '@incentives/contracts';
 import Overview from './Overview';
 import { useProgramStore } from '../data/store';
 import { PROGRAMS } from '../data/programs';
@@ -9,92 +11,50 @@ beforeEach(() => {
   useProgramStore.setState({ programs: PROGRAMS.map(p => ({ ...p })) });
 });
 
-function LocationProbe({ onLocation }: { onLocation: (path: string) => void }) {
-  const loc = useLocation();
-  onLocation(loc.pathname);
-  return null;
+function renderOverview(permissions: PermissionKey[] = ['programs:read', 'programs:manage']) {
+  return render(<TestAuth permissions={permissions}><MemoryRouter>
+    <Routes>
+      <Route path="/" element={<Overview />} />
+      <Route path="/promo" element={<h1>Live Promo list</h1>} />
+      <Route path="/promo/new" element={<h1>Create live Promo</h1>} />
+    </Routes>
+  </MemoryRouter></TestAuth>);
 }
 
-function renderWithRouter(ui: React.ReactElement) {
-  return render(<TestAuth><MemoryRouter>{ui}</MemoryRouter></TestAuth>);
-}
+test.each(['populated', 'empty'])('keeps analytics unavailable with a %s browser-local store', store => {
+  if (store === 'empty') useProgramStore.setState({ programs: [] });
+  renderOverview();
 
-function renderWithLocationCapture() {
-  let currentPath = '/';
-  const setPath = (p: string) => { currentPath = p; };
-  render(
-    <TestAuth><MemoryRouter initialEntries={['/']}>
-      <Routes>
-        <Route path="/" element={<Overview />} />
-        <Route path="*" element={<LocationProbe onLocation={setPath} />} />
-      </Routes>
-    </MemoryRouter></TestAuth>
-  );
-  return { getPath: () => currentPath };
-}
-
-test('renders all three stat card labels', () => {
-  renderWithRouter(<Overview />);
-  expect(screen.getByText('Active programs')).toBeInTheDocument();
-  expect(screen.getByText('Redemptions (30d)')).toBeInTheDocument();
-  expect(screen.getByText('Incentive spend (30d)')).toBeInTheDocument();
+  expect(screen.getByRole('heading', { name: 'Overview metrics aren’t available yet' })).toBeVisible();
+  expect(screen.getByText('Analytics are not available yet. View your promos to manage existing programs.')).toBeVisible();
+  expect(screen.queryByRole('table')).not.toBeInTheDocument();
+  expect(screen.queryByText(/Active programs|Redemptions \(30d\)|Incentive spend|All programs/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/8,412|\$42,180|\$65,000|64%|\+3 this month|18% vs prev/)).not.toBeInTheDocument();
+  expect(screen.queryByText('SUMMER15')).not.toBeInTheDocument();
+  expect(screen.queryByText(/no (programs|promos)/i)).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: /New program/i })).not.toBeInTheDocument();
+  expect(screen.queryByRole('menu')).not.toBeInTheDocument();
 });
 
-test('renders stat card values', () => {
-  renderWithRouter(<Overview />);
-  expect(screen.getByText('11')).toBeInTheDocument();
-  expect(screen.getByText('8,412')).toBeInTheDocument();
-  expect(screen.getByText('$42,180')).toBeInTheDocument();
+test.each([
+  [['programs:read', 'programs:manage'], true],
+  [['programs:read'], false],
+] satisfies [PermissionKey[], boolean][])('derives live actions from permissions %j', (permissions, canManage) => {
+  renderOverview(permissions);
+  expect(screen.getByRole('link', { name: 'View promos' })).toHaveAttribute('href', '/promo');
+  const create = screen.queryByRole('link', { name: 'New promo' });
+  if (canManage) expect(create).toHaveAttribute('href', '/promo/new');
+  else expect(create).not.toBeInTheDocument();
 });
 
-test('renders the programs table with at least one TypePill and StatusBadge', () => {
-  renderWithRouter(<Overview />);
-  const table = within(screen.getByRole('table'));
-  // TypePill labels (scoped to the table)
-  expect(table.getAllByText(/^(Promo|Affiliate|Referral|Loyalty)$/).length).toBeGreaterThan(0);
-  // StatusBadge labels (scoped to the table)
-  expect(table.getAllByText(/^(Active|Paused|Scheduled|Draft|Ended)$/).length).toBeGreaterThan(0);
+test('a reader can open the live Promo list from Overview', async () => {
+  renderOverview(['programs:read']);
+  await userEvent.click(screen.getByRole('link', { name: 'View promos' }));
+  expect(screen.getByRole('heading', { name: 'Live Promo list' })).toBeVisible();
 });
 
-test('Name cell renders subtitle, not a duplicate rewardSummary', () => {
-  renderWithRouter(<Overview />);
-  const table = within(screen.getByRole('table'));
-  // subtitle descriptor from seed
-  expect(table.getByText('Orders over $50')).toBeInTheDocument();
-  // rewardSummary appears once (Reward column only), not duplicated in Name sub-line
-  expect(table.getAllByText('15% off')).toHaveLength(1);
-});
-
-test('renders the "＋ New program" button', () => {
-  renderWithRouter(<Overview />);
-  expect(screen.getByRole('button', { name: /New program/i })).toBeInTheDocument();
-});
-
-test('renders "All programs" page header', () => {
-  renderWithRouter(<Overview />);
-  expect(screen.getByText('All programs')).toBeInTheDocument();
-});
-
-test('clicking a program row navigates to its detail page', () => {
-  const { getPath } = renderWithLocationCapture();
-  // SUMMER15 is the first active promo (promo-1). Click its row.
-  const row = screen.getByText('SUMMER15').closest('tr')!;
-  fireEvent.click(row);
-  expect(getPath()).toMatch(/^\/promo\/.+/);
-});
-
-test('"＋ New program" opens a type chooser with all four program types', () => {
-  renderWithRouter(<Overview />);
-  const newBtn = screen.getByRole('button', { name: /New program/i });
-
-  // Chooser should not be visible initially
-  expect(screen.queryByRole('menuitem', { name: /Promo/i })).not.toBeInTheDocument();
-
-  fireEvent.click(newBtn);
-
-  // All four type options must appear
-  expect(screen.getByRole('menuitem', { name: 'Promo' })).toBeInTheDocument();
-  expect(screen.getByRole('menuitem', { name: 'Affiliate' })).toBeInTheDocument();
-  expect(screen.getByRole('menuitem', { name: 'Referral' })).toBeInTheDocument();
-  expect(screen.getByRole('menuitem', { name: 'Loyalty' })).toBeInTheDocument();
+test('a manager can open the live Promo editor directly', async () => {
+  renderOverview();
+  await userEvent.click(screen.getByRole('link', { name: 'New promo' }));
+  expect(screen.getByRole('heading', { name: 'Create live Promo' })).toBeVisible();
 });

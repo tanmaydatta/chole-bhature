@@ -31,6 +31,7 @@ test('static route — overview shows "Overview" in TopBar', () => {
   renderAtPath('/');
   const h1 = screen.getByRole('heading', { level: 1 });
   expect(h1).toHaveTextContent('Overview');
+  expect(screen.queryByText('Demo data')).not.toBeInTheDocument();
 });
 
 test('static route — /promo shows "Promo Codes" in TopBar', () => {
@@ -67,8 +68,8 @@ test('detail route with unknown id falls back to "Incentives"', () => {
 });
 
 test('shared account context stays separate from shell demo labeling', () => {
-  render(<MemoryRouter><TestAuth><AccountContextStrip /><Routes><Route element={<AppShell />}>
-    <Route index element={<div>Demo overview</div>} />
+  render(<MemoryRouter initialEntries={['/affiliates']}><TestAuth><AccountContextStrip /><Routes><Route element={<AppShell />}>
+    <Route path="/affiliates" element={<div>Demo affiliates</div>} />
   </Route></Routes></TestAuth></MemoryRouter>);
   const context = screen.getByRole('region', { name: 'Account context' });
   expect(context).toHaveTextContent('Test Operator');

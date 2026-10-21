@@ -568,6 +568,10 @@ describe('operator access flow', () => {
     expect(within(context).getByText('Client B')).toBeVisible();
     expect(context).not.toHaveTextContent('Client A');
     expect(clientReads).toBe(2); // One page directory load per successful mount; no auth lookup.
+    await userEvent.click(screen.getByRole('link', { name: 'Overview' }));
+    expect(await screen.findByRole('heading', { name: 'Overview metrics aren’t available yet' })).toBeVisible();
+    expect(screen.getByRole('region', { name: 'Account context' })).toHaveTextContent('Client B');
+    expect(screen.queryByText('Demo data')).not.toBeInTheDocument();
   });
 
   test('keeps the newest account metadata when refreshes complete out of order', async () => {
@@ -610,14 +614,60 @@ describe('operator access flow', () => {
     ['admin', true, true],
     ['operator', false, false],
     ['viewer', false, false],
+    ['rootSelected', true, true],
   ] as const)('renders permission-derived navigation and actions for %s', async (role, teamVisible, credentialsVisible) => {
-    installFetch(sessions[role]);
+    const { calls } = installFetch(sessions[role]);
     renderApp('/');
-    await screen.findByText('Demo data');
+    expect(await screen.findByRole('heading', { name: 'Overview metrics aren’t available yet' })).toBeVisible();
+    const context = screen.getByRole('region', { name: 'Account context' });
+    expect(context).toHaveTextContent('Client A');
+    expect(context).toHaveTextContent(sessions[role].display.user.name);
+    expect(screen.queryByText('Demo data')).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'View promos' })).toHaveAttribute('href', '/promo');
+    expect(screen.queryByRole('link', { name: 'New promo' }) !== null).toBe(role !== 'viewer');
     expect(screen.queryByRole('link', { name: 'Team' }) !== null).toBe(teamVisible);
     expect(screen.queryByRole('link', { name: 'Credentials' }) !== null).toBe(credentialsVisible);
     expect(screen.queryByRole('link', { name: 'Audit' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /redeem/i })).not.toBeInTheDocument();
+    expect(calls).toEqual([{ path: '/operator/v1/session', method: 'GET' }]);
+  });
+
+  test('keeps Overview behind ROOT client selection', async () => {
+    const { calls } = installFetch(sessions.root);
+    renderApp('/');
+    expect(await screen.findByText('Select a client before using merchant settings.')).toBeVisible();
+    expect(screen.getByRole('region', { name: 'Account context' })).toHaveTextContent('No client selected');
+    expect(screen.getByRole('link', { name: 'Select a client' })).toHaveAttribute('href', '/platform/clients');
+    expect(screen.queryByRole('link', { name: 'View promos' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Overview metrics aren’t available yet' })).not.toBeInTheDocument();
+    expect(screen.queryByText('Demo data')).not.toBeInTheDocument();
+    expect(calls).toEqual([{ path: '/operator/v1/session', method: 'GET' }]);
+  });
+
+  test('denies Overview without program read permission instead of showing unavailable metrics', async () => {
+    const { calls } = installFetch({ ...sessions.viewer, permissions: ['schemas:read'] });
+    renderApp('/');
+    expect(await screen.findByText('You do not have permission to view this page.')).toBeVisible();
+    expect(screen.queryByRole('heading', { name: 'Overview metrics aren’t available yet' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'View promos' })).not.toBeInTheDocument();
+    expect(calls).toEqual([{ path: '/operator/v1/session', method: 'GET' }]);
+  });
+
+  test.each([
+    [401, 'UNAUTHORIZED', 'Authentication is required', 'Work email'],
+    [503, 'IDENTITY_UNAVAILABLE', 'Identity is temporarily unavailable', 'Identity is temporarily unavailable'],
+  ] as const)('keeps session loading and %i errors distinct from unavailable Overview metrics', async (status, code, message, expected) => {
+    let finishSession!: (response: Response) => void;
+    const pending = new Promise<Response>(resolve => { finishSession = resolve; });
+    installFetch(null, { 'GET /operator/v1/session': () => pending });
+    renderApp('/');
+    expect(screen.getByText('Checking your session…')).toBeVisible();
+    expect(screen.queryByRole('heading', { name: 'Overview metrics aren’t available yet' })).not.toBeInTheDocument();
+    await act(async () => finishSession(canonicalError(status, code, message, status >= 500)));
+    expect(await screen.findByText(expected)).toBeVisible();
+    expect(screen.queryByRole('heading', { name: 'Overview metrics aren’t available yet' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Account context' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'View promos' })).not.toBeInTheDocument();
   });
 
   test('denies a non-root direct client route without fetching platform clients', async () => {
@@ -687,7 +737,6 @@ describe('operator access flow', () => {
     ['/affiliates', 'New affiliate'],
     ['/referrals', 'New referral'],
     ['/loyalty', 'New loyalty'],
-    ['/', 'New program'],
   ] as const)('lets a viewer read %s without exposing program mutation controls', async (path, actionName) => {
     installFetch(sessions.viewer);
     renderApp(path);

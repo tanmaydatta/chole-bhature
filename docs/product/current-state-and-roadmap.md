@@ -81,11 +81,27 @@ no login, E2E or fixture writes occurred. The
 records versions, provenance and limits. The scoped release status was
 synchronized to the existing three Notion pages and readback-verified on
 2026-10-21; historical checkpoints and unrelated content were preserved.
-Next client-readiness planning is GAP-004 (live tenant-scoped Overview or an
-unambiguous empty state), with its own plan and approval. The
-[account contract](../integration/core-contracts.md#operator-account-and-client-display)
+The [account contract](../integration/core-contracts.md#operator-account-and-client-display)
 records the additive Identity-first, matching BFF/Dashboard contract.
 This changes no Core API, migration or secret and does not close Task10/GateD.
+
+**2026-10-21 local product slice — GAP-004:** Overview now states
+“Overview metrics aren’t available yet” instead of showing fabricated metrics
+and browser-local program rows. Every admitted reader can open **View promos**;
+**New promo** uses the existing `programs:manage` permission. Account/client,
+ROOT selection and read/session gates remain intact. Overview has no Demo data
+badge; unrelated demo pages remain labeled. No analytics service, data fetch,
+program-count claim or contract was added. Build/lint, 2,394 Vitest cases plus
+nine Node tests, and the existing Admin preauth browser case passed locally
+(15.2s; all four owned resources cleaned, zero Product/Auth rows). The browser
+uses the real theme toggle and computed colors to verify at least 4.5:1 text
+contrast for **View promos** in both light and dark themes.
+The [local Overview proof](../testing/preauth-local-promo.md#overview-unavailable-check--2026-10-21)
+records reload and navigation into the real Promo list, with all prior capped
+Promo authoring/publication assertions retained. This slice is uncommitted,
+not merged, deployed or accepted in staging. Independent local review is complete;
+publication remains pending. Scoped GAP-004 status synchronization to the existing
+roadmap and register Notion pages is readback-verified.
 
 **2026-10-19 Task11 baseline:** The public-contract
 [checkout CLI simulator](../integration/integration-simulator.md) is implemented
@@ -168,14 +184,14 @@ deferred issue remains in the
 | Question | Current answer |
 |---|---|
 | Overall phase | Post-Gate-C client readiness; evaluate-only Playground merged and verified in staging |
-| Current activity | GAP-003 is merged and deployed with limited public smoke evidence; authenticated acceptance remains pending. GAP-004 is the next separate planning candidate, not approved implementation. E2E rewrite/cloud provisioning remain parked. |
+| Current activity | GAP-003 is merged and deployed with limited public smoke evidence; authenticated acceptance remains pending. GAP-004's approved unavailable Overview is implemented, independently reviewed and locally verified, awaiting publication. E2E rewrite/cloud provisioning remain parked. |
 | Current repository baseline | Fresh provider read confirms `dev` at PR #30 merge `a5d260cd7cf6574951bf081385c1f22fc84dc944` on 2026-10-21, tree `efd0762bbd67d0c00d9a06e7108aca26638a6d11`, identical to deployed source `1852a13c1adf9d49971300a927a93fa4e54fc52e`. |
 | Current product-code baseline | GAP-003 PR #29 and compatibility PR #30 are merged after GAP-023 PR #27, Task 11 PR #25 and local preauth PR #26. Only matching Identity/Operator source deployed on 2026-10-21; full simulator/capabilities acceptance is unproved with unchanged Core. |
-| Local feature state | GAP-003 and Auth-through-0006 compatibility have local/CI evidence and are deployed; authenticated staging product acceptance remains open. Authoritative merchandise pricing and the E2E platform are merged, with dated staging evidence retained. Cloud E2E foundation/packaging/diagnostics/CI admission/local bootstrap are locally accepted; its dated correction verification passes 337 cloud, 1,683 Vitest cases plus nine separate Node script tests and five local Playwright cases (23.4 s), build/lint. Public Worker writes still refuse before transport. |
+| Local feature state | GAP-004 replaces fabricated Overview content with an unavailable state and permission-derived live Promo links; local build/lint, 2,394 Vitest plus nine Node tests and one Admin preauth case pass. It is uncommitted and not deployed. GAP-003 and Auth-through-0006 compatibility have local/CI evidence and are deployed; authenticated staging product acceptance remains open. Authoritative merchandise pricing and the E2E platform are merged, with dated staging evidence retained. Cloud E2E foundation/packaging/diagnostics/CI admission/local bootstrap are locally accepted; its dated correction verification passes 337 cloud, 1,683 Vitest cases plus nine separate Node script tests and five local Playwright cases (23.4 s), build/lint. Public Worker writes still refuse before transport. |
 | Current deployment state | Identity `ac888e12-3685-49c0-a981-02a0aaea38c6`, Operator `cf5e8d92-b159-48b0-b378-be065c883cfc` and unchanged Core `e38ee573-5a56-444e-9707-ab6f73cb1490` each receive 100% staging traffic. Core immutable source mapping remains unestablished. Migrations/secrets/v2 preauth are unchanged. |
 | Current release decision | Limited two-Worker deployment and public health/privacy/session/asset checks passed. No authenticated acceptance, login, E2E or fixture writes occurred. Historical 2026-10-14 browser results remain dated evidence; full Task 10/Gate D and production acceptance are open. |
 | Gate C finish line | Complete — all mandatory clean-break selection, redemption, tenant-isolation, concurrency, and observability cases passed |
-| Next plan work | Separately authorize authenticated staging acceptance. GAP-004 (live Overview or an unambiguous empty state) is next product planning, requiring its own approval. Full simulator/capabilities staging and Task 10/Gate D acceptance remain open. |
+| Next plan work | Publication of the independently reviewed and locally verified GAP-004 unavailable Overview remains pending. Authenticated staging acceptance requires separate authorization. Full simulator/capabilities staging and Task 10/Gate D acceptance remain open. |
 
 ## Source-of-truth map
 
@@ -355,8 +371,10 @@ The 2026-09-29 cutover likewise does not verify email delivery or a headed run.
 GAP-003 and the Identity compatibility correction are merged and deployed
 under the limited 2026-10-21 release. GAP-023 editor code is included in the
 Operator build. Public checks passed; authenticated account/client, Core RPC
-and Promo acceptance remain pending. GAP-004 is the next separate
-client-readiness planning candidate, not approved implementation.
+and Promo acceptance remain pending. The separately approved GAP-004 unavailable
+Overview is implemented, independently reviewed and locally verified; publication
+remains pending. It adds no analytics capability or staging acceptance. See the
+[local Overview proof](../testing/preauth-local-promo.md#overview-unavailable-check--2026-10-21).
 
 The [public-contract checkout CLI](../integration/integration-simulator.md) and its
 approved canonical read-only capabilities prerequisite are already merged
@@ -628,7 +646,8 @@ The [Product Follow-up Register](./follow-up-register.md) is authoritative and
 must be updated whenever a finding changes state. It currently preserves:
 
 - authenticated staging acceptance of the deployed signed-in identity/scope
-  indicator, plus demo data on Overview and live-page styling;
+  indicator, publication of the independently reviewed and locally verified unavailable Overview,
+  and live-page styling;
 - member passkeys/MFA and safer invitation account handoff;
 - schema deprecation, stale impact state, and lifecycle presentation;
 - Promo active-vs-draft full comparison, revision history/rollback, deliberate

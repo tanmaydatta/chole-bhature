@@ -5,6 +5,32 @@ import { test, expect, type PromoAccountDisplay } from '../support/promo-fixture
 import { executeRecipe } from '../../src/execution.js';
 import { cappedPromo } from '../../src/gap-scenario.js';
 
+function relativeLuminance(color: string) {
+  const channels = color.match(/[\d.]+/g)?.map(Number) ?? [];
+  expect(channels).toHaveLength(3);
+  const [red, green, blue] = channels.map(channel => {
+    const value = channel / 255;
+    return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+  });
+  return 0.2126 * red + 0.7152 * green + 0.0722 * blue;
+}
+
+async function expectReadableOverviewAction(page: Page, theme: 'light' | 'dark') {
+  const html = page.locator('html');
+  if (await html.getAttribute('data-theme') !== theme) {
+    await page.getByTitle('Toggle light / dark', { exact: true }).click();
+  }
+  await expect(html).toHaveAttribute('data-theme', theme);
+  const colors = await page.getByRole('link', { name: 'View promos', exact: true }).evaluate(element => {
+    const style = getComputedStyle(element);
+    return { foreground: style.color, background: style.backgroundColor };
+  });
+  const luminances = [relativeLuminance(colors.foreground), relativeLuminance(colors.background)];
+  const contrast = (Math.max(...luminances) + 0.05) / (Math.min(...luminances) + 0.05);
+  console.log(`overview-contrast theme=${theme}; foreground=${colors.foreground}; background=${colors.background}; ratio=${contrast}`);
+  expect(contrast, `View promos text contrast in ${theme} theme`).toBeGreaterThanOrEqual(4.5);
+}
+
 async function expectAccount(page: Page, expected: PromoAccountDisplay) {
   const account = page.getByRole('region', { name: 'Account context', exact: true });
   await expect(account).toBeVisible();
@@ -75,6 +101,31 @@ test('browser authors and persists the exact capped Promo, then publishes it', a
       }
       const page = await context.newPage();
       const expected = promoScenario.accountDisplay(ctx);
+      await page.goto(`${ctx.target.operatorOrigin}/`);
+      const expectOverview = async () => {
+        await expectAccount(page, expected);
+        await expect(page.getByRole('heading', { name: 'Overview metrics aren’t available yet', exact: true })).toBeVisible();
+        await expect(page.getByText('Analytics are not available yet. View your promos to manage existing programs.', { exact: true })).toBeVisible();
+        await expect(page.getByText('Demo data', { exact: true })).toHaveCount(0);
+        await expect(page.getByRole('table')).toHaveCount(0);
+        await expect(page.getByText(/Active programs|Redemptions \(30d\)|Incentive spend|8,412|\$42,180|\$65,000|64%|SUMMER15/)).toHaveCount(0);
+        await expect(page.getByRole('button', { name: /New program/i })).toHaveCount(0);
+        await expect(page.getByRole('menu')).toHaveCount(0);
+        await expect(page.getByRole('link', { name: 'View promos', exact: true })).toHaveAttribute('href', '/promo');
+        await expect(page.getByRole('link', { name: 'New promo', exact: true })).toHaveAttribute('href', '/promo/new');
+      };
+      await expectOverview();
+      await page.reload();
+      await expectOverview();
+      await expectReadableOverviewAction(page, 'light');
+      await expectReadableOverviewAction(page, 'dark');
+      await page.getByTitle('Toggle light / dark', { exact: true }).click();
+      await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+      await page.getByRole('link', { name: 'View promos', exact: true }).click();
+      await expect(page).toHaveURL(`${ctx.target.operatorOrigin}/promo`);
+      await expectAccount(page, expected);
+      await expect(page.getByRole('cell', { name: `${id} Capped percentage`, exact: true })).toBeVisible();
+      console.log('overview-journey unavailable=true; reload=true; live_promo_navigation=true; owned_promo_visible=true');
       await page.goto(`${ctx.target.operatorOrigin}/affiliates/new`);
       await expectAccount(page, expected);
       const demo = page.getByText('Demo data', { exact: true });
