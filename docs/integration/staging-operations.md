@@ -141,6 +141,33 @@ using the existing headless local suite for product work. See the
 [control lease foundation](../../tests/e2e/README.md#control-lease-foundation)
 and [preauthenticated product E2E contract](../superpowers/specs/2026-10-12-preauthenticated-product-e2e-design.md).
 
+### Identity schema compatibility checkpoint — 2026-10-21
+
+Review of merged `dev` source `57370166bf5975861e29c8248ed922556721b83c`
+found that ordinary invitation and member writes unconditionally queried Auth
+`0007` control schema. A database migrated through `0006` therefore failed with
+`no such table: e2e_control_runs`, including ordinary invitation acceptance.
+The local source correction recognizes the legacy schema from explicit migration,
+object and column metadata on each call. Incomplete required control metadata
+or fences, and metadata or query failures, refuse before business writes.
+This validates the required protocol minimum rather than every `0007` object.
+Migrated fixture organizations
+retain their marker, runtime and atomic lease fences.
+
+Local D1 regression coverage applies the actual historical migrations through
+`0006` and verifies persisted ordinary invitations, accepted accounts,
+memberships, role changes and session revocation; the same flows run against
+the full schema. Incomplete required metadata, retained markers, database errors and later
+schema changes also have refusal checks. This is a local compatibility boundary,
+not a deployment or whole-release acceptance result.
+
+Staging remains **NO-GO** pending a separately reviewed source-to-runtime
+preflight. The read-only checkpoint found Auth `0007` and Product `0009` absent,
+no configured or saved staging ROOT state in the normal test run area, and
+unresolved Core source provenance.
+This correction applies no migrations, enables no preauth runtime and does not
+resolve those release prerequisites. The opt-in preauth proof remains local-only.
+
 ### Prepare the ignored environment file
 
 Copy `.env.staging.example` to `.env.staging` with owner-only permissions. Replace the two D1

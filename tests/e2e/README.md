@@ -140,6 +140,16 @@ before any writes. Manual tenants and version 1 ROOT runs keep their existing
 invitation and account flows. Permanent fixture markers refuse business writes
 when the matching control ledger is missing, expired or fenced.
 
+Identity ordinary invitations and member mutations support the historical Auth
+schema through `0006` as well as the full `0007` schema. Each call checks explicit
+migration, object and column metadata before control lookups; incomplete required
+control metadata or fences, or database errors, refuse writes. This validates the
+required protocol minimum rather than every `0007` object. Local real-D1 regression coverage
+verifies persisted invitation issuance/acceptance, membership changes, session
+revocation and these refusal boundaries. This compatibility correction enables
+no preauth mode and establishes no staging readiness; see the
+[2026-10-21 operations checkpoint](../../docs/integration/staging-operations.md#identity-schema-compatibility-checkpoint--2026-10-21).
+
 Reservations refuse collisions with retained version 1 claims without changing
 legacy business or disposal rows. Fixture organizations require the exact
 reserved tenant tuple and permanent marker. Membership writes check both the
