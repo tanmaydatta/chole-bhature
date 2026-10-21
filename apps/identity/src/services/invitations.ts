@@ -3,7 +3,7 @@ import { invitationAcceptanceUrl, type E2eControlRuntime, type OperatorPrincipal
 import { authorize } from '../authorization/authorize.js';
 import type { FixedRole } from '../authorization/registry.js';
 import { sha256 } from '../recovery.js';
-import { withAuthBusinessWrite } from './e2e-write-fence.js';
+import { authOrganizationIsControlMarked, withAuthBusinessWrite } from './e2e-write-fence.js';
 
 export interface InvitationEmailAdapter {
   send(message: { to: string; subject: string; text: string }): Promise<void>;
@@ -358,10 +358,7 @@ export function createInvitationService(options: InvitationServiceOptions) {
       const row = await invitationByToken(database, tokenHash);
       // Fixture accounts are exclusively controller-reserved synthetic identities.
       // Refuse before expiry housekeeping or any ordinary acceptance write.
-      if (row && await database.prepare(`SELECT 1 FROM organizations
-          WHERE id=?1 AND e2e_control_run_id IS NOT NULL
-        UNION ALL SELECT 1 FROM e2e_control_runs WHERE organization_id=?1 LIMIT 1`)
-        .bind(row.organizationId).first()) {
+      if (row && await authOrganizationIsControlMarked(database, row.organizationId)) {
         throw new InvitationInvalidError('Invitation is invalid');
       }
       const now = clock();

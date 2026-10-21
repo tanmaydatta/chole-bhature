@@ -22,6 +22,7 @@ export default defineConfig(async () => {
       cloudflareTest({
         wrangler: { configPath: './wrangler.toml' },
         miniflare: {
+          d1Databases: ['AUTH_SCHEMA_TEST_DB'],
           serviceBindings: {
             CORE: { network: { deny: ['0.0.0.0/0', '::/0'] } },
           },
