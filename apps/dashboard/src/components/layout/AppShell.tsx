@@ -36,7 +36,7 @@ function usePageTitle(pathname: string): string {
   return titleMap[pathname] ?? 'Incentives';
 }
 
-const liveRoutes = new Set(['/promo', '/playground', '/variables', '/customers', '/platform/clients', '/settings/team', '/settings/credentials']);
+const liveRoutes = new Set(['/', '/promo', '/playground', '/variables', '/customers', '/platform/clients', '/settings/team', '/settings/credentials']);
 
 export function AppShell({
   session,

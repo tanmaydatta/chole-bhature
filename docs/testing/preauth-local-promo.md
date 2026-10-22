@@ -2,6 +2,50 @@
 
 The opt-in local Promo check proves one headless ordinary-Admin product flow without personal ROOT or passkey login, with protected run-owned cleanup.
 
+## Overview unavailable check — 2026-10-21
+
+Run the same opt-in command below to verify Overview after the real run-owned
+capped Promo is created. The browser checks the exact account/client region,
+the accessible “Overview metrics aren’t available yet” heading and explanation,
+no Demo data badge, fabricated metrics, table or four-type chooser, and the
+**View promos** and permission-authorized **New promo** links. Reload preserves
+the unavailable state. The actual theme toggle selects light and dark; the
+browser verifies each theme and computes **View promos** text contrast from
+its rendered foreground/background colors, requiring at least 4.5:1 without
+rounding. Both themes render white on `#4f46e5`, measuring
+6.287528596095884:1. The theme is returned to light through the same UI.
+Clicking **View promos** opens the live list and shows
+the exact run-owned capped Promo; unavailable analytics does not imply an
+empty client inventory. All existing demo badge/scroll/hit checks and
+percentage/cap/editor/save/reload/persisted/publication assertions still run.
+
+On 2026-10-21 the corrected existing case passed first attempt: one test using
+one worker in 15.2s (16.004s command wall). Fixture startup took 11.729s,
+bootstrap 190ms and disposal 105ms. Protected disposal and fresh inventory verified all four
+owned resources cleaned and zero Product/Auth rows before capability/member
+retirement. No retry, skip, timeout, fixture, login or configuration change was
+added. Build/lint and the full root suite also passed: 2,394 Vitest cases
+(306 dashboard cases) plus nine Node tests in 79.869s on the corrected executable
+snapshot. The previous unchanged passkey-bootstrap
+timeout remains an unexplained historical observation, despite passing in
+this execution.
+
+Earlier on 2026-10-21 the initial unavailable-state journey passed in 14.5s
+(15.395s wall), with a full root pass in 80.475s after a sandbox loopback
+permission failure. Final review then identified insufficient dark-mode link
+contrast. The added browser regression failed at the actual 3.2073128953732977:1
+dark contrast before the component-local background fix; the existing CI retry
+reproduced that failure. Both failed scenarios still disposed all four owned
+resources with zero Product/Auth rows. Those earlier results remain historical
+evidence; the corrected 15.2s run above proves the final color pairing.
+
+The Overview slice is uncommitted and locally verified, not merged, deployed
+or accepted in staging. It adds no analytics service or data fetch and keeps
+the existing ROOT/client/read/session gates. This is still one preauthenticated
+Promo browser flow, not full-suite preauth conversion or full local/staging
+Playwright acceptance. Deployed versions and earlier dated results are
+unchanged.
+
 ## Account and client context check — 2026-10-19
 
 Run the existing opt-in command below to check account/scope display alongside
