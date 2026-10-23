@@ -15,9 +15,21 @@ import {
   type ConditionBuilderVariable,
 } from '../../components/builder/ConditionBuilder';
 import { conditionGroupIsAuthorable } from '../../components/builder/condition-validation';
+import { PageHeader } from '../../components/common/PageHeader';
 import { programApi } from '../../data/program-api';
 import { schemaApi } from '../../data/schema-api';
 import { BffClientError } from '../../lib/bff-client';
+
+const frameClass = 'min-h-screen bg-[var(--bg)] p-4 text-[13px] text-[var(--ink)] sm:p-6';
+const panelClass = 'min-w-0 rounded-[12px] border border-[var(--border)] bg-[var(--panel)] p-4 sm:p-5';
+const headingClass = 'text-[15px] font-semibold';
+const labelClass = 'block min-w-0 text-[12px] font-medium';
+const focusClass = 'focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--promo)]';
+const inputClass = `mt-1 block w-full min-w-0 rounded-[7px] border border-[var(--border)] bg-[var(--bg)] px-3 py-2 text-[13px] text-[var(--ink)] disabled:cursor-not-allowed disabled:opacity-60 ${focusClass}`;
+const choiceClass = `h-4 w-4 shrink-0 accent-[var(--accent)] ${focusClass}`;
+const buttonClass = `max-w-full self-start rounded-[7px] border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-[13px] font-semibold text-[var(--ink)] hover:bg-[var(--hover)] disabled:cursor-not-allowed disabled:opacity-50 ${focusClass}`;
+const removeClass = `${buttonClass} text-[var(--req)]`;
+const alertClass = 'rounded-[7px] bg-[var(--req-bg)] px-3 py-2 text-[12px] text-[var(--req)]';
 
 function localVariable(definition: VariableDefinition): ConditionBuilderVariable {
   return {
@@ -120,44 +132,44 @@ function RewardFields({ reward, change, text, changePercentage }: {
   text?: string; changePercentage: (text: string) => void;
 }) {
   const errorId = useId();
-  if (reward.type === 'free_shipping') return <p>Free shipping has no amount fields.</p>;
+  if (reward.type === 'free_shipping') return <p className="text-[12px] text-[var(--muted)]">Free shipping has no amount fields.</p>;
   const value = reward.calculation === 'percent' ? text ?? percentageText(reward.basisPoints) : '';
   const invalid = reward.calculation === 'percent' && percentageBasisPoints(value) === null;
-  return <div className="flex gap-2 flex-wrap">
-    {reward.type === 'line_item_discount' && <label>Product reference<input value={reward.productRef} onChange={event => change({ ...reward, productRef: event.target.value })}/></label>}
+  return <div className="grid min-w-0 gap-3 sm:grid-cols-2">
+    {reward.type === 'line_item_discount' && <label className={labelClass}>Product reference<input className={inputClass} value={reward.productRef} onChange={event => change({ ...reward, productRef: event.target.value })}/></label>}
     {reward.calculation === 'percent'
       ? <>
-        <label>Discount percentage<input type="text" inputMode="decimal" value={value}
+        <label className={labelClass}>Discount percentage<input className={inputClass} type="text" inputMode="decimal" value={value}
           aria-invalid={invalid} aria-describedby={invalid ? errorId : undefined}
           onChange={event => changePercentage(event.target.value)}/></label>
-        {invalid && <span id={errorId} role="alert">Enter a percentage from 0.01 to 100 with at most two decimal places.</span>}
+        {invalid && <span className={alertClass} id={errorId} role="alert">Enter a percentage from 0.01 to 100 with at most two decimal places.</span>}
         {reward.maximumDiscountAmount === undefined
-          ? <button type="button" onClick={() => change({
+          ? <button className={buttonClass} type="button" onClick={() => change({
             ...reward,
             maximumDiscountAmount: { currency: 'GBP', minorUnits: 1 },
           })}>Add maximum discount</button>
           : <>
-            <label>Maximum discount currency<input value={reward.maximumDiscountAmount.currency} onChange={event => change({
+            <label className={labelClass}>Maximum discount currency<input className={inputClass} value={reward.maximumDiscountAmount.currency} onChange={event => change({
               ...reward,
               maximumDiscountAmount: {
                 ...reward.maximumDiscountAmount!,
                 currency: event.target.value,
               },
             })}/></label>
-            <label>Maximum discount minor units<input type="number" min={1} value={reward.maximumDiscountAmount.minorUnits} onChange={event => change({
+            <label className={labelClass}>Maximum discount minor units<input className={inputClass} type="number" min={1} value={reward.maximumDiscountAmount.minorUnits} onChange={event => change({
               ...reward,
               maximumDiscountAmount: {
                 ...reward.maximumDiscountAmount!,
                 minorUnits: Number(event.target.value),
               },
             })}/></label>
-            <button type="button" onClick={() => {
+            <button className={removeClass} type="button" onClick={() => {
               const { maximumDiscountAmount: _maximum, ...uncapped } = reward;
               change(uncapped);
             }}>Remove maximum discount</button>
           </>}
       </>
-      : <><label>Currency<input value={reward.amount.currency} onChange={event => change({ ...reward, amount: { ...reward.amount, currency: event.target.value } })}/></label><label>Minor units<input type="number" min={1} value={reward.amount.minorUnits} onChange={event => change({ ...reward, amount: { ...reward.amount, minorUnits: Number(event.target.value) } })}/></label></>}
+      : <><label className={labelClass}>Currency<input className={inputClass} value={reward.amount.currency} onChange={event => change({ ...reward, amount: { ...reward.amount, currency: event.target.value } })}/></label><label className={labelClass}>Minor units<input className={inputClass} type="number" min={1} value={reward.amount.minorUnits} onChange={event => change({ ...reward, amount: { ...reward.amount, minorUnits: Number(event.target.value) } })}/></label></>}
   </div>;
 }
 
@@ -175,12 +187,12 @@ function RewardRules({ program, variables, change, percentageTexts, changePercen
     next.splice(index + direction, 0, rule);
     change({ ...program, rewardRules: next });
   }
-  return <section className="flex flex-col gap-3"><h2>Ordered reward rules</h2>
-    {program.rewardRules.map((rule, index) => <fieldset key={rule.id} className="border p-3">
-      <legend>Reward rule {index + 1}</legend>
-      <p>Rule ID: <code>{rule.id}</code></p>
-      <label>Rule name<input value={rule.name} onChange={event => update(index, { ...rule, name: event.target.value })}/></label>
-      <label>Reward type<select value={rewardKind(rule.reward)} onChange={event => update(index, { ...rule, reward: changedReward(rule.reward, event.target.value) })}>
+  return <section aria-label="Ordered reward rules" className={`${panelClass} flex flex-col gap-4`}><h2 className={headingClass}>Ordered reward rules</h2>
+    {program.rewardRules.map((rule, index) => <fieldset key={rule.id} className="min-w-0 space-y-4 rounded-[8px] border border-[var(--border)] p-3 sm:p-4">
+      <legend className="px-1 font-semibold">Reward rule {index + 1}</legend>
+      <p className="break-words text-[12px] text-[var(--muted)]">Rule ID: <code>{rule.id}</code></p>
+      <label className={labelClass}>Rule name<input className={inputClass} value={rule.name} onChange={event => update(index, { ...rule, name: event.target.value })}/></label>
+      <label className={labelClass}>Reward type<select className={inputClass} value={rewardKind(rule.reward)} onChange={event => update(index, { ...rule, reward: changedReward(rule.reward, event.target.value) })}>
         <option value="order_discount_fixed">Order fixed</option><option value="order_discount_percent">Order percent</option>
         <option value="line_item_discount_fixed">Line item fixed</option><option value="line_item_discount_percent">Line item percent</option>
         <option value="free_shipping">Free shipping</option>
@@ -188,24 +200,26 @@ function RewardRules({ program, variables, change, percentageTexts, changePercen
       <RewardFields reward={rule.reward} change={reward => update(index, { ...rule, reward })}
         text={percentageTexts.get(rule.id)} changePercentage={text => changePercentage(rule.id, text)}/>
       <ConditionBuilder value={rule.conditions} variables={variables} onChange={conditions => update(index, { ...rule, conditions })}/>
-      <button type="button" aria-label={`Move reward rule ${index + 1} up`} disabled={index === 0} onClick={() => move(index, -1)}>Move up</button>
-      <button type="button" aria-label={`Move reward rule ${index + 1} down`} disabled={index === program.rewardRules.length - 1} onClick={() => move(index, 1)}>Move down</button>
-      <button type="button" onClick={() => change({ ...program, rewardRules: program.rewardRules.filter((_, ruleIndex) => ruleIndex !== index) })}>Remove rule</button>
+      <div className="flex flex-wrap gap-2">
+        <button className={buttonClass} type="button" aria-label={`Move reward rule ${index + 1} up`} disabled={index === 0} onClick={() => move(index, -1)}>Move up</button>
+        <button className={buttonClass} type="button" aria-label={`Move reward rule ${index + 1} down`} disabled={index === program.rewardRules.length - 1} onClick={() => move(index, 1)}>Move down</button>
+        <button className={removeClass} type="button" onClick={() => change({ ...program, rewardRules: program.rewardRules.filter((_, ruleIndex) => ruleIndex !== index) })}>Remove rule</button>
+      </div>
     </fieldset>)}
-    <button type="button" onClick={() => change({ ...program, rewardRules: [...program.rewardRules, {
+    <button className={buttonClass} type="button" onClick={() => change({ ...program, rewardRules: [...program.rewardRules, {
       id: nextId('rule'), name: `Rule ${program.rewardRules.length + 1}`,
       conditions: { match: 'ALL', conditions: [] }, reward: { type: 'free_shipping' },
     }] })}>Add reward rule</button>
-    {program.fallbackReward ? <fieldset className="border p-3"><legend>Fallback reward</legend>
-      <p>Fallback ID: <code>{program.fallbackReward.id}</code></p>
-      <label>Fallback name<input value={program.fallbackReward.name} onChange={event => change({ ...program, fallbackReward: { ...program.fallbackReward!, name: event.target.value } })}/></label>
-      <label>Fallback type<select value={rewardKind(program.fallbackReward.reward)} onChange={event => change({ ...program, fallbackReward: { ...program.fallbackReward!, reward: changedReward(program.fallbackReward!.reward, event.target.value) } })}>
+    {program.fallbackReward ? <fieldset className="min-w-0 space-y-4 rounded-[8px] border border-[var(--border)] p-3 sm:p-4"><legend className="px-1 font-semibold">Fallback reward</legend>
+      <p className="break-words text-[12px] text-[var(--muted)]">Fallback ID: <code>{program.fallbackReward.id}</code></p>
+      <label className={labelClass}>Fallback name<input className={inputClass} value={program.fallbackReward.name} onChange={event => change({ ...program, fallbackReward: { ...program.fallbackReward!, name: event.target.value } })}/></label>
+      <label className={labelClass}>Fallback type<select className={inputClass} value={rewardKind(program.fallbackReward.reward)} onChange={event => change({ ...program, fallbackReward: { ...program.fallbackReward!, reward: changedReward(program.fallbackReward!.reward, event.target.value) } })}>
         <option value="order_discount_fixed">Order fixed</option><option value="order_discount_percent">Order percent</option><option value="line_item_discount_fixed">Line item fixed</option><option value="line_item_discount_percent">Line item percent</option><option value="free_shipping">Free shipping</option>
       </select></label>
       <RewardFields reward={program.fallbackReward.reward} change={reward => change({ ...program, fallbackReward: { ...program.fallbackReward!, reward } })}
         text={percentageTexts.get(program.fallbackReward.id)} changePercentage={text => changePercentage(program.fallbackReward!.id, text)}/>
-      <button type="button" onClick={() => change({ ...program, fallbackReward: undefined })}>Remove fallback</button>
-    </fieldset> : <button type="button" onClick={() => change({ ...program, fallbackReward: { id: nextId('fallback'), name: 'Fallback', reward: { type: 'free_shipping' } } })}>Add fallback reward</button>}
+      <button className={removeClass} type="button" onClick={() => change({ ...program, fallbackReward: undefined })}>Remove fallback</button>
+    </fieldset> : <button className={buttonClass} type="button" onClick={() => change({ ...program, fallbackReward: { id: nextId('fallback'), name: 'Fallback', reward: { type: 'free_shipping' } } })}>Add fallback reward</button>}
   </section>;
 }
 
@@ -340,57 +354,64 @@ export default function LivePromoEditor() {
     });
   }
 
-  if (loading) return <p>Loading Promo draft…</p>;
-  if (loadError) return <ErrorState error={loadError} retry={() => window.location.reload()} forceRetry />;
+  if (loading) return <main className={frameClass}><p className="mx-auto max-w-4xl">Loading Promo draft…</p></main>;
+  if (loadError) return <main className={frameClass}><div className="mx-auto max-w-4xl"><ErrorState error={loadError} retry={() => window.location.reload()} forceRetry /></div></main>;
 
-  return <main className="mx-auto max-w-4xl p-6 flex flex-col gap-5">
-    <h1>{id ? 'Edit Promo draft' : 'Create Promo'}</h1>
-    <label>External reference<input aria-label="External reference" disabled={Boolean(id)} value={program.id} onChange={event => setProgram({ ...program, id: event.target.value })}/></label>
-    <label>Promo name<input aria-label="Promo name" value={program.name} onChange={event => setProgram({ ...program, name: event.target.value })}/></label>
-    <fieldset>
-      <legend>Trigger</legend>
-      <label><input type="radio" name="promo-trigger" checked={program.autoApply} onChange={selectAutomaticTrigger}/>Automatic</label>
-      <label><input type="radio" name="promo-trigger" checked={!program.autoApply} onChange={selectCodedTrigger}/>Code-triggered</label>
-      {!program.autoApply && <label>Code<input value={program.code} onChange={event => setProgram({ ...program, code: event.target.value })}/></label>}
+  return <main className={frameClass}><div className="mx-auto flex max-w-4xl flex-col gap-5">
+    <PageHeader title={id ? 'Edit Promo draft' : 'Create Promo'} />
+    <section aria-label="Basics" className={`${panelClass} space-y-4`}>
+      <h2 className={headingClass}>Basics</h2>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <label className={labelClass}>External reference<input className={inputClass} aria-label="External reference" disabled={Boolean(id)} value={program.id} onChange={event => setProgram({ ...program, id: event.target.value })}/></label>
+        <label className={labelClass}>Promo name<input className={inputClass} aria-label="Promo name" value={program.name} onChange={event => setProgram({ ...program, name: event.target.value })}/></label>
+      </div>
+    </section>
+    <fieldset className={`${panelClass} space-y-3`}>
+      <legend className={`${headingClass} px-1`}>Trigger</legend>
+      <div className="flex flex-wrap gap-x-5 gap-y-3">
+        <label className="inline-flex items-center gap-2"><input className={choiceClass} type="radio" name="promo-trigger" checked={program.autoApply} onChange={selectAutomaticTrigger}/>Automatic</label>
+        <label className="inline-flex items-center gap-2"><input className={choiceClass} type="radio" name="promo-trigger" checked={!program.autoApply} onChange={selectCodedTrigger}/>Code-triggered</label>
+      </div>
+      {!program.autoApply && <label className={labelClass}>Code<input className={inputClass} value={program.code} onChange={event => setProgram({ ...program, code: event.target.value })}/></label>}
     </fieldset>
-    {!id && <button type="button" onClick={() => { setPercentageTexts(new Map()); setProgram(example(program.id, program.name)); }}>Use complete authoring example</button>}
-    <section><h2>Eligibility</h2><ConditionBuilder value={program.eligibility} variables={variables} onChange={eligibility => setProgram({ ...program, eligibility })}/></section>
+    {!id && <button className={buttonClass} type="button" onClick={() => { setPercentageTexts(new Map()); setProgram(example(program.id, program.name)); }}>Use complete authoring example</button>}
+    <section aria-label="Eligibility" className={`${panelClass} space-y-4`}><h2 className={headingClass}>Eligibility</h2><ConditionBuilder value={program.eligibility} variables={variables} onChange={eligibility => setProgram({ ...program, eligibility })}/></section>
     <RewardRules program={program} variables={variables} change={changeProgram}
       percentageTexts={percentageTexts} changePercentage={changePercentage}/>
-    <section className="grid grid-cols-2 gap-3"><h2 className="col-span-2">Limits, schedule, and stacking</h2>
+    <section aria-label="Limits, schedule, and stacking" className={`${panelClass} grid grid-cols-1 gap-3 sm:grid-cols-2`}><h2 className={`${headingClass} sm:col-span-2`}>Limits, schedule, and stacking</h2>
       {program.budget
         ? <>
-          <label>Budget currency<input aria-invalid={budgetCurrencyInvalid} value={program.budget.currency} onChange={event => setProgram({ ...program, budget: { ...program.budget!, currency: event.target.value } })}/>
-            {budgetCurrencyInvalid && <span role="alert">Budget currency must be exactly three uppercase letters.</span>}
+          <label className={labelClass}>Budget currency<input className={inputClass} aria-invalid={budgetCurrencyInvalid} value={program.budget.currency} onChange={event => setProgram({ ...program, budget: { ...program.budget!, currency: event.target.value } })}/>
+            {budgetCurrencyInvalid && <span className={`mt-1 block ${alertClass}`} role="alert">Budget currency must be exactly three uppercase letters.</span>}
           </label>
-          <label>Budget minor units<input aria-invalid={budgetMinorUnitsInvalid} type="number" value={program.budget.minorUnits} onChange={event => setProgram({ ...program, budget: { ...program.budget!, minorUnits: Number(event.target.value) } })}/>
-            {budgetMinorUnitsInvalid && <span role="alert">Budget minor units must be a non-negative whole number.</span>}
+          <label className={labelClass}>Budget minor units<input className={inputClass} aria-invalid={budgetMinorUnitsInvalid} type="number" value={program.budget.minorUnits} onChange={event => setProgram({ ...program, budget: { ...program.budget!, minorUnits: Number(event.target.value) } })}/>
+            {budgetMinorUnitsInvalid && <span className={`mt-1 block ${alertClass}`} role="alert">Budget minor units must be a non-negative whole number.</span>}
           </label>
-          <button type="button" className="col-span-2" onClick={() => setProgram({ ...program, budget: undefined })}>Remove budget</button>
+          <button type="button" className={`${removeClass} justify-self-start sm:col-span-2`} onClick={() => setProgram({ ...program, budget: undefined })}>Remove budget</button>
         </>
-        : <button type="button" className="col-span-2" onClick={() => setProgram({ ...program, budget: { currency: 'GBP', minorUnits: 0 } })}>Add budget</button>}
-      <label>Usage cap<input type="number" value={program.usageCap ?? ''} onChange={event => setProgram({ ...program, usageCap: event.target.value ? Number(event.target.value) : undefined })}/></label>
-      <label>Per customer cap<input type="number" value={program.perCustomerCap ?? ''} onChange={event => setProgram({ ...program, perCustomerCap: event.target.value ? Number(event.target.value) : undefined })}/></label>
-      <label>Start date<input type="date" value={program.startDate ?? ''} onChange={event => setProgram({ ...program, startDate: event.target.value || undefined })}/></label>
-      <label>End date<input type="date" value={program.endDate ?? ''} onChange={event => setProgram({ ...program, endDate: event.target.value || undefined })}/></label>
-      <label>Priority<input type="number" value={program.priority} onChange={event => setProgram({ ...program, priority: Number(event.target.value) })}/></label>
-      {!program.autoApply && <label><input type="checkbox" checked={program.stackable} onChange={event => setProgram({ ...program, stackable: event.target.checked })}/>Stackable</label>}
+        : <button type="button" className={`${buttonClass} justify-self-start sm:col-span-2`} onClick={() => setProgram({ ...program, budget: { currency: 'GBP', minorUnits: 0 } })}>Add budget</button>}
+      <label className={labelClass}>Usage cap<input className={inputClass} type="number" value={program.usageCap ?? ''} onChange={event => setProgram({ ...program, usageCap: event.target.value ? Number(event.target.value) : undefined })}/></label>
+      <label className={labelClass}>Per customer cap<input className={inputClass} type="number" value={program.perCustomerCap ?? ''} onChange={event => setProgram({ ...program, perCustomerCap: event.target.value ? Number(event.target.value) : undefined })}/></label>
+      <label className={labelClass}>Start date<input className={inputClass} type="date" value={program.startDate ?? ''} onChange={event => setProgram({ ...program, startDate: event.target.value || undefined })}/></label>
+      <label className={labelClass}>End date<input className={inputClass} type="date" value={program.endDate ?? ''} onChange={event => setProgram({ ...program, endDate: event.target.value || undefined })}/></label>
+      <label className={labelClass}>Priority<input className={inputClass} type="number" value={program.priority} onChange={event => setProgram({ ...program, priority: Number(event.target.value) })}/></label>
+      {!program.autoApply && <label className="inline-flex items-center gap-2 self-center"><input className={choiceClass} type="checkbox" checked={program.stackable} onChange={event => setProgram({ ...program, stackable: event.target.checked })}/>Stackable</label>}
     </section>
-    {freeShippingBudgetConflict && <p role="alert">Remove the monetary budget before saving a free-shipping reward.</p>}
-    {!validation.success && <p role="alert">Complete every required field and ensure each conditional rule has a condition.</p>}
-    {!conditionsValid && <p role="alert">Resolve every missing field and incompatible condition before saving.</p>}
-    {saveError && <section className="flex flex-col gap-2">
+    {freeShippingBudgetConflict && <p className={alertClass} role="alert">Remove the monetary budget before saving a free-shipping reward.</p>}
+    {!validation.success && <p className={alertClass} role="alert">Complete every required field and ensure each conditional rule has a condition.</p>}
+    {!conditionsValid && <p className={alertClass} role="alert">Resolve every missing field and incompatible condition before saving.</p>}
+    {saveError && <section className={`${panelClass} flex flex-col gap-3`}>
       <ErrorState error={saveError} retry={() => void save()} forceRetry retryLabel="Retry save" />
-      {(id || conflictReference) && <button type="button" onClick={() => void loadComparison()} disabled={comparisonLoading}>
+      {(id || conflictReference) && <button className={buttonClass} type="button" onClick={() => void loadComparison()} disabled={comparisonLoading}>
         {comparisonLoading ? 'Loading server version…' : 'Reload server version for comparison'}
       </button>}
     </section>}
     {compareError && <ErrorState error={compareError} retry={() => void loadComparison()} retryLabel="Retry comparison" />}
-    {comparison && <section aria-label="Server version comparison" className="rounded border p-3">
-      <h2>Server version comparison</h2>
-      <p>Server Promo name: <code>{comparison.name}</code></p>
+    {comparison && <section aria-label="Server version comparison" className={`${panelClass} space-y-3`}>
+      <h2 className={headingClass}>Server version comparison</h2>
+      <p className="break-words">Server Promo name: <code>{comparison.name}</code></p>
       <p>Your authored draft remains in the editor. Replace it only after comparing.</p>
-      <button type="button" onClick={() => {
+      <button className={buttonClass} type="button" onClick={() => {
         setPercentageTexts(new Map());
         setProgram({ ...comparison, status: 'draft' });
         setComparison(null);
@@ -398,6 +419,8 @@ export default function LivePromoEditor() {
         setSaveError(null);
       }}>Replace authored draft with server version</button>
     </section>}
-    <button type="button" disabled={!validation.success || !conditionsValid || !percentagesValid || freeShippingBudgetConflict || saving} onClick={() => void save()}>{saving ? 'Saving…' : 'Save draft'}</button>
-  </main>;
+    <div className="flex flex-wrap gap-3">
+      <button className={`max-w-full rounded-[7px] bg-[#4f46e5] px-4 py-2 font-semibold text-white hover:bg-[#4338ca] disabled:cursor-not-allowed disabled:opacity-50 ${focusClass}`} type="button" disabled={!validation.success || !conditionsValid || !percentagesValid || freeShippingBudgetConflict || saving} onClick={() => void save()}>{saving ? 'Saving…' : 'Save draft'}</button>
+    </div>
+  </div></main>;
 }

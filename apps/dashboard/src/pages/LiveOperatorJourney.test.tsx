@@ -242,6 +242,36 @@ afterEach(() => {
 });
 
 describe('live operator authoring journey', () => {
+  test.each([
+    ['/promo/new', 'Create Promo', false],
+    ['/promo/gold-launch/edit', 'Edit Promo draft', true],
+  ] as const)('groups the %s editor into named authoring sections with associated fields', async (path, title, editing) => {
+    installLiveBff();
+    renderApp(path);
+    await screen.findByRole('heading', { name: title });
+    const basics = await screen.findByRole('region', { name: 'Basics' });
+    const reference = within(basics).getByRole('textbox', { name: 'External reference' });
+    expect(reference).toHaveValue(editing ? 'gold-launch' : '');
+    expect(reference).toHaveProperty('disabled', editing);
+    expect(within(basics).getByRole('textbox', { name: 'Promo name' }))
+      .toHaveValue(editing ? 'Gold launch' : '');
+    expect(screen.getByRole('group', { name: 'Trigger' })).toBeVisible();
+    expect(screen.getByRole('region', { name: 'Eligibility' })).toBeVisible();
+    const rewards = screen.getByRole('region', { name: 'Ordered reward rules' });
+    const limits = screen.getByRole('region', { name: 'Limits, schedule, and stacking' });
+    expect(within(limits).getByRole('spinbutton', { name: 'Usage cap' })).toBeVisible();
+    expect(within(limits).getByLabelText('Start date', { exact: true })).toBeVisible();
+    if (editing) {
+      await userEvent.type(reference, 'replacement-reference');
+      expect(reference).toBeDisabled();
+      expect(reference).toHaveValue('gold-launch');
+      expect(within(within(rewards).getByRole('group', { name: 'Reward rule 1' }))
+        .getByRole('textbox', { name: 'Rule name' })).toBeVisible();
+    } else {
+      expect(within(rewards).queryByRole('group', { name: 'Reward rule 1' })).not.toBeInTheDocument();
+    }
+  });
+
   test('loads and saves percentages for opaque prototype-named reward IDs', async () => {
     const server = installLiveBff(programConfiguration('Gold launch', false, 'constructor'));
     renderApp('/promo/gold-launch/edit');
