@@ -196,6 +196,14 @@ unchanged. No login, authenticated account/client or Core RPC acceptance,
 Promo acceptance, E2E run or fixture write occurred. Full staging product
 acceptance, Task 10/Gate D and per-PR cloud activation remain open.
 
+### Overview staging checkpoint — 2026-10-22
+
+The [Overview staging verification](../testing/overview-staging-2026-10-22.md)
+records the Operator/Dashboard release from PR #32 merge
+`909de21fa82e1af7be809fbc51fed3321b52569d`, including its current version,
+checks and acceptance limits. The account-context checkpoint above retains
+its earlier dated version observations.
+
 ### Prepare the ignored environment file
 
 Copy `.env.staging.example` to `.env.staging` with owner-only permissions. Replace the two D1
