@@ -2,6 +2,59 @@
 
 The opt-in local Promo check proves one headless ordinary-Admin product flow without personal ROOT or passkey login, with protected run-owned cleanup.
 
+## Promo editor presentation check — 2026-10-23
+
+The same opt-in command now checks live Promo create/edit presentation in
+light and dark themes. The real Overview theme toggle selects each theme
+before entering the full-page editor, then restores light. The explicit
+authoring example exercises create fields and fallback; edit uses the exact
+existing capped Promo. Named Basics, Eligibility, Ordered reward rules and
+Limits, schedule, and stacking regions retain associated field labels and
+the existing Trigger fieldset. Rendered tests also verify the minimal create
+state and disabled immutable edit reference.
+
+The browser measures the actual themed frame and enabled editor-owned
+control/action colors, requiring at least 4.5:1 without rounding. The lowest
+measured ratio is 6.287528596095884:1, including **Save draft** with white text
+on `#4f46e5` in both themes. It checks editor-owned control/action horizontal
+bounds at 1280px and 375px, two-column desktop limits and stacked mobile
+limits. Actual Tab/Shift+Tab traversal reaches the name with a visible 2px
+outline; native arrow-key radio selection, select open/dismiss and Space-key
+checkbox toggling retain their behavior. The exact original viewport is restored.
+Shared condition-widget layout and the account strip are outside these
+responsive assertions.
+
+On 2026-10-23 the final browser snapshot passed first attempt: one case in
+17.4s (18.946s command wall), with startup 12.121s, bootstrap 136ms and
+disposal 63ms. All original account/Overview/theme/scroll checks,
+25% and exact GBP 1500 cap, edit/save/reload, persisted configuration and
+active revision 1 assertions passed. Protected disposal and fresh inventories
+verified all four owned resources cleaned and zero Product/Auth rows before
+capability/member retirement. No fixture, auth setup, retry, timeout, skip or
+dependency change was added.
+
+The unchanged focused baseline passed 98 cases. Before production edits, the
+two new rendered cases failed on missing Basics regions. The browser also
+reproduced the unthemed dark frame/text, unstacked mobile limits and 1px focus
+outline; both default attempts cleaned four resources with zero Product/Auth
+rows. An initial new-test compile error and a later keyboard-test traversal
+error were corrected within the existing tests; failed-run records remain
+historical evidence. The focused completed suite passed all 100 cases.
+The initial corrected browser snapshot also passed in 16.0s; self-review then
+corrected exact viewport restoration and the final 17.4s run above verified it.
+Full build/lint and the root suite passed once: 2,396 Vitest cases (308 dashboard)
+plus nine Node tests, with the suite taking 86.18s wall. Lint retains three
+existing warnings in untouched files. Root tests cover E2E units, not this
+Playwright case; targeted E2E typecheck/lint and the final browser proof cover
+the amended viewport-restoration assertion.
+
+At this local verification checkpoint the GAP-005 slice was uncommitted. It is
+now independently reviewed as a PR candidate for `dev`; new-change CI,
+deployment and authenticated staging acceptance remain unverified. Variables, Customers,
+Promo list/detail and the rest of GAP-005 remain open. The earlier unexplained
+passkey-bootstrap timeout remains historical; this preauth run did not
+exercise the global ROOT/passkey path.
+
 ## Overview unavailable check — 2026-10-21
 
 Run the same opt-in command below to verify Overview after the real run-owned

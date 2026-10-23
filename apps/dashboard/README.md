@@ -20,6 +20,25 @@ Run the commands above from the repository root with the pinned Node/pnpm and
 browser installed. A standalone Vite preview serves assets but does not supply
 the authenticated BFF.
 
+## Live Promo authoring
+
+**New promo** opens a minimal draft at `/promo/new`; **Edit Promo** opens the
+persisted draft at `/promo/:id/edit` with an immutable external reference.
+The single-page editor groups Basics, Trigger, Eligibility, Ordered reward
+rules, and Limits, schedule, and stacking in themed panels. Editor-owned
+fields stack on small screens, actions wrap, and keyboard focus is visible
+in light and dark themes. Select the theme in the application header before
+entering the full-page editor.
+
+The complete example loads only through **Use complete authoring example**.
+Enter percentages as human values such as `25` or `12.34`; monetary amounts
+and caps use exact currency and integer minor units. **Save draft** persists
+through the Operator BFF and opens the detail page; publication remains a
+separate reviewed action. Save failures preserve authored values for retry
+or explicit server-version comparison. See the
+[local editor verification](../../docs/testing/preauth-local-promo.md#promo-editor-presentation-check--2026-10-23)
+for presentation checks and their limits.
+
 ## Evaluation Playground
 
 Open **Evaluation Playground** in the sidebar or `/playground` after signing

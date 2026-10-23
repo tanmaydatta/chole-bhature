@@ -31,6 +31,124 @@ async function expectReadableOverviewAction(page: Page, theme: 'light' | 'dark')
   expect(contrast, `View promos text contrast in ${theme} theme`).toBeGreaterThanOrEqual(4.5);
 }
 
+// Scope measurements to controls owned by the editor, excluding shared condition widgets.
+async function expectPromoEditorPresentation(page: Page, theme: 'light' | 'dark', editing: boolean) {
+  const originalViewport = page.viewportSize();
+  const main = page.getByRole('main');
+  const labels = ['External reference', 'Promo name', 'Automatic', 'Code-triggered', 'Code',
+    'Rule name', 'Reward type', 'Product reference', 'Discount percentage',
+    'Maximum discount currency', 'Maximum discount minor units', 'Currency', 'Minor units',
+    'Fallback name', 'Fallback type', 'Budget currency', 'Budget minor units',
+    'Usage cap', 'Per customer cap', 'Start date', 'End date', 'Priority', 'Stackable'];
+  const controls = labels.map(label => main.getByLabel(label, { exact: true }));
+  const actions = main.getByRole('button').filter({ hasText: /^(Save draft|Use complete authoring example|Add reward rule|Add fallback reward|Add budget|Remove budget|Move up|Move down|Remove rule|Remove fallback|Add maximum discount|Remove maximum discount)$/u });
+  const frame = await main.evaluate(element => {
+    const style = getComputedStyle(element);
+    const probe = document.createElement('span');
+    probe.style.color = 'var(--ink)';
+    probe.style.backgroundColor = 'var(--bg)';
+    element.append(probe);
+    const expected = getComputedStyle(probe);
+    const result = { foreground: style.color, background: style.backgroundColor,
+      ink: expected.color, surface: expected.backgroundColor };
+    probe.remove();
+    return result;
+  });
+  expect.soft(frame.background, `${theme} editor themed frame`).toBe(frame.surface);
+  expect.soft(frame.foreground, `${theme} editor themed text`).toBe(frame.ink);
+  const ratios: number[] = [];
+  for (const locator of [...controls, actions]) {
+    for (const control of await locator.all()) {
+      if (await control.isDisabled()) continue;
+      const colors = await control.evaluate(element => {
+        const style = getComputedStyle(element);
+        let background = style.backgroundColor;
+        for (let parent = element.parentElement; background === 'rgba(0, 0, 0, 0)' && parent; parent = parent.parentElement) {
+          background = getComputedStyle(parent).backgroundColor;
+        }
+        return { foreground: style.color, background: background === 'rgba(0, 0, 0, 0)' ? 'rgb(255, 255, 255)' : background };
+      });
+      const luminances = [relativeLuminance(colors.foreground), relativeLuminance(colors.background)];
+      const ratio = (Math.max(...luminances) + 0.05) / (Math.min(...luminances) + 0.05);
+      ratios.push(ratio);
+      expect.soft(ratio, `${theme} editor control/action contrast`).toBeGreaterThanOrEqual(4.5);
+    }
+  }
+  for (const width of [1280, 375]) {
+    await page.setViewportSize({ width, height: 900 });
+    for (const locator of [...controls, actions]) {
+      for (const control of await locator.all()) {
+        const bounds = await control.boundingBox();
+        expect.soft(bounds, `${theme} ${width}px editor control has bounds`).not.toBeNull();
+        if (bounds) {
+          expect.soft(bounds.x, `${theme} ${width}px editor control left`).toBeGreaterThanOrEqual(0);
+          expect.soft(bounds.x + bounds.width, `${theme} ${width}px editor control right`).toBeLessThanOrEqual(width);
+        }
+      }
+    }
+    const usage = await main.getByLabel('Usage cap', { exact: true }).boundingBox();
+    const customer = await main.getByLabel('Per customer cap', { exact: true }).boundingBox();
+    expect(usage).not.toBeNull();
+    expect(customer).not.toBeNull();
+    if (width === 375) expect.soft(customer!.y, 'mobile limit fields stack').toBeGreaterThan(usage!.y);
+    else expect.soft(customer!.y, 'desktop limit fields share a row').toBe(usage!.y);
+  }
+  if (originalViewport) await page.setViewportSize(originalViewport);
+  // Create retains focus on the example action; edit starts at the document.
+  // Reach the name through native keyboard traversal in either case.
+  const name = main.getByLabel('Promo name', { exact: true });
+  const unfocused = await name.evaluate(element => getComputedStyle(element).outlineStyle);
+  for (let tabs = 0; tabs < 30 && !await name.evaluate(element => element === document.activeElement); tabs++) {
+    await page.keyboard.press(editing ? 'Tab' : 'Shift+Tab');
+  }
+  await expect(name).toBeFocused();
+  const focus = await name.evaluate(element => {
+    const style = getComputedStyle(element);
+    return { visible: element.matches(':focus-visible'), style: style.outlineStyle,
+      width: Number.parseFloat(style.outlineWidth), color: style.outlineColor };
+  });
+  expect(focus.visible).toBe(true);
+  expect(focus.style).not.toBe('none');
+  expect(focus.width).toBeGreaterThanOrEqual(2);
+  expect(focus.style).not.toBe(unfocused);
+  await page.keyboard.press('Tab');
+  const trigger = main.getByRole('radio', { name: editing ? 'Code-triggered' : 'Automatic', exact: true });
+  await expect(trigger).toBeFocused();
+  if (!editing) {
+    await page.keyboard.press('ArrowRight');
+    await expect(main.getByRole('radio', { name: 'Code-triggered', exact: true })).toBeChecked();
+    await page.keyboard.press('ArrowLeft');
+    await expect(trigger).toBeChecked();
+  }
+  const rewardType = main.getByLabel('Reward type', { exact: true }).first();
+  if (await rewardType.count()) {
+    for (let tabs = 0; tabs < 80 && !await rewardType.evaluate(element => element === document.activeElement); tabs++) {
+      await page.keyboard.press('Tab');
+    }
+    await expect(rewardType).toBeFocused();
+    const selected = await rewardType.inputValue();
+    await page.keyboard.press('Alt+ArrowDown');
+    await page.keyboard.press('Escape');
+    await expect(rewardType).toHaveValue(selected);
+  }
+  if (editing) {
+    const stackable = main.getByRole('checkbox', { name: 'Stackable', exact: true });
+    for (let tabs = 0; tabs < 80 && !await stackable.evaluate(element => element === document.activeElement); tabs++) {
+      await page.keyboard.press('Tab');
+    }
+    await expect(stackable).toBeFocused();
+    await expect(stackable).toBeChecked();
+    await page.keyboard.press('Space');
+    await expect(stackable).not.toBeChecked();
+    await page.keyboard.press('Space');
+    await expect(stackable).toBeChecked();
+  }
+  for (const section of ['Basics', 'Eligibility', 'Ordered reward rules', 'Limits, schedule, and stacking']) {
+    await expect(main.getByRole('region', { name: section, exact: true })).toBeVisible();
+  }
+  console.log(`promo-editor theme=${theme}; mode=${editing ? 'edit' : 'create'}; min_control_contrast=${Math.min(...ratios)}; widths=1280,375; tab_focus=true; native_controls=true`);
+}
+
 async function expectAccount(page: Page, expected: PromoAccountDisplay) {
   const account = page.getByRole('region', { name: 'Account context', exact: true });
   await expect(account).toBeVisible();
@@ -119,6 +237,14 @@ test('browser authors and persists the exact capped Promo, then publishes it', a
       await expectOverview();
       await expectReadableOverviewAction(page, 'light');
       await expectReadableOverviewAction(page, 'dark');
+      await page.getByRole('link', { name: 'New promo', exact: true }).click();
+      await expect(page.getByRole('heading', { name: 'Create Promo', exact: true })).toBeVisible();
+      await page.getByRole('button', { name: 'Use complete authoring example', exact: true }).click();
+      await expectPromoEditorPresentation(page, 'dark', false);
+      await page.goto(`${ctx.target.operatorOrigin}/promo/${encodeURIComponent(id)}/edit`);
+      await expect(page.getByRole('heading', { name: 'Edit Promo draft', exact: true })).toBeVisible();
+      await expectPromoEditorPresentation(page, 'dark', true);
+      await page.goto(`${ctx.target.operatorOrigin}/`);
       await page.getByTitle('Toggle light / dark', { exact: true }).click();
       await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
       await page.getByRole('link', { name: 'View promos', exact: true }).click();
@@ -152,10 +278,13 @@ test('browser authors and persists the exact capped Promo, then publishes it', a
       await page.getByRole('link', { name: 'New promo', exact: true }).click();
       await expect(page.getByRole('heading', { name: 'Create Promo', exact: true })).toBeVisible();
       await expectAccount(page, expected);
+      await page.getByRole('button', { name: 'Use complete authoring example', exact: true }).click();
+      await expectPromoEditorPresentation(page, 'light', false);
       await page.goto(`${ctx.target.operatorOrigin}/promo/${encodeURIComponent(id)}/edit`);
       await expect(page.getByRole('heading', { name: 'Edit Promo draft' })).toBeVisible();
       await expectAccount(page, expected);
       const percentage = page.getByLabel('Discount percentage');
+      await expectPromoEditorPresentation(page, 'light', true);
       await expect(percentage).toHaveValue('25');
       await percentage.fill('12.34');
       await expect(percentage).toHaveValue('12.34');
