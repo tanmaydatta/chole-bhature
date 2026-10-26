@@ -2,6 +2,80 @@
 
 The opt-in local Promo check proves one headless ordinary-Admin product flow without personal ROOT or passkey login, with protected run-owned cleanup.
 
+## Promo list and detail presentation check — 2026-10-26
+
+The existing single capped-Promo case also checks the live list, detail and
+inline **Review publication** region in both themes using the real header
+toggle. Enabled owned action/control text measures at least
+5.168555560022562:1, exceeding 4.5:1 without rounding. Native Tab/Shift+Tab
+traversal proves visible 2px focus, the Status select, table region, name link,
+publication controls and exact JSON region. Enter opens the native name link,
+cancels review and toggles exact reward details; ArrowRight actually scrolls
+the table and JSON at 375px. Viewport, theme and filter are restored exactly.
+
+Owned controls, configuration/review panels and JSON bounds are checked
+against the actual main allocation and viewport at 1280px and 375px. The
+fixed 228px sidebar and 52px main padding leave 95px for owned content at
+375px. This proves contained overflow and reachable controls, not full mobile
+usability of the shared shell, account strip or shared widgets. Rendered routes
+cover loading announcements, empty/error/retry states, filtering, opaque/long
+encoded references, safe text, active/draft reward order and distinct read,
+manage and publish permissions. Publication review is a named inline region,
+with no modal or focus-redirection system.
+
+The final browser snapshot passed first attempt on 2026-10-26: one case in
+19.3s (20.11s command wall), startup 11.737s, bootstrap 174ms and disposal
+64ms. All original account/Overview/editor/theme/scroll, exact 25%/GBP 1500,
+edit/save/reload, persisted configuration and active revision 1 assertions
+passed. Protected disposal and fresh inventory proved all four owned resources
+cleaned and zero Product/Auth rows before capability/member retirement.
+Root build/lint passed once; the full root suite passed 2,404 Vitest cases
+(316 dashboard) plus nine Node tests in 94.97s wall. E2E typecheck/lint passed.
+Three existing untouched lint warnings, Vite chunk and color-environment
+warnings remain. Node 22.18.0/pnpm 11.14.0 and pinned Chromium were used.
+
+The unchanged focused baseline passed 100 cases. Corrected rendered RED had
+five missing-presentation failures before production edits; focused GREEN
+then passed 105 cases. Three later regressions also passed within the full
+root suite. Browser RED reproduced the native Status outline at only 1px.
+An initial unsupported new-test TypeScript option stopped two attempts before
+bootstrap and was corrected; that setup failure is not RED. A later check
+caught real 375px Status overflow and a new row-locator scoping error. Both
+were corrected; both failed attempts cleaned four resources with fresh zero
+rows. An intermediate corrected browser snapshot passed in 18.0s before the
+final narrow-scroller assertions above.
+
+One earlier RED attempt failed protected disposal with HTTP 409 `INCOMPATIBLE`:
+four resources, none marked cleaned and no protected zero-row proof. Its
+private recovery records remain; the separate retry's successful cleanup
+does not prove that failed run clean. Normal owner stop reported no error,
+but the retained record supplies no temporary path, so actual temporary-D1
+deletion was not independently verified. The 409 cause remains unestablished;
+no platform repair or manual purge was performed. Later runs, including the
+final proof above, have their own successful inventories. Historical auth
+timeouts remain unchanged; no auth setup or staging session was loaded.
+
+The process-only `pnpm --config.ci=false` invocation addressed the observed
+pnpm metadata mismatch (undefined global virtual store versus CI-forced
+false). Outer and child `CI=true` and dependency verification `error` remained
+enabled; no persistent configuration, dependency, retry, timeout, skip,
+fixture resource or authentication change was added.
+
+At this local checkpoint the list/detail slice was uncommitted and locally
+verified. Independent task and final reviews subsequently approved the bounded
+snapshot as a PR candidate for `dev`, with the earlier cleanup concern retained.
+CI completion, merge, deployment, authenticated staging acceptance and Notion
+synchronization remain unclaimed.
+GAP-005 stays open for Variables, Customers and excluded shared layouts.
+Full configuration diff, history/rollback and ranked priority remain separate.
+The earlier editor slice merged through [PR #34](https://github.com/tanmaydatta/chole-bhature/pull/34)
+at `8ccbeb3fef2ed05e75036ba0238a763772709266`; its
+[PR CI](https://github.com/tanmaydatta/chole-bhature/actions/runs/39964299545)
+passed verify/local-e2e and [post-merge CI](https://github.com/tanmaydatta/chole-bhature/actions/runs/40006960247)
+passed verify with PR-only local-e2e skipped. The scoped October 23 roadmap/register
+Notion checkpoint was synchronized with original blocks preserved; no new
+mirror update is claimed here.
+
 ## Promo editor presentation check — 2026-10-23
 
 The same opt-in command now checks live Promo create/edit presentation in
@@ -48,10 +122,11 @@ existing warnings in untouched files. Root tests cover E2E units, not this
 Playwright case; targeted E2E typecheck/lint and the final browser proof cover
 the amended viewport-restoration assertion.
 
-At this local verification checkpoint the GAP-005 slice was uncommitted. It is
-now independently reviewed as a PR candidate for `dev`; new-change CI,
-deployment and authenticated staging acceptance remain unverified. Variables, Customers,
-Promo list/detail and the rest of GAP-005 remain open. The earlier unexplained
+At this historical local checkpoint the editor slice was uncommitted; it later
+merged through PR #34 with the distinct PR/post-merge CI results above.
+Deployment and authenticated staging acceptance of that editor slice remain
+unverified. Variables, Customers and the rest of GAP-005 remain open; the
+2026-10-26 list/detail proof above is a separate local slice. The earlier unexplained
 passkey-bootstrap timeout remains historical; this preauth run did not
 exercise the global ROOT/passkey path.
 
@@ -92,8 +167,10 @@ reproduced that failure. Both failed scenarios still disposed all four owned
 resources with zero Product/Auth rows. Those earlier results remain historical
 evidence; the corrected 15.2s run above proves the final color pairing.
 
-The Overview slice is uncommitted and locally verified, not merged, deployed
-or accepted in staging. It adds no analytics service or data fetch and keeps
+At that historical local checkpoint the Overview slice was uncommitted; it
+later merged through PR #32 and received the limited public verification in
+the [October 22 release](overview-staging-2026-10-22.md), without authenticated
+staging acceptance. It adds no analytics service or data fetch and keeps
 the existing ROOT/client/read/session gates. This is still one preauthenticated
 Promo browser flow, not full-suite preauth conversion or full local/staging
 Playwright acceptance. Deployed versions and earlier dated results are
