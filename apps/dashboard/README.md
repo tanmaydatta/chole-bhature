@@ -20,6 +20,28 @@ Run the commands above from the repository root with the pinned Node/pnpm and
 browser installed. A standalone Vite preview serves assets but does not supply
 the authenticated BFF.
 
+## Live Promo list and detail
+
+The live `/promo` list keeps its Status filter and five-column semantic table.
+Promo names are native links with encoded references; pointer rows and Enter
+on a focused row still open the same detail. The named **Promo table** region
+contains horizontal overflow and accepts keyboard focus so every column stays
+reachable. Loading is announced, errors retain retry and correlation details,
+and an empty filter displays “No Promos match this filter.”
+
+Detail uses themed status/actions and named configuration panels. Active and
+draft panels remain distinct, long references and codes wrap, and **Exact
+reward details** opens a contained, keyboard-reachable JSON scroller.
+**Publish revision** opens an inline **Review publication** region; Tab reaches
+**Confirm publish** and **Cancel publication** without modal focus behavior.
+Manage and publish actions retain their existing permissions and lifecycle rules.
+
+Owned controls and panels fit the available main content at 1280px and 375px,
+with visible focus and readable light/dark action text. The fixed 228px sidebar
+and 52px main padding leave only 95px at 375px; these checks establish owned
+containment, not full mobile usability of the shared shell/account strip or
+shared widgets. See the [local list/detail proof](../../docs/testing/preauth-local-promo.md#promo-list-and-detail-presentation-check--2026-10-26).
+
 ## Live Promo authoring
 
 **New promo** opens a minimal draft at `/promo/new`; **Edit Promo** opens the

@@ -1,6 +1,6 @@
 # Product Current State and Roadmap
 
-**Updated:** 2026-10-23
+**Updated:** 2026-10-26
 
 **Status:** Active — Gate C complete; GAP-030/031 and the E2E platform are
 merged on `dev`. The separate Secrets Store cutover is deployed and verified
@@ -8,7 +8,30 @@ in staging and PR #15 merged into `dev` at
 `0c5e5f1a068d942af8f091ab0fc4b7ff8bf44e9d`. No production, API/Core,
 or D1 migration is part of that cutover.
 
-**2026-10-23 local editor slice — GAP-005:** Live Promo create/edit now uses
+**2026-10-26 local list/detail checkpoint — GAP-005:** Live Promo list/detail now
+uses themed hierarchy, actions, semantic table and named configuration/review
+regions. Native encoded name links, contained table/JSON scrolling and real
+keyboard operation retain the existing workflow and permission gates. The
+[local proof](../testing/preauth-local-promo.md#promo-list-and-detail-presentation-check--2026-10-26)
+records both themes, minimum owned text contrast 5.168555560022562:1 and
+owned 1280/375px bounds against the fixed shell's actual allocation. Full
+build/lint, 2,404 Vitest cases (316 dashboard) plus nine Node tests and the
+existing Admin preauth case passed (19.3s; four resources cleaned and fresh
+zero Product/Auth rows). One earlier RED run lacked protected cleanup proof
+after a 409 disposal refusal; its retained evidence and limits are recorded
+separately. At this local checkpoint the slice was uncommitted with no new CI,
+deployment, authenticated staging acceptance or Notion update. Variables,
+Customers and excluded shared layouts keep GAP-005 open; full
+diff/history/ranked-priority work stays separate.
+
+**2026-10-26 reviewed list/detail candidate:** Independent task and final
+reviews approved the bounded presentation snapshot with no blocking source
+findings. It is a PR candidate for `dev`; CI completion, merge, deployment,
+authenticated staging acceptance and Notion synchronization remain unclaimed.
+The earlier disposal 409 and unproved original cleanup remain an operational
+concern; the final run's successful inventory proves only its own cleanup.
+
+**2026-10-23 editor slice — GAP-005:** Live Promo create/edit now uses
 the established theme, PageHeader, named panels, explicit field/action styles
 and visible keyboard focus. Editor-owned fields stack at 375px and actions
 wrap; shared condition widgets and the account strip are outside the layout
@@ -20,11 +43,15 @@ keyboard checks. Exact 25%, GBP 1500 cap, draft persistence and active revision
 rows. The [local editor proof](../testing/preauth-local-promo.md#promo-editor-presentation-check--2026-10-23)
 records the measured checks. Full build/lint and 2,396 Vitest cases (308
 dashboard) plus nine Node tests passed; the root suite took 86.18s wall.
-At this local verification checkpoint, the change was uncommitted. It is now
-a reviewed PR candidate for `dev`; new-change CI, deployment and authenticated
-staging acceptance remain unverified. GAP-005 stays open for
-Variables, Customers and Promo list/detail; full diff/history/ranked-priority
-work stays separate. The Notion mirror has not received this local checkpoint.
+At that local checkpoint the change was uncommitted. It subsequently merged
+through [PR #34](https://github.com/tanmaydatta/chole-bhature/pull/34) at
+`8ccbeb3fef2ed05e75036ba0238a763772709266`, tree
+`75584a84122912ea1a4e043c3c9111c7499e7322`.
+[PR CI](https://github.com/tanmaydatta/chole-bhature/actions/runs/39964299545)
+passed verify/local-e2e; [post-merge CI](https://github.com/tanmaydatta/chole-bhature/actions/runs/40006960247)
+passed verify with PR-only local-e2e skipped. The scoped October 23 roadmap/register
+Notion checkpoint was synchronized with original blocks preserved. Editor
+deployment and authenticated staging acceptance remain unverified.
 
 **2026-10-14 product slice:** The evaluate-only [Evaluation Playground](../integration/evaluation-playground.md)
 is implemented, independently reviewed and merged through
@@ -225,14 +252,14 @@ deferred issue remains in the
 | Question | Current answer |
 |---|---|
 | Overall phase | Post-Gate-C client readiness; evaluate-only Playground merged and verified in staging |
-| Current activity | GAP-005's bounded live Promo create/edit polish is locally verified and independently reviewed as a PR candidate for `dev`; Variables, Customers and Promo list/detail remain open. GAP-004 is merged/deployed with public verification; authenticated Overview/Promo acceptance remains pending. E2E rewrite/cloud provisioning remain parked. |
-| Current repository baseline | The editor PR candidate starts from PR #33 merge `a764d6c0ac97df34d09db2d6ddd3b9e02d63a9c4`, tree `dd3d7779e9195198f56637eb3bd896c3b1fde434`. PR #32 merge `909de21fa82e1af7be809fbc51fed3321b52569d`, tree `81767a5292c10a3e530b1bd7fbf2ac7b01b9b155`, remains the exact deployed Operator source; its post-merge verify passed with local-e2e skipped. |
-| Current product-code baseline | GAP-004 PR #32 is merged after GAP-003 PR #29 and compatibility PR #30. Operator/Dashboard uses the merged source; Identity/Core were unchanged in the 2026-10-22 release. Complete simulator/capabilities acceptance remains unproved. |
-| Local feature state | GAP-005's live Promo create/edit polish passes build/lint, 2,396 Vitest plus nine Node tests, 100 focused cases and the Admin preauth journey (17.4s), with both themes, editor-owned 375px bounds, keyboard operation and owned cleanup; it is a reviewed PR candidate, not deployed or staging accepted. GAP-004's unavailable Overview and permission-derived live Promo links are merged and deployed; its 2,394 Vitest plus nine Node tests and one Admin preauth case remain dated local proof. GAP-003 and Auth-through-0006 compatibility have local/CI evidence and are deployed; authenticated staging product acceptance remains open. Authoritative merchandise pricing and the E2E platform are merged, with dated staging evidence retained. Cloud E2E foundation/packaging/diagnostics/CI admission/local bootstrap are locally accepted; its dated correction verification passes 337 cloud, 1,683 Vitest cases plus nine separate Node script tests and five local Playwright cases (23.4 s), build/lint. Public Worker writes still refuse before transport. |
-| Current deployment state | Operator `1ea858a5-e74c-43bd-b007-750356bc37ea`, unchanged Identity `ac888e12-3685-49c0-a981-02a0aaea38c6` and unchanged Core `e38ee573-5a56-444e-9707-ab6f73cb1490` each receive 100% staging traffic. Core immutable source mapping remains unestablished. Migrations/secrets/v2 preauth are unchanged. |
+| Current activity | GAP-005 Promo list/detail polish is locally verified and independently reviewed as a PR candidate for `dev`; editor polish merged through PR #34. Variables, Customers and excluded shared layouts remain open. Authenticated staging Overview/Promo acceptance remains pending; E2E rewrite/cloud provisioning remain parked. |
+| Current repository baseline | PR #34 merge `8ccbeb3fef2ed05e75036ba0238a763772709266`, tree `75584a84122912ea1a4e043c3c9111c7499e7322`, is the list/detail slice's base. PR CI `39964299545` passed verify/local-e2e; post-merge `40006960247` passed verify with local-e2e skipped. The new working slice has no CI result. |
+| Current product-code baseline | Editor PR #34 is merged after GAP-004 PR #32, GAP-003 PR #29 and compatibility PR #30. Only PR #32's source has the recorded October 22 Operator deployment proof; Identity/Core were unchanged in that release. Complete simulator/capabilities acceptance remains unproved. |
+| Local feature state | The reviewed list/detail candidate passes build/lint, 2,404 Vitest plus nine Node tests and the Admin preauth case (19.3s), including both themes, owned 375px containment, native keyboard and final four-resource/zero-row cleanup. An earlier failed disposal remains explicitly unproved. The editor's 2,396 Vitest plus nine Node tests and 17.4s browser run are dated evidence for merged PR #34. GAP-003/004/023 staging acceptance and full Task10/GateD remain open. Cloud checkpoint proof remains dated local evidence with public Worker writes refused before transport. |
+| Latest recorded deployment | The October 22 record has Operator `1ea858a5-e74c-43bd-b007-750356bc37ea`, unchanged Identity `ac888e12-3685-49c0-a981-02a0aaea38c6` and unchanged Core `e38ee573-5a56-444e-9707-ab6f73cb1490` at 100% staging traffic. Current deployment was not queried for this local slice. Core immutable source mapping remains unestablished. |
 | Current release decision | The 2026-10-22 Operator-only release passed public health/privacy/session/asset checks. Authenticated staging acceptance was not verified; the documented automation session was expired, and no new login/auth setup was performed. No fixture/business write or E2E run occurred. Full Task 10/Gate D and production acceptance remain open. |
 | Gate C finish line | Complete — all mandatory clean-break selection, redemption, tenant-isolation, concurrency, and observability cases passed |
-| Next plan work | Publish the reviewed GAP-005 editor candidate into a PR for `dev`, then assess its CI separately. Merge, deployment and authenticated staging product acceptance require separate authority; staging acceptance also needs usable state. Remaining live-page polish, full simulator/capabilities and Task 10/Gate D acceptance remain open. |
+| Next plan work | Publish the reviewed GAP-005 list/detail candidate into a PR against `dev` and inspect CI. Merge, deployment and authenticated staging acceptance are subsequent checkpoints. Variables, Customers, excluded shared layouts, full simulator/capabilities and Task10/GateD remain open. |
 
 ## Source-of-truth map
 
@@ -415,14 +442,19 @@ The 2026-09-29 cutover likewise does not verify email delivery or a headed run.
 
 ## Current work
 
-The approved GAP-005 live Promo create/edit slice is locally verified and
-independently reviewed as a PR candidate for `dev`. It preserves the single-page draft workflow and business rules;
-the [local proof](../testing/preauth-local-promo.md#promo-editor-presentation-check--2026-10-23)
-covers theme/contrast, editor-owned responsive bounds, keyboard behavior and
-the existing persisted capped-Promo publication journey. Commit, push and PR
-creation are approved; merge and deployment remain separate. Variables, Customers and Promo
-list/detail keep GAP-005 open; no deployment, new-change CI, authenticated
-staging acceptance or Notion synchronization is claimed.
+The approved GAP-005 list/detail presentation slice is locally verified and
+independently reviewed as a PR candidate for `dev`. Its
+[local proof](../testing/preauth-local-promo.md#promo-list-and-detail-presentation-check--2026-10-26)
+covers owned theme/contrast, containment, native keyboard operation and the
+persisted capped-Promo journey, with failed-run cleanup limits retained.
+The earlier editor slice merged through PR #34 with the distinct PR/post-merge
+CI results above; its scoped October 23 Notion checkpoint is synchronized.
+Variables, Customers and excluded shared layouts keep GAP-005 open. No new
+CI, deployment, authenticated staging acceptance or mirror update is claimed
+for the list/detail slice.
+
+Next priority is a bounded full-demo plan (author/publish → evaluate → redeem
+→ retry → cap exhaustion/reprice), pending explicit implementation approval.
 
 GAP-003 and the Identity compatibility correction are merged and deployed
 under the limited 2026-10-21 release. GAP-023 editor code is included in the

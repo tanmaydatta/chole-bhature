@@ -1,5 +1,5 @@
 import { OperatorProgramViewSchema } from '@incentives/contracts';
-import type { Page } from '@playwright/test';
+import type { Locator, Page } from '@playwright/test';
 import { test, expect, type PromoAccountDisplay } from '../support/promo-fixtures.js';
 
 import { executeRecipe } from '../../src/execution.js';
@@ -29,6 +29,143 @@ async function expectReadableOverviewAction(page: Page, theme: 'light' | 'dark')
   const contrast = (Math.max(...luminances) + 0.05) / (Math.min(...luminances) + 0.05);
   console.log(`overview-contrast theme=${theme}; foreground=${colors.foreground}; background=${colors.background}; ratio=${contrast}`);
   expect(contrast, `View promos text contrast in ${theme} theme`).toBeGreaterThanOrEqual(4.5);
+}
+
+// Catches unreadable owned actions, escaping panels and inaccessible native keyboard paths.
+async function tabTo(page: Page, target: Locator, backwards = false) {
+  for (let tabs = 0; tabs < 100 && !await target.evaluate(element => element === document.activeElement); tabs++) {
+    await page.keyboard.press(backwards ? 'Shift+Tab' : 'Tab');
+  }
+  await expect(target).toBeFocused();
+  const focus = await target.evaluate(element => {
+    const style = getComputedStyle(element);
+    return { visible: element.matches(':focus-visible'), style: style.outlineStyle,
+      width: Number.parseFloat(style.outlineWidth) };
+  });
+  expect(focus.visible).toBe(true);
+  expect(focus.style).not.toBe('none');
+  expect(focus.width).toBeGreaterThanOrEqual(2);
+}
+
+async function expectPromoPresentation(page: Page, surface: 'list' | 'detail', id: string) {
+  const originalViewport = page.viewportSize();
+  const originalTheme = await page.locator('html').getAttribute('data-theme');
+  const main = page.getByRole('main');
+  const status = main.getByRole('combobox', { name: 'Status', exact: true });
+  const originalFilter = surface === 'list' ? await status.inputValue() : undefined;
+  const ratios: number[] = [];
+  try {
+    for (const theme of ['light', 'dark'] as const) {
+      if (await page.locator('html').getAttribute('data-theme') !== theme) {
+        await page.getByTitle('Toggle light / dark', { exact: true }).click();
+      }
+      await expect(page.locator('html')).toHaveAttribute('data-theme', theme);
+      if (surface === 'detail') {
+        await page.getByRole('button', { name: 'Publish revision', exact: true }).click();
+        await expect(main.getByRole('region', { name: 'Review publication', exact: true })).toBeVisible();
+        await expect(page.getByRole('dialog')).toHaveCount(0);
+        const summary = main.getByText('Exact reward details', { exact: true }).first();
+        await tabTo(page, summary);
+        await page.keyboard.press('Enter');
+        await expect(main.getByRole('region', { name: 'Exact reward JSON', exact: true }).first()).toBeVisible();
+      }
+      const controls = main.locator('a, button, select, summary');
+      for (const control of await controls.all()) {
+        if (!await control.isVisible() || await control.isDisabled()) continue;
+        const colors = await control.evaluate(element => {
+          const foreground = getComputedStyle(element).color;
+          let background = 'rgba(0, 0, 0, 0)';
+          for (let node: Element | null = element; node && background === 'rgba(0, 0, 0, 0)'; node = node.parentElement) {
+            background = getComputedStyle(node).backgroundColor;
+          }
+          return { foreground, background };
+        });
+        const luminances = [relativeLuminance(colors.foreground), relativeLuminance(colors.background)];
+        const ratio = (Math.max(...luminances) + 0.05) / (Math.min(...luminances) + 0.05);
+        ratios.push(ratio);
+        expect.soft(ratio, `${surface} ${theme} owned text contrast`).toBeGreaterThanOrEqual(4.5);
+      }
+      const scroller = surface === 'list' ? main.getByRole('region', { name: 'Promo table', exact: true })
+        : main.getByRole('region', { name: 'Configuration', exact: true });
+      for (const width of [1280, 375]) {
+        await page.setViewportSize({ width, height: 900 });
+        const allocation = await main.boundingBox();
+        expect(allocation).not.toBeNull();
+        const padding = await main.evaluate(element => {
+          const style = getComputedStyle(element);
+          return { left: parseFloat(style.paddingLeft), right: parseFloat(style.paddingRight) };
+        });
+        for (const owned of [main.locator('[aria-labelledby="promo-title"]'), scroller,
+          ...await controls.all(), ...await main.getByRole('region', { name: 'Review publication', exact: true }).all(),
+          ...await main.getByRole('region', { name: 'Exact reward JSON', exact: true }).all()]) {
+          if (!await owned.isVisible()) continue;
+          // Table content remains intentionally wider inside its owned scroller.
+          if (surface === 'list' && await owned.evaluate(element => element.closest('table') !== null)) continue;
+          const bounds = await owned.boundingBox();
+          expect(bounds).not.toBeNull();
+          expect.soft(bounds!.x, `${surface} ${theme} ${width} owned left`).toBeGreaterThanOrEqual(allocation!.x + padding.left - 1);
+          expect.soft(bounds!.x + bounds!.width, `${surface} ${theme} ${width} owned right`).toBeLessThanOrEqual(Math.min(width, allocation!.x + allocation!.width - padding.right) + 1);
+        }
+        if (width === 375) {
+          const overflow = surface === 'list' ? scroller : main.getByRole('region', { name: 'Exact reward JSON', exact: true }).first();
+          await tabTo(page, overflow);
+          expect(await overflow.evaluate(element => element.scrollWidth > element.clientWidth)).toBe(true);
+          const before = await overflow.evaluate(element => element.scrollLeft);
+          await page.keyboard.press('ArrowRight');
+          await expect.poll(() => overflow.evaluate(element => element.scrollLeft)).toBeGreaterThan(before);
+        }
+      }
+      if (originalViewport) await page.setViewportSize(originalViewport);
+      if (surface === 'list') {
+        await tabTo(page, status);
+        await page.keyboard.press('Home');
+        await page.keyboard.press('d');
+        await page.keyboard.press('Enter');
+        await expect(status).toHaveValue('draft');
+        await tabTo(page, scroller);
+        const link = main.getByRole('link', { name: `${id} Capped percentage`, exact: true });
+        await tabTo(page, link);
+        await expect(link).toHaveAttribute('href', `/promo/${encodeURIComponent(id)}`);
+        await page.keyboard.press('Shift+Tab');
+        const row = main.getByRole('row').filter({ has: page.getByRole('link', { name: `${id} Capped percentage`, exact: true }) });
+        await expect(row).toBeFocused();
+        await page.keyboard.press('Tab');
+        await expect(link).toBeFocused();
+        await page.keyboard.press('Enter');
+        await expect(page).toHaveURL(`${new URL(page.url()).origin}/promo/${encodeURIComponent(id)}`);
+        await page.goBack();
+        await expect(status).toBeVisible();
+      } else {
+        const confirm = main.getByRole('button', { name: 'Confirm publish', exact: true });
+        await tabTo(page, confirm);
+        await page.keyboard.press('Tab');
+        const cancel = main.getByRole('button', { name: 'Cancel publication', exact: true });
+        await expect(cancel).toBeFocused();
+        await page.keyboard.press('Shift+Tab');
+        await expect(confirm).toBeFocused();
+        await page.keyboard.press('Tab');
+        await page.keyboard.press('Enter');
+        await expect(main.getByRole('region', { name: 'Review publication', exact: true })).toHaveCount(0);
+        const summary = main.getByText('Exact reward details', { exact: true }).first();
+        await tabTo(page, summary);
+        const json = main.getByRole('region', { name: 'Exact reward JSON', exact: true }).first();
+        await expect(json).toBeVisible();
+        await tabTo(page, json);
+        await page.keyboard.press('Shift+Tab');
+        await expect(summary).toBeFocused();
+        await page.keyboard.press('Enter');
+      }
+    }
+    console.log(`promo-${surface} themes=light,dark; min_control_contrast=${Math.min(...ratios)}; owned_widths=1280,375; native_keyboard=true; fixed_shell_excluded=true`);
+  } finally {
+    if (originalViewport) await page.setViewportSize(originalViewport);
+    if (surface === 'list' && originalFilter !== undefined) await status.selectOption(originalFilter);
+    if (await page.locator('html').getAttribute('data-theme') !== originalTheme) {
+      await page.getByTitle('Toggle light / dark', { exact: true }).click();
+    }
+    await expect(page.locator('html')).toHaveAttribute('data-theme', originalTheme!);
+    expect(page.viewportSize()).toEqual(originalViewport);
+  }
 }
 
 // Scope measurements to controls owned by the editor, excluding shared condition widgets.
@@ -275,6 +412,7 @@ test('browser authors and persists the exact capped Promo, then publishes it', a
       await expectAccount(page, expected);
       await expect(page.getByRole('link', { name: 'New promo', exact: true })).toBeVisible();
       await expectShellActionsAfterScroll(page, 'list');
+      await expectPromoPresentation(page, 'list', id);
       await page.getByRole('link', { name: 'New promo', exact: true }).click();
       await expect(page.getByRole('heading', { name: 'Create Promo', exact: true })).toBeVisible();
       await expectAccount(page, expected);
@@ -298,6 +436,7 @@ test('browser authors and persists the exact capped Promo, then publishes it', a
       await expect(page.getByText('25% off order (maximum GBP 15.00)')).toBeVisible();
       await expectAccount(page, expected);
       await expectShellActionsAfterScroll(page, 'detail');
+      await expectPromoPresentation(page, 'detail', id);
       await page.reload();
       await expectAccount(page, expected);
       await expect(page.getByText('25% off order (maximum GBP 15.00)')).toBeVisible();
@@ -317,7 +456,7 @@ test('browser authors and persists the exact capped Promo, then publishes it', a
         maximumDiscountAmount: { currency: 'GBP', minorUnits: 1_500 },
       });
       await page.getByRole('button', { name: 'Publish revision' }).click();
-      await expect(page.getByRole('dialog').getByRole('heading',
+      await expect(page.getByRole('region', { name: 'Review publication', exact: true }).getByRole('heading',
         { name: 'Review publication' })).toBeVisible();
       await page.getByRole('button', { name: 'Confirm publish' }).click();
       await expect(page.getByText('Active revision 1')).toBeVisible();

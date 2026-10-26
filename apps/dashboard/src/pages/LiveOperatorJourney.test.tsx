@@ -242,6 +242,84 @@ afterEach(() => {
 });
 
 describe('live operator authoring journey', () => {
+  // Breaks if the real list loses its native encoded link, semantic cells or contained keyboard surface.
+  test.each(['pointer', 'keyboard'])('filters the semantic Promo table and opens opaque references through the native name link once by %s', async method => {
+    const id = `constructor /?#% ${'long-reference-'.repeat(12)}`;
+    const configuration = { ...programConfiguration(), id, name: '<img src=x onerror=alert(1)>',
+      autoApply: false, code: '<script>plain text</script>' };
+    const view = { configuration, draftConfiguration: configuration,
+      lifecycle: { programRef: id, status: 'draft', draftRevision: 1, updatedAt: now } };
+    const reads: string[] = [];
+    vi.stubGlobal('fetch', async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path === '/operator/v1/session') return response(session);
+      if (path === '/operator/v1/programs') return response({ programs: [view] });
+      reads.push(path);
+      return response(view);
+    });
+    renderApp('/promo');
+    const scroller = await screen.findByRole('region', { name: 'Promo table' });
+    expect(scroller).toHaveAttribute('tabindex', '0');
+    expect(within(scroller).getAllByRole('columnheader').map(cell => cell.textContent))
+      .toEqual(['Name', 'Trigger', 'Status', 'Revision', 'Schedule']);
+    expect(screen.getByRole('cell', { name: configuration.name })).toBeVisible();
+    const status = screen.getByRole('combobox', { name: 'Status' });
+    expect(within(status).getAllByRole('option').map(option => option.textContent))
+      .toEqual(['All', 'draft', 'scheduled', 'active', 'paused', 'ended']);
+    await userEvent.selectOptions(status, 'active');
+    expect(screen.getByText('No Promos match this filter.')).toBeVisible();
+    await userEvent.selectOptions(status, 'all');
+    const link = screen.getByRole('link', { name: configuration.name });
+    expect(link).toHaveAttribute('href', `/promo/${encodeURIComponent(id)}`);
+    if (method === 'pointer') await userEvent.click(link);
+    else {
+      for (let tabs = 0; tabs < 40 && document.activeElement !== link; tabs++) await userEvent.tab();
+      expect(link).toHaveFocus();
+      await userEvent.keyboard('{Enter}');
+    }
+    expect(await screen.findByRole('heading', { name: configuration.name })).toBeVisible();
+    expect(screen.getByText(id, { selector: 'code' })).toBeVisible();
+    expect(screen.getByText(configuration.code, { selector: 'code' })).toBeVisible();
+    expect(document.querySelector('main img, main script')).toBeNull();
+    expect(reads).toEqual([`/operator/v1/programs/${encodeURIComponent(id)}`]);
+  });
+
+  // Breaks if loading is not announced or a recoverable error prevents the real retry/list/detail render.
+  test.each(['/promo', '/promo/gold-launch'])('announces %s loading and retries its error into usable content', async path => {
+    let finish!: (value: Response) => void;
+    let failed = false;
+    const pending = new Promise<Response>(resolve => { finish = resolve; });
+    vi.stubGlobal('fetch', async (input: RequestInfo | URL) => {
+      if (String(input) === '/operator/v1/session') return response(session);
+      if (!failed) { failed = true; return pending; }
+      const configuration = programConfiguration();
+      const view = { configuration, draftConfiguration: configuration,
+        lifecycle: { programRef: 'gold-launch', status: 'draft', draftRevision: 1, updatedAt: now } };
+      return response(path === '/promo' ? { programs: [] } : view);
+    });
+    renderApp(path);
+    expect(await screen.findByRole('status')).toHaveTextContent(path === '/promo' ? 'Loading Promos…' : 'Loading Promo…');
+    finish(error(503, 'CORE_UNAVAILABLE', 'Core is temporarily unavailable', true));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Correlation: corr-live-error');
+    await userEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    if (path === '/promo') expect(await screen.findByText('No Promos match this filter.')).toBeVisible();
+    else expect(await screen.findByRole('region', { name: 'Configuration' })).toHaveTextContent('Gold customer');
+  });
+
+  // Breaks if detail failures are rendered as content or hide the service correlation needed for retry.
+  test.each([
+    [403, 'FORBIDDEN', 'You do not have permission to view this page.'],
+    [404, 'NOT_FOUND', 'Promo not found'],
+  ] as const)('keeps detail %i failures visible with correlation and retry', async (status, code, message) => {
+    vi.stubGlobal('fetch', async (input: RequestInfo | URL) => String(input) === '/operator/v1/session'
+      ? response(session) : error(status, code, message));
+    renderApp('/promo/gold-launch');
+    expect(await screen.findByRole('alert')).toHaveTextContent(message);
+    expect(screen.getByRole('alert')).toHaveTextContent('Correlation: corr-live-error');
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Publish revision' })).not.toBeInTheDocument();
+  });
+
   test.each([
     ['/promo/new', 'Create Promo', false],
     ['/promo/gold-launch/edit', 'Edit Promo draft', true],
@@ -494,9 +572,9 @@ describe('live operator authoring journey', () => {
       call.path === '/operator/v1/programs/gold-launch/publish' && call.method === 'POST'
     ));
     await userEvent.click(screen.getByRole('button', { name: 'Publish revision' }));
-    const review = (await screen.findByRole('heading', { name: 'Review publication' }))
-      .closest<HTMLElement>('[role="dialog"]');
-    if (!review) throw new Error('Expected publication review dialog');
+    const review = await screen.findByRole('region', { name: 'Review publication' });
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(review).not.toHaveAttribute('aria-modal');
     expect(within(review).getByText('Trigger: Code-triggered')).toBeInTheDocument();
     expect(within(review).getByText('GATEC20')).toBeInTheDocument();
     expect(within(review).getByText('Stackable: Yes')).toBeInTheDocument();
@@ -668,6 +746,10 @@ describe('live operator authoring journey', () => {
     await userEvent.click(screen.getByText('Gold launch revision 2').closest('tr')!);
     expect(await screen.findByRole('heading', { name: 'Active configuration' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Draft configuration' })).toBeInTheDocument();
+    expect(within(screen.getByRole('region', { name: 'Active configuration' })).getAllByRole('heading', { level: 4 }).map(heading => heading.textContent))
+      .toEqual(['1. Large basket', '2. Gold customer', 'Fallback: Fallback discount']);
+    expect(within(screen.getByRole('region', { name: 'Draft configuration' })).getAllByRole('heading', { level: 4 }).map(heading => heading.textContent))
+      .toEqual(['1. Gold customer', '2. Large basket', 'Fallback: Fallback discount']);
     await userEvent.click(screen.getByRole('button', { name: 'Publish revision' }));
     expect(await screen.findByRole('heading', { name: 'Review publication' })).toBeInTheDocument();
     expect(screen.getByText('Active revision: 1')).toBeInTheDocument();

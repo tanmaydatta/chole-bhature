@@ -743,7 +743,7 @@ describe('operator access flow', () => {
 
     if (path === '/promo') await screen.findByText('No Promos match this filter.');
     else await screen.findByText('Demo data');
-    expect(screen.queryByRole('button', { name: new RegExp(actionName, 'i') })).not.toBeInTheDocument();
+    expect(screen.queryByRole(path === '/promo' ? 'link' : 'button', { name: new RegExp(actionName, 'i') })).not.toBeInTheDocument();
   });
 
   test('lets a viewer inspect a draft but not edit it', async () => {
@@ -751,7 +751,27 @@ describe('operator access flow', () => {
     renderApp('/promo/promo-draft-1');
 
     expect((await screen.findAllByText('Draft Summer Sale')).length).toBeGreaterThan(0);
-    expect(screen.queryByRole('link', { name: 'Edit' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Edit Promo' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Publish revision' })).not.toBeInTheDocument();
+  });
+
+  test.each([
+    [['programs:read', 'programs:manage'], true, false],
+    [['programs:read', 'programs:publish'], false, true],
+  ] as const)('keeps manage and publish permission actions separate for %j', async (permissions, manage, publish) => {
+    installFetch({ ...sessions.viewer, permissions });
+    renderApp('/promo/promo-draft-1');
+    await screen.findByText('Draft revision 1');
+    expect(screen.queryByRole('link', { name: 'Edit Promo' }) !== null).toBe(manage);
+    expect(screen.queryByRole('button', { name: 'Publish revision' }) !== null).toBe(publish);
+    if (publish) {
+      await userEvent.click(screen.getByRole('button', { name: 'Publish revision' }));
+      expect(screen.getByRole('region', { name: 'Review publication' })).toBeVisible();
+    }
+    cleanup();
+    renderApp('/promo');
+    await screen.findByText('No Promos match this filter.');
+    expect(screen.queryByRole('link', { name: 'New promo' }) !== null).toBe(manage);
   });
 
   test.each([
