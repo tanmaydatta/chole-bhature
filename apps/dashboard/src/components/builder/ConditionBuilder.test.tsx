@@ -550,3 +550,116 @@ test('toggle visibility of nested group add/remove buttons', async () => {
   expect(screen.queryByRole('button', { name: 'Remove group 1' })).not.toBeInTheDocument();
   expect(screen.queryByLabelText('Condition group match group 1')).not.toBeInTheDocument();
 });
+
+test('reorder conditions within a group using up/down arrows', () => {
+  const group: ConditionGroup = {
+    match: 'ALL',
+    conditions: [
+      { id: 'first', variable: 'customer_tier', operator: 'eq', value: 'gold' },
+      { id: 'second', variable: 'customer_tier', operator: 'eq', value: 'silver' },
+      { id: 'third', variable: 'customer_tier', operator: 'eq', value: 'bronze' },
+    ],
+  };
+
+  let latest: ConditionGroup = group;
+  function Capture() {
+    const [value, setValue] = useState(latest);
+    return <ConditionBuilder value={value} variables={SAMPLE_VARIABLES} onChange={(next) => { latest = next; setValue(next); }} />;
+  }
+  render(<Capture />);
+
+  // Verify initial order
+  expect(latest.conditions[0].id).toBe('first');
+  expect(latest.conditions[1].id).toBe('second');
+  expect(latest.conditions[2].id).toBe('third');
+
+  // Find the down arrow for the first condition and click it
+  const moveDownBtn = screen.getByTestId('move-condition-down-first');
+  fireEvent.click(moveDownBtn);
+
+  // Now order should be: second, first, third
+  expect(latest.conditions[0].id).toBe('second');
+  expect(latest.conditions[1].id).toBe('first');
+  expect(latest.conditions[2].id).toBe('third');
+});
+
+test('reorder nested groups using up/down arrows', () => {
+  const group: ConditionGroup = {
+    match: 'ANY',
+    conditions: [],
+    groups: [
+      { match: 'ALL', conditions: [] },
+      { match: 'ALL', conditions: [] },
+      { match: 'ALL', conditions: [] },
+    ],
+  };
+
+  let latest: ConditionGroup = group;
+  function Capture() {
+    const [value, setValue] = useState(latest);
+    return <ConditionBuilder value={value} variables={SAMPLE_VARIABLES} onChange={(next) => { latest = next; setValue(next); }} />;
+  }
+  render(<Capture />);
+
+  // Find nested group headers and verify reorder arrows exist
+  const group1Header = screen.getByLabelText('Condition group match group 1');
+  const group2Header = screen.getByLabelText('Condition group match group 2');
+  const group3Header = screen.getByLabelText('Condition group match group 3');
+  
+  // Nested groups have match 'ALL' (the parent is 'ANY')
+  expect((group1Header as HTMLSelectElement).value).toBe('ALL');
+  expect((group2Header as HTMLSelectElement).value).toBe('ALL');
+  expect((group3Header as HTMLSelectElement).value).toBe('ALL');
+
+  // Click the first group's "Move group down" button
+  fireEvent.click(screen.getByTestId('move-group-down-1'));
+
+  // Groups should be reordered: [2, 1, 3]
+  expect(latest.groups?.[0].match).toBe('ALL');
+  expect(latest.groups?.[1].match).toBe('ALL');
+});
+
+test('group condition creates a nested group', () => {
+  const group: ConditionGroup = {
+    match: 'ANY',
+    conditions: [
+      { id: 'cond-a', variable: 'customer_tier', operator: 'eq', value: 'gold' },
+      { id: 'cond-b', variable: 'customer_tier', operator: 'eq', value: 'silver' },
+    ],
+  };
+
+  let latest: ConditionGroup = group;
+  function Capture() {
+    const [value, setValue] = useState(latest);
+    return <ConditionBuilder value={value} variables={SAMPLE_VARIABLES} onChange={(next) => { latest = next; setValue(next); }} />;
+  }
+  render(<Capture />);
+
+  // Find the group button and click it by data-testid
+  const groupBtn = screen.getByTestId('group-condition-cond-a');
+  fireEvent.click(groupBtn);
+
+  // After grouping: one condition remains at root, one is in a new nested group
+  expect(latest.groups?.[0]?.conditions).toHaveLength(1);
+  expect(latest.conditions).toHaveLength(1);
+});
+
+test('no reorder arrows shown for single condition', () => {
+  const group: ConditionGroup = {
+    match: 'ALL',
+    conditions: [
+      { id: 'only', variable: 'basket_value', operator: 'gte', value: 100 },
+    ],
+  };
+
+  let latest: ConditionGroup = group;
+  function Capture() {
+    const [value, setValue] = useState(latest);
+    return <ConditionBuilder value={value} variables={SAMPLE_VARIABLES} onChange={(next) => { latest = next; setValue(next); }} />;
+  }
+  render(<Capture />);
+
+  // No move up/down arrows for a single condition
+  expect(screen.queryByTestId('move-condition-up-only')).not.toBeInTheDocument();
+  expect(screen.queryByTestId('move-condition-down-only')).not.toBeInTheDocument();
+});
