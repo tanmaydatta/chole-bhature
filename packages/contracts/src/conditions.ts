@@ -27,43 +27,31 @@ export const ConditionSchema = z.object({
   message: z.string().max(500).optional(),
 }).strict();
 
-const NestedConditionGroupSchema = z.object({
-  match: z.enum(['ALL', 'ANY']),
-  conditions: z.array(ConditionSchema),
-}).strict();
-
-export const ConditionGroupSchema = z.object({
-  match: z.enum(['ALL', 'ANY']),
-  conditions: z.array(ConditionSchema),
-  groups: z.array(NestedConditionGroupSchema).optional(),
-}).strict().superRefine((group, context) => {
-  const seenIds = new Set<string>();
-  const conditions = [
-    ...group.conditions.map((condition, index) => ({
-      condition,
-      path: ['conditions', index, 'id'] as Array<string | number>,
-    })),
-    ...(group.groups ?? []).flatMap((nested, groupIndex) => (
-      nested.conditions.map((condition, conditionIndex) => ({
-        condition,
-        path: ['groups', groupIndex, 'conditions', conditionIndex, 'id'] as Array<string | number>,
-      }))
-    )),
-  ];
-
-  for (const { condition, path } of conditions) {
-    if (seenIds.has(condition.id)) {
-      context.addIssue({
-        code: 'custom',
-        path,
-        message: `duplicate condition id: ${condition.id}`,
-      });
-    }
-    seenIds.add(condition.id);
-  }
-});
+export type Condition = z.infer<typeof ConditionSchema>;
 
 export type ConditionOperator = z.infer<typeof ConditionOperatorSchema>;
 export type ConditionValue = z.infer<typeof ConditionValueSchema>;
-export type Condition = z.infer<typeof ConditionSchema>;
-export type ConditionGroup = z.infer<typeof ConditionGroupSchema>;
+
+// Recursive interface: groups can themselves contain groups at unlimited depth.
+// The runtime schema validates one level; deeper nesting is validated
+// by `conditionGroupIsAuthorable()` in the dashboard which traverses recursively.
+export interface ConditionGroup {
+  match: 'ALL' | 'ANY';
+  conditions: Condition[];
+  groups?: ConditionGroup[] | undefined;
+}
+
+const _ConditionGroupShape = {
+  match: z.enum(['ALL', 'ANY']),
+  conditions: z.array(ConditionSchema),
+};
+
+// Use `any` for the schema variable to satisfy the recursive type reference,
+// then cast to ZodType<ConditionGroup>. This is a known pattern for recursive
+// Zod schemas when strict mode prevents z.lazy() type inference.
+const _ConditionGroupSchemaRaw: any = z.object({
+  ..._ConditionGroupShape,
+  groups: z.lazy(() => _ConditionGroupSchemaRaw.array()).optional(),
+}).strict();
+
+export const ConditionGroupSchema: z.ZodType<ConditionGroup> = _ConditionGroupSchemaRaw;

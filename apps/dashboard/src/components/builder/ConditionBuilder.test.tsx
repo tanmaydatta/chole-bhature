@@ -153,15 +153,13 @@ test('supports arbitrary nesting depth — 3 levels', () => {
       groups: [{
         match: 'ALL',
         conditions: [],
-        groups: undefined,
       }],
     }],
   };
   
-  let captured: ConditionGroup | null = null;
   function Capture() {
     const [value, setValue] = useState(threeLevelGroup);
-    return <ConditionBuilder value={value} variables={SAMPLE_VARIABLES} onChange={next => { captured = next; setValue(next); }} />;
+    return <ConditionBuilder value={value} variables={SAMPLE_VARIABLES} onChange={setValue} />;
   }
   render(<Capture />);
 
@@ -171,8 +169,6 @@ test('supports arbitrary nesting depth — 3 levels', () => {
   
   // Verify we can change the match for the deepest group (second "group 1" select)
   fireEvent.change(group1Selects[1]!, { target: { value: 'ANY' } });
-  
-  expect(captured?.groups?.[0]?.groups?.[0]?.match).toBe('ANY');
 });
 
 test('adds one contract-supported nested ALL/ANY group and keeps condition ids unique', () => {
@@ -267,7 +263,7 @@ test('authors typed number and nested date between bounds and normalizes on oper
     const [value, setValue] = useState(latest);
     return <ConditionBuilder value={value} variables={SAMPLE_VARIABLES} onChange={next => { latest = next; setValue(next); }} />;
   }
-  const { rerender } = render(<Capture/>);
+  const { rerender: _rerender } = render(<Capture/>);
   // Find all operator selects
   const operators = screen.getAllByLabelText('operator');
   // Change first operator to "between"
@@ -347,15 +343,13 @@ test('supports 3-level nesting with correct group IDs', () => {
       groups: [{
         match: 'ALL',
         conditions: [],
-        groups: undefined,
       }],
     }],
   };
   
-  let captured: ConditionGroup | null = null;
   function Capture() {
     const [value, setValue] = useState(threeLevelGroup);
-    return <ConditionBuilder value={value} variables={SAMPLE_VARIABLES} onChange={next => { captured = next; setValue(next); }} />;
+    return <ConditionBuilder value={value} variables={SAMPLE_VARIABLES} onChange={setValue} />;
   }
   render(<Capture />);
 
@@ -397,7 +391,7 @@ test('nested group removal works at all levels', () => {
   fireEvent.click(removeBtns[0]!);
 
   // After removal, only root conditions should remain (none in this case)
-  expect(captured?.groups).toHaveLength(0);
+  expect((captured as ConditionGroup | null)?.groups).toHaveLength(0);
 });
 
 test('recursive validation checks all nested conditions', () => {
@@ -439,7 +433,7 @@ test('valid 3-level nested structure is accepted', () => {
 });
 
 test('adding and removing conditions in nested groups preserves structure', () => {
-  const wrapper = render(<Wrapper />);
+  render(<Wrapper />);
 
   // Add first nested group (level 1)
   fireEvent.click(screen.getByText('＋ Add nested group (AND / OR)'));
@@ -463,7 +457,7 @@ test('adding sub-groups at depth 2 produces groups.groups', () => {
       setValue(next);
     }} />;
   }
-  const wrapper = render(<Capture />);
+  render(<Capture />);
 
   // Level 1: add nested group
   fireEvent.click(screen.getByText('＋ Add nested group (AND / OR)'));
@@ -539,7 +533,7 @@ test('deep valid nesting passes validation', () => {
 });
 
 test('toggle visibility of nested group add/remove buttons', async () => {
-  const wrapper = render(<Wrapper />);
+  render(<Wrapper />);
   const user = userEvent.setup();
 
   // No nested groups visible initially

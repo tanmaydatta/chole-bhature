@@ -67,7 +67,6 @@ function GroupRenderer({
   onRemove,
 }: GroupRendererProps) {
   const [pickerOpen, setPickerOpen] = useState(false);
-  const [nestedPicker, setNestedPicker] = useState<number | null>(null);
   const [replacement, setReplacement] = useState<{
     conditionId: string;
     nestedIndex?: number;
