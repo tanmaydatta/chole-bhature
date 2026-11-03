@@ -33,7 +33,7 @@ export type ConditionOperator = z.infer<typeof ConditionOperatorSchema>;
 export type ConditionValue = z.infer<typeof ConditionValueSchema>;
 
 // Recursive interface: groups can themselves contain groups at unlimited depth.
-// The runtime schema validates one level; deeper nesting is validated
+// The runtime schema validates one level of nesting; deeper nesting is validated
 // by `conditionGroupIsAuthorable()` in the dashboard which traverses recursively.
 export interface ConditionGroup {
   match: 'ALL' | 'ANY';
@@ -41,17 +41,49 @@ export interface ConditionGroup {
   groups?: ConditionGroup[] | undefined;
 }
 
-const _ConditionGroupShape = {
+const ConditionGroupBase = z.object({
   match: z.enum(['ALL', 'ANY']),
   conditions: z.array(ConditionSchema),
-};
-
-// Use `any` for the schema variable to satisfy the recursive type reference,
-// then cast to ZodType<ConditionGroup>. This is a known pattern for recursive
-// Zod schemas when strict mode prevents z.lazy() type inference.
-const _ConditionGroupSchemaRaw: any = z.object({
-  ..._ConditionGroupShape,
-  groups: z.lazy(() => _ConditionGroupSchemaRaw.array()).optional(),
 }).strict();
 
-export const ConditionGroupSchema: z.ZodType<ConditionGroup> = _ConditionGroupSchemaRaw;
+function checkDuplicateConditionIds(
+  data: ConditionGroup,
+  _ctx: z.RefinementCtx,
+): void {
+  const conditions = data.conditions;
+  const nestedGroups = data.groups ?? [];
+  const seen = new Set<string>();
+
+  for (const c of conditions) {
+    if (seen.has(c.id)) {
+      _ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `duplicate condition id: ${c.id}`,
+        path: ['conditions', conditions.indexOf(c), 'id'],
+      });
+    }
+    seen.add(c.id);
+  }
+
+  for (const ng of nestedGroups) {
+    for (const c of ng.conditions) {
+      if (seen.has(c.id)) {
+        _ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `duplicate condition id: ${c.id}`,
+          path: ['groups', nestedGroups.indexOf(ng), 'conditions', ng.conditions.indexOf(c), 'id'],
+        });
+      }
+      seen.add(c.id);
+    }
+  }
+}
+
+// Export a flat schema as ZodType<ConditionGroup>. The interface handles the
+// recursive type; the schema handles one level of runtime validation.
+const _flatSchema = ConditionGroupBase.extend({
+  groups: z.array(ConditionGroupBase).optional(),
+}) as z.ZodType<ConditionGroup>;
+
+export const ConditionGroupSchema: z.ZodType<ConditionGroup> =
+  _flatSchema.superRefine(checkDuplicateConditionIds);
