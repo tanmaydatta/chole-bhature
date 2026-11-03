@@ -33,8 +33,6 @@ export function conditionGroupIsAuthorable(
   group: ConditionGroup,
   variables: readonly Variable[],
 ): boolean {
-  return [
-    ...group.conditions,
-    ...(group.groups ?? []).flatMap(nested => nested.conditions),
-  ].every(condition => conditionIssue(condition, variables) === null);
+  return group.conditions.every(c => conditionIssue(c, variables) === null)
+    && (group.groups ?? []).every(g => conditionGroupIsAuthorable(g, variables));
 }
