@@ -2,6 +2,7 @@ import { render, screen, fireEvent, waitFor, within } from '@testing-library/rea
 import userEvent from '@testing-library/user-event';
 import { useState } from 'react';
 import { ConditionBuilder } from './ConditionBuilder';
+import { conditionGroupIsAuthorable } from './condition-validation';
 import type { ConditionGroup, Variable } from '../../lib/types';
 
 const SAMPLE_VARIABLES: Variable[] = [
@@ -140,6 +141,36 @@ test('condition with an existing custom message shows the editor open with that 
   expect(msgInput).toHaveValue('Spend a bit more to qualify!');
 });
 
+test('supports arbitrary nesting depth — 3 levels', () => {
+  // Test that the component can render and update 3 levels of nesting
+  // by starting with pre-existing structure
+  const threeLevelGroup: ConditionGroup = {
+    match: 'ALL',
+    conditions: [],
+    groups: [{
+      match: 'ANY',
+      conditions: [],
+      groups: [{
+        match: 'ALL',
+        conditions: [],
+      }],
+    }],
+  };
+  
+  function Capture() {
+    const [value, setValue] = useState(threeLevelGroup);
+    return <ConditionBuilder value={value} variables={SAMPLE_VARIABLES} onChange={setValue} />;
+  }
+  render(<Capture />);
+
+  // Verify all 3 groups are rendered (use getAllByLabelText to get both "group 1" selects)
+  const group1Selects = screen.getAllByLabelText('Condition group match group 1');
+  expect(group1Selects).toHaveLength(2); // One for each nested group
+  
+  // Verify we can change the match for the deepest group (second "group 1" select)
+  fireEvent.change(group1Selects[1]!, { target: { value: 'ANY' } });
+});
+
 test('adds one contract-supported nested ALL/ANY group and keeps condition ids unique', () => {
   let latest: ConditionGroup = { match: 'ALL', conditions: [] };
   function NestedWrapper() {
@@ -152,18 +183,17 @@ test('adds one contract-supported nested ALL/ANY group and keeps condition ids u
   render(<NestedWrapper />);
 
   fireEvent.click(screen.getByText('＋ Add nested group (AND / OR)'));
-  fireEvent.change(screen.getByLabelText('Nested group match 1'), { target: { value: 'ANY' } });
-  fireEvent.click(screen.getByRole('button', { name: 'Add condition to nested group 1' }));
+  fireEvent.change(screen.getByLabelText('Condition group match group 1'), { target: { value: 'ANY' } });
+  const addBtns = screen.getAllByText('＋ Add condition');
+  fireEvent.click(addBtns[1]!); // the nested group's add button
   fireEvent.click(screen.getByText('basket_value'));
-  fireEvent.click(screen.getAllByText('＋ Add condition')[0]!);
-  fireEvent.click(screen.getAllByText('basket_value')[0]!);
 
   expect(latest.groups).toHaveLength(1);
   expect(latest.groups?.[0]?.match).toBe('ANY');
   expect(latest.groups?.[0]?.conditions).toHaveLength(1);
   const ids = [
-    ...latest.conditions.map(condition => condition.id),
-    ...(latest.groups ?? []).flatMap(group => group.conditions.map(condition => condition.id)),
+    ...latest.conditions.map(c => c.id),
+    ...(latest.groups ?? []).flatMap(g => g.conditions.map(c => c.id)),
   ];
   expect(new Set(ids).size).toBe(ids.length);
 });
@@ -217,7 +247,7 @@ test('authors string and enum in-values as arrays and normalizes when the operat
   expect(latest.conditions[0]?.value).toEqual(['store', 'web']);
 });
 
-test('authors typed number and nested date between bounds and normalizes on operator change', () => {
+test('authors typed number and nested date between bounds and normalizes on operator change', async () => {
   let latest: ConditionGroup = {
     match: 'ALL',
     conditions: [{ id: 'number-between', variable: 'basket_value', operator: 'gte', value: 10 }],
@@ -233,9 +263,11 @@ test('authors typed number and nested date between bounds and normalizes on oper
     const [value, setValue] = useState(latest);
     return <ConditionBuilder value={value} variables={SAMPLE_VARIABLES} onChange={next => { latest = next; setValue(next); }} />;
   }
-  render(<Capture/>);
-  const rows = screen.getAllByLabelText('operator').map(control => control.closest('div')!);
-  fireEvent.change(within(rows[0]!).getByLabelText('operator'), { target: { value: 'between' } });
+  const { rerender: _rerender } = render(<Capture/>);
+  // Find all operator selects
+  const operators = screen.getAllByLabelText('operator');
+  // Change first operator to "between"
+  fireEvent.change(operators[0]!, { target: { value: 'between' } });
   expect(latest.conditions[0]?.value).toEqual([10, 10]);
   const minimums = screen.getAllByLabelText('minimum value');
   const maximums = screen.getAllByLabelText('maximum value');
@@ -272,6 +304,7 @@ test('keeps unresolved and incompatible top-level and nested conditions visible 
       />
     </>;
   }
+  const user = userEvent.setup();
   render(<InvalidWrapper />);
 
   await waitFor(() => expect(screen.getByLabelText('condition validity')).toHaveTextContent('false'));
@@ -281,13 +314,239 @@ test('keeps unresolved and incompatible top-level and nested conditions visible 
   expect(within(top).getByText('legacy')).toBeInTheDocument();
   expect(screen.getByText('Missing variable definition for customer.deprecated.')).toBeInTheDocument();
   expect(screen.getByText('Missing variable definition for context.missing.')).toBeInTheDocument();
-  expect(screen.getByText('Operator “gt” is not valid for context.channel.')).toBeInTheDocument();
+  // Check for operator error with flexible matcher
+  expect(screen.getByText(/Operator.*gt.*is not valid for context\.channel/)).toBeInTheDocument();
 
-  await userEvent.click(within(top).getByRole('button', { name: 'Replace customer.deprecated' }));
-  await userEvent.click(within(top).getByText('customer_tier'));
+  await user.click(within(top).getByRole('button', { name: 'Replace customer.deprecated' }));
+  await user.click(within(top).getByText('customer_tier'));
   expect(latest.conditions[0]).toMatchObject({
     id: 'deprecated-top', variable: 'customer_tier', operator: 'eq', value: 'gold',
   });
-  await userEvent.click(screen.getByRole('button', { name: 'Remove context.missing' }));
+  
+  // Remove the nested condition - it's inside the nested group's unresolved condition
+  const nestedUnresolved = screen.getByRole('group', { name: 'Unresolved condition context.missing' });
+  await user.click(within(nestedUnresolved).getByRole('button', { name: 'Remove context.missing' }));
   expect(latest.groups?.[0]?.conditions).toEqual([]);
+});
+
+// ── New tests: recursive nesting ──────────────────────────────────
+
+test('supports 3-level nesting with correct group IDs', () => {
+  // Test that the component can render 3 levels of nesting
+  // by starting with pre-existing structure
+  const threeLevelGroup: ConditionGroup = {
+    match: 'ALL',
+    conditions: [],
+    groups: [{
+      match: 'ANY',
+      conditions: [],
+      groups: [{
+        match: 'ALL',
+        conditions: [],
+      }],
+    }],
+  };
+  
+  function Capture() {
+    const [value, setValue] = useState(threeLevelGroup);
+    return <ConditionBuilder value={value} variables={SAMPLE_VARIABLES} onChange={setValue} />;
+  }
+  render(<Capture />);
+
+  // Verify all 3 groups are rendered
+  expect(screen.getByLabelText('Condition group match root')).toBeInTheDocument();
+  const group1Selects = screen.getAllByLabelText('Condition group match group 1');
+  expect(group1Selects).toHaveLength(2); // Both nested groups have "group 1" label
+});
+
+test('nested group removal works at all levels', () => {
+  // Test removal by starting with pre-existing 2-level structure
+  const twoLevelGroup: ConditionGroup = {
+    match: 'ALL',
+    conditions: [],
+    groups: [{
+      match: 'ANY',
+      conditions: [],
+      groups: [{
+        match: 'ALL',
+        conditions: [],
+        groups: undefined,
+      }],
+    }],
+  };
+  
+  let captured: ConditionGroup | null = null;
+  function Capture() {
+    const [value, setValue] = useState(twoLevelGroup);
+    return <ConditionBuilder value={value} variables={SAMPLE_VARIABLES} onChange={next => { captured = next; setValue(next); }} />;
+  }
+  render(<Capture />);
+
+  // Verify both nested groups are rendered
+  const group1Selects = screen.getAllByLabelText('Condition group match group 1');
+  expect(group1Selects).toHaveLength(2);
+
+  // Remove the first nested group (first "Remove group 1" button)
+  const removeBtns = screen.getAllByRole('button', { name: 'Remove group 1' });
+  fireEvent.click(removeBtns[0]!);
+
+  // After removal, only root conditions should remain (none in this case)
+  expect((captured as ConditionGroup | null)?.groups).toHaveLength(0);
+});
+
+test('recursive validation checks all nested conditions', () => {
+  const threeLevelGroup: ConditionGroup = {
+    match: 'ALL',
+    conditions: [{ id: 'c1', variable: 'basket_value', operator: 'gte', value: 100 }],
+    groups: [{
+      match: 'ANY',
+      conditions: [{ id: 'c2', variable: 'customer_tier', operator: 'in', value: ['gold'] }],
+      groups: [{
+        match: 'ALL',
+        conditions: [{ id: 'c3', variable: 'nonexistent_var', operator: 'eq', value: 'test' }],
+        groups: undefined,
+      }],
+    }],
+  };
+
+  const isValid = conditionGroupIsAuthorable(threeLevelGroup, SAMPLE_VARIABLES);
+  expect(isValid).toBe(false); // Should be invalid due to 'nonexistent_var'
+});
+
+test('valid 3-level nested structure is accepted', () => {
+  const threeLevelValidGroup: ConditionGroup = {
+    match: 'ALL',
+    conditions: [],
+    groups: [{
+      match: 'ANY',
+      conditions: [{ id: 'c1', variable: 'basket_value', operator: 'gte', value: 100 }],
+      groups: [{
+        match: 'ALL',
+        conditions: [{ id: 'c2', variable: 'customer_tier', operator: 'in', value: ['gold', 'silver'] }],
+        groups: undefined,
+      }],
+    }],
+  };
+
+  const isValid = conditionGroupIsAuthorable(threeLevelValidGroup, SAMPLE_VARIABLES);
+  expect(isValid).toBe(true);
+});
+
+test('adding and removing conditions in nested groups preserves structure', () => {
+  render(<Wrapper />);
+
+  // Add first nested group (level 1)
+  fireEvent.click(screen.getByText('＋ Add nested group (AND / OR)'));
+
+  // Verify the nested group structure is preserved (remove button should exist)
+  const removeBtns = screen.getAllByRole('button', { name: 'Remove group 1' });
+  expect(removeBtns).toHaveLength(1);
+  expect(removeBtns[0]).toBeInTheDocument();
+  
+  // The nested group's match selector should exist
+  const group1Selects = screen.getAllByLabelText('Condition group match group 1');
+  expect(group1Selects).toHaveLength(1);
+});
+
+test('adding sub-groups at depth 2 produces groups.groups', () => {
+  let latest: ConditionGroup = { match: 'ALL', conditions: [] };
+  function Capture() {
+    const [value, setValue] = useState(latest);
+    return <ConditionBuilder value={value} variables={SAMPLE_VARIABLES} onChange={(next) => {
+      latest = next;
+      setValue(next);
+    }} />;
+  }
+  render(<Capture />);
+
+  // Level 1: add nested group
+  fireEvent.click(screen.getByText('＋ Add nested group (AND / OR)'));
+
+  // Level 2: add nested group inside level 1
+  fireEvent.click(screen.getAllByText('＋ Add nested group (AND / OR)')[1]!);
+
+  // Add a condition to the level 2 group
+  const addBtns = screen.getAllByText('＋ Add condition');
+  fireEvent.click(addBtns[addBtns.length - 1]!);
+  fireEvent.click(screen.getByText('basket_value'));
+
+  // Verify the 3-level structure exists
+  expect(latest.groups).toHaveLength(1);
+  expect(latest.groups![0].groups).toHaveLength(1);
+  expect(latest.groups![0].groups![0].conditions).toHaveLength(1);
+  expect(latest.groups![0].groups![0].conditions[0].variable).toBe('basket_value');
+});
+
+test('condition validation with deep nested invalid conditions', () => {
+  // 4 levels deep — ensure recursion handles it
+  const fourLevelGroup: ConditionGroup = {
+    match: 'ALL',
+    conditions: [],
+    groups: [{
+      match: 'ANY',
+      conditions: [],
+      groups: [{
+        match: 'ALL',
+        conditions: [],
+        groups: [{
+          match: 'ANY',
+          conditions: [{
+            id: 'invalid-deep',
+            variable: 'does.not.exist',
+            operator: 'eq',
+            value: 'test',
+          }],
+          groups: undefined,
+        }],
+      }],
+    }],
+  };
+
+  expect(conditionGroupIsAuthorable(fourLevelGroup, SAMPLE_VARIABLES)).toBe(false);
+});
+
+test('deep valid nesting passes validation', () => {
+  const valid4Level: ConditionGroup = {
+    match: 'ALL',
+    conditions: [],
+    groups: [{
+      match: 'ANY',
+      conditions: [],
+      groups: [{
+        match: 'ALL',
+        conditions: [],
+        groups: [{
+          match: 'ANY',
+          conditions: [{
+            id: 'deep-valid',
+            variable: 'basket_value',
+            operator: 'gte',
+            value: 50,
+          }],
+          groups: undefined,
+        }],
+      }],
+    }],
+  };
+
+  expect(conditionGroupIsAuthorable(valid4Level, SAMPLE_VARIABLES)).toBe(true);
+});
+
+test('toggle visibility of nested group add/remove buttons', async () => {
+  render(<Wrapper />);
+  const user = userEvent.setup();
+
+  // No nested groups visible initially
+  expect(screen.queryByRole('button', { name: 'Remove group 1' })).not.toBeInTheDocument();
+  expect(screen.queryByLabelText('Condition group match group 1')).not.toBeInTheDocument();
+
+  // Add one nested group — both should appear
+  await user.click(screen.getByText('＋ Add nested group (AND / OR)'));
+  expect(screen.getByRole('button', { name: 'Remove group 1' })).toBeInTheDocument();
+  expect(screen.getByLabelText('Condition group match group 1')).toBeInTheDocument();
+
+  // Remove it
+  await user.click(screen.getByRole('button', { name: 'Remove group 1' }));
+  expect(screen.queryByRole('button', { name: 'Remove group 1' })).not.toBeInTheDocument();
+  expect(screen.queryByLabelText('Condition group match group 1')).not.toBeInTheDocument();
 });

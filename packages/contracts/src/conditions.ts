@@ -27,43 +27,63 @@ export const ConditionSchema = z.object({
   message: z.string().max(500).optional(),
 }).strict();
 
-const NestedConditionGroupSchema = z.object({
+export type Condition = z.infer<typeof ConditionSchema>;
+
+export type ConditionOperator = z.infer<typeof ConditionOperatorSchema>;
+export type ConditionValue = z.infer<typeof ConditionValueSchema>;
+
+// Recursive interface: groups can themselves contain groups at unlimited depth.
+// The runtime schema validates one level of nesting; deeper nesting is validated
+// by `conditionGroupIsAuthorable()` in the dashboard which traverses recursively.
+export interface ConditionGroup {
+  match: 'ALL' | 'ANY';
+  conditions: Condition[];
+  groups?: ConditionGroup[] | undefined;
+}
+
+const ConditionGroupBase = z.object({
   match: z.enum(['ALL', 'ANY']),
   conditions: z.array(ConditionSchema),
 }).strict();
 
-export const ConditionGroupSchema = z.object({
-  match: z.enum(['ALL', 'ANY']),
-  conditions: z.array(ConditionSchema),
-  groups: z.array(NestedConditionGroupSchema).optional(),
-}).strict().superRefine((group, context) => {
-  const seenIds = new Set<string>();
-  const conditions = [
-    ...group.conditions.map((condition, index) => ({
-      condition,
-      path: ['conditions', index, 'id'] as Array<string | number>,
-    })),
-    ...(group.groups ?? []).flatMap((nested, groupIndex) => (
-      nested.conditions.map((condition, conditionIndex) => ({
-        condition,
-        path: ['groups', groupIndex, 'conditions', conditionIndex, 'id'] as Array<string | number>,
-      }))
-    )),
-  ];
+function checkDuplicateConditionIds(
+  data: ConditionGroup,
+  _ctx: z.RefinementCtx,
+): void {
+  const conditions = data.conditions;
+  const nestedGroups = data.groups ?? [];
+  const seen = new Set<string>();
 
-  for (const { condition, path } of conditions) {
-    if (seenIds.has(condition.id)) {
-      context.addIssue({
-        code: 'custom',
-        path,
-        message: `duplicate condition id: ${condition.id}`,
+  for (const c of conditions) {
+    if (seen.has(c.id)) {
+      _ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `duplicate condition id: ${c.id}`,
+        path: ['conditions', conditions.indexOf(c), 'id'],
       });
     }
-    seenIds.add(condition.id);
+    seen.add(c.id);
   }
-});
 
-export type ConditionOperator = z.infer<typeof ConditionOperatorSchema>;
-export type ConditionValue = z.infer<typeof ConditionValueSchema>;
-export type Condition = z.infer<typeof ConditionSchema>;
-export type ConditionGroup = z.infer<typeof ConditionGroupSchema>;
+  for (const ng of nestedGroups) {
+    for (const c of ng.conditions) {
+      if (seen.has(c.id)) {
+        _ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `duplicate condition id: ${c.id}`,
+          path: ['groups', nestedGroups.indexOf(ng), 'conditions', ng.conditions.indexOf(c), 'id'],
+        });
+      }
+      seen.add(c.id);
+    }
+  }
+}
+
+// Export a flat schema as ZodType<ConditionGroup>. The interface handles the
+// recursive type; the schema handles one level of runtime validation.
+const _flatSchema = ConditionGroupBase.extend({
+  groups: z.array(ConditionGroupBase).optional(),
+}) as z.ZodType<ConditionGroup>;
+
+export const ConditionGroupSchema: z.ZodType<ConditionGroup> =
+  _flatSchema.superRefine(checkDuplicateConditionIds);

@@ -45,59 +45,73 @@ function makeCondition(variable: Variable): Condition {
   };
 }
 
-export function ConditionBuilder({
-  value,
+// ── Recursive sub-group renderer ──────────────────────────────────
+
+interface GroupRendererProps {
+  group: ConditionGroup;
+  groupIndex: number | null;
+  variables: Variable[];
+  depth: number;
+  onChange: (next: ConditionGroup) => void;
+  onValidityChange?: (valid: boolean) => void;
+  onRemove?: () => void;
+}
+
+function GroupRenderer({
+  group,
+  groupIndex,
   variables,
+  depth,
   onChange,
   onValidityChange,
-}: ConditionBuilderProps) {
+  onRemove,
+}: GroupRendererProps) {
   const [pickerOpen, setPickerOpen] = useState(false);
-  const [nestedPicker, setNestedPicker] = useState<number | null>(null);
   const [replacement, setReplacement] = useState<{
     conditionId: string;
     nestedIndex?: number;
   } | null>(null);
 
   const varMap = Object.fromEntries(variables.map((v) => [v.name, v]));
-  const valid = conditionGroupIsAuthorable(value, variables);
+  const valid = conditionGroupIsAuthorable(group, variables);
 
   useEffect(() => {
     onValidityChange?.(valid);
   }, [onValidityChange, valid]);
 
   function handleMatchChange(e: React.ChangeEvent<HTMLSelectElement>) {
-    onChange({ ...value, match: e.target.value as 'ALL' | 'ANY' });
+    onChange({ ...group, match: e.target.value as 'ALL' | 'ANY' });
   }
 
   function handlePick(variable: Variable) {
     const condition = makeCondition(variable);
-    onChange({ ...value, conditions: [...value.conditions, condition] });
+    onChange({ ...group, conditions: [...group.conditions, condition] });
     setPickerOpen(false);
   }
 
   function handleConditionChange(id: string, next: Condition) {
     onChange({
-      ...value,
-      conditions: value.conditions.map((c) => (c.id === id ? next : c)),
+      ...group,
+      conditions: group.conditions.map((c) => (c.id === id ? next : c)),
     });
   }
 
   function handleRemove(id: string) {
     onChange({
-      ...value,
-      conditions: value.conditions.filter((c) => c.id !== id),
+      ...group,
+      conditions: group.conditions.filter((c) => c.id !== id),
     });
   }
 
   function addNestedGroup() {
-    onChange({ ...value, groups: [...(value.groups ?? []), { match: 'ALL', conditions: [] }] });
+    onChange({ ...group, groups: [...(group.groups ?? []), { match: 'ALL', conditions: [] }] });
   }
 
-  function updateNested(index: number, group: NonNullable<ConditionGroup['groups']>[number]) {
+  function updateNested(index: number, nestedGroup: NonNullable<ConditionGroup['groups']>[number]) {
     onChange({
-      ...value,
-      groups: (value.groups ?? []).map((existing, groupIndex) => (
-        groupIndex === index ? group : existing
+      ...group,
+      groups: (group.groups ?? []).map((existing, gi) => (
+        gi === index ? nestedGroup : existing
       )),
     });
   }
@@ -130,10 +144,10 @@ export function ConditionBuilder({
           const next = { ...makeCondition(variable), id: condition.id };
           if (nestedIndex === undefined) handleConditionChange(condition.id, next);
           else {
-            const group = value.groups?.[nestedIndex];
-            if (group) updateNested(nestedIndex, {
-              ...group,
-              conditions: group.conditions.map(existing => existing.id === condition.id ? next : existing),
+            const g = group.groups?.[nestedIndex];
+            if (g) updateNested(nestedIndex, {
+              ...g,
+              conditions: g.conditions.map(existing => existing.id === condition.id ? next : existing),
             });
           }
           setReplacement(null);
@@ -162,26 +176,40 @@ export function ConditionBuilder({
     </div>;
   }
 
+  const indentPx = depth * 20;
+  const labelPrefix = groupIndex === null ? 'root' : `group ${groupIndex + 1}`;
+
   return (
     <div>
-      {/* Match ALL / ANY bar */}
       <div className="flex items-center gap-[8px] text-[13.5px] text-[var(--muted)] mb-[12px]">
         Customer must match{' '}
         <select
-          aria-label="Condition group match"
+          aria-label={`Condition group match ${labelPrefix}`}
           className="border border-[var(--border)] bg-[var(--bg)] rounded-[7px] px-[10px] py-[4px] font-bold text-[var(--ink)] cursor-pointer"
-          value={value.match}
+          value={group.match}
           onChange={handleMatchChange}
         >
           <option value="ALL">ALL</option>
           <option value="ANY">ANY</option>
         </select>{' '}
         of these conditions:
+        {groupIndex !== null && onRemove && (
+          <button
+            type="button"
+            aria-label={`Remove group ${groupIndex + 1}`}
+            className="text-[var(--muted)] cursor-pointer text-[13px] border-0 bg-transparent"
+            onClick={onRemove}
+          >
+            Remove group {groupIndex + 1}
+          </button>
+        )}
       </div>
 
-      {/* Condition group */}
-      <div className="border border-[var(--border)] border-l-[3px] border-l-[var(--accent)] rounded-[10px] p-[12px] bg-[var(--bg)]">
-        {value.conditions.map(condition => conditionRow(
+      <div
+        className="border border-[var(--border)] border-l-[3px] border-l-[var(--accent)] rounded-[10px] p-[12px] bg-[var(--bg)]"
+        style={{ marginLeft: indentPx }}
+      >
+        {group.conditions.map(condition => conditionRow(
           condition,
           next => handleConditionChange(condition.id, next),
           () => handleRemove(condition.id),
@@ -206,50 +234,43 @@ export function ConditionBuilder({
           <VariablePicker variables={variables} onPick={handlePick} />
         )}
 
-        {(value.groups ?? []).map((group, index) => (
-          <div key={index} className="mt-3 ml-5 border-l-2 border-[var(--accent)] pl-3">
-            <div className="flex items-center gap-2">
-              <select
-                aria-label={`Nested group match ${index + 1}`}
-                value={group.match}
-                onChange={event => updateNested(index, {
-                  ...group, match: event.target.value as 'ALL' | 'ANY',
-                })}
-              >
-                <option value="ALL">ALL</option><option value="ANY">ANY</option>
-              </select>
-              <button
-                type="button"
-                aria-label={`Remove nested group ${index + 1}`}
-                onClick={() => onChange({
-                  ...value, groups: (value.groups ?? []).filter((_, groupIndex) => groupIndex !== index),
-                })}
-              >Remove group</button>
-            </div>
-            {group.conditions.map(condition => conditionRow(
-              condition,
-              next => updateNested(index, {
-                  ...group,
-                  conditions: group.conditions.map(existing => existing.id === condition.id ? next : existing),
-                }),
-              () => updateNested(index, {
-                  ...group,
-                  conditions: group.conditions.filter(existing => existing.id !== condition.id),
-                }),
-              index,
-            ))}
-            <button
-              type="button"
-              aria-label={`Add condition to nested group ${index + 1}`}
-              onClick={() => setNestedPicker(nestedPicker === index ? null : index)}
-            >＋ Add condition</button>
-            {nestedPicker === index && <VariablePicker variables={variables} onPick={variable => {
-              updateNested(index, { ...group, conditions: [...group.conditions, makeCondition(variable)] });
-              setNestedPicker(null);
-            }} />}
-          </div>
+        {(group.groups ?? []).map((nested, index) => (
+          <GroupRenderer
+            key={index}
+            group={nested}
+            groupIndex={index}
+            variables={variables}
+            depth={depth + 1}
+            onChange={(nextNested) => updateNested(index, nextNested)}
+            onRemove={onRemove
+              ? () => onRemove()
+              : () => onChange({ ...group, groups: (group.groups ?? []).filter((_, gi) => gi !== index) })
+            }
+          />
         ))}
       </div>
+    </div>
+  );
+}
+
+// ── Top-level entry point ─────────────────────────────────────────
+
+export function ConditionBuilder({
+  value,
+  variables,
+  onChange,
+  onValidityChange,
+}: ConditionBuilderProps) {
+  return (
+    <div>
+      <GroupRenderer
+        group={value}
+        groupIndex={null}
+        variables={variables}
+        depth={0}
+        onChange={onChange}
+        onValidityChange={onValidityChange}
+      />
     </div>
   );
 }
