@@ -1,7 +1,9 @@
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { describe, test, expect, vi, beforeEach } from 'vitest';
 import LivePromoDetail from './LivePromoDetail';
+import { programApi } from '../../data/program-api';
+import { BffClientError } from '../../lib/bff-client';
 
 const mockProgramView = {
   configuration: {
@@ -102,5 +104,47 @@ describe('LivePromoDetail', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Cancel publication' }));
     expect(screen.queryByRole('heading', { name: 'Review publication' })).not.toBeInTheDocument();
+  });
+
+  test('review publication dialog has aria-labelledby and handles Escape key', async () => {
+    render(
+      <MemoryRouter initialEntries={['/promo/gold-launch']}>
+        <Routes>
+          <Route path="/promo/:id" element={<LivePromoDetail />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    const publishBtn = await screen.findByRole('button', { name: 'Publish revision' });
+    fireEvent.click(publishBtn);
+
+    const dialog = screen.getByRole('dialog');
+    expect(dialog).toHaveAttribute('aria-labelledby', 'review-pub-heading');
+    expect(screen.getByRole('heading', { name: 'Review publication' })).toHaveAttribute('id', 'review-pub-heading');
+
+    fireEvent.keyDown(dialog, { key: 'Escape' });
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
+  test('displays error inside review publication dialog when publish fails', async () => {
+    const error = new BffClientError(409, 'PROMO_CODE_CONFLICT', 'Code conflict', false, 'conflict');
+    vi.mocked(programApi.publish).mockRejectedValueOnce(error);
+
+    render(
+      <MemoryRouter initialEntries={['/promo/gold-launch']}>
+        <Routes>
+          <Route path="/promo/:id" element={<LivePromoDetail />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    const publishBtn = await screen.findByRole('button', { name: 'Publish revision' });
+    fireEvent.click(publishBtn);
+
+    const confirmBtn = screen.getByRole('button', { name: 'Confirm publish' });
+    fireEvent.click(confirmBtn);
+
+    const dialog = screen.getByRole('dialog');
+    expect(await within(dialog).findByText(/another published promo already uses this code/i)).toBeInTheDocument();
   });
 });

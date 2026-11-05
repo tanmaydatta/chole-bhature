@@ -8,6 +8,7 @@ import { PageHeader } from '../../components/common/PageHeader';
 import { StatusBadge } from '../../components/common/StatusBadge';
 import { programApi } from '../../data/program-api';
 import { BffClientError } from '../../lib/bff-client';
+import type { Status } from '../../lib/types';
 
 const STATUS_OPTIONS: Array<{ label: string; value: ProgramStatus | 'all' }> = [
   { label: 'All', value: 'all' },
@@ -118,7 +119,7 @@ export default function LivePromoList() {
                       navigate(`/promo/${encodeURIComponent(view.configuration.id)}`);
                     }
                   }}
-                  className="cursor-pointer transition-colors hover:bg-[var(--hover)] focus:bg-[var(--hover)] focus:outline-none"
+                  className="cursor-pointer transition-colors hover:bg-[var(--hover)] focus:bg-[var(--hover)] focus:outline-none focus:ring-2 focus:ring-inset focus:ring-[var(--accent)]"
                 >
                   <td className="px-4 py-3.5 font-semibold text-[var(--ink)]">
                     {view.configuration.name}
@@ -129,7 +130,7 @@ export default function LivePromoList() {
                     </span>
                   </td>
                   <td className="px-4 py-3.5">
-                    <StatusBadge status={view.lifecycle.status as any} />
+                    <StatusBadge status={view.lifecycle.status as Status} />
                   </td>
                   <td className="px-4 py-3.5 text-[var(--muted)]">
                     <div className="flex flex-wrap items-center gap-1.5">

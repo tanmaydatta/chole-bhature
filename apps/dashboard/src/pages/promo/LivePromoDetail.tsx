@@ -12,6 +12,7 @@ import { PageHeader } from '../../components/common/PageHeader';
 import { StatusBadge } from '../../components/common/StatusBadge';
 import { programApi } from '../../data/program-api';
 import { BffClientError } from '../../lib/bff-client';
+import type { Status } from '../../lib/types';
 
 function rewardSummary(reward: CommerceReward): string {
   if (reward.type === 'free_shipping') return 'Free shipping';
@@ -211,7 +212,7 @@ export default function LivePromoDetail() {
       />
 
       <div className="flex flex-wrap items-center gap-3">
-        <StatusBadge status={lifecycle.status as any} />
+        <StatusBadge status={lifecycle.status as Status} />
         {lifecycle.activeRevision && (
           <span className="inline-flex items-center rounded-full bg-[var(--bg)] px-2.5 py-0.5 text-[11.5px] font-medium text-[var(--muted)] border border-[var(--border)]">
             Active revision {lifecycle.activeRevision}
@@ -234,9 +235,9 @@ export default function LivePromoDetail() {
         </div>
       )}
 
-      {error && <ErrorState error={error} />}
+      {error && !reviewingPublication && <ErrorState error={error} />}
 
-      {error?.code === 'PROMO_CODE_CONFLICT' && (
+      {error?.code === 'PROMO_CODE_CONFLICT' && !reviewingPublication && (
         <p role="alert" className="rounded-[7px] bg-[var(--req-bg)] px-3.5 py-2.5 text-[12.5px] font-medium text-[var(--req)] border border-rose-200">
           Another published Promo already uses this code during an overlapping schedule. Change the code or schedule, then review and publish again.
         </p>
@@ -282,13 +283,26 @@ export default function LivePromoDetail() {
       </div>
 
       {reviewingPublication && draftProgram && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm">
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm"
+          onKeyDown={(event) => {
+            if (event.key === 'Escape') setReviewingPublication(false);
+          }}
+        >
           <section
             role="dialog"
             aria-modal="true"
-            className="w-full max-w-lg rounded-[14px] border border-[var(--border)] bg-[var(--panel)] p-6 shadow-2xl space-y-4 text-[13px] text-[var(--ink)]"
+            aria-labelledby="review-pub-heading"
+            tabIndex={-1}
+            className="w-full max-w-lg rounded-[14px] border border-[var(--border)] bg-[var(--panel)] p-6 shadow-2xl space-y-4 text-[13px] text-[var(--ink)] focus:outline-none"
           >
-            <h2 className="text-[16px] font-bold text-[var(--ink)] m-0">Review publication</h2>
+            <h2 id="review-pub-heading" className="text-[16px] font-bold text-[var(--ink)] m-0">Review publication</h2>
+            {error && <ErrorState error={error} />}
+            {error?.code === 'PROMO_CODE_CONFLICT' && (
+              <p role="alert" className="rounded-[7px] bg-[var(--req-bg)] px-3.5 py-2.5 text-[12.5px] font-medium text-[var(--req)] border border-rose-200">
+                Another published Promo already uses this code during an overlapping schedule. Change the code or schedule, then review and publish again.
+              </p>
+            )}
             <div className="space-y-2 rounded-[8px] border border-[var(--border)] bg-[var(--bg)] p-4 text-[13px]">
               <p>Trigger: {trigger(draftProgram)}</p>
               {!draftProgram.autoApply && (
