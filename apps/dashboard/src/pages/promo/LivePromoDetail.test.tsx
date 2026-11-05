@@ -15,10 +15,17 @@ const mockProgramView = {
     stackable: true,
     startDate: '2026-06-01',
     endDate: '2026-12-31',
+    eligibility: {
+      match: 'ALL',
+      conditions: [
+        { id: 'c1', variable: 'customer.tier', operator: 'eq', value: 'gold' },
+      ],
+    },
     rewardRules: [
       {
         id: 'rule-1',
         name: 'Order discount',
+        conditions: { match: 'ALL', conditions: [] },
         reward: { type: 'order_discount', calculation: 'percent', basisPoints: 2000 },
       },
     ],
@@ -32,10 +39,17 @@ const mockProgramView = {
     stackable: true,
     startDate: '2026-06-01',
     endDate: '2026-12-31',
+    eligibility: {
+      match: 'ALL',
+      conditions: [
+        { id: 'c1', variable: 'customer.tier', operator: 'eq', value: 'gold' },
+      ],
+    },
     rewardRules: [
       {
         id: 'rule-1',
         name: 'Order discount',
+        conditions: { match: 'ALL', conditions: [] },
         reward: { type: 'order_discount', calculation: 'percent', basisPoints: 2000 },
       },
     ],
@@ -60,6 +74,24 @@ vi.mock('../../data/program-api', () => ({
   },
 }));
 
+vi.mock('../../data/schema-api', () => ({
+  schemaApi: {
+    list: vi.fn(async () => ({
+      definitions: [
+        {
+          definition: {
+            key: 'customer.tier',
+            type: 'enum',
+            source: 'customer',
+            enumValues: ['gold', 'silver'],
+            defaultErrorMessage: "This code isn't valid for your order.",
+          },
+        },
+      ],
+    })),
+  },
+}));
+
 vi.mock('../../auth/AuthContext', () => ({
   useAuth: () => mockAuth,
 }));
@@ -69,7 +101,7 @@ describe('LivePromoDetail', () => {
     vi.clearAllMocks();
   });
 
-  test('renders styled header with edit action and configuration card', async () => {
+  test('renders styled header with edit action and configuration card with eligibility', async () => {
     render(
       <MemoryRouter initialEntries={['/promo/gold-launch']}>
         <Routes>
@@ -82,6 +114,9 @@ describe('LivePromoDetail', () => {
     expect(screen.getByRole('link', { name: 'Edit Promo' })).toHaveAttribute('href', '/promo/gold-launch/edit');
     expect(screen.getByRole('button', { name: 'Publish revision' })).toBeInTheDocument();
     expect(screen.getByText('Configuration')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Eligibility' })).toBeInTheDocument();
+    expect(screen.getByText('customer.tier')).toBeInTheDocument();
+    expect(screen.getByText('gold')).toBeInTheDocument();
     expect(screen.getByText('GOLD20')).toBeInTheDocument();
     expect(screen.getByText('20% off order')).toBeInTheDocument();
   });

@@ -4,15 +4,28 @@ import type {
   CommerceReward,
   OperatorProgramView,
   PromoProgram,
+  VariableDefinition,
 } from '@incentives/contracts';
 
 import { useAuth } from '../../auth/AuthContext';
 import { ErrorState } from '../../auth/ErrorState';
+import { ConditionView } from '../../components/builder/ConditionView';
 import { PageHeader } from '../../components/common/PageHeader';
 import { StatusBadge } from '../../components/common/StatusBadge';
 import { programApi } from '../../data/program-api';
+import { schemaApi } from '../../data/schema-api';
 import { BffClientError } from '../../lib/bff-client';
-import type { Status } from '../../lib/types';
+import type { Status, Variable } from '../../lib/types';
+
+function localVariable(definition: VariableDefinition): Variable {
+  return {
+    name: definition.key,
+    type: definition.type,
+    origin: definition.source === 'customer' ? 'user' : definition.source === 'system' ? 'system' : 'dynamic',
+    enumValues: definition.enumValues,
+    defaultMessage: definition.defaultErrorMessage,
+  };
+}
 
 function rewardSummary(reward: CommerceReward): string {
   if (reward.type === 'free_shipping') return 'Free shipping';
@@ -33,9 +46,11 @@ function trigger(program: PromoProgram): string {
 function Configuration({
   program,
   heading,
+  variables,
 }: {
   program: PromoProgram;
   heading: string;
+  variables: Variable[];
 }) {
   return (
     <section className="flex flex-col gap-4 rounded-[12px] border border-[var(--border)] bg-[var(--panel)] p-5 shadow-sm">
@@ -72,6 +87,16 @@ function Configuration({
           {program.startDate ?? 'Immediately'} → {program.endDate ?? 'No end date'}
         </dd>
       </dl>
+
+      <section className="space-y-3">
+        <h3 className="text-[13px] font-semibold text-[var(--muted)] uppercase tracking-wider">
+          Eligibility
+        </h3>
+        <div className="rounded-[8px] border border-[var(--border)] bg-[var(--bg)] p-4">
+          <ConditionView group={program.eligibility} variables={variables} />
+        </div>
+      </section>
+
       <section className="space-y-3">
         <h3 className="text-[13px] font-semibold text-[var(--muted)] uppercase tracking-wider">
           Ordered reward rules
@@ -80,7 +105,7 @@ function Configuration({
           {program.rewardRules.map((rule, index) => (
             <article
               key={rule.id}
-              className="rounded-[8px] border border-[var(--border)] bg-[var(--bg)] p-3.5 space-y-2"
+              className="rounded-[8px] border border-[var(--border)] bg-[var(--bg)] p-3.5 space-y-2.5"
             >
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <h4 className="text-[13.5px] font-bold text-[var(--ink)] m-0">
@@ -88,11 +113,21 @@ function Configuration({
                 </h4>
                 <code className="text-[11px] text-[var(--muted)]">{rule.id}</code>
               </div>
-              <p className="text-[13px] font-medium text-[var(--ink)]">
+              <p className="text-[13px] font-medium text-[var(--ink)] m-0">
                 <span className="inline-flex rounded-full bg-[var(--hover)] px-2.5 py-0.5 text-[12px] border border-[var(--border)]">
                   {rewardSummary(rule.reward)}
                 </span>
               </p>
+              {rule.conditions && (rule.conditions.conditions.length > 0 || (rule.conditions.groups && rule.conditions.groups.length > 0)) && (
+                <div className="pt-2 border-t border-[var(--border)] space-y-1.5">
+                  <span className="text-[11.5px] font-semibold text-[var(--muted)] uppercase tracking-wider block">
+                    Rule Conditions
+                  </span>
+                  <div className="rounded-[6px] border border-[var(--border)] bg-[var(--panel)] p-3">
+                    <ConditionView group={rule.conditions} variables={variables} />
+                  </div>
+                </div>
+              )}
               <details className="text-[12px] text-[var(--muted)] cursor-pointer pt-1">
                 <summary className="hover:text-[var(--ink)] font-medium">Exact reward details</summary>
                 <pre className="mt-2 rounded-[6px] border border-[var(--border)] bg-[var(--panel)] p-2.5 font-mono text-[11.5px] overflow-x-auto text-[var(--ink)]">
@@ -109,7 +144,7 @@ function Configuration({
                 </h4>
                 <code className="text-[11px] text-[var(--muted)]">{program.fallbackReward.id}</code>
               </div>
-              <p className="text-[13px] font-medium text-[var(--ink)]">
+              <p className="text-[13px] font-medium text-[var(--ink)] m-0">
                 <span className="inline-flex rounded-full bg-[var(--hover)] px-2.5 py-0.5 text-[12px] border border-[var(--border)]">
                   {rewardSummary(program.fallbackReward.reward)}
                 </span>
@@ -134,10 +169,30 @@ export default function LivePromoDetail() {
   const canManage = auth.hasPermission('programs:manage');
   const canPublish = auth.hasPermission('programs:publish');
   const [view, setView] = useState<OperatorProgramView | null>(null);
+  const [variables, setVariables] = useState<Variable[]>([]);
   const [error, setError] = useState<BffClientError | null>(null);
   const [warnings, setWarnings] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [reviewingPublication, setReviewingPublication] = useState(false);
+
+  useEffect(() => {
+    let current = true;
+    void schemaApi.list().then((result) => {
+      if (current) {
+        setVariables(
+          result.definitions
+            .map((defView) => defView.definition)
+            .filter((definition) => definition.source !== 'event')
+            .map(localVariable)
+        );
+      }
+    }).catch(() => {
+      // Non-blocking: variables enhance labels/origin chips, but ConditionView falls back safely
+    });
+    return () => {
+      current = false;
+    };
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -341,11 +396,11 @@ export default function LivePromoDetail() {
 
       {activeProgram && draftProgram ? (
         <div className="grid gap-5 lg:grid-cols-2">
-          <Configuration program={activeProgram} heading="Active configuration" />
-          <Configuration program={draftProgram} heading="Draft configuration" />
+          <Configuration program={activeProgram} heading="Active configuration" variables={variables} />
+          <Configuration program={draftProgram} heading="Draft configuration" variables={variables} />
         </div>
       ) : (
-        <Configuration program={program} heading="Configuration" />
+        <Configuration program={program} heading="Configuration" variables={variables} />
       )}
     </div>
   );
