@@ -98,6 +98,7 @@ function coerceValue(
 export function ruleGroupToConditionGroup(
   rg: RuleGroupType,
   variables?: readonly Variable[],
+  depth = 0,
 ): ConditionGroup {
   const varMap = new Map((variables ?? []).map((v) => [v.name, v]));
   const conditions: Condition[] = [];
@@ -105,7 +106,7 @@ export function ruleGroupToConditionGroup(
 
   for (const ruleOrGroup of rg.rules ?? []) {
     if ('rules' in ruleOrGroup) {
-      groups.push(ruleGroupToConditionGroup(ruleOrGroup, variables));
+      groups.push(ruleGroupToConditionGroup(ruleOrGroup, variables, depth + 1));
     } else {
       const variable = varMap.get(ruleOrGroup.field);
       const coerced = coerceValue(ruleOrGroup.value, ruleOrGroup.operator, variable);
@@ -124,7 +125,7 @@ export function ruleGroupToConditionGroup(
   return {
     match: rg.combinator === 'or' ? 'ANY' : 'ALL',
     conditions,
-    groups,
+    ...(depth === 0 ? { groups } : groups.length > 0 ? { groups } : {}),
   };
 }
 

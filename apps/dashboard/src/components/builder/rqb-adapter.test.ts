@@ -146,6 +146,28 @@ describe('rqb-adapter', () => {
       expect(group.groups?.[0]?.conditions[0]?.id).toBe('r-2');
     });
 
+    it('does not emit empty groups array on nested groups so that strict Zod schemas pass', () => {
+      const rg: RuleGroupType = {
+        combinator: 'and',
+        rules: [
+          {
+            combinator: 'or',
+            rules: [
+              {
+                id: 'r-1',
+                field: 'customer.tier',
+                operator: 'eq',
+                value: 'silver',
+              },
+            ],
+          },
+        ],
+      };
+
+      const group = ruleGroupToConditionGroup(rg, SAMPLE_VARIABLES);
+      expect(group.groups?.[0]).not.toHaveProperty('groups');
+    });
+
     it('coerces numeric strings to numbers for number-typed variables', () => {
       const rg: RuleGroupType = {
         combinator: 'and',

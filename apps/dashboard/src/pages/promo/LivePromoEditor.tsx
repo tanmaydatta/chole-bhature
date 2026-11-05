@@ -398,7 +398,16 @@ export default function LivePromoEditor() {
       {!program.autoApply && <label className="inline-flex items-center gap-2 self-center"><input className={choiceClass} type="checkbox" checked={program.stackable} onChange={event => setProgram({ ...program, stackable: event.target.checked })}/>Stackable</label>}
     </section>
     {freeShippingBudgetConflict && <p className={alertClass} role="alert">Remove the monetary budget before saving a free-shipping reward.</p>}
-    {!validation.success && <p className={alertClass} role="alert">Complete every required field and ensure each conditional rule has a condition.</p>}
+    {!validation.success && (
+      <div className={`${alertClass} space-y-1`} role="alert">
+        <p className="font-semibold m-0">Complete every required field and ensure each conditional rule has a condition.</p>
+        {validation.error?.issues?.length > 0 && (
+          <p className="text-[11.5px] opacity-90 m-0">
+            Detail: {validation.error.issues[0]?.message} at {validation.error.issues[0]?.path.join('.')}
+          </p>
+        )}
+      </div>
+    )}
     {!conditionsValid && <p className={alertClass} role="alert">Resolve every missing field and incompatible condition before saving.</p>}
     {saveError && <section className={`${panelClass} flex flex-col gap-3`}>
       <ErrorState error={saveError} retry={() => void save()} forceRetry retryLabel="Retry save" />
