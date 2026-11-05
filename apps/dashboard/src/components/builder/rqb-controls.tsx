@@ -529,37 +529,9 @@ export function CustomRule(
           </span>
         </div>
 
-        {/* Group / Promote actions */}
-        <div className="flex gap-2 mt-1">
-          {!isNested && (
-            <button
-              type="button"
-              onClick={() => callbacks?.onGroupCondition?.(props.rule.id || '')}
-              data-testid={`group-condition-${props.rule.id}`}
-              className="text-[var(--accent)] cursor-pointer text-[11px] border-0 bg-transparent font-bold"
-              aria-label="Group this condition into a new nested group"
-              title="Move this condition into a new nested group (AND branch)"
-            >
-              [ group ]
-            </button>
-          )}
-          {isNested && (
-            <button
-              type="button"
-              onClick={() => callbacks?.onPromoteCondition?.(props.rule.id || '')}
-              data-testid={`promote-condition-${props.rule.id}`}
-              className="text-[var(--accent)] cursor-pointer text-[11px] border-0 bg-transparent font-bold"
-              aria-label="Promote this condition to the parent group"
-              title="Move this condition to the parent group"
-            >
-              [ promote ]
-            </button>
-          )}
-        </div>
-
-        {/* Failure message bar */}
+        {/* Footer actions: Failure message & Group/Promote action */}
         {showMsg ? (
-          <div className="mt-1">
+          <div className="mt-1.5 space-y-2">
             <MessageEditor
               condition={currentCondition}
               variable={variable}
@@ -567,20 +539,82 @@ export function CustomRule(
                 (props.actions.onPropChange as any)('message', next.message, props.path)
               }
             />
+            <div className="flex justify-between items-center text-[11px] px-1">
+              <button
+                type="button"
+                className="text-[var(--muted)] hover:text-[var(--ink)] cursor-pointer bg-transparent border-0 p-0"
+                onClick={() => setShowMsg(false)}
+              >
+                Hide message editor
+              </button>
+              {!isNested && (
+                <button
+                  type="button"
+                  onClick={() => callbacks?.onGroupCondition?.(props.rule.id || '')}
+                  data-testid={`group-condition-${props.rule.id}`}
+                  className="inline-flex items-center gap-1 text-[var(--muted)] hover:text-[var(--ink)] cursor-pointer text-[11px] border border-[var(--border)] hover:border-[var(--accent)] rounded-[5px] px-1.5 py-0.5 bg-[var(--bg)] transition-colors"
+                  aria-label="Group this condition into a new nested group"
+                  title="Move this condition into a new nested group (AND branch)"
+                >
+                  <span className="text-[var(--accent)] font-bold">↳</span> Group
+                </button>
+              )}
+              {isNested && (
+                <button
+                  type="button"
+                  onClick={() => callbacks?.onPromoteCondition?.(props.rule.id || '')}
+                  data-testid={`promote-condition-${props.rule.id}`}
+                  className="inline-flex items-center gap-1 text-[var(--muted)] hover:text-[var(--ink)] cursor-pointer text-[11px] border border-[var(--border)] hover:border-[var(--accent)] rounded-[5px] px-1.5 py-0.5 bg-[var(--bg)] transition-colors"
+                  aria-label="Promote this condition to the parent group"
+                  title="Move this condition to the parent group"
+                >
+                  <span className="text-[var(--accent)] font-bold">↰</span> Move to parent
+                </button>
+              )}
+            </div>
           </div>
         ) : (
-          <div className="flex items-center gap-[7px] text-[12px] mt-[2px] ml-[2px]">
-            <span>💬</span>
-            <button
-              type="button"
-              className="text-[var(--accent)] cursor-pointer font-semibold bg-transparent border-0 p-0 text-[12px]"
-              onClick={() => setShowMsg(true)}
-            >
-              {hasCustomMsg ? 'Customize' : 'Add custom message'}
-            </button>
-            <span className="text-[var(--faint)] italic">
-              · {hasCustomMsg ? 'custom message set' : `using default: "${inherited}"`}
-            </span>
+          <div className="flex flex-wrap items-center justify-between gap-2 mt-[6px] px-1 text-[12px]">
+            <div className="flex items-center gap-[7px] min-w-0">
+              <span className="shrink-0 text-[13px]">💬</span>
+              <button
+                type="button"
+                className="text-[var(--accent)] hover:underline cursor-pointer font-semibold bg-transparent border-0 p-0 text-[12px] shrink-0"
+                onClick={() => setShowMsg(true)}
+              >
+                {hasCustomMsg ? 'Customize message' : 'Add custom message'}
+              </button>
+              <span className="text-[var(--faint)] italic truncate text-[11.5px]">
+                · {hasCustomMsg ? 'custom message set' : `using default: "${inherited}"`}
+              </span>
+            </div>
+
+            <div className="flex items-center gap-1.5 ml-auto">
+              {!isNested && (
+                <button
+                  type="button"
+                  onClick={() => callbacks?.onGroupCondition?.(props.rule.id || '')}
+                  data-testid={`group-condition-${props.rule.id}`}
+                  className="inline-flex items-center gap-1 text-[var(--muted)] hover:text-[var(--ink)] cursor-pointer text-[11px] border border-[var(--border)] hover:border-[var(--accent)] rounded-[5px] px-2 py-0.5 bg-[var(--bg)] transition-colors"
+                  aria-label="Group this condition into a new nested group"
+                  title="Move this condition into a new nested group (AND branch)"
+                >
+                  <span className="text-[var(--accent)] font-bold">↳</span> Group
+                </button>
+              )}
+              {isNested && (
+                <button
+                  type="button"
+                  onClick={() => callbacks?.onPromoteCondition?.(props.rule.id || '')}
+                  data-testid={`promote-condition-${props.rule.id}`}
+                  className="inline-flex items-center gap-1 text-[var(--muted)] hover:text-[var(--ink)] cursor-pointer text-[11px] border border-[var(--border)] hover:border-[var(--accent)] rounded-[5px] px-2 py-0.5 bg-[var(--bg)] transition-colors"
+                  aria-label="Promote this condition to the parent group"
+                  title="Move this condition to the parent group"
+                >
+                  <span className="text-[var(--accent)] font-bold">↰</span> Move to parent
+                </button>
+              )}
+            </div>
           </div>
         )}
 
