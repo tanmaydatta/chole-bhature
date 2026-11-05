@@ -3,7 +3,6 @@ import { Link, useParams } from 'react-router-dom';
 import type {
   CommerceReward,
   OperatorProgramView,
-  ProgramLifecycle,
   PromoProgram,
 } from '@incentives/contracts';
 
@@ -13,10 +12,6 @@ import { PageHeader } from '../../components/common/PageHeader';
 import { StatusBadge } from '../../components/common/StatusBadge';
 import { programApi } from '../../data/program-api';
 import { BffClientError } from '../../lib/bff-client';
-
-function title(status: ProgramLifecycle['status']): string {
-  return status.slice(0, 1).toUpperCase() + status.slice(1);
-}
 
 function rewardSummary(reward: CommerceReward): string {
   if (reward.type === 'free_shipping') return 'Free shipping';
