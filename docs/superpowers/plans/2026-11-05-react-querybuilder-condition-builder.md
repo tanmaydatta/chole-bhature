@@ -211,7 +211,39 @@ git commit -m "test(dashboard): align ConditionBuilder test suite with react-que
 
 ---
 
-### Task 6: Full Workspace Verification & Walkthrough
+### Task 6: Add Playwright End-to-End Browser Test for Condition Builder
+
+**Files:**
+- Create: `tests/e2e/test/playwright/condition-builder.browser.spec.ts`
+
+**Interfaces:**
+- Consumes: Dashboard web application running in Playwright browser environment
+- Produces: Automated browser verification of condition builder authoring, nesting, value editing, and failure messages
+
+- [ ] **Step 1: Write Playwright E2E browser test**
+Create `tests/e2e/test/playwright/condition-builder.browser.spec.ts` testing:
+1. Operator navigates to Promo creation (`/promos/new`) and proceeds to the Conditions step.
+2. Condition builder renders root group with combinator switch (ALL / ANY).
+3. Operator adds a condition: selects a variable from the categorized origin picker (e.g. `basket_value` or `customer.tier`).
+4. Operator authors typed values (tests numeric input and enum selector).
+5. Operator adds a nested group (`＋ Add nested group`), verifies visual branch rendering, and sets the nested match to `ANY`.
+6. Operator adds a condition inside the nested group (tests `between` or `in` operator with dual inputs).
+7. Operator opens the message editor (`💬 Message`), enters a template token (`Add {{ 50 - basket_value | money }} more!`), and verifies the live formatted preview appears in the DOM.
+8. Operator submits or saves draft, verifying that the output payload conforms to `ConditionGroup` schema.
+
+- [ ] **Step 2: Run E2E Playwright test (or preauth browser runner)**
+Run: `pnpm --filter @incentives/e2e test:preauth --grep "Condition Builder"` (or local playwright spec runner)
+Expected: PASS.
+
+- [ ] **Step 3: Commit**
+```bash
+git add tests/e2e/test/playwright/condition-builder.browser.spec.ts
+git commit -m "test(e2e): add Playwright browser test for modernized condition builder"
+```
+
+---
+
+### Task 7: Full Workspace Verification & Walkthrough
 
 **Files:**
 - Create: `<Artifact Directory>/walkthrough.md`
