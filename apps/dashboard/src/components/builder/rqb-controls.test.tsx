@@ -43,9 +43,9 @@ describe('rqb-controls', () => {
     );
 
     const select = screen.getByLabelText(/Condition group match/i);
-    expect(select).toHaveValue('and');
+    expect(select).toHaveValue('ALL');
 
-    fireEvent.change(select, { target: { value: 'or' } });
+    fireEvent.change(select, { target: { value: 'ANY' } });
     expect(onQueryChange).toHaveBeenCalledWith(
       expect.objectContaining({ combinator: 'or' })
     );

@@ -14,7 +14,10 @@ function newId(): string {
     : `cond-${Math.random().toString(36).slice(2)}`;
 }
 
-export function conditionGroupToRuleGroup(group: ConditionGroup): RuleGroupType {
+export function conditionGroupToRuleGroup(
+  group: ConditionGroup,
+  path: string = 'root'
+): RuleGroupType {
   const leafRules: RuleType[] = (group.conditions ?? []).map((c) => ({
     id: c.id,
     field: c.variable,
@@ -23,9 +26,12 @@ export function conditionGroupToRuleGroup(group: ConditionGroup): RuleGroupType 
     message: c.message,
   }));
 
-  const subGroupRules: RuleGroupType[] = (group.groups ?? []).map(conditionGroupToRuleGroup);
+  const subGroupRules: RuleGroupType[] = (group.groups ?? []).map((sub, idx) =>
+    conditionGroupToRuleGroup(sub, `${path}-${idx}`)
+  );
 
   return {
+    id: (group as any).id || (path === 'root' ? 'root' : `group-${path}`),
     combinator: group.match === 'ANY' ? 'or' : 'and',
     rules: [...leafRules, ...subGroupRules],
   };
@@ -36,6 +42,10 @@ function coerceValue(
   operator: string,
   variable?: Variable,
 ): ConditionValue {
+  if (!variable) {
+    return value as ConditionValue;
+  }
+
   const isNumber = variable?.type === 'number';
   const isBoolean = variable?.type === 'boolean' || operator === 'is';
 
@@ -113,7 +123,7 @@ export function ruleGroupToConditionGroup(
   return {
     match: rg.combinator === 'or' ? 'ANY' : 'ALL',
     conditions,
-    ...(groups.length > 0 ? { groups } : {}),
+    groups,
   };
 }
 
