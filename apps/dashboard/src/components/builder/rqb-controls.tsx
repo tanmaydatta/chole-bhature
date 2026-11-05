@@ -2,13 +2,14 @@ import { useState, useContext } from 'react';
 import type {
   CombinatorSelectorProps,
   ControlElementsProp,
+  Path,
   RuleGroupProps,
   RuleProps,
   ValueEditorProps,
   ValueSelectorProps,
 } from 'react-querybuilder';
 import { useRule, useRuleGroup } from 'react-querybuilder';
-import type { Condition, ConditionOperator, Variable, Origin } from '../../lib/types';
+import type { Condition, Operator, Variable, Origin } from '../../lib/types';
 import { OPERATORS_BY_TYPE, operatorLabel, resolveMessage } from '../../lib/conditions';
 import { MessageEditor } from './MessageEditor';
 import { VariablePicker } from './VariablePicker';
@@ -44,7 +45,9 @@ export interface BuilderCallbacks {
   canMoveConditionDown?: (id: string) => boolean;
 }
 
-export function CustomCombinatorSelector(props: CombinatorSelectorProps) {
+export function CustomCombinatorSelector(
+  props: CombinatorSelectorProps | (Record<string, any> & { path: Path; value?: string; handleOnChange: (val: string) => void })
+) {
   const isRoot = props.path.length === 0;
   const groupNumber = props.path.length > 0 ? (props.path[props.path.length - 1] ?? 0) + 1 : 1;
   const label = isRoot
@@ -89,12 +92,18 @@ export function CustomCombinatorSelector(props: CombinatorSelectorProps) {
 }
 
 export function CustomFieldSelector(
-  props: ValueSelectorProps & { variables?: readonly Variable[] }
+  props: Partial<ValueSelectorProps> & {
+    value?: string;
+    variables?: readonly Variable[];
+    handleOnChange: (val: string) => void;
+    [key: string]: any;
+  }
 ) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const ctx = useContext(ConditionBuilderContext);
-  const variables = props.variables ?? (props.context as any)?.variables ?? ctx.variables ?? [];
-  const variable = variables.find((v) => v.name === props.value);
+  const variables: readonly Variable[] =
+    props.variables ?? (props.context as any)?.variables ?? ctx.variables ?? [];
+  const variable = variables.find((v: Variable) => v.name === props.value);
   const origin: Origin = variable?.origin ?? 'dynamic';
   const chipClass = ORIGIN_CHIP_CLASS[origin] ?? ORIGIN_CHIP_CLASS.dynamic;
   const icon = ORIGIN_ICON[origin] ?? '◇';
@@ -127,7 +136,14 @@ export function CustomFieldSelector(
   );
 }
 
-export function CustomOperatorSelector(props: ValueSelectorProps) {
+export function CustomOperatorSelector(
+  props: {
+    value?: string;
+    options?: any;
+    handleOnChange: (val: string) => void;
+    [key: string]: any;
+  }
+) {
   const options = props.options ?? [];
   return (
     <select
@@ -136,8 +152,8 @@ export function CustomOperatorSelector(props: ValueSelectorProps) {
       value={props.value}
       onChange={(e) => props.handleOnChange(e.target.value)}
     >
-      {options.map((opt) => (
-        <option key={opt.name} value={opt.name}>
+      {options.map((opt: any) => (
+        <option key={opt.name ?? opt.value} value={opt.name ?? opt.value}>
           {opt.label}
         </option>
       ))}
@@ -146,11 +162,19 @@ export function CustomOperatorSelector(props: ValueSelectorProps) {
 }
 
 export function CustomValueEditor(
-  props: ValueEditorProps & { variables?: readonly Variable[] }
+  props: Partial<ValueEditorProps> & {
+    field?: string;
+    operator?: string;
+    value?: any;
+    variables?: readonly Variable[];
+    handleOnChange: (val: any) => void;
+    [key: string]: any;
+  }
 ) {
   const ctx = useContext(ConditionBuilderContext);
-  const variables = props.variables ?? (props.context as any)?.variables ?? ctx.variables ?? [];
-  const variable = variables.find((v) => v.name === props.field);
+  const variables: readonly Variable[] =
+    props.variables ?? (props.context as any)?.variables ?? ctx.variables ?? [];
+  const variable = variables.find((v: Variable) => v.name === props.field);
   const operator = props.operator;
   const val = props.value;
 
@@ -312,9 +336,10 @@ export function CustomRule(
   );
   const [replacing, setReplacing] = useState(false);
 
-  const variables = props.variables ?? (props.context as any)?.variables ?? ctx.variables ?? [];
+  const variables: readonly Variable[] =
+    props.variables ?? (props.context as any)?.variables ?? ctx.variables ?? [];
   const callbacks = props.callbacks ?? (props.context as any)?.callbacks ?? ctx.callbacks;
-  const variable = variables.find((v) => v.name === props.rule.field);
+  const variable = variables.find((v: Variable) => v.name === props.rule.field);
 
   // Unresolved condition handling
   if (!variable) {
@@ -372,17 +397,18 @@ export function CustomRule(
   const currentCondition: Condition = {
     id: props.rule.id || '',
     variable: props.rule.field,
-    operator: props.rule.operator as ConditionOperator,
+    operator: props.rule.operator as Operator,
     value: props.rule.value,
     message: (props.rule as any).message,
   };
 
-  const issue = conditionIssue(currentCondition, variables);
+  const issue = conditionIssue(currentCondition, variables as Variable[]);
   const inherited = resolveMessage({ ...currentCondition, message: undefined }, variable);
   const hasCustomMsg = Boolean(currentCondition.message && currentCondition.message.trim() !== '');
 
-  const operators = (OPERATORS_BY_TYPE[variable.type] ?? []).map((op) => ({
+  const operators = ((OPERATORS_BY_TYPE[variable.type] ?? []) as Operator[]).map((op) => ({
     name: op,
+    value: op,
     label: operatorLabel(op),
   }));
 
@@ -443,7 +469,7 @@ export function CustomRule(
             value={props.rule.field}
             variables={variables}
             handleOnChange={(val) => {
-              const nextVar = variables.find((v) => v.name === val);
+              const nextVar = variables.find((v: Variable) => v.name === val);
               const op = nextVar ? (OPERATORS_BY_TYPE[nextVar.type]?.[0] ?? 'eq') : 'eq';
               let defVal: any = '';
               if (nextVar?.type === 'boolean') defVal = true;
@@ -538,7 +564,7 @@ export function CustomRule(
               condition={currentCondition}
               variable={variable}
               onChange={(next) =>
-                props.actions.onPropChange('message', next.message, props.path)
+                (props.actions.onPropChange as any)('message', next.message, props.path)
               }
             />
           </div>
@@ -634,7 +660,8 @@ export function CustomRuleGroup(
   const [pickerOpen, setPickerOpen] = useState(false);
   const isRoot = props.path.length === 0;
   const ctx = useContext(ConditionBuilderContext);
-  const variables = props.variables ?? (props.context as any)?.variables ?? ctx.variables ?? [];
+  const variables: readonly Variable[] =
+    props.variables ?? (props.context as any)?.variables ?? ctx.variables ?? [];
   const callbacks = props.callbacks ?? (props.context as any)?.callbacks ?? ctx.callbacks;
 
   const groupNumber = props.path.length > 0 ? (props.path[props.path.length - 1] ?? 0) + 1 : 1;
@@ -791,7 +818,7 @@ export function CustomRuleGroup(
   );
 }
 
-export const customControlElements: ControlElementsProp = {
+export const customControlElements: ControlElementsProp<any, any> = {
   combinatorSelector: CustomCombinatorSelector,
   fieldSelector: CustomFieldSelector,
   operatorSelector: CustomOperatorSelector,
@@ -803,7 +830,7 @@ export const customControlElements: ControlElementsProp = {
 export function createCustomControlElements(
   variables: readonly Variable[],
   callbacks?: BuilderCallbacks
-): ControlElementsProp {
+): ControlElementsProp<any, any> {
   return {
     combinatorSelector: CustomCombinatorSelector,
     fieldSelector: (props: ValueSelectorProps) => (

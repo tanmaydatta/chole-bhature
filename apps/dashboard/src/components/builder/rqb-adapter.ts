@@ -109,12 +109,13 @@ export function ruleGroupToConditionGroup(
     } else {
       const variable = varMap.get(ruleOrGroup.field);
       const coerced = coerceValue(ruleOrGroup.value, ruleOrGroup.operator, variable);
+      const msg = (ruleOrGroup as any).message;
       const condition: Condition = {
         id: ruleOrGroup.id || newId(),
         variable: ruleOrGroup.field,
         operator: ruleOrGroup.operator as ConditionOperator,
         value: coerced,
-        ...(ruleOrGroup.message ? { message: ruleOrGroup.message as string } : {}),
+        ...(msg ? { message: msg as string } : {}),
       };
       conditions.push(condition);
     }
