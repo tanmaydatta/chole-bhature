@@ -71,12 +71,15 @@ importers:
       react-dom:
         specifier: ^19.2.7
         version: 19.2.7(react@19.2.7)
+      react-querybuilder:
+        specifier: ^8.26.0
+        version: 8.26.0(@types/react@19.2.17)(drizzle-orm@0.45.2(@cloudflare/workers-types@5.20260717.1)(kysely@0.29.4))(react@19.2.7)(redux@5.0.1)
       react-router-dom:
         specifier: ^7.18.0
         version: 7.18.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
       zustand:
         specifier: ^5.0.14
-        version: 5.0.14(@types/react@19.2.17)(react@19.2.7)
+        version: 5.0.14(@types/react@19.2.17)(immer@11.2.9)(react@19.2.7)(use-sync-external-store@1.7.0(react@19.2.7))
     devDependencies:
       '@testing-library/jest-dom':
         specifier: ^6.9.1
@@ -496,6 +499,7 @@ packages:
 
   '@cloudflare/vitest-pool-workers@0.18.6':
     resolution: {integrity: sha512-6JGqaQsQRZIVq/6jEC4ouJnShZriPIJ2X0yGndwMm+SiPP93pJi5Dp30dYAoztNrNJC7wWK7ec5slLfMBMZ8jA==}
+    deprecated: '@cloudflare/vitest-pool-workers has been renamed to @cloudflare/vitest-plugin. This package will not receive future updates.'
     peerDependencies:
       '@vitest/runner': ^4.1.0
       '@vitest/snapshot': ^4.1.0
@@ -1553,6 +1557,49 @@ packages:
   '@poppinss/exception@1.2.3':
     resolution: {integrity: sha512-dCED+QRChTVatE9ibtoaxc+WkdzOSjYTKi/+uacHWIsfodVfpsueo3+DKpgU5Px8qXjgmXkSvhXvSCz3fnP9lw==}
 
+  '@react-querybuilder/core@8.26.0':
+    resolution: {integrity: sha512-gdCzYLT7tUVYLQICf5g1Qg92MnPRPlGvltbwubTrLPdwgVVNVPf/XXvPc9iACHzhVRQyUK+0/KGfaPFtVmpQTg==}
+    peerDependencies:
+      '@tanstack/db': '>=0.6.9'
+      '@traqula/parser-sparql-1-2': '>=0.1.0'
+      chevrotain: '>=11'
+      drizzle-orm: '>=0.38.0'
+      json-logic-js: '>=2'
+      jsonata: '>=2'
+      sequelize: '>=6'
+      spel2js: '>=0.2.0'
+    peerDependenciesMeta:
+      '@tanstack/db':
+        optional: true
+      '@traqula/parser-sparql-1-2':
+        optional: true
+      chevrotain:
+        optional: true
+      drizzle-orm:
+        optional: true
+      json-logic-js:
+        optional: true
+      jsonata:
+        optional: true
+      sequelize:
+        optional: true
+      spel2js:
+        optional: true
+
+  '@reduxjs/toolkit@2.14.0':
+    resolution: {integrity: sha512-m/PxMwRe0xLL6XUsAgy0YjInklHcfi9uMwFhJk+QINqjxqPvyc89T5cMjszA5bDmTE0gwGc7zr9LRO4gL+mhaw==}
+    peerDependencies:
+      '@types/react': '*'
+      react: ^16.9.0 || ^17.0.0 || ^18 || ^19
+      react-redux: ^7.2.1 || ^8.1.3 || ^9.0.0
+    peerDependenciesMeta:
+      '@types/react':
+        optional: true
+      react:
+        optional: true
+      react-redux:
+        optional: true
+
   '@rolldown/binding-android-arm64@1.1.5':
     resolution: {integrity: sha512-lZg8fqIv2v7FF237bwMgzGZEJvGL79/s5knJ/i6FmsGF4XXlzccZ4jb+TrFIxtSSxFtIpdsgrPZeMk1I9AFcyQ==}
     engines: {node: ^20.19.0 || >=22.12.0}
@@ -1668,6 +1715,9 @@ packages:
   '@standard-schema/spec@1.1.0':
     resolution: {integrity: sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w==}
 
+  '@standard-schema/utils@0.3.0':
+    resolution: {integrity: sha512-e7Mew686owMaPJVNNLs55PUvgz371nKgwsc4vxE49zsODpJEnxgxRo2y/OKrqueavXgZNMDVj3DdHFlaSAeU8g==}
+
   '@testing-library/dom@10.4.1':
     resolution: {integrity: sha512-o4PXJQidqJl82ckFaXUeoAW+XysPLauYI43Abki5hABd853iMhitooc6znOnczgbTYmEP6U6/y1ZyKAIsvMKGg==}
     engines: {node: '>=18'}
@@ -1697,6 +1747,15 @@ packages:
     peerDependencies:
       '@testing-library/dom': '>=7.21.4'
 
+  '@ts-jison/common@0.4.1-alpha.4':
+    resolution: {integrity: sha512-3P2x2i/sIh8mVeAY+lu9/NqpuLm4V+McGPce3k/1Zf5pw6fQPa/ideqNu5A5331UEEdMYlQFpP8fJDdAytY/9g==}
+
+  '@ts-jison/lexer@0.4.1-alpha.4':
+    resolution: {integrity: sha512-OkmxoZJIAmU6wTQfEeqey+4C62cehwfhV9gx4Hbge2dhdNtZkUbNkrYyuSdUbsIx3E4w6bwVOp+8kQAFblpVrQ==}
+
+  '@ts-jison/parser@0.4.1-alpha.4':
+    resolution: {integrity: sha512-GD+AGlG/Nc7zF/rLtsM695G7Pff6UFBLYuMRC4KD4K9pDGGNMKjCE0/+XGh/1lyo89eb9bLcN7pezRk/JENmPw==}
+
   '@tybys/wasm-util@0.10.3':
     resolution: {integrity: sha512-F3fo1MYrRJYL3zER0OUOmkutjr1Vp23m7OsSgp7nq4SP6OqX6C/56XFIPAl5bt3zaBRjmW7SGz3u/6LwFpYcOg==}
 
@@ -1712,6 +1771,9 @@ packages:
   '@types/estree@1.0.9':
     resolution: {integrity: sha512-GhdPgy1el4/ImP05X05Uw4cw2/M93BCUmnEvWZNStlCzEKME4Fkk+YpoA5OiHNQmoS7Cafb8Xa3Pya8m1Qrzeg==}
 
+  '@types/json-logic-js@2.0.8':
+    resolution: {integrity: sha512-WgNsDPuTPKYXl0Jh0IfoCoJoAGGYZt5qzpmjuLSEg7r0cKp/kWtWp0HAsVepyPSPyXiHo6uXp/B/kW/2J1fa2Q==}
+
   '@types/node@24.13.2':
     resolution: {integrity: sha512-fRa09kZTgu8o71KFcDjUFuc7F+dEbZYZmkI0mg5YBTRs0yMKjYHsq/c0urDKeDb+D5qVgXOdFcuu+DZPKOITwA==}
 
@@ -1725,6 +1787,9 @@ packages:
 
   '@types/react@19.2.17':
     resolution: {integrity: sha512-MXfmqaVPEVgkBT/aY0aGCkRWWtByiYQXo3xdQ8r5RzuFrPiRn8Gar2tQdXSUQ2GKV3bkXckek89V8wQBY2Q/Aw==}
+
+  '@types/use-sync-external-store@0.0.6':
+    resolution: {integrity: sha512-zFDAD+tlpf2r4asuHEj0XH6pY6i0g5NeAHPn+15wk3BV6JA69eERFXC1gyGThDkVa1zCyKr5jox1+2LbV/AMLg==}
 
   '@vitejs/plugin-react@6.0.3':
     resolution: {integrity: sha512-vmFvco5/QuC2f9Oj+wTk0+9XeDFkHxSamwZKYc7MxYwKICfvUvlMhqKI0VuICPltGqh1neqBKDvO4kes1ya8vg==}
@@ -2172,6 +2237,9 @@ packages:
     resolution: {integrity: sha512-CV9TW3Y3f8/wT0BRFc1/KAVQ3TUHiXmaAb6VW9vtiMFf7SLoMd1PdAc4W3KFOFETBJUb90KatHqlsZMWV+R9Gg==}
     engines: {node: ^20.19.0 || ^22.12.0 || >=24.0.0}
 
+  immer@11.2.9:
+    resolution: {integrity: sha512-IQ4UEtXjZjyefyWjtLEDXUSrF6T2hwjKPi6BIJl3bY/2XXW24d6cNGdXJSBOA/+KNnuiXkZY6DR0C3efolhitA==}
+
   indent-string@4.0.0:
     resolution: {integrity: sha512-EdDDZu4A2OyIK7Lr/2zG+w5jmbuk1DVBnEwREQvBzspBJkCEbRa8GxU1lghYcaGJCnRWibjDXlq779X1/y5xwg==}
     engines: {node: '>=8'}
@@ -2358,6 +2426,10 @@ packages:
     resolution: {integrity: sha512-6eZs5Ls3WtCisHWp9S2GUy8dqkpGi4BVSz3GaqiE6ezub0512ESztXUwUB6C6IKbQkY2Pnb/mD4WYojCRwcwLA==}
     engines: {node: '>=0.10.0'}
 
+  numeric-quantity@3.3.4:
+    resolution: {integrity: sha512-mYzGsK+5jEK3DM3iAxC8ACKp6k1qH2lxvbTQxfIb6FL+meXx4yrwUTiAQtXik7ZnCj8R5pMIY63Ra0wPP3SW/A==}
+    engines: {node: '>=16'}
+
   object-assign@4.1.1:
     resolution: {integrity: sha512-rJgTQnkUnH1sFw8yT6VSU3zD3sWmu6sZhIseY8VX+GRu3P6F7Fu+JNDoXfklElbLJSnc3FUQHVe4cU5hj+BcUg==}
     engines: {node: '>=0.10.0'}
@@ -2513,6 +2585,23 @@ packages:
   react-is@17.0.2:
     resolution: {integrity: sha512-w2GsyukL62IJnlaff/nRegPQR94C/XXamvMWmSHRJ4y7Ts/4ocGRmTHvOs8PSE6pB3dWOrD/nueuU5sduBsQ4w==}
 
+  react-querybuilder@8.26.0:
+    resolution: {integrity: sha512-Y199ec9SSPAwmIeMA3PuWD1OUpcKBPa8F8r0WlPMhoIn+Pq6ny79kb69tcUcvBWpLguSKrIHKa0ywK4Si9Ch7g==}
+    peerDependencies:
+      react: '>=18'
+
+  react-redux@9.3.1:
+    resolution: {integrity: sha512-vxMLT0lalUjbZPkoTepWyKAZbjIIFssNx/CEL9lTfwQBU6XpkGSmCNdcCIrkOBUgB68uftZMnbXVb6DwGnhRKQ==}
+    peerDependencies:
+      '@types/react': ^18.2.25 || ^19
+      react: ^18.0 || ^19
+      redux: ^5.0.0
+    peerDependenciesMeta:
+      '@types/react':
+        optional: true
+      redux:
+        optional: true
+
   react-router-dom@7.18.1:
     resolution: {integrity: sha512-KaZh+X/6UtEp28x51AUYZDMg9NGoz2ja3dNHa+ta/tk40vCzKhQ/RypCWBMLbmDr6//E24Vv5uPsrqXFozdkAg==}
     engines: {node: '>=20.0.0'}
@@ -2545,12 +2634,23 @@ packages:
     resolution: {integrity: sha512-6tDA8g98We0zd0GvVeMT9arEOnTw9qM03L9cJXaCjrip1OO764RDBLBfrB4cwzNGDj5OA5ioymC9GkizgWJDUg==}
     engines: {node: '>=8'}
 
+  redux-thunk@3.1.0:
+    resolution: {integrity: sha512-NW2r5T6ksUKXCabzhL9z+h206HQw/NJkcLm1GPImRQ8IzfXwRGqjVhKJGauHirT0DAuyy6hjdnMZaRoAcy0Klw==}
+    peerDependencies:
+      redux: ^5.0.0
+
+  redux@5.0.1:
+    resolution: {integrity: sha512-M9/ELqF6fy8FwmkpnF0S3YKOqMyoWJ4+CS5Efg2ct3oY9daQvd/Pc71FpGZsVsbl3Cpb+IIcjBDUnnyBdQbq4w==}
+
   reflect-metadata@0.2.2:
     resolution: {integrity: sha512-urBwgfrvVP/eAyXx4hluJivBKzuEbSQs9rKWCrCkbSxNv8mxPcUZKeuoF3Uy4mJl3Lwprp6yy5/39VWigZ4K6Q==}
 
   require-from-string@2.0.2:
     resolution: {integrity: sha512-Xf0nWe6RseziFMu+Ap9biiUbmplq6S9/p+7w7YXP/JBHhrUDDUhwa+vANyubuqfZWTveU//DYVGsDG7RKL/vEw==}
     engines: {node: '>=0.10.0'}
+
+  reselect@5.3.0:
+    resolution: {integrity: sha512-XGoLeRAVzUTcJ1qkxPQhDJyIZ5d6zzZD9nT7AEZOaaU9UbWclhycElmhO+VD5bFeLuzhPBaOV2oXC8uG35ZSpg==}
 
   resolve-pkg-maps@1.0.0:
     resolution: {integrity: sha512-seS2Tj26TBVOC2NIc2rOe2y2ZO7efxITtLZcGSOnHHNOQ7CkiUBfw0Iw2ck6xkIhPwLhKNLS8BO+hEpngQlqzw==}
@@ -2726,6 +2826,11 @@ packages:
     hasBin: true
     peerDependencies:
       browserslist: '>= 4.21.0'
+
+  use-sync-external-store@1.7.0:
+    resolution: {integrity: sha512-6L+EeigHMQhdaIPNIFUKwfWJSwWFQ8gJbJ2DLOs5sDIegTwR9fRxvnM3uciHKjIZhFz+KAv2emhWMRvDmMcY8A==}
+    peerDependencies:
+      react: ^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0.0
 
   util-deprecate@1.0.2:
     resolution: {integrity: sha512-EPD5q1uXyFxJpCrLnCc1nHnq3gOa6DZBocAIiI2TaSCA7VCJ1UJDMagCzIkXNsUYfD1daK//LTEQ8xiIbrHtcw==}
@@ -3714,6 +3819,29 @@ snapshots:
 
   '@poppinss/exception@1.2.3': {}
 
+  '@react-querybuilder/core@8.26.0(drizzle-orm@0.45.2(@cloudflare/workers-types@5.20260717.1)(kysely@0.29.4))':
+    dependencies:
+      '@ts-jison/lexer': 0.4.1-alpha.4
+      '@ts-jison/parser': 0.4.1-alpha.4
+      '@types/json-logic-js': 2.0.8
+      immer: 11.2.9
+      numeric-quantity: 3.3.4
+    optionalDependencies:
+      drizzle-orm: 0.45.2(@cloudflare/workers-types@5.20260717.1)(kysely@0.29.4)
+
+  '@reduxjs/toolkit@2.14.0(@types/react@19.2.17)(react-redux@9.3.1(@types/react@19.2.17)(react@19.2.7)(redux@5.0.1))(react@19.2.7)':
+    dependencies:
+      '@standard-schema/spec': 1.1.0
+      '@standard-schema/utils': 0.3.0
+      immer: 11.2.9
+      redux: 5.0.1
+      redux-thunk: 3.1.0(redux@5.0.1)
+      reselect: 5.3.0
+    optionalDependencies:
+      '@types/react': 19.2.17
+      react: 19.2.7
+      react-redux: 9.3.1(@types/react@19.2.17)(react@19.2.7)(redux@5.0.1)
+
   '@rolldown/binding-android-arm64@1.1.5':
     optional: true
 
@@ -3784,6 +3912,8 @@ snapshots:
 
   '@standard-schema/spec@1.1.0': {}
 
+  '@standard-schema/utils@0.3.0': {}
+
   '@testing-library/dom@10.4.1':
     dependencies:
       '@babel/code-frame': 7.29.7
@@ -3818,6 +3948,17 @@ snapshots:
     dependencies:
       '@testing-library/dom': 10.4.1
 
+  '@ts-jison/common@0.4.1-alpha.4': {}
+
+  '@ts-jison/lexer@0.4.1-alpha.4':
+    dependencies:
+      '@ts-jison/common': 0.4.1-alpha.4
+
+  '@ts-jison/parser@0.4.1-alpha.4':
+    dependencies:
+      '@ts-jison/common': 0.4.1-alpha.4
+      '@ts-jison/lexer': 0.4.1-alpha.4
+
   '@tybys/wasm-util@0.10.3':
     dependencies:
       tslib: 2.8.1
@@ -3834,6 +3975,8 @@ snapshots:
 
   '@types/estree@1.0.9': {}
 
+  '@types/json-logic-js@2.0.8': {}
+
   '@types/node@24.13.2':
     dependencies:
       undici-types: 7.18.2
@@ -3849,6 +3992,8 @@ snapshots:
   '@types/react@19.2.17':
     dependencies:
       csstype: 3.2.3
+
+  '@types/use-sync-external-store@0.0.6': {}
 
   '@vitejs/plugin-react@6.0.3(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.1)(jiti@1.21.7)(tsx@4.23.1)(yaml@2.9.0))':
     dependencies:
@@ -4226,6 +4371,8 @@ snapshots:
     transitivePeerDependencies:
       - '@noble/hashes'
 
+  immer@11.2.9: {}
+
   indent-string@4.0.0: {}
 
   is-binary-path@2.1.0:
@@ -4380,6 +4527,8 @@ snapshots:
 
   normalize-path@3.0.0: {}
 
+  numeric-quantity@3.3.4: {}
+
   object-assign@4.1.1: {}
 
   object-hash@3.0.0: {}
@@ -4522,6 +4671,33 @@ snapshots:
 
   react-is@17.0.2: {}
 
+  react-querybuilder@8.26.0(@types/react@19.2.17)(drizzle-orm@0.45.2(@cloudflare/workers-types@5.20260717.1)(kysely@0.29.4))(react@19.2.7)(redux@5.0.1):
+    dependencies:
+      '@react-querybuilder/core': 8.26.0(drizzle-orm@0.45.2(@cloudflare/workers-types@5.20260717.1)(kysely@0.29.4))
+      '@reduxjs/toolkit': 2.14.0(@types/react@19.2.17)(react-redux@9.3.1(@types/react@19.2.17)(react@19.2.7)(redux@5.0.1))(react@19.2.7)
+      react: 19.2.7
+      react-redux: 9.3.1(@types/react@19.2.17)(react@19.2.7)(redux@5.0.1)
+    transitivePeerDependencies:
+      - '@tanstack/db'
+      - '@traqula/parser-sparql-1-2'
+      - '@types/react'
+      - chevrotain
+      - drizzle-orm
+      - json-logic-js
+      - jsonata
+      - redux
+      - sequelize
+      - spel2js
+
+  react-redux@9.3.1(@types/react@19.2.17)(react@19.2.7)(redux@5.0.1):
+    dependencies:
+      '@types/use-sync-external-store': 0.0.6
+      react: 19.2.7
+      use-sync-external-store: 1.7.0(react@19.2.7)
+    optionalDependencies:
+      '@types/react': 19.2.17
+      redux: 5.0.1
+
   react-router-dom@7.18.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7):
     dependencies:
       react: 19.2.7
@@ -4551,9 +4727,17 @@ snapshots:
       indent-string: 4.0.0
       strip-indent: 3.0.0
 
+  redux-thunk@3.1.0(redux@5.0.1):
+    dependencies:
+      redux: 5.0.1
+
+  redux@5.0.1: {}
+
   reflect-metadata@0.2.2: {}
 
   require-from-string@2.0.2: {}
+
+  reselect@5.3.0: {}
 
   resolve-pkg-maps@1.0.0: {}
 
@@ -4770,6 +4954,10 @@ snapshots:
       escalade: 3.2.0
       picocolors: 1.1.1
 
+  use-sync-external-store@1.7.0(react@19.2.7):
+    dependencies:
+      react: 19.2.7
+
   util-deprecate@1.0.2: {}
 
   vite@8.1.5(@types/node@24.13.2)(esbuild@0.28.1)(jiti@1.21.7)(tsx@4.23.1)(yaml@2.9.0):
@@ -4929,7 +5117,9 @@ snapshots:
 
   zod@4.4.3: {}
 
-  zustand@5.0.14(@types/react@19.2.17)(react@19.2.7):
+  zustand@5.0.14(@types/react@19.2.17)(immer@11.2.9)(react@19.2.7)(use-sync-external-store@1.7.0(react@19.2.7)):
     optionalDependencies:
       '@types/react': 19.2.17
+      immer: 11.2.9
       react: 19.2.7
+      use-sync-external-store: 1.7.0(react@19.2.7)
