@@ -64,6 +64,8 @@ export const EvaluationRequestSchema = z.object({
   codes: z.array(PromoCodeSchema).optional(),
   cart: CartSchema,
   context: AttributesSchema.optional(),
+  includeCandidateOffers: z.boolean().optional(),
+  ttlSeconds: z.number().int().min(60).max(86_400).optional(),
 }).strict().superRefine(validateDistinctCodeLimit);
 
 export const DecisionOutcomeSchema = z.enum([
@@ -279,6 +281,20 @@ export const MerchandisePriceBreakdownSchema = z.object({
   });
 });
 
+export const CandidateOfferProgressSchema = z.object({
+  current: z.number().int().nonnegative(),
+  target: z.number().int().nonnegative(),
+  shortfall: z.number().int().nonnegative(),
+}).strict();
+
+export const CandidateOfferSchema = z.object({
+  programRef: z.string().min(1),
+  name: z.string().min(1),
+  qualified: z.boolean(),
+  estimatedDiscountMinorUnits: z.number().int().nonnegative(),
+  progress: CandidateOfferProgressSchema.optional(),
+}).strict();
+
 export const EvaluationResponseSchema = z.object({
   evaluationId: z.string().min(1),
   customerRef: z.string().min(1).optional(),
@@ -288,6 +304,7 @@ export const EvaluationResponseSchema = z.object({
   decisions: z.array(IncentiveDecisionSchema),
   priceBreakdown: MerchandisePriceBreakdownSchema,
   codeResults: z.array(CodeEvaluationResultSchema).optional(),
+  candidateOffers: z.array(CandidateOfferSchema).optional(),
 }).strict();
 
 export const RedemptionRequestSchema = z.object({
@@ -329,6 +346,8 @@ export type MerchandiseDiscountAllocation = z.infer<
   typeof MerchandiseDiscountAllocationSchema
 >;
 export type MerchandisePriceBreakdown = z.infer<typeof MerchandisePriceBreakdownSchema>;
+export type CandidateOfferProgress = z.infer<typeof CandidateOfferProgressSchema>;
+export type CandidateOffer = z.infer<typeof CandidateOfferSchema>;
 export type EvaluationResponse = z.infer<typeof EvaluationResponseSchema>;
 export type RedemptionRequest = z.infer<typeof RedemptionRequestSchema>;
 export type RedemptionEntry = z.infer<typeof RedemptionEntrySchema>;

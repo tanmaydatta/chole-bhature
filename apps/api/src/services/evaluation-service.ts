@@ -2,8 +2,11 @@ import {
   EvaluationRequestSchema,
   EvaluationResponseSchema,
   normalizeDistinctPromoCodes,
+  type CandidateOffer,
   type Cart,
   type CodeEvaluationResult,
+  type CommerceReward,
+  type ConditionGroup,
   type Effect,
   type EvaluationRequest,
   type EvaluationResponse,
@@ -470,10 +473,91 @@ function selectedCurrencyMismatch(
   );
 }
 
-function ttlSeconds(env: Env): number {
+function effectiveTtlSeconds(request: EvaluationRequest, env: Env): number {
+  if (request.ttlSeconds !== undefined) {
+    return request.ttlSeconds;
+  }
   return env.EVALUATION_TTL_SECONDS === undefined
     ? DEFAULT_TTL_SECONDS
     : TtlSchema.parse(env.EVALUATION_TTL_SECONDS);
+}
+
+function safeProjectedDiscount(reward: CommerceReward, cart: Cart): number {
+  try {
+    return projectedDiscountMinorUnits([reward], cart);
+  } catch {
+    return 0;
+  }
+}
+
+interface SubtotalProgress {
+  current: number;
+  target: number;
+  shortfall: number;
+  reward?: CommerceReward | undefined;
+}
+
+function findSubtotalProgress(
+  program: PromoProgram,
+  currentSubtotal: number,
+): SubtotalProgress | undefined {
+  interface CandidateCondition {
+    operator: 'gte' | 'gt';
+    value: number;
+    reward?: CommerceReward | undefined;
+  }
+  const conditions: CandidateCondition[] = [];
+
+  function collectFromGroup(group?: ConditionGroup, reward?: CommerceReward | undefined) {
+    if (!group) return;
+    for (const c of group.conditions) {
+      if (
+        c.variable === 'cart.subtotal'
+        && (c.operator === 'gte' || c.operator === 'gt')
+        && typeof c.value === 'number'
+      ) {
+        conditions.push({
+          operator: c.operator,
+          value: c.value,
+          ...(reward !== undefined ? { reward } : {}),
+        });
+      }
+    }
+    if (group.groups) {
+      for (const nested of group.groups) {
+        collectFromGroup(nested, reward);
+      }
+    }
+  }
+
+  const defaultReward = program.rewardRules[0]?.reward ?? program.fallbackReward?.reward;
+  collectFromGroup(program.eligibility, defaultReward);
+
+  for (const rule of program.rewardRules) {
+    collectFromGroup(rule.conditions, rule.reward);
+  }
+
+  if (conditions.length === 0) return undefined;
+
+  const candidatesWithTarget = conditions.map(c => {
+    const target = c.operator === 'gt' ? c.value + 1 : c.value;
+    const shortfall = Math.max(0, target - currentSubtotal);
+    return {
+      current: currentSubtotal,
+      target,
+      shortfall,
+      ...(c.reward !== undefined ? { reward: c.reward } : {}),
+    };
+  });
+
+  const unreached = candidatesWithTarget.filter(c => c.shortfall > 0);
+  if (unreached.length > 0) {
+    unreached.sort((a, b) => a.shortfall - b.shortfall);
+    return unreached[0];
+  }
+
+  candidatesWithTarget.sort((a, b) => b.target - a.target);
+  return candidatesWithTarget[0];
 }
 
 function factInputs(request: EvaluationRequest) {
@@ -615,7 +699,7 @@ async function evaluateSingleProgram(
     preparedReservations,
   } = context;
   const runtimeProgram = effectiveProgram(record.program, now);
-  const customerUsesCount = customer === null
+  const customerUsesCount = customer === null || customer.version === undefined
     ? 0
     : await repositories.redemptions.countCommittedForCustomerProgram(
       merchantId,
@@ -804,14 +888,23 @@ export function createEvaluationService(
       let cleanupContext: Omit<ReservationCleanupContext, 'programRef'> | undefined;
 
       try {
-        const customer = request.customerRef === undefined
+        const now = new Date();
+        const storedCustomer = request.customerRef === undefined
           ? null
-          : await repositories.customers.get(merchantId, request.customerRef!);
+          : await repositories.customers.get(merchantId, request.customerRef);
+        let customer: EvaluationCustomer = storedCustomer;
         if (request.customerRef !== undefined && customer === null) {
-          throw new NotFoundError('Customer not found', 'CUSTOMER_NOT_FOUND');
+          if (request.includeCandidateOffers) {
+            customer = await repositories.customers.create(merchantId, {
+              externalRef: request.customerRef,
+              attributes: {},
+            });
+          } else {
+            throw new NotFoundError('Customer not found', 'CUSTOMER_NOT_FOUND');
+          }
         }
-        if (customer !== null) {
-          validateCustomerAttributes(customer.attributes, published.definitions);
+        if (storedCustomer !== null) {
+          validateCustomerAttributes(storedCustomer.attributes, published.definitions);
         }
         const signingSecret = decisionSigningSecret(env);
         const verifyHistoricalIntegrity: RedemptionIntegrityVerifiers = {
@@ -823,7 +916,6 @@ export function createEvaluationService(
           ),
         };
 
-        const now = new Date();
         const evaluationId = crypto.randomUUID();
         cleanupContext = { merchantId, evaluationId, correlationId };
         const normalizedCodes = normalizeDistinctPromoCodes(request.codes ?? []);
@@ -959,8 +1051,78 @@ export function createEvaluationService(
               : codeResult(entry.code, entry.decision, rejectedProgramRefs)
           ));
         }
+
+        let candidateOffers: CandidateOffer[] | undefined;
+        if (request.includeCandidateOffers) {
+          candidateOffers = [];
+          const candidatePrograms = await automaticCandidates(repositories, merchantId, now);
+          const candidateFacts: EvaluationFactsSnapshot = {
+            ...commonFacts,
+            programs: [],
+          };
+          const candidateContext: SingleProgramEvaluationContext = {
+            ...singleProgramContext,
+            facts: candidateFacts,
+            preparedReservations: [],
+          };
+
+          for (const candidate of candidatePrograms) {
+            const evaluated = await evaluateSingleProgram(candidate, candidateContext, true);
+            const qualified = evaluated.decision.outcome === 'qualified';
+
+            if (qualified) {
+              const estimatedDiscountMinorUnits = projectedDiscountMinorUnits(
+                evaluated.decision.effects,
+                request.cart,
+              );
+              candidateOffers.push({
+                programRef: candidate.externalRef,
+                name: candidate.program.name,
+                qualified: true,
+                estimatedDiscountMinorUnits,
+              });
+            } else {
+              const progressInfo = findSubtotalProgress(candidate.program, request.cart.subtotal);
+              let estimatedDiscountMinorUnits = 0;
+              let progress: CandidateOffer['progress'];
+
+              if (progressInfo !== undefined) {
+                progress = {
+                  current: progressInfo.current,
+                  target: progressInfo.target,
+                  shortfall: progressInfo.shortfall,
+                };
+                const rewardToProject = progressInfo.reward
+                  ?? candidate.program.rewardRules[0]?.reward
+                  ?? candidate.program.fallbackReward?.reward;
+                if (rewardToProject !== undefined) {
+                  const targetCart: Cart = {
+                    ...request.cart,
+                    subtotal: Math.max(progressInfo.target, request.cart.subtotal),
+                  };
+                  estimatedDiscountMinorUnits = safeProjectedDiscount(rewardToProject, targetCart);
+                }
+              } else {
+                const rewardToProject = candidate.program.rewardRules[0]?.reward
+                  ?? candidate.program.fallbackReward?.reward;
+                if (rewardToProject !== undefined) {
+                  estimatedDiscountMinorUnits = safeProjectedDiscount(rewardToProject, request.cart);
+                }
+              }
+
+              candidateOffers.push({
+                programRef: candidate.externalRef,
+                name: candidate.program.name,
+                qualified: false,
+                estimatedDiscountMinorUnits,
+                ...(progress !== undefined ? { progress } : {}),
+              });
+            }
+          }
+        }
+
         const createdAt = now.toISOString();
-        const expiresAt = new Date(now.getTime() + ttlSeconds(env) * 1_000).toISOString();
+        const expiresAt = new Date(now.getTime() + effectiveTtlSeconds(request, env) * 1_000).toISOString();
         const priceBreakdown = calculateMerchandisePriceBreakdown(request.cart, decisions);
         const unsigned = {
           evaluationId,
@@ -970,8 +1132,10 @@ export function createEvaluationService(
           codeResults,
           requestDigest: await evaluationRequestDigest(request, mode, normalizedCodes),
           correlationId,
-          ...(request.customerRef === undefined ? {} : { customerRef: request.customerRef }),
-          ...(customer === null ? {} : { customerVersion: customer.version }),
+          ...(customer === null ? {} : {
+            customerRef: customer.externalRef,
+            customerVersion: customer.version,
+          }),
           schemaVersion: published.version,
           request,
           facts,
@@ -997,6 +1161,7 @@ export function createEvaluationService(
           decisions,
           priceBreakdown,
           ...(mode === 'coded' ? { codeResults } : {}),
+          ...(candidateOffers !== undefined ? { candidateOffers } : {}),
         });
         await repositories.decisions.create(record);
         preparedReservations.length = 0;
