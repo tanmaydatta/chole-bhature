@@ -7,16 +7,6 @@ query RunInput {
         currencyCode
       }
     }
-    lines {
-      id
-      quantity
-      cost {
-        subtotalAmount {
-          amount
-          currencyCode
-        }
-      }
-    }
     attribute(key: "_incentives_eval") {
       value
     }

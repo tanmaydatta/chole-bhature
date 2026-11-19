@@ -7,6 +7,11 @@ type = "function"
 title = "Incentives Discount Function"
 description = "Incentives discount function evaluating signed cart tokens"
 
+[[extensions.targeting]]
+target = "purchase.order-discount.run"
+input_query = "run.graphql"
+export = "run"
+
 [extensions.build]
 command = "cargo build --target wasm32-wasip1 --release"
 path = "target/wasm32-wasip1/release/incentives-discount-fn.wasm"

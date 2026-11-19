@@ -164,8 +164,6 @@ pub struct IncentivesEval {
     pub target: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "deserialize_optional_string_or_number")]
     pub expires_at: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub percentage: Option<f64>,
     pub signature: String,
 }
 

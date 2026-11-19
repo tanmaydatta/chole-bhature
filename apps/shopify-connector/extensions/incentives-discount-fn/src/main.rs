@@ -21,37 +21,58 @@ pub fn verify_signature(secret: &str, payload: &str, signature: &str) -> bool {
 }
 
 pub fn parse_to_minor_units(amount_str: &str) -> Option<i64> {
-    let parts: Vec<&str> = amount_str.trim().split('.').collect();
-    match parts.len() {
-        1 => {
-            let whole: i64 = parts[0].parse().ok()?;
-            Some(whole * 100)
-        }
-        2 => {
-            let whole: i64 = parts[0].parse().ok()?;
-            let frac_str = parts[1];
-            let frac: i64 = if frac_str.is_empty() {
-                0
-            } else if frac_str.len() == 1 {
-                frac_str.parse::<i64>().ok()? * 10
-            } else if frac_str.len() == 2 {
-                frac_str.parse::<i64>().ok()?
+    let trimmed = amount_str.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let is_negative = trimmed.starts_with('-');
+    let num_str = if is_negative { &trimmed[1..] } else { trimmed };
+    if num_str.is_empty() {
+        return None;
+    }
+
+    let parts: Vec<&str> = num_str.split('.').collect();
+    if parts.len() > 2 {
+        return None;
+    }
+    // Must contain only ASCII digits
+    if !parts.iter().all(|p| p.chars().all(|c| c.is_ascii_digit())) {
+        return None;
+    }
+
+    let whole: i64 = if parts[0].is_empty() {
+        0
+    } else {
+        parts[0].parse().ok()?
+    };
+
+    let frac: i64 = if parts.len() == 2 {
+        let frac_str = parts[1];
+        if frac_str.is_empty() {
+            0
+        } else if frac_str.len() == 1 {
+            frac_str.parse::<i64>().ok()? * 10
+        } else if frac_str.len() == 2 {
+            frac_str.parse::<i64>().ok()?
+        } else {
+            // Because we verified all chars are ASCII digits, byte slicing is completely safe
+            let first_two: i64 = frac_str[..2].parse().ok()?;
+            let third: i64 = frac_str[2..3].parse().ok()?;
+            if third >= 5 {
+                first_two + 1
             } else {
-                let first_two: i64 = frac_str[..2].parse().ok()?;
-                let third: i64 = frac_str[2..3].parse().ok()?;
-                if third >= 5 {
-                    first_two + 1
-                } else {
-                    first_two
-                }
-            };
-            if whole >= 0 {
-                Some(whole * 100 + frac)
-            } else {
-                Some(whole * 100 - frac)
+                first_two
             }
         }
-        _ => None,
+    } else {
+        0
+    };
+
+    let total = whole.checked_mul(100)?.checked_add(frac)?;
+    if is_negative {
+        Some(-total)
+    } else {
+        Some(total)
     }
 }
 
@@ -146,33 +167,23 @@ pub fn run_function(input: &Input) -> FunctionResult {
         return FunctionResult::empty();
     }
 
-    // Verify target (defaults to "order" if omitted)
+    // Verify target (defaults to "order" if omitted; promotions are evaluated against order subtotal)
     let target = eval.target.as_deref().unwrap_or("order");
     if target != "order" {
         return FunctionResult::empty();
     }
 
-    // Emit calculated discount
-    let value = if let Some(pct) = eval.percentage {
-        if pct <= 0.0 {
-            return FunctionResult::empty();
-        }
-        ValueInput {
-            fixed_amount: None,
-            percentage: Some(PercentageInput {
-                value: pct.to_string(),
-            }),
-        }
-    } else if eval.discount_minor_units > 0 {
-        ValueInput {
-            fixed_amount: Some(FixedAmountInput {
-                amount: format_minor_to_major(eval.discount_minor_units),
-                applies_to_each_item: None,
-            }),
-            percentage: None,
-        }
-    } else {
+    // Emit fixed amount discount from cryptographically signed discount_minor_units
+    if eval.discount_minor_units <= 0 {
         return FunctionResult::empty();
+    }
+
+    let value = ValueInput {
+        fixed_amount: Some(FixedAmountInput {
+            amount: format_minor_to_major(eval.discount_minor_units),
+            applies_to_each_item: None,
+        }),
+        percentage: None,
     };
 
     let discount = DiscountOperation {
@@ -278,7 +289,6 @@ mod tests {
             discount_minor_units: discount_minor,
             target: Some("order".to_string()),
             expires_at: Some(expires_at.to_string()),
-            percentage: None,
             signature,
         };
 
@@ -316,7 +326,6 @@ mod tests {
             discount_minor_units: 1000,
             target: Some("order".to_string()),
             expires_at: None,
-            percentage: None,
             signature,
         };
 
@@ -343,7 +352,6 @@ mod tests {
             discount_minor_units: 1000,
             target: Some("order".to_string()),
             expires_at: None,
-            percentage: None,
             signature,
         };
 
@@ -369,7 +377,6 @@ mod tests {
             discount_minor_units: 1000,
             target: Some("order".to_string()),
             expires_at: None,
-            percentage: None,
             signature: "deadbeef0123456789abcdefdeadbeef0123456789abcdefdeadbeef01234567".to_string(),
         };
 
@@ -409,7 +416,6 @@ mod tests {
             discount_minor_units: 1000,
             target: Some("order".to_string()),
             expires_at: None,
-            percentage: None,
             signature,
         };
 
@@ -436,7 +442,6 @@ mod tests {
             discount_minor_units: 1000,
             target: Some("order".to_string()),
             expires_at: None,
-            percentage: None,
             signature,
         };
 
@@ -477,7 +482,6 @@ mod tests {
             discount_minor_units: 0,
             target: Some("order".to_string()),
             expires_at: None,
-            percentage: None,
             signature,
         };
 
@@ -487,7 +491,7 @@ mod tests {
     }
 
     #[test]
-    fn test_percentage_discount_emits_percentage_value() {
+    fn test_tampered_json_with_injected_percentage_cannot_override_signed_fixed_discount() {
         let secret = "test-tenant-secret-key-1234567890123456";
         let cart_id = "gid://shopify/Cart/c1-pct";
         let subtotal_minor = 10000;
@@ -502,26 +506,27 @@ mod tests {
         );
         let signature = sign(secret, &sig_payload);
 
-        let eval = IncentivesEval {
-            evaluation_id: eval_id.to_string(),
-            shop_domain: None,
-            cart_id: cart_id.to_string(),
-            subtotal_minor_units: subtotal_minor,
-            currency: currency.to_string(),
-            discount_minor_units: discount_minor,
-            target: Some("order".to_string()),
-            expires_at: Some(expires_at.to_string()),
-            percentage: Some(15.0),
-            signature,
-        };
+        // Attacker crafts JSON with an injected "percentage": 90.0
+        let tampered_json = format!(
+            r#"{{"evaluationId":"{}","cartId":"{}","subtotalMinorUnits":{},"currency":"{}","discountMinorUnits":{},"target":"order","expiresAt":"{}","percentage":90.0,"signature":"{}"}}"#,
+            eval_id, cart_id, subtotal_minor, currency, discount_minor, expires_at, signature
+        );
 
-        let input = create_test_input(cart_id, "100.00", currency, Some(eval), Some(secret));
+        let mut input = create_test_input(cart_id, "100.00", currency, None, Some(secret));
+        input.cart.attribute = Some(CartAttributeInput {
+            key: Some("_incentives_eval".to_string()),
+            value: Some(tampered_json),
+        });
+
         let result = run_function(&input);
 
+        // Crucial security guarantee: percentage injection does NOT produce a percentage discount;
+        // it strictly emits the signed 1500 minor units ($15.00) fixed amount discount.
         assert_eq!(result.discounts.len(), 1);
         let discount = &result.discounts[0];
-        let pct_val = discount.value.percentage.as_ref().expect("expected percentage");
-        assert_eq!(pct_val.value, "15");
+        assert!(discount.value.percentage.is_none());
+        let fixed_val = discount.value.fixed_amount.as_ref().expect("expected fixedAmount");
+        assert_eq!(fixed_val.amount, "15.00");
     }
 
     #[test]
@@ -541,7 +546,6 @@ mod tests {
             discount_minor_units: 500,
             target: None,
             expires_at: None,
-            percentage: None,
             signature,
         };
 
@@ -574,7 +578,6 @@ mod tests {
             discount_minor_units: 500,
             target: Some("unsupported_target".to_string()),
             expires_at: None,
-            percentage: None,
             signature,
         };
 
@@ -601,7 +604,6 @@ mod tests {
             discount_minor_units: 250,
             target: Some("order".to_string()),
             expires_at: None,
-            percentage: None,
             signature,
         };
 
@@ -631,5 +633,20 @@ mod tests {
         assert_eq!(format_minor_to_major(99), "0.99");
         assert_eq!(format_minor_to_major(5), "0.05");
         assert_eq!(format_minor_to_major(0), "0.00");
+    }
+
+    #[test]
+    fn test_parse_to_minor_units_handles_negative_and_unicode_safely() {
+        assert_eq!(parse_to_minor_units("-0.50"), Some(-50));
+        assert_eq!(parse_to_minor_units("-10.00"), Some(-1000));
+        assert_eq!(parse_to_minor_units("-5"), Some(-500));
+        assert_eq!(parse_to_minor_units("100.999"), Some(10100)); // rounds 999 to 100
+        assert_eq!(parse_to_minor_units("100.994"), Some(10099)); // rounds 994 to 99
+        assert_eq!(parse_to_minor_units("10.0€"), None); // Non-ascii unicode character
+        assert_eq!(parse_to_minor_units("€10.00"), None);
+        assert_eq!(parse_to_minor_units("abc"), None);
+        assert_eq!(parse_to_minor_units(""), None);
+        assert_eq!(parse_to_minor_units("   "), None);
+        assert_eq!(parse_to_minor_units("1.2.3"), None);
     }
 }
