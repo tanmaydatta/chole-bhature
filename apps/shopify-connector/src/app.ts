@@ -1,10 +1,14 @@
 import { Hono } from 'hono';
 import type { Env } from './env.js';
+import { adminRoutes } from './routes/admin.js';
 import { oauthRoutes } from './routes/oauth.js';
 import { webhookRoutes } from './routes/webhooks.js';
 
 export function createApp() {
   const app = new Hono<{ Bindings: Env }>();
+
+  // Mount Admin Bridge routes under /admin
+  app.route('/admin', adminRoutes);
 
   // Mount OAuth routes under /auth
   app.route('/auth', oauthRoutes);

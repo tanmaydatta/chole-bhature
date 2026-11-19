@@ -22,6 +22,7 @@ export interface CoreServiceBinding {
     input: ApiCredentialCreateInput,
   ): Promise<ApiCredentialCreateResult>;
   commitRedemption?(input: unknown): Promise<unknown>;
+  fetch?(request: Request | string, init?: RequestInit): Promise<Response>;
   [key: string]: unknown;
 }
 
