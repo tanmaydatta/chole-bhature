@@ -50,8 +50,8 @@ export type DiscountCodeChange =
   | { type: 'removeDiscountCode'; code: string };
 
 export type InterceptorResult =
-  | { canBlockProgress: true; reason: string; label?: string }
-  | { canBlockProgress: false };
+  | { behavior?: 'block'; canBlockProgress: true; reason: string; label?: string }
+  | { behavior?: 'allow'; canBlockProgress: false; reason?: string };
 
 export interface SignedEvaluationPayload {
   evaluationId: string;
@@ -162,9 +162,14 @@ export function useIncentivesEvaluation(options: UseIncentivesEvaluationOptions)
   const [appliedOffer, setAppliedOffer] = useState<string | null>(null);
   const [appliedCode, setAppliedCode] = useState<string | null>(null);
 
-  // Keep a ref to inFlight state for buyerJourneyIntercept
+  // Keep refs to avoid unnecessary re-evaluations
   const inFlightRef = useRef(inFlight);
   inFlightRef.current = inFlight;
+  const appliedCodeRef = useRef(appliedCode);
+  appliedCodeRef.current = appliedCode;
+  const appliedOfferRef = useRef(appliedOffer);
+  appliedOfferRef.current = appliedOffer;
+  const isInitialMount = useRef(true);
 
   // Intercept checkout progress while evaluation is in-flight
   useEffect(() => {
@@ -173,12 +178,14 @@ export function useIncentivesEvaluation(options: UseIncentivesEvaluationOptions)
     const unsubscribe = buyerJourneyIntercept((_props) => {
       if (inFlightRef.current) {
         return {
+          behavior: 'block',
           canBlockProgress: true,
           reason: 'Evaluation in progress',
           label: 'Evaluating available offers...',
         };
       }
       return {
+        behavior: 'allow',
         canBlockProgress: false,
       };
     });
@@ -256,11 +263,106 @@ export function useIncentivesEvaluation(options: UseIncentivesEvaluationOptions)
     [apiUrl, publishableKey, cost, cartLines, discountCodes]
   );
 
-  // Run initial evaluation on mount or when subtotal/cartLines change
+  // Run evaluation on mount or when subtotal/cartLines change
   const cartFingerprint = `${cost?.subtotalAmount?.amount}:${cost?.subtotalAmount?.currencyCode}:${cartLines.length}`;
   useEffect(() => {
-    runEvaluation();
-  }, [cartFingerprint, runEvaluation]);
+    let active = true;
+    const currentCode = appliedCodeRef.current;
+    const currentOffer = appliedOfferRef.current;
+    const codesToEvaluate = currentCode ? [currentCode] : undefined;
+
+    runEvaluation(codesToEvaluate).then(async (newEval) => {
+      if (!active || !newEval || !applyAttributeChange) return;
+
+      // Skip re-writing on initial mount before any offer or code was applied
+      if (isInitialMount.current) {
+        isInitialMount.current = false;
+        return;
+      }
+
+      const subtotalMinorUnits = Math.round(Number(cost?.subtotalAmount?.amount ?? 0) * 100);
+      const currency = cost?.subtotalAmount?.currencyCode ?? 'USD';
+
+      if (currentCode) {
+        const totalDiscount = newEval.priceBreakdown?.totalDiscount ?? 0;
+        if (totalDiscount > 0) {
+          const signature = await computePayloadSignature(
+            {
+              evaluationId: newEval.evaluationId,
+              cartId,
+              subtotalMinorUnits,
+              currency,
+              discountMinorUnits: totalDiscount,
+              expiresAt: newEval.expiresAt,
+            },
+            signingSecret
+          );
+          const payload: SignedEvaluationPayload = {
+            evaluationId: newEval.evaluationId,
+            shopDomain,
+            cartId,
+            subtotalMinorUnits,
+            currency,
+            discountMinorUnits: totalDiscount,
+            target: 'order',
+            expiresAt: newEval.expiresAt,
+            signature,
+          };
+          await applyAttributeChange({
+            type: 'updateAttribute',
+            key: '_incentives_eval',
+            value: JSON.stringify(payload),
+          });
+        }
+      } else if (currentOffer) {
+        const matchingOffer = newEval.candidateOffers?.find(
+          (o) => o.programRef === currentOffer && o.qualified
+        );
+        if (matchingOffer && matchingOffer.estimatedDiscountMinorUnits) {
+          const discountMinorUnits = matchingOffer.estimatedDiscountMinorUnits;
+          const signature = await computePayloadSignature(
+            {
+              evaluationId: newEval.evaluationId,
+              cartId,
+              subtotalMinorUnits,
+              currency,
+              discountMinorUnits,
+              expiresAt: newEval.expiresAt,
+            },
+            signingSecret
+          );
+          const payload: SignedEvaluationPayload = {
+            evaluationId: newEval.evaluationId,
+            shopDomain,
+            cartId,
+            subtotalMinorUnits,
+            currency,
+            discountMinorUnits,
+            target: 'order',
+            expiresAt: newEval.expiresAt,
+            signature,
+          };
+          await applyAttributeChange({
+            type: 'updateAttribute',
+            key: '_incentives_eval',
+            value: JSON.stringify(payload),
+          });
+        }
+      }
+    });
+
+    return () => {
+      active = false;
+    };
+  }, [
+    cartFingerprint,
+    runEvaluation,
+    applyAttributeChange,
+    cost,
+    cartId,
+    signingSecret,
+    shopDomain,
+  ]);
 
   const selectOffer = useCallback(
     async (offer: CandidateOffer): Promise<boolean> => {
@@ -322,6 +424,20 @@ export function useIncentivesEvaluation(options: UseIncentivesEvaluationOptions)
       if (!evalData) return false;
 
       const totalDiscount = evalData.priceBreakdown?.totalDiscount ?? 0;
+      const isRejected = evalData.codeResults?.some(
+        (c) =>
+          c.code === normalizedCode &&
+          (c.outcome === 'invalid_code' ||
+            c.outcome === 'exhausted' ||
+            c.outcome === 'not_qualified' ||
+            c.outcome === 'unavailable' ||
+            c.outcome === 'combination_rejected' ||
+            c.outcome === ('rejected' as any))
+      );
+      if (isRejected || totalDiscount <= 0) {
+        setError(`Promo code "${normalizedCode}" is invalid or does not apply to this cart`);
+        return false;
+      }
 
       if (applyDiscountCodeChange) {
         await applyDiscountCodeChange({

@@ -508,4 +508,197 @@ describe('CheckoutOffers Extension Component', () => {
       );
     });
   });
+
+  it('rejects invalid or non-qualifying promo codes without applying them or writing 0 discount attribute', async () => {
+    const mockInitialResponse = {
+      evaluationId: 'eval-initial',
+      schemaVersion: 1,
+      expiresAt: '2026-11-19T12:00:00.000Z',
+      decisions: [],
+      priceBreakdown: {
+        currency: 'USD',
+        originalMerchandiseSubtotal: 5000,
+        discountAllocations: [],
+        totalDiscount: 0,
+        discountedMerchandiseSubtotal: 5000,
+      },
+      candidateOffers: [],
+    };
+
+    const mockRejectedResponse = {
+      evaluationId: 'eval-rejected',
+      schemaVersion: 1,
+      expiresAt: '2026-11-19T12:00:00.000Z',
+      decisions: [],
+      priceBreakdown: {
+        currency: 'USD',
+        originalMerchandiseSubtotal: 5000,
+        discountAllocations: [],
+        totalDiscount: 0,
+        discountedMerchandiseSubtotal: 5000,
+      },
+      codeResults: [{ code: 'EXPIRED99', outcome: 'invalid_code' }],
+    };
+
+    globalThis.fetch = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => mockInitialResponse,
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => mockRejectedResponse,
+      });
+
+    render(
+      <CheckoutOffers
+        apiUrl="https://api.incentives.dev"
+        publishableKey="pk_live_test_123"
+        cartId="gid://shopify/Cart/c1-test"
+        shopDomain="test-store.myshopify.com"
+        signingSecret="test-secret-456"
+        cartLines={mockCartLines}
+        cost={mockCost}
+        discountCodes={mockDiscountCodes}
+        applyAttributeChange={mockApplyAttributeChange}
+        applyDiscountCodeChange={mockApplyDiscountCodeChange}
+        buyerJourneyIntercept={mockBuyerJourneyIntercept}
+      />
+    );
+
+    const input = await screen.findByPlaceholderText('Enter promo code');
+    const submitBtn = screen.getByRole('button', { name: /apply promo code/i });
+
+    fireEvent.change(input, { target: { value: 'EXPIRED99' } });
+    fireEvent.click(submitBtn);
+
+    // Verify error is shown
+    const errorMsg = await screen.findByText(/promo code "EXPIRED99" is invalid or does not apply to this cart/i);
+    expect(errorMsg).toBeDefined();
+
+    // Verify applyDiscountCodeChange and applyAttributeChange were NOT called for the rejected code
+    expect(mockApplyDiscountCodeChange).not.toHaveBeenCalled();
+    expect(mockApplyAttributeChange).not.toHaveBeenCalled();
+  });
+
+  it('re-evaluates and updates signed cart attribute when cart subtotal changes after code is applied', async () => {
+    const mockInitialResponse = {
+      evaluationId: 'eval-1',
+      schemaVersion: 1,
+      expiresAt: '2026-11-19T12:00:00.000Z',
+      decisions: [],
+      priceBreakdown: {
+        currency: 'USD',
+        originalMerchandiseSubtotal: 5000,
+        discountAllocations: [],
+        totalDiscount: 0,
+        discountedMerchandiseSubtotal: 5000,
+      },
+      candidateOffers: [],
+    };
+
+    const mockCodeResponse = {
+      evaluationId: 'eval-code',
+      schemaVersion: 1,
+      expiresAt: '2026-11-19T12:00:00.000Z',
+      decisions: [],
+      priceBreakdown: {
+        currency: 'USD',
+        originalMerchandiseSubtotal: 5000,
+        discountAllocations: [],
+        totalDiscount: 1000,
+        discountedMerchandiseSubtotal: 4000,
+      },
+      codeResults: [{ code: 'VALID10', outcome: 'accepted' }],
+    };
+
+    const mockUpdatedSubtotalResponse = {
+      evaluationId: 'eval-updated',
+      schemaVersion: 1,
+      expiresAt: '2026-11-19T12:00:00.000Z',
+      decisions: [],
+      priceBreakdown: {
+        currency: 'USD',
+        originalMerchandiseSubtotal: 10000,
+        discountAllocations: [],
+        totalDiscount: 2000,
+        discountedMerchandiseSubtotal: 8000,
+      },
+      codeResults: [{ code: 'VALID10', outcome: 'accepted' }],
+    };
+
+    globalThis.fetch = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => mockInitialResponse,
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => mockCodeResponse,
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => mockUpdatedSubtotalResponse,
+      });
+
+    const { rerender } = render(
+      <CheckoutOffers
+        apiUrl="https://api.incentives.dev"
+        publishableKey="pk_live_test_123"
+        cartId="gid://shopify/Cart/c1-test"
+        shopDomain="test-store.myshopify.com"
+        signingSecret="test-secret-456"
+        cartLines={mockCartLines}
+        cost={mockCost}
+        discountCodes={mockDiscountCodes}
+        applyAttributeChange={mockApplyAttributeChange}
+        applyDiscountCodeChange={mockApplyDiscountCodeChange}
+        buyerJourneyIntercept={mockBuyerJourneyIntercept}
+      />
+    );
+
+    const input = await screen.findByPlaceholderText('Enter promo code');
+    const submitBtn = screen.getByRole('button', { name: /apply promo code/i });
+
+    fireEvent.change(input, { target: { value: 'VALID10' } });
+    fireEvent.click(submitBtn);
+
+    await waitFor(() => {
+      expect(mockApplyAttributeChange).toHaveBeenCalledTimes(1);
+    });
+
+    // Now shopper changes cart quantity (subtotal rises to 100.00)
+    const updatedCost = {
+      subtotalAmount: { amount: 100.0, currencyCode: 'USD' },
+      totalAmount: { amount: 100.0, currencyCode: 'USD' },
+    };
+
+    rerender(
+      <CheckoutOffers
+        apiUrl="https://api.incentives.dev"
+        publishableKey="pk_live_test_123"
+        cartId="gid://shopify/Cart/c1-test"
+        shopDomain="test-store.myshopify.com"
+        signingSecret="test-secret-456"
+        cartLines={mockCartLines}
+        cost={updatedCost}
+        discountCodes={mockDiscountCodes}
+        applyAttributeChange={mockApplyAttributeChange}
+        applyDiscountCodeChange={mockApplyDiscountCodeChange}
+        buyerJourneyIntercept={mockBuyerJourneyIntercept}
+      />
+    );
+
+    // Verify background re-evaluation auto-updates _incentives_eval with new subtotal
+    await waitFor(() => {
+      expect(mockApplyAttributeChange).toHaveBeenCalledTimes(2);
+      const secondCallArg = mockApplyAttributeChange.mock.calls[1][0];
+      const parsed = JSON.parse(secondCallArg.value);
+      expect(parsed.subtotalMinorUnits).toBe(10000);
+      expect(parsed.discountMinorUnits).toBe(2000);
+      expect(parsed.evaluationId).toBe('eval-updated');
+    });
+  });
 });

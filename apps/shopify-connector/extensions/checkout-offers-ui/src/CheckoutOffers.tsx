@@ -9,12 +9,20 @@ export interface CheckoutOffersProps extends UseIncentivesEvaluationOptions {
   title?: string;
 }
 
-function formatMoney(minorUnits: number): string {
-  return `$${(minorUnits / 100).toFixed(2)}`;
+function formatMoney(minorUnits: number, currency = 'USD'): string {
+  try {
+    return new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency,
+    }).format(minorUnits / 100);
+  } catch {
+    return `$${(minorUnits / 100).toFixed(2)}`;
+  }
 }
 
 export function CheckoutOffers(props: CheckoutOffersProps) {
   const { title = 'Special Offers & Rewards', ...hookOptions } = props;
+  const currency = hookOptions.cost?.subtotalAmount?.currencyCode ?? 'USD';
 
   const {
     inFlight,
@@ -103,7 +111,7 @@ export function CheckoutOffers(props: CheckoutOffersProps) {
                     <div style={{ fontWeight: 600, fontSize: '14px' }}>{offer.name}</div>
                     {offer.estimatedDiscountMinorUnits > 0 && (
                       <div style={{ color: '#008060', fontSize: '13px', marginTop: '2px' }}>
-                        Save {formatMoney(offer.estimatedDiscountMinorUnits)}
+                        Save {formatMoney(offer.estimatedDiscountMinorUnits, currency)}
                       </div>
                     )}
                   </div>
@@ -147,7 +155,7 @@ export function CheckoutOffers(props: CheckoutOffersProps) {
                 >
                   <div style={{ fontWeight: 600, fontSize: '14px', marginBottom: '4px' }}>{offer.name}</div>
                   <div style={{ fontSize: '13px', color: '#5c5f62', marginBottom: '8px' }}>
-                    Add {formatMoney(shortfall)} more to unlock {offer.name}
+                    Add {formatMoney(shortfall, currency)} more to unlock {offer.name}
                   </div>
                   <div
                     role="progressbar"
