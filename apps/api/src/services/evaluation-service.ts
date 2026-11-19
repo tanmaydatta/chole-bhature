@@ -556,8 +556,7 @@ function findSubtotalProgress(
     return unreached[0];
   }
 
-  candidatesWithTarget.sort((a, b) => b.target - a.target);
-  return candidatesWithTarget[0];
+  return undefined;
 }
 
 function factInputs(request: EvaluationRequest) {
@@ -894,13 +893,16 @@ export function createEvaluationService(
           : await repositories.customers.get(merchantId, request.customerRef);
         let customer: EvaluationCustomer = storedCustomer;
         if (request.customerRef !== undefined && customer === null) {
-          if (request.includeCandidateOffers) {
+          try {
             customer = await repositories.customers.create(merchantId, {
               externalRef: request.customerRef,
               attributes: {},
             });
-          } else {
-            throw new NotFoundError('Customer not found', 'CUSTOMER_NOT_FOUND');
+          } catch (cause) {
+            customer = await repositories.customers.get(merchantId, request.customerRef);
+            if (customer === null) {
+              throw new EvaluationPipelineError('d1', cause);
+            }
           }
         }
         if (storedCustomer !== null) {
@@ -951,12 +953,16 @@ export function createEvaluationService(
           reservations,
           preparedReservations,
         };
+        const autoCandidates = (mode === 'automatic' || request.includeCandidateOffers)
+          ? await automaticCandidates(repositories, merchantId, now)
+          : [];
+
         let decisions: IncentiveDecision[];
         let codeResults: CodeEvaluationResult[];
         if (mode === 'automatic') {
           decisions = [];
           codeResults = [];
-          for (const candidate of await automaticCandidates(repositories, merchantId, now)) {
+          for (const candidate of autoCandidates) {
             const evaluated = await evaluateSingleProgram(candidate, singleProgramContext);
             if (evaluated.decision.outcome !== 'qualified') continue;
             decisions = [stableDecision(evaluated.decision)];
@@ -1055,7 +1061,6 @@ export function createEvaluationService(
         let candidateOffers: CandidateOffer[] | undefined;
         if (request.includeCandidateOffers) {
           candidateOffers = [];
-          const candidatePrograms = await automaticCandidates(repositories, merchantId, now);
           const candidateFacts: EvaluationFactsSnapshot = {
             ...commonFacts,
             programs: [],
@@ -1066,11 +1071,16 @@ export function createEvaluationService(
             preparedReservations: [],
           };
 
-          for (const candidate of candidatePrograms) {
+          for (const candidate of autoCandidates) {
             const evaluated = await evaluateSingleProgram(candidate, candidateContext, true);
-            const qualified = evaluated.decision.outcome === 'qualified';
+            const outcome = evaluated.decision.outcome;
+            const isExhausted = outcome === 'exhausted'
+              || (candidate.program.usageCap !== undefined && candidate.usageCount >= candidate.program.usageCap)
+              || (candidate.budgetRemaining !== undefined && candidate.budgetRemaining <= 0);
+            const isUnavailable = outcome === 'unavailable'
+              || selectedCurrencyMismatch(candidate.program, evaluated.decision, request.cart.currency);
 
-            if (qualified) {
+            if (outcome === 'qualified' && !isExhausted && !isUnavailable) {
               const estimatedDiscountMinorUnits = projectedDiscountMinorUnits(
                 evaluated.decision.effects,
                 request.cart,
@@ -1080,6 +1090,13 @@ export function createEvaluationService(
                 name: candidate.program.name,
                 qualified: true,
                 estimatedDiscountMinorUnits,
+              });
+            } else if (isExhausted || isUnavailable) {
+              candidateOffers.push({
+                programRef: candidate.externalRef,
+                name: candidate.program.name,
+                qualified: false,
+                estimatedDiscountMinorUnits: 0,
               });
             } else {
               const progressInfo = findSubtotalProgress(candidate.program, request.cart.subtotal);

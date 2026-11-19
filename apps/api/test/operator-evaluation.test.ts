@@ -112,14 +112,20 @@ describe('private operator evaluation RPC', () => {
     expect(await env.DB.prepare('SELECT COUNT(*) AS n FROM evaluation_decisions').first('n')).toBe(0);
   });
 
-  test('enforces published types and missing schema/customer prerequisites', async () => {
+  test('enforces published types and missing schema/merchant prerequisites', async () => {
     await expect(service.evaluate(context(), request)).resolves.toEqual({ error: { code: 'NOT_FOUND',
       message: 'The requested resource was not found', correlationId: 'operator-evaluation-correlation', retryable: false } });
     await publish();
     await expect(service.evaluate(context(), { ...request, context: { channel: 'foreign' } })).resolves.toMatchObject({ error: { code: 'INVALID_REQUEST', message: 'Request validation failed' } });
-    await expect(service.evaluate(context(), { ...request, customerRef: 'missing-customer' })).resolves.toMatchObject({ error: { code: 'NOT_FOUND' } });
     await expect(service.evaluate({ ...context(), merchantId: 'foreign-merchant' }, request)).resolves.toMatchObject({ error: { code: 'NOT_FOUND' } });
     expect(await env.DB.prepare('SELECT COUNT(*) AS n FROM evaluation_decisions').first('n')).toBe(0);
+  });
+
+  test('evaluates unknown customer gracefully with empty attributes', async () => {
+    await publish();
+    const result = await service.evaluate(context(), { ...request, customerRef: 'missing-customer' });
+    if ('error' in result) throw new Error('Expected evaluation success');
+    expect(result).toMatchObject({ customerRef: 'missing-customer', customerVersion: 1 });
   });
 
   test('returns a canonical missing-schema envelope across the private published-schema boundary', async () => {

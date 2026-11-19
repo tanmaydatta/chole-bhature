@@ -318,4 +318,101 @@ describe('Evaluation Service - Candidate Offers & Discovery Updates', () => {
     expect(res.customerVersion).toBe(1);
     expect(res.evaluationId).toBeDefined();
   });
+
+  test('evaluates un-synced customer gracefully without includeCandidateOffers', async () => {
+    const res = await evaluate({
+      customerRef: 'unsynced-customer-no-candidates',
+      cart: { currency: 'USD', subtotal: 5000, items: [] },
+    });
+
+    expect(res.customerRef).toBe('unsynced-customer-no-candidates');
+    expect(res.customerVersion).toBe(1);
+    expect(res.candidateOffers).toBeUndefined();
+  });
+
+  test('omits progress when customer has already surpassed all subtotal hurdles', async () => {
+    await seedProgram({
+      id: 'tier-gold-subtotal',
+      type: 'promo',
+      name: 'Gold members over 50',
+      status: 'active',
+      autoApply: true,
+      stackable: false,
+      priority: 10,
+      eligibility: {
+        match: 'ALL',
+        conditions: [
+          {
+            id: 'tier-check',
+            variable: 'customer.tier',
+            operator: 'eq',
+            value: 'gold',
+          },
+          {
+            id: 'subtotal-50',
+            variable: 'cart.subtotal',
+            operator: 'gte',
+            value: 5000,
+          },
+        ],
+      },
+      rewardRules: [conditionalRule({
+        type: 'order_discount',
+        calculation: 'fixed',
+        amount: { currency: 'USD', minorUnits: 1000 },
+      }, 'reward-gold')],
+    });
+
+    const res = await evaluate({
+      cart: { currency: 'USD', subtotal: 8000, items: [] },
+      includeCandidateOffers: true,
+    });
+
+    const offer = res.candidateOffers?.find(o => o.programRef === 'tier-gold-subtotal');
+    expect(offer).toBeDefined();
+    expect(offer?.qualified).toBe(false);
+    expect(offer?.progress).toBeUndefined();
+  });
+
+  test('omits progress for exhausted promos', async () => {
+    await seedProgram({
+      id: 'exhausted-promo',
+      type: 'promo',
+      name: 'Exhausted Promo',
+      status: 'active',
+      autoApply: true,
+      stackable: false,
+      priority: 10,
+      usageCap: 1,
+      eligibility: {
+        match: 'ALL',
+        conditions: [{
+          id: 'sub-100',
+          variable: 'cart.subtotal',
+          operator: 'gte',
+          value: 10000,
+        }],
+      },
+      rewardRules: [conditionalRule({
+        type: 'order_discount',
+        calculation: 'fixed',
+        amount: { currency: 'USD', minorUnits: 500 },
+      }, 'r-ex')],
+    });
+
+    await env.DB.prepare(
+      'UPDATE program_counters SET usage_count = 1 WHERE program_id IN (SELECT id FROM programs WHERE external_ref = ?)',
+    ).bind('exhausted-promo').run();
+
+    const res = await evaluate({
+      cart: { currency: 'USD', subtotal: 8000, items: [] },
+      includeCandidateOffers: true,
+    });
+
+    const offer = res.candidateOffers?.find(o => o.programRef === 'exhausted-promo');
+    expect(offer).toBeDefined();
+    expect(offer?.qualified).toBe(false);
+    expect(offer?.progress).toBeUndefined();
+    expect(offer?.estimatedDiscountMinorUnits).toBe(0);
+  });
 });
