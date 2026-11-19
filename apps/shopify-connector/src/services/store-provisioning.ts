@@ -30,7 +30,7 @@ export async function shopifyGraphQL<T = unknown>(
   query: string,
   variables: Record<string, unknown> = {},
   apiVersion = '2026-07',
-): Promise<{ data?: T; errors?: unknown[]; userErrors?: unknown[] }> {
+): Promise<{ data?: T; errors?: Array<{ message: string }> }> {
   const endpoint = `https://${shop}/admin/api/${apiVersion}/graphql.json`;
   const response = await fetch(endpoint, {
     method: 'POST',
@@ -43,10 +43,37 @@ export async function shopifyGraphQL<T = unknown>(
 
   if (!response.ok) {
     const errorText = await response.text();
-    throw new Error(`Shopify GraphQL request failed with status ${response.status}: ${errorText}`);
+    throw new Error(`Shopify GraphQL HTTP error ${response.status}: ${errorText}`);
   }
 
-  return response.json() as Promise<{ data?: T; errors?: unknown[]; userErrors?: unknown[] }>;
+  const payload = (await response.json()) as {
+    data?: T;
+    errors?: Array<{ message: string }>;
+  };
+
+  if (payload.errors && payload.errors.length > 0) {
+    const messages = payload.errors.map(e => e.message).join('; ');
+    throw new Error(`Shopify GraphQL execution error: ${messages}`);
+  }
+
+  return payload;
+}
+
+function assertNoUserErrors(
+  mutationName: string,
+  result: { data?: Record<string, unknown> },
+) {
+  const mutationResult = result.data?.[mutationName] as
+    | { userErrors?: Array<{ field?: string[]; message: string; code?: string }> }
+    | undefined;
+
+  const userErrors = mutationResult?.userErrors;
+  if (userErrors && Array.isArray(userErrors) && userErrors.length > 0) {
+    const details = userErrors
+      .map(e => `${e.field?.join('.') ?? 'general'}: ${e.message}`)
+      .join(', ');
+    throw new Error(`Shopify ${mutationName} userErrors: ${details}`);
+  }
 }
 
 export async function provisionStore(
@@ -60,7 +87,7 @@ export async function provisionStore(
     env.SHOPIFY_DISCOUNT_FUNCTION_ID ??
     '00000000-0000-0000-0000-000000000000';
 
-  // 1. Create dedicated merchant tenant via CORE service binding
+  // 1. Create or resolve dedicated merchant tenant via CORE service binding
   const tenantId = `shop_${shop.replace(/[^a-zA-Z0-9]/g, '_')}`;
   const correlationId = crypto.randomUUID();
   const operatorContext: OperatorCallContext = {
@@ -79,9 +106,12 @@ export async function provisionStore(
   });
 
   if (!provisionResult.ok) {
-    throw new Error(
-      `Failed to provision merchant in Core: ${provisionResult.error.message} (${provisionResult.error.code})`,
-    );
+    // If tenant already exists, handle re-installation/re-authentication idempotently
+    if (provisionResult.error.code !== 'CONFLICT') {
+      throw new Error(
+        `Failed to provision merchant in Core: ${provisionResult.error.message} (${provisionResult.error.code})`,
+      );
+    }
   }
 
   if (env.CORE.activateMerchant) {
@@ -147,7 +177,29 @@ export async function provisionStore(
     )
     .run();
 
-  // 5. Register App Metafield ($app:incentives:publishable_token) on Shopify
+  // 5. Query App Installation or Shop ID for mandatory ownerId in metafieldsSet
+  const getOwnerQuery = `
+    query GetAppInstallationOwner {
+      currentAppInstallation {
+        id
+      }
+      shop {
+        id
+      }
+    }
+  `;
+
+  const ownerRes = await shopifyGraphQL<{
+    currentAppInstallation?: { id: string };
+    shop?: { id: string };
+  }>(shop, accessToken, getOwnerQuery, {}, apiVersion);
+
+  const ownerId =
+    ownerRes.data?.currentAppInstallation?.id ??
+    ownerRes.data?.shop?.id ??
+    `gid://shopify/AppInstallation/0`;
+
+  // 6. Register App Metafield ($app:incentives:publishable_token) on Shopify
   const setMetafieldsMutation = `
     mutation SetAppMetafield($metafields: [MetafieldsSetInput!]!) {
       metafieldsSet(metafields: $metafields) {
@@ -166,13 +218,14 @@ export async function provisionStore(
     }
   `;
 
-  await shopifyGraphQL(
+  const metafieldsRes = await shopifyGraphQL(
     shop,
     accessToken,
     setMetafieldsMutation,
     {
       metafields: [
         {
+          ownerId,
           namespace: '$app:incentives',
           key: 'publishable_token',
           type: 'single_line_text_field',
@@ -182,8 +235,9 @@ export async function provisionStore(
     },
     apiVersion,
   );
+  assertNoUserErrors('metafieldsSet', metafieldsRes as { data?: Record<string, unknown> });
 
-  // 6. Register Shopify Automatic Discount Function
+  // 7. Register Shopify Automatic Discount Function
   const createAutoDiscountMutation = `
     mutation CreateAutomaticDiscount($automaticAppDiscount: DiscountAutomaticAppInput!) {
       discountAutomaticAppCreate(automaticAppDiscount: $automaticAppDiscount) {
@@ -201,7 +255,7 @@ export async function provisionStore(
     }
   `;
 
-  await shopifyGraphQL(
+  const autoDiscountRes = await shopifyGraphQL(
     shop,
     accessToken,
     createAutoDiscountMutation,
@@ -209,6 +263,7 @@ export async function provisionStore(
       automaticAppDiscount: {
         title: 'Incentives Automatic Discounts',
         functionId,
+        discountClasses: ['ORDER', 'PRODUCT', 'SHIPPING'],
         startsAt: now,
         metafields: [
           {
@@ -222,8 +277,9 @@ export async function provisionStore(
     },
     apiVersion,
   );
+  assertNoUserErrors('discountAutomaticAppCreate', autoDiscountRes as { data?: Record<string, unknown> });
 
-  // 7. Register Shopify Master Discount Code Node
+  // 8. Register Shopify Master Discount Code Node
   const createCodeDiscountMutation = `
     mutation CreateCodeDiscount($codeAppDiscount: DiscountCodeAppInput!) {
       discountCodeAppCreate(codeAppDiscount: $codeAppDiscount) {
@@ -241,7 +297,7 @@ export async function provisionStore(
     }
   `;
 
-  await shopifyGraphQL(
+  const codeDiscountRes = await shopifyGraphQL(
     shop,
     accessToken,
     createCodeDiscountMutation,
@@ -263,6 +319,7 @@ export async function provisionStore(
     },
     apiVersion,
   );
+  assertNoUserErrors('discountCodeAppCreate', codeDiscountRes as { data?: Record<string, unknown> });
 
   return {
     shop,

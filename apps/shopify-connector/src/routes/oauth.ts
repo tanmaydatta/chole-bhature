@@ -96,9 +96,9 @@ oauthRoutes.get('/callback', async c => {
     return c.text('Invalid HMAC signature', 401);
   }
 
-  // Verify OAuth state cookie
+  // Verify OAuth state cookie (CSRF protection)
   const cookieState = getCookie(c, 'shopify_oauth_state');
-  if (cookieState && !timingSafeEqual(cookieState, state)) {
+  if (!cookieState || !timingSafeEqual(cookieState, state)) {
     return c.text('Invalid state parameter', 403);
   }
 

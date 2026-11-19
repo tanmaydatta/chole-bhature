@@ -47,7 +47,6 @@ class MockD1Database {
   executeRun(sql: string, params: unknown[]): { success: boolean; meta: Record<string, unknown> } {
     if (sql.includes('shopify_installed_shops')) {
       if (sql.toUpperCase().includes('INSERT') || sql.toUpperCase().includes('REPLACE')) {
-        // params: shop, accessToken, merchantId, tenantSigningKey, publishableToken, secretToken, now, now
         const [
           shopDomain,
           accessToken,
@@ -171,6 +170,22 @@ describe('Shopify OAuth & Store Provisioning', () => {
         const body = typeof init?.body === 'string' ? JSON.parse(init.body) : {};
         const query = body.query || '';
 
+        if (query.includes('GetAppInstallationOwner')) {
+          return new Response(
+            JSON.stringify({
+              data: {
+                currentAppInstallation: {
+                  id: 'gid://shopify/AppInstallation/123456',
+                },
+                shop: {
+                  id: 'gid://shopify/Shop/987654',
+                },
+              },
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } },
+          );
+        }
+
         if (query.includes('metafieldsSet')) {
           return new Response(
             JSON.stringify({
@@ -238,6 +253,16 @@ describe('Shopify OAuth & Store Provisioning', () => {
     });
   });
 
+  describe('GET /health', () => {
+    it('returns service health status', async () => {
+      const app = createApp();
+      const res = await app.request('/health', {}, testEnv);
+      expect(res.status).toBe(200);
+      const json = await res.json();
+      expect(json).toEqual({ status: 'ok', service: 'shopify-connector' });
+    });
+  });
+
   describe('GET /auth/shopify', () => {
     it('returns 400 if shop parameter is missing', async () => {
       const app = createApp();
@@ -300,6 +325,24 @@ describe('Shopify OAuth & Store Provisioning', () => {
       expect(text).toContain('Invalid HMAC');
     });
 
+    it('returns 403 when shopify_oauth_state cookie is missing', async () => {
+      const app = createApp();
+      const queryParams: Record<string, string> = {
+        shop: SHOP,
+        code: 'code123',
+        state: 'any-state-token',
+        timestamp: '1234567890',
+      };
+      const hmac = computeShopifyOAuthHmac(queryParams, CLIENT_SECRET);
+      const search = new URLSearchParams({ ...queryParams, hmac }).toString();
+
+      // Request WITHOUT Cookie header
+      const res = await app.request(`/auth/callback?${search}`, {}, testEnv);
+      expect(res.status).toBe(403);
+      const text = await res.text();
+      expect(text).toContain('Invalid state parameter');
+    });
+
     it('returns 403 when state parameter does not match cookie', async () => {
       const app = createApp();
       const queryParams: Record<string, string> = {
@@ -322,7 +365,7 @@ describe('Shopify OAuth & Store Provisioning', () => {
       );
       expect(res.status).toBe(403);
       const text = await res.text();
-      expect(text).toContain('Invalid state');
+      expect(text).toContain('Invalid state parameter');
     });
 
     it('successfully processes callback: exchanges token, provisions store, sets up metafield and discounts', async () => {
@@ -402,7 +445,14 @@ describe('Shopify OAuth & Store Provisioning', () => {
       expect(storeRecord?.secret_token).toBe('sk_live_shopify_sec_token_1234567890');
       expect(storeRecord?.status).toBe('active');
 
-      // Verify Shopify GraphQL calls
+      // Verify owner query
+      const ownerFetch = capturedFetches.find(f => {
+        const body = typeof f.options?.body === 'string' ? f.options.body : '';
+        return body.includes('GetAppInstallationOwner');
+      });
+      expect(ownerFetch).toBeDefined();
+
+      // Verify Shopify GraphQL calls for App Metafield
       const metafieldFetch = capturedFetches.find(f => {
         const body = typeof f.options?.body === 'string' ? f.options.body : '';
         return body.includes('metafieldsSet');
@@ -412,6 +462,7 @@ describe('Shopify OAuth & Store Provisioning', () => {
         'X-Shopify-Access-Token': 'shpat_permanent_access_token_xyz',
       });
       const metafieldBody = JSON.parse(metafieldFetch!.options?.body as string);
+      expect(metafieldBody.variables.metafields[0].ownerId).toBe('gid://shopify/AppInstallation/123456');
       expect(metafieldBody.variables.metafields[0].namespace).toBe('$app:incentives');
       expect(metafieldBody.variables.metafields[0].key).toBe('publishable_token');
       expect(metafieldBody.variables.metafields[0].value).toBe('pk_live_shopify_pub_token_1234567890');
@@ -423,6 +474,11 @@ describe('Shopify OAuth & Store Provisioning', () => {
       });
       expect(autoDiscountFetch).toBeDefined();
       const autoDiscountBody = JSON.parse(autoDiscountFetch!.options?.body as string);
+      expect(autoDiscountBody.variables.automaticAppDiscount.discountClasses).toEqual([
+        'ORDER',
+        'PRODUCT',
+        'SHIPPING',
+      ]);
       expect(autoDiscountBody.variables.automaticAppDiscount.metafields[0].key).toBe('signing-secret');
       expect(autoDiscountBody.variables.automaticAppDiscount.metafields[0].value).toBe(
         storeRecord?.tenant_signing_key,
@@ -464,6 +520,94 @@ describe('Shopify OAuth & Store Provisioning', () => {
       expect(dbRow?.access_token).toBe('shpat_direct_provision_token');
       expect(dbRow?.tenant_id).toBe(result.merchantId);
       expect(dbRow?.tenant_signing_key).toBe(result.tenantSigningKey);
+    });
+
+    it('handles re-authentication idempotently when Core returns CONFLICT', async () => {
+      // Simulate existing merchant conflict
+      (mockCore.provisionMerchant as any).mockResolvedValueOnce({
+        ok: false,
+        error: {
+          code: 'CONFLICT',
+          message: 'Merchant provisioning identity conflicts',
+          retryable: false,
+        },
+      });
+
+      const result = await provisionStore(testEnv, {
+        shop: SHOP,
+        accessToken: 'shpat_reauth_new_token',
+      });
+
+      expect(result.shop).toBe(SHOP);
+      expect(result.merchantId).toMatch(/^shop_/);
+
+      // Verify updated in DB with new access token
+      const dbRow = await mockDb
+        .prepare('SELECT * FROM shopify_installed_shops WHERE shop_domain = ?')
+        .bind(SHOP)
+        .first();
+      expect(dbRow?.access_token).toBe('shpat_reauth_new_token');
+    });
+
+    it('throws error when Shopify GraphQL returns execution errors', async () => {
+      vi.stubGlobal('fetch', async () => {
+        return new Response(
+          JSON.stringify({
+            errors: [{ message: 'GraphQL syntax error or internal failure' }],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        );
+      });
+
+      await expect(
+        provisionStore(testEnv, {
+          shop: SHOP,
+          accessToken: 'shpat_err',
+        }),
+      ).rejects.toThrow('Shopify GraphQL execution error');
+    });
+
+    it('throws error when Shopify mutation returns userErrors', async () => {
+      vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+        const body = typeof init?.body === 'string' ? JSON.parse(init.body) : {};
+        const query = body.query || '';
+
+        if (query.includes('GetAppInstallationOwner')) {
+          return new Response(
+            JSON.stringify({
+              data: {
+                currentAppInstallation: { id: 'gid://shopify/AppInstallation/1' },
+              },
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } },
+          );
+        }
+
+        if (query.includes('metafieldsSet')) {
+          return new Response(
+            JSON.stringify({
+              data: {
+                metafieldsSet: {
+                  userErrors: [{ field: ['namespace'], message: 'Invalid namespace' }],
+                },
+              },
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } },
+          );
+        }
+
+        return new Response(JSON.stringify({ data: {} }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      });
+
+      await expect(
+        provisionStore(testEnv, {
+          shop: SHOP,
+          accessToken: 'shpat_err',
+        }),
+      ).rejects.toThrow('Shopify metafieldsSet userErrors: namespace: Invalid namespace');
     });
   });
 });
