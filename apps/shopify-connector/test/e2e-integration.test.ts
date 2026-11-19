@@ -397,12 +397,12 @@ describe('Shopify Plus Turnkey Integration - End-to-End System Integration Suite
           updatedAt: new Date().toISOString(),
         };
         provisionedMerchants.set(input.id, tenant);
-        return { ok: true, value: tenant };
+        return { ok: true as const, value: tenant };
       }),
       activateMerchant: vi.fn(async (_context, input) => {
         const tenant = provisionedMerchants.get(input.id);
         if (tenant) tenant.status = 'active';
-        return { ok: true };
+        return { ok: true as const, value: tenant ?? { id: input.id, name: input.id, provisioningId: input.id, status: 'active', createdAt: '', updatedAt: '' } };
       }),
       createCredential: vi.fn(async (context, input) => {
         const isPub = input.kind === 'publishable';
@@ -474,6 +474,8 @@ describe('Shopify Plus Turnkey Integration - End-to-End System Integration Suite
             discountedMerchandiseSubtotal: 8000,
           },
         };
+
+        expect(RedemptionResponseSchema.safeParse(redemptionRecord).success).toBe(true);
 
         committedRedemptions.set(input.idempotencyKey, redemptionRecord);
         auditRows.push({
