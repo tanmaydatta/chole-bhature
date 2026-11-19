@@ -39,7 +39,7 @@ export function parseMoneyToMinorUnits(value: number | string | undefined, defau
     return defaultVal;
   }
   if (typeof value === 'number') {
-    return value;
+    return Math.round(value);
   }
   const trimmed = value.trim();
   if (!trimmed) {
@@ -50,7 +50,7 @@ export function parseMoneyToMinorUnits(value: number | string | undefined, defau
     const whole = parseInt(parts[0] || '0', 10);
     const frac = (parts[1] || '').padEnd(2, '0').slice(0, 2);
     const sign = whole < 0 || trimmed.startsWith('-') ? -1 : 1;
-    return Math.abs(whole) * 100 + parseInt(frac, 10) * sign;
+    return sign * (Math.abs(whole) * 100 + parseInt(frac, 10));
   }
   const parsed = parseInt(trimmed, 10);
   return Number.isNaN(parsed) ? defaultVal : parsed;
@@ -81,22 +81,22 @@ export function normalizeCustomer(input: ShopifyCustomer): CustomerSnapshot {
   const attributes: Record<string, unknown> = {
     ...input.attributes,
   };
-  if (input.tags !== undefined && !('tags' in attributes)) {
+  if (input.tags != null && !('tags' in attributes)) {
     attributes.tags = input.tags;
   }
-  if (input.email !== undefined && !('email' in attributes)) {
+  if (input.email != null && !('email' in attributes)) {
     attributes.email = input.email;
   }
-  if (input.firstName !== undefined && !('firstName' in attributes)) {
+  if (input.firstName != null && !('firstName' in attributes)) {
     attributes.firstName = input.firstName;
   }
-  if (input.lastName !== undefined && !('lastName' in attributes)) {
+  if (input.lastName != null && !('lastName' in attributes)) {
     attributes.lastName = input.lastName;
   }
-  if (input.ordersCount !== undefined && !('ordersCount' in attributes)) {
+  if (input.ordersCount != null && !('ordersCount' in attributes)) {
     attributes.ordersCount = input.ordersCount;
   }
-  if (input.totalSpent !== undefined && !('totalSpent' in attributes)) {
+  if (input.totalSpent != null && !('totalSpent' in attributes)) {
     attributes.totalSpent = input.totalSpent;
   }
 
@@ -114,7 +114,7 @@ function normalizeCartLine(
 ): CartLineItem {
   const lineRef = line.lineRef
     ?? line.lineId
-    ?? (line.id !== undefined ? String(line.id) : `line_${index + 1}`);
+    ?? (line.id != null ? String(line.id) : `line_${index + 1}`);
 
   const productRef = line.productRef
     ?? line.productId
@@ -190,17 +190,17 @@ function normalizeOrderLine(
 ): CartLineItem {
   const lineRef = line.lineRef
     ?? line.lineId
-    ?? (line.id !== undefined ? String(line.id) : `line_${index + 1}`);
+    ?? (line.id != null ? String(line.id) : `line_${index + 1}`);
 
   const productRef = line.productRef
     ?? line.productId
-    ?? (line.product_id !== undefined ? String(line.product_id) : undefined)
+    ?? (line.product_id != null ? String(line.product_id) : undefined)
     ?? line.merchandise?.product?.id
     ?? `product_${index + 1}`;
 
   const variantRef = line.variantRef
     ?? line.variantId
-    ?? (line.variant_id !== undefined ? String(line.variant_id) : undefined)
+    ?? (line.variant_id != null ? String(line.variant_id) : undefined)
     ?? line.merchandise?.id;
 
   const quantity = line.quantity ?? 1;
@@ -232,11 +232,11 @@ function normalizeOrderLine(
 export function normalizeOrder(input: ShopifyOrder): OrderSnapshot {
   const externalRef = input.externalRef
     ?? input.orderRef
-    ?? (input.admin_graphql_api_id !== undefined ? String(input.admin_graphql_api_id) : undefined)
-    ?? (input.id !== undefined ? String(input.id) : '');
+    ?? (input.admin_graphql_api_id != null ? String(input.admin_graphql_api_id) : undefined)
+    ?? (input.id != null ? String(input.id) : '');
 
   const idempotencyKey = input.idempotencyKey
-    ?? (input.id !== undefined ? `shopify_${input.id}` : externalRef);
+    ?? (input.id != null ? `shopify_${input.id}` : externalRef);
 
   const currency = input.currency
     ?? input.currencyCode
@@ -254,11 +254,11 @@ export function normalizeOrder(input: ShopifyOrder): OrderSnapshot {
   const total = parseMoneyToMinorUnits(rawTotal);
 
   const customerRef = input.customerRef
-    ?? (input.customerId !== undefined ? String(input.customerId) : undefined)
-    ?? (input.customer?.admin_graphql_api_id !== undefined
+    ?? (input.customerId != null ? String(input.customerId) : undefined)
+    ?? (input.customer?.admin_graphql_api_id != null
       ? String(input.customer.admin_graphql_api_id)
       : undefined)
-    ?? (input.customer?.id !== undefined ? String(input.customer.id) : undefined);
+    ?? (input.customer?.id != null ? String(input.customer.id) : undefined);
 
   const rawLines = input.items ?? input.line_items ?? input.lines ?? [];
   const items = rawLines.map((line, index) =>
@@ -397,8 +397,11 @@ export async function computeShopifyHmac(
 
 export async function verifyShopifyWebhookRequest(
   request: Request,
-  secret: string,
+  secret?: string,
 ): Promise<VerificationResult> {
+  if (!secret) {
+    return { verified: false };
+  }
   try {
     const hmacHeader = request.headers.get('x-shopify-hmac-sha256')
       ?? request.headers.get('X-Shopify-Hmac-Sha256');
@@ -443,7 +446,7 @@ export function createShopifyConnector(
 ): CommerceConnector<ShopifyCustomer, ShopifyCart, ShopifyOrder, ShopifyDecision> {
   const envSecret = (globalThis as { process?: { env?: Record<string, string | undefined> } })
     .process?.env?.['SHOPIFY_CLIENT_SECRET'];
-  const secret = options.secret ?? envSecret ?? 'shopify-connector-secret';
+  const secret = options.secret ?? envSecret;
 
   return {
     capabilities() {
@@ -454,6 +457,9 @@ export function createShopifyConnector(
     normalizeOrder,
     mapDecision,
     async verifyIncomingRequest(request: Request) {
+      if (!secret) {
+        return { verified: false };
+      }
       return verifyShopifyWebhookRequest(request, secret);
     },
   };

@@ -14,6 +14,7 @@ import {
   type ShopifyOrder,
   computeShopifyHmac,
   createShopifyConnector,
+  parseMoneyToMinorUnits,
 } from './index.js';
 
 const TEST_SECRET = 'shopify_test_app_secret_abc123';
@@ -322,6 +323,29 @@ describe('Shopify Connector Conformance Suite', () => {
         ],
       });
     });
+
+    it('handles null customer, customerId, and variant_id without stringifying null', () => {
+      const connector = createShopifyConnector();
+      const snapshot = connector.normalizeOrder({
+        id: 'Order::guest',
+        currency: 'USD',
+        total: 5000,
+        customer: null as unknown as undefined,
+        customerId: null as unknown as undefined,
+        line_items: [
+          {
+            id: 'line::1',
+            product_id: 'prod::1',
+            variant_id: null as unknown as undefined,
+            quantity: 1,
+            unitPrice: 5000,
+          },
+        ],
+      });
+
+      expect(snapshot.customerRef).toBeUndefined();
+      expect(snapshot.items[0]?.variantRef).toBeUndefined();
+    });
   });
 
   describe('mapDecision', () => {
@@ -342,7 +366,34 @@ describe('Shopify Connector Conformance Suite', () => {
     });
   });
 
+  describe('parseMoneyToMinorUnits', () => {
+    it('rounds floating point divisions to integer minor units', () => {
+      expect(parseMoneyToMinorUnits(1000 / 3)).toBe(333);
+      expect(parseMoneyToMinorUnits(2000 / 3)).toBe(667);
+    });
+
+    it('correctly calculates negative decimal strings', () => {
+      expect(parseMoneyToMinorUnits('-10.50')).toBe(-1050);
+      expect(parseMoneyToMinorUnits('-0.99')).toBe(-99);
+      expect(parseMoneyToMinorUnits('-150.00')).toBe(-15000);
+    });
+  });
+
   describe('verifyIncomingRequest', () => {
+    it('fails closed when no secret is configured', async () => {
+      const connector = createShopifyConnector();
+      const request = new Request('https://quickstart.myshopify.com/webhooks/orders-paid', {
+        method: 'POST',
+        headers: {
+          'x-shopify-hmac-sha256': 'any-signature',
+        },
+        body: JSON.stringify({ test: true }),
+      });
+
+      const result = await connector.verifyIncomingRequest(request);
+      expect(result.verified).toBe(false);
+    });
+
     it('rejects missing signature header', async () => {
       const connector = createShopifyConnector({ secret: TEST_SECRET });
       const request = new Request('https://quickstart.myshopify.com/webhooks/orders-paid', {
