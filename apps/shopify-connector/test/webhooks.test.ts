@@ -460,6 +460,30 @@ describe('Shopify Webhooks Handler & Post-Capture Reconciliation', () => {
 
       expect(res.status).toBe(404);
     });
+
+    it('returns 400 when request body contains malformed JSON', async () => {
+      const app = createApp();
+      const rawBody = '{ malformed: json, ';
+      const hmac = computeShopifyWebhookHmac(rawBody, CLIENT_SECRET);
+
+      const res = await app.request(
+        '/webhooks/orders-paid',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Shopify-Shop-Domain': SHOP,
+            'X-Shopify-Hmac-Sha256': hmac,
+          },
+          body: rawBody,
+        },
+        testEnv,
+      );
+
+      expect(res.status).toBe(400);
+      const text = await res.text();
+      expect(text).toContain('Malformed JSON');
+    });
   });
 
   describe('POST /webhooks/orders-cancelled', () => {
@@ -528,6 +552,30 @@ describe('Shopify Webhooks Handler & Post-Capture Reconciliation', () => {
         idempotencyKey: 'shopify_cancel_987654321',
       }));
     });
+
+    it('returns 400 when request body contains malformed JSON', async () => {
+      const app = createApp();
+      const rawBody = '{ bad: json';
+      const hmac = computeShopifyWebhookHmac(rawBody, CLIENT_SECRET);
+
+      const res = await app.request(
+        '/webhooks/orders-cancelled',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Shopify-Shop-Domain': SHOP,
+            'X-Shopify-Hmac-Sha256': hmac,
+          },
+          body: rawBody,
+        },
+        testEnv,
+      );
+
+      expect(res.status).toBe(400);
+      const text = await res.text();
+      expect(text).toContain('Malformed JSON');
+    });
   });
 
   describe('POST /webhooks/refunds-create', () => {
@@ -584,6 +632,30 @@ describe('Shopify Webhooks Handler & Post-Capture Reconciliation', () => {
       expect(data.received).toBe(true);
       expect(data.refunded).toBe(true);
       expect(data.refundId).toBe(777666);
+    });
+
+    it('returns 400 when request body contains malformed JSON', async () => {
+      const app = createApp();
+      const rawBody = '{ bad: json';
+      const hmac = computeShopifyWebhookHmac(rawBody, CLIENT_SECRET);
+
+      const res = await app.request(
+        '/webhooks/refunds-create',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Shopify-Shop-Domain': SHOP,
+            'X-Shopify-Hmac-Sha256': hmac,
+          },
+          body: rawBody,
+        },
+        testEnv,
+      );
+
+      expect(res.status).toBe(400);
+      const text = await res.text();
+      expect(text).toContain('Malformed JSON');
     });
   });
 
@@ -644,7 +716,8 @@ describe('Shopify Webhooks Handler & Post-Capture Reconciliation', () => {
 
       expect(mockCore.upsertCustomer).toHaveBeenCalledTimes(1);
       const upsertCall = (mockCore.upsertCustomer as any).mock.calls[0];
-      // Check customer ref and attributes
+      // Check customer context, ref, and attributes
+      expect(upsertCall[0].permission).toBe('customers:manage');
       expect(upsertCall[1]).toBe('888999');
       expect(upsertCall[2]).toEqual(expect.objectContaining({
         attributes: expect.objectContaining({
@@ -655,6 +728,30 @@ describe('Shopify Webhooks Handler & Post-Capture Reconciliation', () => {
           ordersCount: 7,
         }),
       }));
+    });
+
+    it('returns 400 when request body contains malformed JSON', async () => {
+      const app = createApp();
+      const rawBody = '{ bad: json';
+      const hmac = computeShopifyWebhookHmac(rawBody, CLIENT_SECRET);
+
+      const res = await app.request(
+        '/webhooks/customers-update',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Shopify-Shop-Domain': SHOP,
+            'X-Shopify-Hmac-Sha256': hmac,
+          },
+          body: rawBody,
+        },
+        testEnv,
+      );
+
+      expect(res.status).toBe(400);
+      const text = await res.text();
+      expect(text).toContain('Malformed JSON');
     });
   });
 });

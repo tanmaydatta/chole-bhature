@@ -223,7 +223,7 @@ export async function processCustomerUpdate(
       actorUserId: 'system:shopify-connector',
       actorKind: 'root' as const,
       merchantId: store?.tenant_id ?? `shop_${shopDomain.replace(/[^a-zA-Z0-9]/g, '_')}`,
-      permission: 'customers:write' as const,
+      permission: 'customers:manage' as const,
     };
 
     const customerPatch = {

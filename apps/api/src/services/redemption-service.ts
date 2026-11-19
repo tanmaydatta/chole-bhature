@@ -114,8 +114,9 @@ export function createRedemptionService(
               const selected = evaluation.decisions.filter(
                 decision => decision.outcome === 'qualified' && decision.commitRequired,
               );
+              const reconciledKey = request.idempotencyKey.replace(/[^a-zA-Z0-9_-]/g, '_');
               return RedemptionResponseSchema.parse({
-                redemptionId: `redemption_reconciled_${crypto.randomUUID()}`,
+                redemptionId: `redemption_reconciled_${reconciledKey}`,
                 evaluationId: request.evaluationId,
                 externalOrderRef: request.externalOrderRef,
                 idempotencyKey: request.idempotencyKey,
@@ -154,8 +155,9 @@ export function createRedemptionService(
                   const selected = evaluation.decisions.filter(
                     decision => decision.outcome === 'qualified' && decision.commitRequired,
                   );
+                  const reconciledKey = request.idempotencyKey.replace(/[^a-zA-Z0-9_-]/g, '_');
                   return RedemptionResponseSchema.parse({
-                    redemptionId: `redemption_reconciled_${crypto.randomUUID()}`,
+                    redemptionId: `redemption_reconciled_${reconciledKey}`,
                     evaluationId: request.evaluationId,
                     externalOrderRef: request.externalOrderRef,
                     idempotencyKey: request.idempotencyKey,

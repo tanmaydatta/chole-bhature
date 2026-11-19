@@ -1080,6 +1080,7 @@ describe('POST /v1/redemptions', () => {
     const retry = await redeem(request);
     expect(retry.status).toBe('committed');
     expect(retry.reconciliationWarning).toBe('POST_CAPTURE_OVERSPEND');
+    expect(retry.redemptionId).toBe(response.redemptionId);
   });
 
   test('revalidates every selected active revision and reward rule before committing', async () => {

@@ -50,8 +50,14 @@ webhookRoutes.post('/orders-paid', async c => {
     return c.text('Unauthorized: Invalid HMAC signature', 401);
   }
 
+  let payload: Record<string, unknown>;
   try {
-    const payload = JSON.parse(rawBody) as Record<string, unknown>;
+    payload = JSON.parse(rawBody) as Record<string, unknown>;
+  } catch {
+    return c.text('Bad Request: Malformed JSON body', 400);
+  }
+
+  try {
     const result = await processOrderPaid(c.env, shopDomain, payload);
     return c.json(result, 200);
   } catch (error) {
@@ -68,7 +74,13 @@ webhookRoutes.post('/orders-cancelled', async c => {
     return c.text('Unauthorized: Invalid HMAC signature', 401);
   }
 
-  const payload = JSON.parse(rawBody) as Record<string, unknown>;
+  let payload: Record<string, unknown>;
+  try {
+    payload = JSON.parse(rawBody) as Record<string, unknown>;
+  } catch {
+    return c.text('Bad Request: Malformed JSON body', 400);
+  }
+
   const result = await processOrderCancelled(c.env, shopDomain, payload);
   return c.json(result, 200);
 });
@@ -79,7 +91,13 @@ webhookRoutes.post('/refunds-create', async c => {
     return c.text('Unauthorized: Invalid HMAC signature', 401);
   }
 
-  const payload = JSON.parse(rawBody) as Record<string, unknown>;
+  let payload: Record<string, unknown>;
+  try {
+    payload = JSON.parse(rawBody) as Record<string, unknown>;
+  } catch {
+    return c.text('Bad Request: Malformed JSON body', 400);
+  }
+
   const result = await processRefundCreated(c.env, shopDomain, payload);
   return c.json(result, 200);
 });
@@ -90,7 +108,13 @@ webhookRoutes.post('/customers-update', async c => {
     return c.text('Unauthorized: Invalid HMAC signature', 401);
   }
 
-  const payload = JSON.parse(rawBody) as Record<string, unknown>;
+  let payload: Record<string, unknown>;
+  try {
+    payload = JSON.parse(rawBody) as Record<string, unknown>;
+  } catch {
+    return c.text('Bad Request: Malformed JSON body', 400);
+  }
+
   const result = await processCustomerUpdate(c.env, shopDomain, payload);
   return c.json(result, 200);
 });
