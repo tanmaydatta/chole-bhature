@@ -1,7 +1,12 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import type { EvaluationRequest, EvaluationResponse, CandidateOffer } from '@incentives/contracts';
+import type {
+  EvaluationRequest,
+  EvaluationResponse,
+  CandidateOffer,
+  SignedEvaluationPayload,
+} from '@incentives/contracts';
 
-export type { CandidateOffer };
+export type { CandidateOffer, SignedEvaluationPayload };
 
 export interface CartLine {
   id: string;
@@ -52,18 +57,6 @@ export type DiscountCodeChange =
 export type InterceptorResult =
   | { behavior?: 'block'; canBlockProgress: true; reason: string; label?: string }
   | { behavior?: 'allow'; canBlockProgress: false; reason?: string };
-
-export interface SignedEvaluationPayload {
-  evaluationId: string;
-  shopDomain?: string;
-  cartId: string;
-  subtotalMinorUnits: number;
-  currency: string;
-  discountMinorUnits: number;
-  target?: string;
-  expiresAt?: string;
-  signature: string;
-}
 
 export interface ExtensionSettings {
   apiUrl?: string;
@@ -152,8 +145,7 @@ export function useIncentivesEvaluation(options: UseIncentivesEvaluationOptions)
     settings?.signingSecret ??
     appMetafields.find(
       (m) => m.metafield?.key === 'signing-secret' || m.metafield?.key === 'signing_secret'
-    )?.metafield?.value ??
-    'default-secret';
+    )?.metafield?.value;
 
   const [inFlight, setInFlight] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -239,6 +231,8 @@ export function useIncentivesEvaluation(options: UseIncentivesEvaluationOptions)
           headers: {
             Authorization: `Bearer ${publishableKey}`,
             'Content-Type': 'application/json',
+            'x-shopify-shop-domain': shopDomain,
+            'x-shopify-cart-id': cartId,
           },
           body: JSON.stringify(reqBody),
         });
@@ -260,7 +254,7 @@ export function useIncentivesEvaluation(options: UseIncentivesEvaluationOptions)
         setInFlight(false);
       }
     },
-    [apiUrl, publishableKey, cost, cartLines, discountCodes]
+    [apiUrl, publishableKey, cost, cartLines, discountCodes, shopDomain, cartId]
   );
 
   // Run evaluation on mount or when subtotal/cartLines change
@@ -284,69 +278,85 @@ export function useIncentivesEvaluation(options: UseIncentivesEvaluationOptions)
       const currency = cost?.subtotalAmount?.currencyCode ?? 'USD';
 
       if (currentCode) {
-        const totalDiscount = newEval.priceBreakdown?.totalDiscount ?? 0;
-        if (totalDiscount > 0) {
-          const signature = await computePayloadSignature(
-            {
+        if (newEval.signedEvaluation) {
+          await applyAttributeChange({
+            type: 'updateAttribute',
+            key: '_incentives_eval',
+            value: JSON.stringify(newEval.signedEvaluation),
+          });
+        } else {
+          const totalDiscount = newEval.priceBreakdown?.totalDiscount ?? 0;
+          if (totalDiscount > 0 && signingSecret) {
+            const signature = await computePayloadSignature(
+              {
+                evaluationId: newEval.evaluationId,
+                cartId,
+                subtotalMinorUnits,
+                currency,
+                discountMinorUnits: totalDiscount,
+                expiresAt: newEval.expiresAt,
+              },
+              signingSecret
+            );
+            const payload: SignedEvaluationPayload = {
               evaluationId: newEval.evaluationId,
+              shopDomain,
               cartId,
               subtotalMinorUnits,
               currency,
               discountMinorUnits: totalDiscount,
+              target: 'order',
               expiresAt: newEval.expiresAt,
-            },
-            signingSecret
-          );
-          const payload: SignedEvaluationPayload = {
-            evaluationId: newEval.evaluationId,
-            shopDomain,
-            cartId,
-            subtotalMinorUnits,
-            currency,
-            discountMinorUnits: totalDiscount,
-            target: 'order',
-            expiresAt: newEval.expiresAt,
-            signature,
-          };
+              signature,
+            };
+            await applyAttributeChange({
+              type: 'updateAttribute',
+              key: '_incentives_eval',
+              value: JSON.stringify(payload),
+            });
+          }
+        }
+      } else if (currentOffer) {
+        if (newEval.signedEvaluation && newEval.signedEvaluation.discountMinorUnits > 0) {
           await applyAttributeChange({
             type: 'updateAttribute',
             key: '_incentives_eval',
-            value: JSON.stringify(payload),
+            value: JSON.stringify(newEval.signedEvaluation),
           });
-        }
-      } else if (currentOffer) {
-        const matchingOffer = newEval.candidateOffers?.find(
-          (o) => o.programRef === currentOffer && o.qualified
-        );
-        if (matchingOffer && matchingOffer.estimatedDiscountMinorUnits) {
-          const discountMinorUnits = matchingOffer.estimatedDiscountMinorUnits;
-          const signature = await computePayloadSignature(
-            {
+        } else {
+          const matchingOffer = newEval.candidateOffers?.find(
+            (o) => o.programRef === currentOffer && o.qualified
+          );
+          if (matchingOffer && matchingOffer.estimatedDiscountMinorUnits && signingSecret) {
+            const discountMinorUnits = matchingOffer.estimatedDiscountMinorUnits;
+            const signature = await computePayloadSignature(
+              {
+                evaluationId: newEval.evaluationId,
+                cartId,
+                subtotalMinorUnits,
+                currency,
+                discountMinorUnits,
+                expiresAt: newEval.expiresAt,
+              },
+              signingSecret
+            );
+            const payload: SignedEvaluationPayload = {
               evaluationId: newEval.evaluationId,
+              shopDomain,
               cartId,
               subtotalMinorUnits,
               currency,
               discountMinorUnits,
+              target: 'order',
               expiresAt: newEval.expiresAt,
-            },
-            signingSecret
-          );
-          const payload: SignedEvaluationPayload = {
-            evaluationId: newEval.evaluationId,
-            shopDomain,
-            cartId,
-            subtotalMinorUnits,
-            currency,
-            discountMinorUnits,
-            target: 'order',
-            expiresAt: newEval.expiresAt,
-            signature,
-          };
-          await applyAttributeChange({
-            type: 'updateAttribute',
-            key: '_incentives_eval',
-            value: JSON.stringify(payload),
-          });
+              signature,
+            };
+            await applyAttributeChange({
+              type: 'updateAttribute',
+              key: '_incentives_eval',
+              value: JSON.stringify(payload),
+            });
+          }
         }
       }
     });
@@ -375,38 +385,55 @@ export function useIncentivesEvaluation(options: UseIncentivesEvaluationOptions)
         const currency = cost?.subtotalAmount?.currencyCode ?? 'USD';
         const discountMinorUnits = offer.estimatedDiscountMinorUnits ?? 0;
 
-        const signature = await computePayloadSignature(
-          {
+        if (
+          evaluation.signedEvaluation &&
+          (evaluation.signedEvaluation.discountMinorUnits === discountMinorUnits || !signingSecret)
+        ) {
+          await applyAttributeChange({
+            type: 'updateAttribute',
+            key: '_incentives_eval',
+            value: JSON.stringify(evaluation.signedEvaluation),
+          });
+          setAppliedOffer(offer.programRef);
+          return true;
+        }
+
+        if (signingSecret) {
+          const signature = await computePayloadSignature(
+            {
+              evaluationId: evaluation.evaluationId,
+              cartId,
+              subtotalMinorUnits,
+              currency,
+              discountMinorUnits,
+              expiresAt: evaluation.expiresAt,
+            },
+            signingSecret
+          );
+
+          const payload: SignedEvaluationPayload = {
             evaluationId: evaluation.evaluationId,
+            shopDomain,
             cartId,
             subtotalMinorUnits,
             currency,
             discountMinorUnits,
+            target: 'order',
             expiresAt: evaluation.expiresAt,
-          },
-          signingSecret
-        );
+            signature,
+          };
 
-        const payload: SignedEvaluationPayload = {
-          evaluationId: evaluation.evaluationId,
-          shopDomain,
-          cartId,
-          subtotalMinorUnits,
-          currency,
-          discountMinorUnits,
-          target: 'order',
-          expiresAt: evaluation.expiresAt,
-          signature,
-        };
+          await applyAttributeChange({
+            type: 'updateAttribute',
+            key: '_incentives_eval',
+            value: JSON.stringify(payload),
+          });
 
-        await applyAttributeChange({
-          type: 'updateAttribute',
-          key: '_incentives_eval',
-          value: JSON.stringify(payload),
-        });
+          setAppliedOffer(offer.programRef);
+          return true;
+        }
 
-        setAppliedOffer(offer.programRef);
-        return true;
+        return false;
       } catch (err: any) {
         setError(err?.message ?? 'Failed to apply offer');
         return false;
@@ -442,43 +469,51 @@ export function useIncentivesEvaluation(options: UseIncentivesEvaluationOptions)
       if (applyDiscountCodeChange) {
         await applyDiscountCodeChange({
           type: 'addDiscountCode',
-          code: normalizedCode,
+          code: 'INCENTIVES_APPLIED',
         });
       }
 
       if (applyAttributeChange) {
-        const subtotalMinorUnits = Math.round(Number(cost?.subtotalAmount?.amount ?? 0) * 100);
-        const currency = cost?.subtotalAmount?.currencyCode ?? 'USD';
+        if (evalData.signedEvaluation) {
+          await applyAttributeChange({
+            type: 'updateAttribute',
+            key: '_incentives_eval',
+            value: JSON.stringify(evalData.signedEvaluation),
+          });
+        } else if (signingSecret) {
+          const subtotalMinorUnits = Math.round(Number(cost?.subtotalAmount?.amount ?? 0) * 100);
+          const currency = cost?.subtotalAmount?.currencyCode ?? 'USD';
 
-        const signature = await computePayloadSignature(
-          {
+          const signature = await computePayloadSignature(
+            {
+              evaluationId: evalData.evaluationId,
+              cartId,
+              subtotalMinorUnits,
+              currency,
+              discountMinorUnits: totalDiscount,
+              expiresAt: evalData.expiresAt,
+            },
+            signingSecret
+          );
+
+          const payload: SignedEvaluationPayload = {
             evaluationId: evalData.evaluationId,
+            shopDomain,
             cartId,
             subtotalMinorUnits,
             currency,
             discountMinorUnits: totalDiscount,
+            target: 'order',
             expiresAt: evalData.expiresAt,
-          },
-          signingSecret
-        );
+            signature,
+          };
 
-        const payload: SignedEvaluationPayload = {
-          evaluationId: evalData.evaluationId,
-          shopDomain,
-          cartId,
-          subtotalMinorUnits,
-          currency,
-          discountMinorUnits: totalDiscount,
-          target: 'order',
-          expiresAt: evalData.expiresAt,
-          signature,
-        };
-
-        await applyAttributeChange({
-          type: 'updateAttribute',
-          key: '_incentives_eval',
-          value: JSON.stringify(payload),
-        });
+          await applyAttributeChange({
+            type: 'updateAttribute',
+            key: '_incentives_eval',
+            value: JSON.stringify(payload),
+          });
+        }
       }
 
       setAppliedCode(normalizedCode);

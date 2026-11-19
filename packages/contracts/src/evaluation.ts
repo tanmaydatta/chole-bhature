@@ -295,6 +295,18 @@ export const CandidateOfferSchema = z.object({
   progress: CandidateOfferProgressSchema.optional(),
 }).strict();
 
+export const SignedEvaluationPayloadSchema = z.object({
+  evaluationId: z.string().min(1),
+  shopDomain: z.string().optional(),
+  cartId: z.string().min(1),
+  subtotalMinorUnits: z.number().int().nonnegative(),
+  currency: z.string().min(1),
+  discountMinorUnits: z.number().int().nonnegative(),
+  target: z.string().optional(),
+  expiresAt: z.string().optional(),
+  signature: z.string().min(1),
+}).strict();
+
 export const EvaluationResponseSchema = z.object({
   evaluationId: z.string().min(1),
   customerRef: z.string().min(1).optional(),
@@ -305,6 +317,7 @@ export const EvaluationResponseSchema = z.object({
   priceBreakdown: MerchandisePriceBreakdownSchema,
   codeResults: z.array(CodeEvaluationResultSchema).optional(),
   candidateOffers: z.array(CandidateOfferSchema).optional(),
+  signedEvaluation: SignedEvaluationPayloadSchema.optional(),
 }).strict();
 
 export const RedemptionRequestSchema = z.object({
@@ -350,6 +363,7 @@ export type MerchandiseDiscountAllocation = z.infer<
 export type MerchandisePriceBreakdown = z.infer<typeof MerchandisePriceBreakdownSchema>;
 export type CandidateOfferProgress = z.infer<typeof CandidateOfferProgressSchema>;
 export type CandidateOffer = z.infer<typeof CandidateOfferSchema>;
+export type SignedEvaluationPayload = z.infer<typeof SignedEvaluationPayloadSchema>;
 export type EvaluationResponse = z.infer<typeof EvaluationResponseSchema>;
 export type RedemptionRequest = z.infer<typeof RedemptionRequestSchema>;
 export type RedemptionEntry = z.infer<typeof RedemptionEntrySchema>;

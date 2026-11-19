@@ -293,7 +293,7 @@ describe('CheckoutOffers Extension Component', () => {
     await waitFor(() => {
       expect(mockApplyDiscountCodeChange).toHaveBeenCalledWith({
         type: 'addDiscountCode',
-        code: 'SUMMER25',
+        code: 'INCENTIVES_APPLIED',
       });
     });
 
@@ -699,6 +699,95 @@ describe('CheckoutOffers Extension Component', () => {
       expect(parsed.subtotalMinorUnits).toBe(10000);
       expect(parsed.discountMinorUnits).toBe(2000);
       expect(parsed.evaluationId).toBe('eval-updated');
+    });
+  });
+
+  it('server-side signedEvaluation is directly used without requiring client signingSecret', async () => {
+    const mockServerSignedPayload = {
+      evaluationId: 'eval-server-signed-001',
+      shopDomain: 'test-store.myshopify.com',
+      cartId: 'gid://shopify/Cart/c1-test',
+      subtotalMinorUnits: 5000,
+      currency: 'USD',
+      discountMinorUnits: 1000,
+      target: 'order',
+      expiresAt: '2026-11-19T12:00:00.000Z',
+      signature: 'server-computed-hmac-signature-abc123',
+    };
+
+    const mockEvalResponse = {
+      evaluationId: 'eval-server-signed-001',
+      schemaVersion: 1,
+      expiresAt: '2026-11-19T12:00:00.000Z',
+      decisions: [],
+      priceBreakdown: {
+        currency: 'USD',
+        originalMerchandiseSubtotal: 5000,
+        discountAllocations: [],
+        totalDiscount: 1000,
+        discountedMerchandiseSubtotal: 4000,
+      },
+      candidateOffers: [
+        {
+          programRef: 'prog-server-1',
+          name: 'Save $10 on your order',
+          qualified: true,
+          estimatedDiscountMinorUnits: 1000,
+        },
+      ],
+      signedEvaluation: mockServerSignedPayload,
+    };
+
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => mockEvalResponse,
+    });
+
+    render(
+      <CheckoutOffers
+        apiUrl="https://api.incentives.dev"
+        publishableKey="pk_live_test_123"
+        cartId="gid://shopify/Cart/c1-test"
+        shopDomain="test-store.myshopify.com"
+        // NO signingSecret provided!
+        cartLines={mockCartLines}
+        cost={mockCost}
+        discountCodes={mockDiscountCodes}
+        applyAttributeChange={mockApplyAttributeChange}
+        applyDiscountCodeChange={mockApplyDiscountCodeChange}
+        buyerJourneyIntercept={mockBuyerJourneyIntercept}
+      />
+    );
+
+    // Initial evaluation should be triggered with shop-domain and cart-id headers
+    await waitFor(() => {
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        'https://api.incentives.dev/v1/evaluate',
+        expect.objectContaining({
+          method: 'POST',
+          headers: expect.objectContaining({
+            Authorization: 'Bearer pk_live_test_123',
+            'x-shopify-shop-domain': 'test-store.myshopify.com',
+            'x-shopify-cart-id': 'gid://shopify/Cart/c1-test',
+          }),
+        })
+      );
+    });
+
+    // Offer title and estimated discount should be displayed
+    expect(await screen.findByText('Save $10 on your order')).toBeDefined();
+
+    // Click Claim button to claim offer
+    const applyBtn = screen.getByRole('button', { name: /claim/i });
+    fireEvent.click(applyBtn);
+
+    // Should update _incentives_eval attribute with server's signedEvaluation directly
+    await waitFor(() => {
+      expect(mockApplyAttributeChange).toHaveBeenCalledWith({
+        type: 'updateAttribute',
+        key: '_incentives_eval',
+        value: JSON.stringify(mockServerSignedPayload),
+      });
     });
   });
 });

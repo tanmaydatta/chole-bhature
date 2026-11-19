@@ -67,10 +67,15 @@ class MockD1Database {
 
   executeAll<T>(sql: string, params: unknown[]): { results: T[] } {
     if (sql.includes('shopify_installed_shops') && sql.toUpperCase().includes('SELECT')) {
-      const shopDomain = params[0] as string | undefined;
-      if (shopDomain) {
-        if (this.rows.has(shopDomain)) {
-          return { results: [this.rows.get(shopDomain) as T] };
+      const param = params[0] as string | undefined;
+      if (param) {
+        if (this.rows.has(param)) {
+          return { results: [this.rows.get(param) as T] };
+        }
+        for (const row of this.rows.values()) {
+          if (row.publishable_token === param || row.secret_token === param) {
+            return { results: [row as T] };
+          }
         }
         return { results: [] };
       }
