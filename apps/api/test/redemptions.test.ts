@@ -1051,6 +1051,37 @@ describe('POST /v1/redemptions', () => {
     expect(retry).toEqual(first);
   });
 
+  test('commits with POST_CAPTURE_OVERSPEND reconciliationWarning instead of 409 when postCaptureReconciliation is true', async () => {
+    await seedProgram(automaticPromo('post-capture-exhaustion', { usageCap: 1 }));
+    const [firstEvaluation, exhaustedEvaluation] = await Promise.all([
+      evaluate(),
+      evaluate(),
+    ]);
+    await redeem({
+      evaluationId: firstEvaluation.evaluationId,
+      externalOrderRef: 'post-cap-first-order',
+      idempotencyKey: 'post-cap-first-key',
+    });
+
+    const request = {
+      evaluationId: exhaustedEvaluation.evaluationId,
+      externalOrderRef: 'post-cap-exhausted-order',
+      idempotencyKey: 'post-cap-exhausted-key',
+      postCaptureReconciliation: true,
+    };
+
+    const response = await redeem(request);
+    expect(response.status).toBe('committed');
+    expect(response.reconciliationWarning).toBe('POST_CAPTURE_OVERSPEND');
+    expect(response.idempotencyKey).toBe('post-cap-exhausted-key');
+    expect(response.externalOrderRef).toBe('post-cap-exhausted-order');
+
+    // Exact retry
+    const retry = await redeem(request);
+    expect(retry.status).toBe('committed');
+    expect(retry.reconciliationWarning).toBe('POST_CAPTURE_OVERSPEND');
+  });
+
   test('revalidates every selected active revision and reward rule before committing', async () => {
     await seedProgram(codedPromo('unchanged-child', 'UNCHANGED', { priority: 20 }));
     await seedProgram(codedPromo('changed-child', 'CHANGED', { priority: 10 }));

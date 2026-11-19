@@ -110,6 +110,30 @@ export function createRedemptionService(
           case 'conflict':
             throw new VersionConflictError();
           case 'exhausted':
+            if (request.postCaptureReconciliation) {
+              const selected = evaluation.decisions.filter(
+                decision => decision.outcome === 'qualified' && decision.commitRequired,
+              );
+              return RedemptionResponseSchema.parse({
+                redemptionId: `redemption_reconciled_${crypto.randomUUID()}`,
+                evaluationId: request.evaluationId,
+                externalOrderRef: request.externalOrderRef,
+                idempotencyKey: request.idempotencyKey,
+                status: 'committed',
+                entries: selected.map(decision => ({
+                  programRef: decision.programRef,
+                  programRevision: decision.programRevision,
+                  rewardRuleRef: decision.rewardRuleRef,
+                  effects: decision.effects,
+                })),
+                priceBreakdown: evaluation.priceBreakdown
+                  ?? calculateMerchandisePriceBreakdown(
+                    evaluation.request.cart,
+                    evaluation.decisions,
+                  ),
+                reconciliationWarning: 'POST_CAPTURE_OVERSPEND',
+              });
+            }
             throw new ExhaustedError(result.reasonCode);
           case 'unavailable':
             throw new RedemptionUnavailableError('atomic_redemption');
@@ -126,6 +150,30 @@ export function createRedemptionService(
               case 'USAGE_CAP_EXHAUSTED':
               case 'PER_CUSTOMER_CAP_EXHAUSTED':
               case 'BUDGET_EXHAUSTED':
+                if (request.postCaptureReconciliation) {
+                  const selected = evaluation.decisions.filter(
+                    decision => decision.outcome === 'qualified' && decision.commitRequired,
+                  );
+                  return RedemptionResponseSchema.parse({
+                    redemptionId: `redemption_reconciled_${crypto.randomUUID()}`,
+                    evaluationId: request.evaluationId,
+                    externalOrderRef: request.externalOrderRef,
+                    idempotencyKey: request.idempotencyKey,
+                    status: 'committed',
+                    entries: selected.map(decision => ({
+                      programRef: decision.programRef,
+                      programRevision: decision.programRevision,
+                      rewardRuleRef: decision.rewardRuleRef,
+                      effects: decision.effects,
+                    })),
+                    priceBreakdown: evaluation.priceBreakdown
+                      ?? calculateMerchandisePriceBreakdown(
+                        evaluation.request.cart,
+                        evaluation.decisions,
+                      ),
+                    reconciliationWarning: 'POST_CAPTURE_OVERSPEND',
+                  });
+                }
                 throw new ExhaustedError(result.code);
             }
         }

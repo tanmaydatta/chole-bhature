@@ -311,6 +311,7 @@ export const RedemptionRequestSchema = z.object({
   evaluationId: z.string().min(1),
   externalOrderRef: z.string().min(1),
   idempotencyKey: z.string().min(1),
+  postCaptureReconciliation: z.boolean().optional(),
 }).strict();
 
 export const RedemptionEntrySchema = z.object({
@@ -328,6 +329,7 @@ export const RedemptionResponseSchema = z.object({
   entries: z.array(RedemptionEntrySchema),
   priceBreakdown: MerchandisePriceBreakdownSchema,
   idempotencyKey: z.string().min(1),
+  reconciliationWarning: z.string().optional(),
 }).strict();
 
 export type CartLineItem = z.infer<typeof CartLineItemSchema>;
