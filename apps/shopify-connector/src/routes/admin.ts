@@ -64,7 +64,8 @@ async function handleDashboardProxy(c: Context<ShopifyAdminEnv>) {
   }
 
   const method = c.req.method;
-  const body = ['GET', 'HEAD'].includes(method) ? undefined : await c.req.arrayBuffer();
+  const rawBody = ['GET', 'HEAD'].includes(method) ? undefined : await c.req.arrayBuffer();
+  const body = rawBody && rawBody.byteLength > 0 ? rawBody : undefined;
 
   if (!c.env.CORE || typeof c.env.CORE.fetch !== 'function') {
     return c.json(
@@ -82,7 +83,8 @@ async function handleDashboardProxy(c: Context<ShopifyAdminEnv>) {
       }),
     );
 
-    return new Response(upstreamRes.body, {
+    const hasNoBody = [204, 205, 304].includes(upstreamRes.status);
+    return new Response(hasNoBody ? null : upstreamRes.body, {
       status: upstreamRes.status,
       statusText: upstreamRes.statusText,
       headers: upstreamRes.headers,

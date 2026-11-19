@@ -50,12 +50,16 @@ export function extractShopDomain(destOrIss: string): string {
  * Requires zero cookies for 100% iframe and Safari ITP safety.
  */
 export const shopifySessionMiddleware: MiddlewareHandler<ShopifyAdminEnv> = async (c, next) => {
+  if (!c.env.SHOPIFY_CLIENT_ID || !c.env.SHOPIFY_CLIENT_SECRET) {
+    return c.json({ error: 'Server configuration error: Missing Shopify credentials' }, 500);
+  }
+
   const authHeader = c.req.header('authorization') ?? c.req.header('Authorization');
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+  if (!authHeader || !/^Bearer\s+/i.test(authHeader)) {
     return c.json({ error: 'Unauthorized: Missing or malformed Authorization header' }, 401);
   }
 
-  const token = authHeader.slice(7).trim();
+  const token = authHeader.replace(/^Bearer\s+/i, '').trim();
   if (!token) {
     return c.json({ error: 'Unauthorized: Empty session token' }, 401);
   }
@@ -94,11 +98,12 @@ export const shopifySessionMiddleware: MiddlewareHandler<ShopifyAdminEnv> = asyn
     );
   }
 
-  const rawDomain =
-    (typeof payload.dest === 'string' && payload.dest) ||
-    (typeof payload.iss === 'string' && payload.iss) ||
-    '';
-  const shopDomain = extractShopDomain(rawDomain);
+  const destDomain = typeof payload.dest === 'string' ? extractShopDomain(payload.dest) : '';
+  const issDomain = typeof payload.iss === 'string' ? extractShopDomain(payload.iss) : '';
+  if (destDomain && issDomain && destDomain !== issDomain) {
+    return c.json({ error: 'Unauthorized: Destination and Issuer domain mismatch' }, 401);
+  }
+  const shopDomain = destDomain || issDomain;
   if (!shopDomain) {
     return c.json({ error: 'Unauthorized: Missing shop domain in session token' }, 401);
   }

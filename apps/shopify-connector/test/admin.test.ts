@@ -460,5 +460,87 @@ describe('Embedded Operator Dashboard Admin Bridge & Session Tokens', () => {
 
       expect(res.status).toBe(503);
     });
+
+    it('proxies HTTP 204 No Content response from Core API without error', async () => {
+      const token = await createSessionToken();
+      const envWith204 = {
+        ...testEnv,
+        CORE: {
+          ...mockCore,
+          fetch: vi.fn().mockResolvedValue(new Response(null, { status: 204 })),
+        },
+      };
+
+      const res = await app.fetch(
+        new Request('https://shopify.incentives.dev/admin/dashboard/proxy/v1/programs/123', {
+          method: 'DELETE',
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        }),
+        envWith204,
+      );
+
+      expect(res.status).toBe(204);
+      expect(res.body).toBeNull();
+    });
+
+    it('case-insensitive bearer prefix authenticates successfully', async () => {
+      const token = await createSessionToken();
+      const res = await app.fetch(
+        new Request('https://shopify.incentives.dev/admin/session', {
+          method: 'GET',
+          headers: {
+            authorization: `bearer ${token}`,
+          },
+        }),
+        testEnv,
+      );
+
+      expect(res.status).toBe(200);
+    });
+
+    it('divergent dest and iss domains returns HTTP 401', async () => {
+      const token = await createSessionToken({
+        dest: 'https://attacker.myshopify.com',
+        iss: 'https://victim.myshopify.com/admin',
+      });
+
+      const res = await app.fetch(
+        new Request('https://shopify.incentives.dev/admin/session', {
+          method: 'GET',
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        }),
+        testEnv,
+      );
+
+      expect(res.status).toBe(401);
+      const json = await res.json() as Record<string, unknown>;
+      expect(json.error).toMatch(/mismatch/i);
+    });
+
+    it('missing SHOPIFY_CLIENT_ID or SHOPIFY_CLIENT_SECRET returns HTTP 500', async () => {
+      const token = await createSessionToken();
+      const misconfiguredEnv = {
+        ...testEnv,
+        SHOPIFY_CLIENT_ID: '',
+      };
+
+      const res = await app.fetch(
+        new Request('https://shopify.incentives.dev/admin/session', {
+          method: 'GET',
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        }),
+        misconfiguredEnv,
+      );
+
+      expect(res.status).toBe(500);
+      const json = await res.json() as Record<string, unknown>;
+      expect(json.error).toMatch(/Missing Shopify credentials/i);
+    });
   });
 });
