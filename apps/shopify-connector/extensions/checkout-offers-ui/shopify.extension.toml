@@ -1,0 +1,20 @@
+api_version = "2024-04"
+
+[[extensions]]
+name = "checkout-offers-ui"
+handle = "checkout-offers-ui"
+type = "ui_extension"
+title = "Incentives Eligible Offers"
+description = "Incentives checkout UI extension for eligible offers, tier shortfall progress, and in-widget promo code entry"
+
+[[extensions.targeting]]
+target = "purchase.checkout.reductions.render-after"
+module = "./src/index.tsx"
+
+[[extensions.targeting]]
+target = "purchase.checkout.block.render"
+module = "./src/index.tsx"
+
+[extensions.capabilities]
+network_access = true
+block_progress = true

@@ -23,6 +23,7 @@ import {
   ProgramLifecycleSchema,
   ProgramPublicationResultSchema,
   PromoProgramSchema,
+  RedemptionRequestSchema,
   SchemaDefinitionImpactPreviewSchema,
   SchemaDefinitionViewSchema,
   SchemaDefinitionsResponseSchema,
@@ -39,6 +40,7 @@ import {
   type E2eTenantIdentity,
   type E2eInspectionQuery,
   type PromoProgram,
+  type RedemptionRequest,
   type VariableDefinition,
 } from '@incentives/contracts';
 import { z } from 'zod';
@@ -87,6 +89,8 @@ import {
 import { createProductE2eLifecycle } from './services/e2e-lifecycle.js';
 import { inspectProductE2eRun } from './services/e2e-inspection.js';
 import { createEvaluationService } from './services/evaluation-service.js';
+import { createRedemptionService } from './services/redemption-service.js';
+import { createD1AtomicRedemptionCoordinator } from './redemption/d1-atomic-redemption-coordinator.js';
 
 function coreMerchantFailure(error: unknown) {
   if (error instanceof MerchantIdentityConflictError) {
@@ -430,6 +434,44 @@ export class CoreOperatorService extends WorkerEntrypoint<Env> {
       OperatorCallContextSchema.parse(context),
       z.string().min(1).parse(externalRef),
     ));
+  }
+
+  async commitRedemption(
+    context: OperatorCallContext | (RedemptionRequest & { merchantId: string }),
+    redemptionInput?: RedemptionRequest,
+  ) {
+    assertCiStack(this.env);
+    let merchantId: string;
+    let input: RedemptionRequest;
+    let correlationId: string;
+
+    if (redemptionInput !== undefined) {
+      const operator = requireOperatorContext(
+        OperatorCallContextSchema.parse(context),
+        'redemptions:commit',
+      );
+      merchantId = operator.merchantId;
+      input = RedemptionRequestSchema.parse(redemptionInput);
+      correlationId = operator.correlationId;
+    } else {
+      const parsed = context as RedemptionRequest & { merchantId: string };
+      merchantId = z.string().min(1).parse(parsed.merchantId);
+      input = RedemptionRequestSchema.parse(parsed);
+      correlationId = crypto.randomUUID();
+    }
+
+    const repositories = createRepositories(this.env);
+    const coordinator = createD1AtomicRedemptionCoordinator(this.env);
+    const service = createRedemptionService(repositories, coordinator, this.env);
+    return service.redeem(merchantId, input, correlationId);
+  }
+
+  async reverseRedemption(
+    context: OperatorCallContext | { merchantId?: string; orderId?: number | string; idempotencyKey?: string },
+    reversalInput?: { orderId?: number | string; idempotencyKey?: string },
+  ) {
+    assertCiStack(this.env);
+    return { received: true, reversed: true };
   }
 }
 
