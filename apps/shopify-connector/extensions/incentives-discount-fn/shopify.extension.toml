@@ -1,0 +1,17 @@
+api_version = "2024-04"
+
+[[extensions]]
+name = "incentives-discount-fn"
+handle = "incentives-discount-fn"
+type = "function"
+title = "Incentives Discount Function"
+description = "Incentives discount function evaluating signed cart tokens"
+
+[extensions.build]
+command = "cargo build --target wasm32-wasip1 --release"
+path = "target/wasm32-wasip1/release/incentives-discount-fn.wasm"
+watch = [ "src/**/*.rs" ]
+
+[extensions.ui.paths]
+create = "/"
+details = "/"

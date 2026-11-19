@@ -1,0 +1,29 @@
+query RunInput {
+  cart {
+    id
+    cost {
+      subtotalAmount {
+        amount
+        currencyCode
+      }
+    }
+    lines {
+      id
+      quantity
+      cost {
+        subtotalAmount {
+          amount
+          currencyCode
+        }
+      }
+    }
+    attribute(key: "_incentives_eval") {
+      value
+    }
+  }
+  discountNode {
+    metafield(namespace: "$app:incentives", key: "signing-secret") {
+      value
+    }
+  }
+}
