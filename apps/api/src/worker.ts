@@ -509,6 +509,28 @@ export class CoreOperatorService extends WorkerEntrypoint<Env> {
     return { released: true };
   }
 
+  async refundRedemption(
+    context: OperatorCallContext | {
+      merchantId?: string;
+      orderId?: number | string;
+      refundId?: number | string;
+      idempotencyKey?: string;
+      refundLineItems?: unknown;
+    },
+    refundInput?: { orderId?: number | string; refundId?: number | string; idempotencyKey?: string },
+  ) {
+    assertCiStack(this.env);
+    return {
+      received: true,
+      refunded: false,
+      reason: 'reversal_not_supported',
+      orderId: refundInput?.orderId
+        ?? (context as { orderId?: number | string }).orderId,
+      refundId: refundInput?.refundId
+        ?? (context as { refundId?: number | string }).refundId,
+    };
+  }
+
   async reverseRedemption(
     context: OperatorCallContext | { merchantId?: string; orderId?: number | string; idempotencyKey?: string },
     reversalInput?: { orderId?: number | string; idempotencyKey?: string },

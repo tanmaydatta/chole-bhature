@@ -69,10 +69,18 @@ async function onboardingPage(env: Env, shop: string, message?: string): Promise
 export function createApp() {
   const app = new Hono<{ Bindings: Env }>();
 
-  app.get('/', c => {
+  app.get('/', async c => {
     const shop = c.req.query('shop');
     if (shop && /^[a-zA-Z0-9][a-zA-Z0-9-]*\.myshopify\.com$/u.test(shop)) {
-      return c.redirect(`/onboarding?shop=${encodeURIComponent(shop)}`, 302);
+      const record = await c.env.DB.prepare(
+        `SELECT status FROM shopify_installed_shops WHERE shop_domain = ? LIMIT 1`,
+      )
+        .bind(shop)
+        .first<{ status: string }>();
+      if (record?.status === 'active') {
+        return c.redirect(`/onboarding?shop=${encodeURIComponent(shop)}`, 302);
+      }
+      return c.redirect(`/auth/shopify?shop=${encodeURIComponent(shop)}`, 302);
     }
     return c.html(
       '<!doctype html><title>Incentives</title><p>Incentives Shopify app is running. Install from your Shopify Admin.</p>',

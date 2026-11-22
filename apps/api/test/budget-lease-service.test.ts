@@ -9,6 +9,7 @@ class LeaseDb {
   constructor(
     private budgetRemaining: number | null,
     private insertChanges = 1,
+    private programMissing = false,
   ) {}
 
   prepare(sql: string) {
@@ -17,9 +18,11 @@ class LeaseDb {
         first: async <T>() => {
           if (sql.includes('COALESCE(SUM(amount_minor)')) return { total: 0 } as T;
           if (sql.includes('FROM programs')) {
-            return (this.budgetRemaining === null
-              ? null
-              : { budget_remaining: this.budgetRemaining, committed_spend: 0 }) as T;
+            if (this.programMissing) return null;
+            return {
+              budget_remaining: this.budgetRemaining,
+              committed_spend: 0,
+            } as T;
           }
           return null;
         },
@@ -86,6 +89,20 @@ describe('budget lease service', () => {
 
     expect(result.accepted).toBe(true);
     expect(result.leases).toEqual([]);
+  });
+
+  it('fails closed when the program row is missing', async () => {
+    const result = await reserveBudgetLeases(
+      envWith(new LeaseDb(null, 1, true)),
+      'merchant-1',
+      {
+        evaluationId: 'eval-1',
+        decisions: [{ programRef: 'missing-program', amountMinor: 100 }],
+      },
+    );
+
+    expect(result.accepted).toBe(false);
+    expect(result.reason).toContain('program_not_found');
   });
 
   it('releases leases for an evaluation', async () => {

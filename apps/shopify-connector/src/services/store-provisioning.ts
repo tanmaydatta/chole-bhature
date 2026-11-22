@@ -308,6 +308,7 @@ export async function provisionStore(
     ? await decryptToken(env, existing.tenant_signing_key)
     : generateTenantSigningKey();
   const provisioningId = existing?.provisioning_id ?? `prov_${tenantId}`;
+  const wasActive = existing?.status === 'active';
 
   await upsertProvisioningRow(env, {
     shop,
@@ -315,38 +316,41 @@ export async function provisionStore(
     tenantId,
     tenantSigningKey,
     provisioningId,
-    status: 'provisioning',
+    status: wasActive ? 'active' : 'provisioning',
     functionHandle,
     automaticDiscountId: existing?.automatic_discount_id ?? undefined,
   });
 
   try {
-    // 1. Create or reuse the merchant tenant. The provisioning ID is stable so
-    // a failed activate can be retried without bricking the tenant.
     const provisionContext = createOperatorContext(
       tenantId,
       'credentials:manage',
       correlationId,
     );
-    const provisionResult = await env.CORE.provisionMerchant(provisionContext, {
-      id: tenantId,
-      name: shop,
-      provisioningId,
-    });
-    if (!provisionResult.ok && provisionResult.error.code !== 'CONFLICT') {
-      throw new Error(
-        `Failed to provision merchant in Core: ${provisionResult.error.message} (${provisionResult.error.code})`,
-      );
-    }
-    if (env.CORE.activateMerchant) {
-      const activation = await env.CORE.activateMerchant(provisionContext, {
+
+    if (!wasActive) {
+      // 1. Create or reuse the merchant tenant. The provisioning ID is stable
+      // so a failed activate can be retried without bricking the tenant.
+      const provisionResult = await env.CORE.provisionMerchant(provisionContext, {
         id: tenantId,
+        name: shop,
         provisioningId,
       });
-      if (!activation.ok) {
+      if (!provisionResult.ok && provisionResult.error.code !== 'CONFLICT') {
         throw new Error(
-          `Failed to activate merchant in Core: ${activation.error.message} (${activation.error.code})`,
+          `Failed to provision merchant in Core: ${provisionResult.error.message} (${provisionResult.error.code})`,
         );
+      }
+      if (env.CORE.activateMerchant) {
+        const activation = await env.CORE.activateMerchant(provisionContext, {
+          id: tenantId,
+          provisioningId,
+        });
+        if (!activation.ok) {
+          throw new Error(
+            `Failed to activate merchant in Core: ${activation.error.message} (${activation.error.code})`,
+          );
+        }
       }
     }
 
@@ -362,7 +366,7 @@ export async function provisionStore(
       provisioningId,
       publishableToken: credentials.publishableToken,
       secretToken: credentials.secretToken,
-      status: 'provisioning',
+      status: wasActive ? 'active' : 'provisioning',
       functionHandle,
       automaticDiscountId: existing?.automatic_discount_id ?? undefined,
     });
@@ -387,7 +391,7 @@ export async function provisionStore(
       provisioningId,
       publishableToken: credentials.publishableToken,
       secretToken: credentials.secretToken,
-      status: 'provisioning',
+      status: wasActive ? 'active' : 'provisioning',
       automaticDiscountId,
       functionHandle,
     });
@@ -433,7 +437,7 @@ export async function provisionStore(
       tenantId,
       tenantSigningKey,
       provisioningId,
-      status: 'error',
+      status: wasActive ? 'active' : 'error',
       functionHandle,
       provisioningError: message,
       automaticDiscountId: existing?.automatic_discount_id ?? undefined,

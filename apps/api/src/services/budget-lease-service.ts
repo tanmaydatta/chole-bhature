@@ -67,8 +67,17 @@ export async function reserveBudgetLeases(
   await releaseExpiredLeases(env, merchantId, now);
 
   const leases: BudgetLeaseReserveResponse['leases'] = [];
+  const aggregated = new Map<string, number>();
   for (const decision of request.decisions) {
     if (decision.amountMinor <= 0) continue;
+    aggregated.set(
+      decision.programRef,
+      (aggregated.get(decision.programRef) ?? 0) + decision.amountMinor,
+    );
+  }
+
+  for (const [programRef, amountMinor] of aggregated) {
+    const decision = { programRef, amountMinor };
 
     const existing = await env.DB.prepare(
       `SELECT lease_id, program_ref, amount_minor, expires_at
@@ -102,7 +111,15 @@ export async function reserveBudgetLeases(
     }
 
     const budget = await programBudget(env, merchantId, decision.programRef);
-    if (budget === null || budget.budget_remaining === null) {
+    if (budget === null) {
+      await releaseBudgetLeases(env, merchantId, request.evaluationId);
+      return {
+        accepted: false,
+        leases: [],
+        reason: `program_not_found:${decision.programRef}`,
+      };
+    }
+    if (budget.budget_remaining === null) {
       // No monetary budget on this program; no lease is required.
       continue;
     }

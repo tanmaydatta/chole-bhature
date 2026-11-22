@@ -110,6 +110,7 @@ export interface OrderPaidResult {
 interface SignedEvaluationCheck {
   ok: boolean;
   reason?: string;
+  warning?: string;
 }
 
 const EVALUATION_EXPIRY_GRACE_MS = 24 * 60 * 60 * 1000;
@@ -152,6 +153,14 @@ async function verifySignedEvaluation(
   if (!Number.isFinite(expiresAt) || expiresAt + EVALUATION_EXPIRY_GRACE_MS <= Date.now()) {
     return { ok: false, reason: 'evaluation_expired' };
   }
+  let warning: string | undefined;
+  if (expiresAt <= Date.now()) {
+    warning = 'evaluation_expired_grace';
+  }
+  const leaseExpiresAt = payload.leaseExpiresAt ? Date.parse(payload.leaseExpiresAt) : NaN;
+  if (Number.isFinite(leaseExpiresAt) && leaseExpiresAt <= Date.now()) {
+    warning = warning ?? 'lease_expired';
+  }
   if (payload.shopDomain !== shopDomain) {
     return { ok: false, reason: 'shop_domain_mismatch' };
   }
@@ -164,7 +173,7 @@ async function verifySignedEvaluation(
     return { ok: false, reason: 'invalid_signature' };
   }
 
-  const orderCurrency = order['currency'];
+  const orderCurrency = order['presentment_currency'] ?? order['currency'];
   if (typeof orderCurrency === 'string' && orderCurrency !== payload.currency) {
     return { ok: false, reason: 'currency_mismatch' };
   }
@@ -175,10 +184,14 @@ async function verifySignedEvaluation(
     && !payload.checkoutToken?.startsWith('checkout:')
     && payload.checkoutToken !== orderCheckoutToken
   ) {
-    return { ok: false, reason: 'checkout_token_mismatch' };
+    warning = warning ?? 'checkout_token_mismatch';
   }
 
-  const totalDiscounts = paymentMinorUnits(order['total_discounts']);
+  const totalDiscounts = paymentMinorUnits(
+    (order['total_discounts_set'] as { presentment_money?: { amount?: unknown } } | undefined)
+      ?.presentment_money?.amount
+      ?? order['total_discounts'],
+  );
   if (totalDiscounts === null || totalDiscounts < payload.discountMinorUnits) {
     return { ok: false, reason: 'discount_not_applied' };
   }
@@ -197,7 +210,7 @@ async function verifySignedEvaluation(
     return { ok: false, reason: 'discount_not_applied' };
   }
 
-  return { ok: true };
+  return { ok: true, ...(warning === undefined ? {} : { warning }) };
 }
 
 export async function processOrderPaid(
@@ -250,6 +263,13 @@ export async function processOrderPaid(
       return {
         received: true,
         ...result,
+        ...(verification.warning === undefined
+          ? {}
+          : {
+              reconciliationWarning:
+                (result['reconciliationWarning'] as string | undefined)
+                ?? verification.warning,
+            }),
       };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

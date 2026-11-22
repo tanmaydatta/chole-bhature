@@ -432,7 +432,7 @@ describe('Shopify Webhooks Handler & Post-Capture Reconciliation', () => {
       expect(mockCore.commitRedemption).not.toHaveBeenCalled();
     });
 
-    it('skips when the checkout token does not match the order', async () => {
+    it('commits with a reconciliation warning when the checkout token does not match the order', async () => {
       const app = createApp();
       const orderPayload = paidOrder({
         id: 987654328,
@@ -459,10 +459,10 @@ describe('Shopify Webhooks Handler & Post-Capture Reconciliation', () => {
       expect(res.status).toBe(200);
       expect(await res.json()).toMatchObject({
         received: true,
-        skipped: true,
-        reason: 'checkout_token_mismatch',
+        status: 'committed',
+        reconciliationWarning: 'checkout_token_mismatch',
       });
-      expect(mockCore.commitRedemption).not.toHaveBeenCalled();
+      expect(mockCore.commitRedemption).toHaveBeenCalledTimes(1);
     });
 
     it('skips when the order did not actually receive the discount', async () => {

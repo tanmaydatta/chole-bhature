@@ -168,6 +168,16 @@ describe('Storefront evaluation route', () => {
 
     mockCore = {
       evaluate: vi.fn().mockResolvedValue(evaluationResponse),
+      reserveBudgetLeases: vi.fn().mockResolvedValue({
+        accepted: true,
+        leases: [{
+          leaseId: 'lease-1',
+          programRef: 'prog_flash_sale',
+          amountMinor: 1500,
+          expiresAt: '2026-11-23T14:30:00.000Z',
+        }],
+      }),
+      releaseBudgetLeases: vi.fn().mockResolvedValue({ released: true }),
       provisionMerchant: vi.fn(),
       createCredential: vi.fn(),
       listSchemaDefinitions: vi.fn(),
@@ -201,7 +211,7 @@ describe('Storefront evaluation route', () => {
     expect(mockCore.evaluate).toHaveBeenCalledTimes(1);
     const [, forwarded] = (mockCore.evaluate as ReturnType<typeof vi.fn>).mock.calls[0];
     expect(forwarded.customerRef).toBe('gid://shopify/Customer/777');
-    expect(forwarded.ttlSeconds).toBe(86_400);
+    expect(forwarded.ttlSeconds).toBe(900);
     expect(forwarded.includeCandidateOffers).toBe(true);
     expect(forwarded.context.channel).toBe('shopify_checkout');
 
@@ -217,6 +227,17 @@ describe('Storefront evaluation route', () => {
       items: cart.items.map(item => ({ ...item })),
     } as never);
     expect(signed.cartFingerprint).toBe(fingerprint);
+    expect(signed.leaseId).toBe('eval-server-e2e-001');
+    expect(signed.leaseExpiresAt).toBe('2026-11-23T14:30:00.000Z');
+    expect(signed.expiresAt).toBe('2026-11-23T14:30:00.000Z');
+    expect(mockCore.reserveBudgetLeases).toHaveBeenCalledWith(
+      expect.objectContaining({ permission: 'redemptions:commit' }),
+      expect.objectContaining({
+        evaluationId: 'eval-server-e2e-001',
+        decisions: [{ programRef: 'prog_flash_sale', amountMinor: 1500 }],
+        ttlSeconds: 900,
+      }),
+    );
 
     const expectedMessage = [
       'v2',
@@ -227,12 +248,42 @@ describe('Storefront evaluation route', () => {
       6000,
       'USD',
       1500,
-      '',
-      '',
+      signed.leaseId!,
+      signed.leaseExpiresAt!,
       signed.expiresAt,
     ].join(':');
     const expected = crypto.createHmac('sha256', SIGNING_KEY).update(expectedMessage).digest('hex');
     expect(signed.signature).toBe(expected);
+  });
+
+  it('returns 409 when the budget lease cannot be reserved', async () => {
+    (mockCore.reserveBudgetLeases as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      accepted: false,
+      leases: [],
+      reason: 'budget_exhausted:prog_flash_sale',
+    });
+    const token = await sessionToken();
+    const res = await app.fetch(request({ cart }, token), testEnv);
+
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({
+      error: 'budget_exhausted',
+      reason: 'budget_exhausted:prog_flash_sale',
+    });
+  });
+
+  it('releases the previous evaluation before reserving a new one', async () => {
+    const token = await sessionToken();
+    const res = await app.fetch(
+      request({ cart, checkoutToken: 'chk_123', previousEvaluationId: 'eval-previous' }, token),
+      testEnv,
+    );
+
+    expect(res.status).toBe(200);
+    expect(mockCore.releaseBudgetLeases).toHaveBeenCalledWith(
+      expect.objectContaining({ permission: 'redemptions:commit' }),
+      { evaluationId: 'eval-previous' },
+    );
   });
 
   it('works on the /evaluate alias and defaults checkout token to the evaluation id', async () => {

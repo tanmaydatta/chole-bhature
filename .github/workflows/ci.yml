@@ -56,6 +56,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @incentives/contracts build
       - run: pnpm --filter @incentives/shopify-connector build
+      - run: pnpm --filter @incentives/shopify-app build
       - run: pnpm --filter @incentives/shopify-app test
       - run: pnpm --filter @incentives/checkout-offers-ui test
       - run: pnpm --filter @incentives/checkout-offers-ui build

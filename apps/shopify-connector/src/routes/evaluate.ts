@@ -14,7 +14,7 @@ import { computeHmacSha256Hex } from '../services/hmac.js';
 import { createOperatorContext } from '../services/operator-context.js';
 import { shopifyCheckoutCors } from '../middleware/cors.js';
 
-const SHOPIFY_EVALUATION_TTL_SECONDS = 86_400;
+const SHOPIFY_EVALUATION_TTL_SECONDS = 900;
 
 export async function computeHmacSha256(secret: string, message: string): Promise<string> {
   return computeHmacSha256Hex(secret, message);
@@ -127,7 +127,7 @@ export async function handleEvaluate(c: Context<ShopifyAdminEnv>) {
     upstream.priceBreakdown.totalDiscount,
     subtotalMinorUnits,
   );
-  const expiresAt = upstream.expiresAt;
+  const upstreamExpiresAt = upstream.expiresAt;
   const checkoutRef = checkoutToken || `checkout:${upstream.evaluationId}`;
 
   const leaseDecisions = upstream.priceBreakdown.discountAllocations
@@ -148,7 +148,10 @@ export async function handleEvaluate(c: Context<ShopifyAdminEnv>) {
       decisions: leaseDecisions,
       ttlSeconds: 900,
       toleranceBps: 300,
-    });
+    }).catch(() => null);
+    if (reserved === null) {
+      return c.json({ error: 'lease_unavailable' }, 503);
+    }
     if (!reserved.accepted) {
       return c.json(
         {
@@ -166,6 +169,7 @@ export async function handleEvaluate(c: Context<ShopifyAdminEnv>) {
       '',
     );
   }
+  const expiresAt = leaseExpiresAt || upstreamExpiresAt;
 
   // v2 signature:
   // v2:${evaluationId}:${shopDomain}:${checkoutToken}:${cartFingerprint}:${subtotal}:${currency}:${discount}:${leaseId}:${leaseExpiresAt}:${expiresAt}

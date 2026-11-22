@@ -17,7 +17,7 @@ Cloudflare Worker that turns a Shopify Plus custom app into a client of the ince
 | Name | Type | Notes |
 |---|---|---|
 | `CORE` | Service binding | `entrypoint = "CoreOperatorService"` |
-| `DB` | D1 | `shopify_installed_shops`, `budget_leases` (Core DB) |
+| `DB` | D1 | `shopify_installed_shops` in the connector DB |
 | `SHOPIFY_CLIENT_ID` | var/secret | Shopify app client ID |
 | `SHOPIFY_CLIENT_SECRET` | secret | OAuth + webhook HMAC |
 | `SHOPIFY_APP_URL` | var | Public connector URL, e.g. `https://shopify.incentives.dev` |
@@ -32,6 +32,13 @@ wrangler secret put SHOPIFY_CLIENT_SECRET
 wrangler secret put TOKEN_ENCRYPTION_KEY
 wrangler deploy
 ```
+
+`budget_leases` lives in the **Core API** D1 database, not the connector database.
+
+If a local environment applied the interim `0001` from an early feature-branch
+commit, reset the connector D1 database before applying the released
+`0001` + `0002`. The interim schema already contained the columns that `0002`
+adds, and SQLite has no `ADD COLUMN IF NOT EXISTS` for migrations.
 
 ## Shopify app setup
 
