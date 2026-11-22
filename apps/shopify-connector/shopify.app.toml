@@ -1,0 +1,18 @@
+client_id = "REPLACE_WITH_SHOPIFY_CLIENT_ID"
+name = "Incentives"
+application_url = "https://shopify.incentives.dev"
+embedded = true
+
+[access_scopes]
+scopes = "read_orders,write_discounts,read_customers,write_customers"
+
+[auth]
+redirect_urls = [
+  "https://shopify.incentives.dev/auth/callback"
+]
+
+[webhooks]
+api_version = "2026-07"
+
+[build]
+include_config_on_deploy = true

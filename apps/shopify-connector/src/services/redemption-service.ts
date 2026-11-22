@@ -1,4 +1,6 @@
+import { timingSafeEqual } from '@incentives/shopify-connector';
 import type { Env } from '../env.js';
+import { computeHmacSha256Hex, paymentMinorUnits } from './hmac.js';
 import { decryptToken } from './token-crypto.js';
 
 export interface InstalledShopRecord {
@@ -46,15 +48,23 @@ export async function findInstalledShop(
 export interface IncentivesEvalPayload {
   evaluationId: string;
   cartId?: string;
+  checkoutToken?: string;
+  cartFingerprint?: string;
+  shopDomain?: string;
   subtotalMinorUnits?: number;
   currency?: string;
   discountMinorUnits?: number;
+  leaseId?: string;
+  leaseExpiresAt?: string;
+  expiresAt?: string;
+  signature?: string;
+  target?: string;
   [key: string]: unknown;
 }
 
 export function extractIncentivesEval(
   noteAttributes?: unknown,
-): { evaluationId: string; raw?: unknown } | null {
+): { evaluationId: string; raw: IncentivesEvalPayload } | null {
   if (!noteAttributes || !Array.isArray(noteAttributes)) {
     return null;
   }
@@ -64,26 +74,15 @@ export function extractIncentivesEval(
     const name = (attr as { name?: string; key?: string }).name ?? (attr as { key?: string }).key;
     if (name === '_incentives_eval') {
       const rawVal = (attr as { value?: unknown }).value;
-      if (typeof rawVal === 'string') {
-        const trimmed = rawVal.trim();
-        if (trimmed.startsWith('{')) {
-          try {
-            const parsed = JSON.parse(trimmed) as IncentivesEvalPayload;
-            if (parsed.evaluationId) {
-              return { evaluationId: parsed.evaluationId, raw: parsed };
-            }
-          } catch {
-            // If JSON parsing fails, treat as literal evaluationId string
-            return { evaluationId: trimmed };
-          }
-        }
-        return { evaluationId: trimmed };
-      }
-      if (rawVal && typeof rawVal === 'object' && 'evaluationId' in rawVal) {
-        return {
-          evaluationId: String((rawVal as { evaluationId: unknown }).evaluationId),
-          raw: rawVal,
-        };
+      if (typeof rawVal !== 'string') return null;
+      const trimmed = rawVal.trim();
+      if (!trimmed.startsWith('{')) return null;
+      try {
+        const parsed = JSON.parse(trimmed) as IncentivesEvalPayload;
+        if (!parsed.evaluationId) return null;
+        return { evaluationId: parsed.evaluationId, raw: parsed };
+      } catch {
+        return null;
       }
     }
   }
@@ -99,6 +98,103 @@ export interface OrderPaidResult {
   reconciliationWarning?: string;
   redemptionId?: string;
   [key: string]: unknown;
+}
+
+interface SignedEvaluationCheck {
+  ok: boolean;
+  reason?: string;
+}
+
+function signedEvaluationMessage(payload: IncentivesEvalPayload): string {
+  const checkoutToken = payload.checkoutToken ?? payload.cartId ?? '';
+  return [
+    'v2',
+    payload.evaluationId,
+    payload.shopDomain ?? '',
+    checkoutToken,
+    payload.cartFingerprint ?? '',
+    payload.subtotalMinorUnits ?? 0,
+    payload.currency ?? '',
+    payload.discountMinorUnits ?? 0,
+    payload.leaseId ?? '',
+    payload.leaseExpiresAt ?? '',
+    payload.expiresAt ?? '',
+  ].join(':');
+}
+
+async function verifySignedEvaluation(
+  payload: IncentivesEvalPayload,
+  store: InstalledShopRecord,
+  shopDomain: string,
+  order: Record<string, unknown>,
+): Promise<SignedEvaluationCheck> {
+  if (
+    payload.signature === undefined
+    || payload.cartFingerprint === undefined
+    || payload.expiresAt === undefined
+    || payload.subtotalMinorUnits === undefined
+    || payload.currency === undefined
+    || payload.discountMinorUnits === undefined
+  ) {
+    return { ok: false, reason: 'invalid_signed_payload' };
+  }
+
+  const expiresAt = Date.parse(payload.expiresAt);
+  if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
+    return { ok: false, reason: 'evaluation_expired' };
+  }
+  if (payload.shopDomain !== shopDomain) {
+    return { ok: false, reason: 'shop_domain_mismatch' };
+  }
+
+  const expected = await computeHmacSha256Hex(
+    store.tenant_signing_key,
+    signedEvaluationMessage(payload),
+  );
+  if (!timingSafeEqual(expected, payload.signature.toLowerCase())) {
+    return { ok: false, reason: 'invalid_signature' };
+  }
+
+  const orderCurrency = order['currency'];
+  if (typeof orderCurrency === 'string' && orderCurrency !== payload.currency) {
+    return { ok: false, reason: 'currency_mismatch' };
+  }
+
+  const orderCheckoutToken = order['checkout_token'];
+  if (
+    typeof orderCheckoutToken === 'string'
+    && !payload.checkoutToken?.startsWith('checkout:')
+    && payload.checkoutToken !== orderCheckoutToken
+  ) {
+    return { ok: false, reason: 'checkout_token_mismatch' };
+  }
+
+  const orderSubtotal = paymentMinorUnits(
+    order['current_subtotal_price'] ?? order['subtotal_price'],
+  );
+  if (orderSubtotal !== null && orderSubtotal !== payload.subtotalMinorUnits) {
+    return { ok: false, reason: 'subtotal_mismatch' };
+  }
+
+  const totalDiscounts = paymentMinorUnits(order['total_discounts']);
+  if (totalDiscounts !== null && totalDiscounts < payload.discountMinorUnits) {
+    return { ok: false, reason: 'discount_not_applied' };
+  }
+
+  const applications = order['discount_applications'];
+  if (Array.isArray(applications)) {
+    const applied = applications.some(application => {
+      if (!application || typeof application !== 'object') return false;
+      const title = (application as { title?: unknown }).title;
+      return title === 'Incentives Automatic Discounts'
+        || title === 'Incentives Discount';
+    });
+    if (!applied) {
+      return { ok: false, reason: 'discount_not_applied' };
+    }
+  }
+
+  return { ok: true };
 }
 
 export async function processOrderPaid(
@@ -121,6 +217,15 @@ export async function processOrderPaid(
       received: true,
       skipped: true,
       reason: 'shop_not_installed',
+    };
+  }
+
+  const verification = await verifySignedEvaluation(extracted.raw, store, shopDomain, order);
+  if (!verification.ok) {
+    return {
+      received: true,
+      skipped: true,
+      reason: verification.reason ?? 'invalid_signed_payload',
     };
   }
 

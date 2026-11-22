@@ -1,4 +1,4 @@
-api_version = "2024-04"
+api_version = "2026-10"
 
 [[extensions]]
 name = "checkout-offers-ui"

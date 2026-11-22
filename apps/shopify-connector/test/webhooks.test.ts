@@ -7,6 +7,30 @@ export function computeShopifyWebhookHmac(rawBody: string, secret: string): stri
   return crypto.createHmac('sha256', secret).update(rawBody, 'utf8').digest('base64');
 }
 
+function computeSignedEvaluation(
+  payload: Record<string, unknown>,
+  secret: string,
+): Record<string, unknown> {
+  const checkoutToken = String(payload['checkoutToken'] ?? payload['cartId'] ?? '');
+  const message = [
+    'v2',
+    String(payload['evaluationId'] ?? ''),
+    String(payload['shopDomain'] ?? ''),
+    checkoutToken,
+    String(payload['cartFingerprint'] ?? ''),
+    String(payload['subtotalMinorUnits'] ?? 0),
+    String(payload['currency'] ?? ''),
+    String(payload['discountMinorUnits'] ?? 0),
+    String(payload['leaseId'] ?? ''),
+    String(payload['leaseExpiresAt'] ?? ''),
+    String(payload['expiresAt'] ?? ''),
+  ].join(':');
+  return {
+    ...payload,
+    signature: crypto.createHmac('sha256', secret).update(message).digest('hex'),
+  };
+}
+
 class MockD1PreparedStatement {
   constructor(
     private db: MockD1Database,
@@ -145,6 +169,39 @@ describe('Shopify Webhooks Handler & Post-Capture Reconciliation', () => {
     };
   });
 
+  function validEval(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+    return computeSignedEvaluation(
+      {
+        evaluationId: 'eval-cart-uuid-001',
+        shopDomain: SHOP,
+        checkoutToken: 'chk-webhook-001',
+        cartFingerprint: 'a'.repeat(64),
+        subtotalMinorUnits: 5000,
+        currency: 'USD',
+        discountMinorUnits: 1000,
+        target: 'order',
+        expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
+        ...overrides,
+      },
+      TENANT_SIGNING_KEY,
+    );
+  }
+
+  function paidOrder(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+      id: 9001,
+      admin_graphql_api_id: 'gid://shopify/Order/9001',
+      checkout_token: 'chk-webhook-001',
+      currency: 'USD',
+      subtotal_price: '50.00',
+      total_discounts: '10.00',
+      note_attributes: [
+        { name: '_incentives_eval', value: JSON.stringify(validEval()) },
+      ],
+      ...overrides,
+    };
+  }
+
   describe('HMAC Security & Authentication', () => {
     it('returns 401 when X-Shopify-Hmac-Sha256 header is missing', async () => {
       const app = createApp();
@@ -216,27 +273,16 @@ describe('Shopify Webhooks Handler & Post-Capture Reconciliation', () => {
   });
 
   describe('POST /webhooks/orders-paid', () => {
-    it('parses _incentives_eval JSON from note_attributes and commits redemption idempotently', async () => {
+    it('parses a signed _incentives_eval and commits redemption idempotently', async () => {
       const app = createApp();
-      const orderPayload = {
+      const orderPayload = paidOrder({
         id: 987654321,
         admin_graphql_api_id: 'gid://shopify/Order/987654321',
-        total_price: '40.00',
-        currency: 'USD',
         note_attributes: [
           { name: 'irrelevant_note', value: 'hello' },
-          {
-            name: '_incentives_eval',
-            value: JSON.stringify({
-              evaluationId: 'eval-cart-uuid-001',
-              cartId: 'gid://shopify/Cart/c1-test',
-              subtotalMinorUnits: 5000,
-              currency: 'USD',
-              discountMinorUnits: 1000,
-            }),
-          },
+          { name: '_incentives_eval', value: JSON.stringify(validEval()) },
         ],
-      };
+      });
       const rawBody = JSON.stringify(orderPayload);
       const hmac = computeShopifyWebhookHmac(rawBody, CLIENT_SECRET);
 
@@ -269,15 +315,15 @@ describe('Shopify Webhooks Handler & Post-Capture Reconciliation', () => {
       }));
     });
 
-    it('supports _incentives_eval when value is a direct evaluation ID string', async () => {
+    it('rejects a raw evaluation ID string instead of a signed payload', async () => {
       const app = createApp();
-      const orderPayload = {
+      const orderPayload = paidOrder({
         id: 987654322,
         admin_graphql_api_id: 'gid://shopify/Order/987654322',
         note_attributes: [
           { name: '_incentives_eval', value: 'eval-direct-string-002' },
         ],
-      };
+      });
       const rawBody = JSON.stringify(orderPayload);
       const hmac = computeShopifyWebhookHmac(rawBody, CLIENT_SECRET);
 
@@ -296,10 +342,12 @@ describe('Shopify Webhooks Handler & Post-Capture Reconciliation', () => {
       );
 
       expect(res.status).toBe(200);
-      expect(mockCore.commitRedemption).toHaveBeenCalledTimes(1);
-      const redemptionCall = (mockCore.commitRedemption as any).mock.calls[0][0];
-      expect(redemptionCall.evaluationId).toBe('eval-direct-string-002');
-      expect(redemptionCall.idempotencyKey).toBe('shopify_987654322');
+      expect(await res.json()).toMatchObject({
+        received: true,
+        skipped: true,
+        reason: 'no_incentives_eval',
+      });
+      expect(mockCore.commitRedemption).not.toHaveBeenCalled();
     });
 
     it('gracefully skips orders without _incentives_eval note attribute', async () => {
@@ -351,16 +399,16 @@ describe('Shopify Webhooks Handler & Post-Capture Reconciliation', () => {
         reconciliationWarning: 'POST_CAPTURE_OVERSPEND',
       });
 
-      const orderPayload = {
+      const orderPayload = paidOrder({
         id: 987654324,
         admin_graphql_api_id: 'gid://shopify/Order/987654324',
         note_attributes: [
           {
             name: '_incentives_eval',
-            value: JSON.stringify({ evaluationId: 'eval-exhausted-001' }),
+            value: JSON.stringify(validEval({ evaluationId: 'eval-exhausted-001' })),
           },
         ],
-      };
+      });
       const rawBody = JSON.stringify(orderPayload);
       const hmac = computeShopifyWebhookHmac(rawBody, CLIENT_SECRET);
 
@@ -387,16 +435,16 @@ describe('Shopify Webhooks Handler & Post-Capture Reconciliation', () => {
 
     it('handles idempotent retries cleanly with identical idempotencyKey', async () => {
       const app = createApp();
-      const orderPayload = {
+      const orderPayload = paidOrder({
         id: 987654325,
         admin_graphql_api_id: 'gid://shopify/Order/987654325',
         note_attributes: [
           {
             name: '_incentives_eval',
-            value: JSON.stringify({ evaluationId: 'eval-retry-001' }),
+            value: JSON.stringify(validEval({ evaluationId: 'eval-retry-001' })),
           },
         ],
-      };
+      });
       const rawBody = JSON.stringify(orderPayload);
       const hmac = computeShopifyWebhookHmac(rawBody, CLIENT_SECRET);
 
@@ -441,7 +489,12 @@ describe('Shopify Webhooks Handler & Post-Capture Reconciliation', () => {
 
     it('returns 200 skipped when shop domain is not recognized in D1', async () => {
       const app = createApp();
-      const body = JSON.stringify({ id: 111, note_attributes: [{ name: '_incentives_eval', value: 'e1' }] });
+      const body = JSON.stringify({
+        id: 111,
+        note_attributes: [
+          { name: '_incentives_eval', value: JSON.stringify(validEval()) },
+        ],
+      });
       const hmac = computeShopifyWebhookHmac(body, CLIENT_SECRET);
 
       const res = await app.request(

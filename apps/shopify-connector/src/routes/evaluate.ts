@@ -11,24 +11,14 @@ import {
   type ShopifyAdminEnv,
 } from '../middleware/shopify-session.js';
 import { computeCartFingerprint } from '../services/cart-fingerprint.js';
+import { computeHmacSha256Hex } from '../services/hmac.js';
 import { createOperatorContext } from '../services/operator-context.js';
 import { shopifyCheckoutCors } from '../middleware/cors.js';
 
 const SHOPIFY_EVALUATION_TTL_SECONDS = 86_400;
 
 export async function computeHmacSha256(secret: string, message: string): Promise<string> {
-  const enc = new TextEncoder();
-  const key = await crypto.subtle.importKey(
-    'raw',
-    enc.encode(secret),
-    { name: 'HMAC', hash: 'SHA-256' },
-    false,
-    ['sign'],
-  );
-  const sig = await crypto.subtle.sign('HMAC', key, enc.encode(message));
-  return Array.from(new Uint8Array(sig))
-    .map(byte => byte.toString(16).padStart(2, '0'))
-    .join('');
+  return computeHmacSha256Hex(secret, message);
 }
 
 export const evaluateRoutes = new Hono<ShopifyAdminEnv>();
