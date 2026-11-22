@@ -1,7 +1,6 @@
 import {
   BudgetLeaseReserveRequestSchema,
   BudgetLeaseReserveResponseSchema,
-  type BudgetLeaseReserveRequest,
   type BudgetLeaseReserveResponse,
 } from '@incentives/contracts';
 
