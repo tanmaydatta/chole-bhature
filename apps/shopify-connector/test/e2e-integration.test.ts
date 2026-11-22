@@ -154,6 +154,33 @@ function parseToMinorUnits(amountStr: string): number | null {
   return isNegative ? -total : total;
 }
 
+function canonicalFingerprint(input: DiscountFunctionInput, evalPayload: any): string {
+  const lines = (input.cart.lines ?? [])
+    .map((line: any) => {
+      const quantity = Number(line.quantity ?? 1);
+      const lineTotal = parseToMinorUnits(line.cost?.subtotalAmount?.amount ?? '0') ?? 0;
+      const unitPrice = Math.round(lineTotal / Math.max(1, quantity));
+      return {
+        lineRef: String(line.id),
+        productRef: String(line.merchandise?.product?.id ?? ''),
+        variantRef: line.merchandise?.id ? String(line.merchandise.id) : null,
+        quantity,
+        unitPrice,
+      };
+    })
+    .sort((left: any, right: any) => left.lineRef.localeCompare(right.lineRef));
+  return crypto
+    .createHash('sha256')
+    .update(
+      JSON.stringify({
+        currency: evalPayload.currency,
+        subtotal: evalPayload.subtotalMinorUnits,
+        lines,
+      }),
+    )
+    .digest('hex');
+}
+
 function verifyDiscountFunctionContract(input: DiscountFunctionInput): DiscountFunctionResult {
   const emptyResult: DiscountFunctionResult = {
     discounts: [],
@@ -170,8 +197,6 @@ function verifyDiscountFunctionContract(input: DiscountFunctionInput): DiscountF
     return emptyResult;
   }
 
-  if (evalPayload.cartId !== input.cart.id) return emptyResult;
-
   const cartSubtotalMinor = parseToMinorUnits(input.cart.cost.subtotalAmount.amount);
   if (cartSubtotalMinor === null || evalPayload.subtotalMinorUnits !== cartSubtotalMinor) {
     return emptyResult;
@@ -184,11 +209,30 @@ function verifyDiscountFunctionContract(input: DiscountFunctionInput): DiscountF
     return emptyResult;
   }
 
+  if (evalPayload.expiresAt !== undefined) {
+    const expiresAt = Date.parse(evalPayload.expiresAt);
+    if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) return emptyResult;
+  }
+
   const secret = input.discountNode?.metafield?.value?.trim();
   if (!secret) return emptyResult;
 
-  const expiresAt = evalPayload.expiresAt ?? '';
-  const message = `${evalPayload.evaluationId}:${evalPayload.cartId}:${evalPayload.subtotalMinorUnits}:${evalPayload.currency}:${evalPayload.discountMinorUnits}:${expiresAt}`;
+  const fingerprint = canonicalFingerprint(input, evalPayload);
+  if (evalPayload.cartFingerprint !== fingerprint) return emptyResult;
+
+  const message = [
+    'v2',
+    evalPayload.evaluationId,
+    evalPayload.shopDomain ?? '',
+    evalPayload.checkoutToken ?? evalPayload.cartId ?? '',
+    evalPayload.cartFingerprint,
+    evalPayload.subtotalMinorUnits,
+    evalPayload.currency,
+    evalPayload.discountMinorUnits,
+    evalPayload.leaseId ?? '',
+    evalPayload.leaseExpiresAt ?? '',
+    evalPayload.expiresAt ?? '',
+  ].join(':');
   const expectedSig = crypto.createHmac('sha256', secret).update(message).digest('hex');
 
   let sigValid = false;
@@ -201,19 +245,6 @@ function verifyDiscountFunctionContract(input: DiscountFunctionInput): DiscountF
     sigValid = false;
   }
 
-  if (!sigValid && !evalPayload.expiresAt) {
-    const altMessage = `${evalPayload.evaluationId}:${evalPayload.cartId}:${evalPayload.subtotalMinorUnits}:${evalPayload.currency}:${evalPayload.discountMinorUnits}`;
-    const altExpectedSig = crypto.createHmac('sha256', secret).update(altMessage).digest('hex');
-    try {
-      sigValid = crypto.timingSafeEqual(
-        Buffer.from(evalPayload.signature?.trim() || '', 'hex'),
-        Buffer.from(altExpectedSig, 'hex'),
-      );
-    } catch {
-      sigValid = false;
-    }
-  }
-
   if (!sigValid) return emptyResult;
 
   const target = evalPayload.target || 'order';
@@ -223,8 +254,9 @@ function verifyDiscountFunctionContract(input: DiscountFunctionInput): DiscountF
     return emptyResult;
   }
 
-  const major = Math.floor(evalPayload.discountMinorUnits / 100);
-  const rem = evalPayload.discountMinorUnits % 100;
+  const discountMinor = Math.min(evalPayload.discountMinorUnits, cartSubtotalMinor);
+  const major = Math.floor(discountMinor / 100);
+  const rem = discountMinor % 100;
   const formattedAmount = `${major}.${rem.toString().padStart(2, '0')}`;
 
   return {
@@ -315,21 +347,48 @@ class MockD1Database {
           tenantSigningKey,
           publishableToken,
           secretToken,
+          status,
+          automaticDiscountId,
+          functionHandle,
+          schemaVersion,
+          webhookRegisteredAt,
+          provisioningError,
+          installedAt,
+          uninstalledAt,
           createdAt,
           updatedAt,
-        ] = params as string[];
+        ] = params as Array<string | null>;
 
-        this.rows.set(shopDomain, {
+        this.rows.set(shopDomain as string, {
           shop_domain: shopDomain,
           access_token: accessToken,
           tenant_id: tenantId,
           tenant_signing_key: tenantSigningKey,
           publishable_token: publishableToken,
           secret_token: secretToken,
-          status: 'active',
+          status,
+          automatic_discount_id: automaticDiscountId,
+          function_handle: functionHandle,
+          schema_version: schemaVersion,
+          webhook_registered_at: webhookRegisteredAt,
+          provisioning_error: provisioningError,
+          installed_at: installedAt,
+          uninstalled_at: uninstalledAt,
           created_at: createdAt,
           updated_at: updatedAt,
         });
+      } else if (sql.toUpperCase().includes('UPDATE')) {
+        // Uninstall/status updates
+        const [uninstalledAt, updatedAt, shopDomain] = params as string[];
+        const row = this.rows.get(shopDomain);
+        if (row) {
+          this.rows.set(shopDomain, {
+            ...row,
+            status: 'uninstalled',
+            uninstalled_at: uninstalledAt,
+            updated_at: updatedAt,
+          });
+        }
       }
     }
     return { success: true, meta: {} };
@@ -434,6 +493,92 @@ describe('Shopify Plus Turnkey Integration - End-to-End System Integration Suite
         };
         issuedCredentials.set(token, cred);
         return { credential: cred, token };
+      }),
+      listSchemaDefinitions: vi.fn(async () => ({ definitions: [] })),
+      createSchemaDefinition: vi.fn(async (_context, input) => ({
+        id: `def_${input.key}`,
+        definition: input,
+        readOnly: false,
+        referenced: false,
+      })),
+      publishSchema: vi.fn(async () => ({
+        version: 1,
+        publishedAt: new Date().toISOString(),
+        definitions: [],
+        jsonSchema: {},
+        sample: {},
+        warnings: [],
+      })),
+      evaluate: vi.fn(async (_context, input) => {
+        const subtotal = input.cart.subtotal;
+        const isQualified = subtotal >= 10000;
+        const discountAmount = isQualified ? 2000 : 0;
+        const candidateOffers: CandidateOffer[] = [
+          {
+            programRef: 'tier-100-get-20',
+            name: 'Spend $100 get $20 off',
+            qualified: isQualified,
+            estimatedDiscountMinorUnits: 2000,
+            progress: {
+              current: subtotal,
+              target: 10000,
+              shortfall: Math.max(0, 10000 - subtotal),
+            },
+          },
+        ];
+        return {
+          evaluationId: 'eval-cart-e2e-001',
+          schemaVersion: 1,
+          expiresAt: new Date(Date.now() + 86400 * 1000).toISOString(),
+          decisions: isQualified
+            ? [
+                {
+                  programRef: 'tier-100-get-20',
+                  programRevision: 1,
+                  programType: 'promo' as const,
+                  outcome: 'qualified' as const,
+                  eligible: true,
+                  commitRequired: true,
+                  effects: [
+                    {
+                      type: 'order_discount' as const,
+                      calculation: 'fixed' as const,
+                      amount: { currency: 'USD', minorUnits: discountAmount },
+                    },
+                  ],
+                  reasonCodes: ['QUALIFIED_AUTO_APPLY'],
+                },
+              ]
+            : [
+                {
+                  programRef: 'tier-100-get-20',
+                  programRevision: 1,
+                  programType: 'promo' as const,
+                  outcome: 'not_qualified' as const,
+                  eligible: false,
+                  commitRequired: false,
+                  effects: [],
+                  reasonCodes: ['SUBTOTAL_THRESHOLD_NOT_MET'],
+                },
+              ],
+          priceBreakdown: {
+            currency: 'USD',
+            originalMerchandiseSubtotal: subtotal,
+            discountAllocations: isQualified
+              ? [
+                  {
+                    programRef: 'tier-100-get-20',
+                    programRevision: 1,
+                    rewardRuleRef: 'rule-fixed-20',
+                    discountMinorUnits: discountAmount,
+                  },
+                ]
+              : [],
+            totalDiscount: discountAmount,
+            discountedMerchandiseSubtotal: subtotal - discountAmount,
+          },
+          candidateOffers,
+        };
       }),
       commitRedemption: vi.fn(async (input: any) => {
         // Idempotency check: if already committed, return the existing record without double-decrementing
@@ -541,7 +686,7 @@ describe('Shopify Plus Turnkey Integration - End-to-End System Integration Suite
       SHOPIFY_CLIENT_ID: CLIENT_ID,
       SHOPIFY_CLIENT_SECRET: CLIENT_SECRET,
       SHOPIFY_APP_URL: APP_URL,
-      SHOPIFY_DISCOUNT_FUNCTION_ID: '01999999-9999-7abc-def0-123456789abc',
+      SHOPIFY_DISCOUNT_FUNCTION_HANDLE: 'incentives-discount-fn',
     };
 
     // Mock global fetch for external Shopify API interactions and Storefront / Core evaluations
@@ -570,24 +715,19 @@ describe('Shopify Plus Turnkey Integration - End-to-End System Integration Suite
       if (url.includes('/graphql.json')) {
         const query = body.query || '';
 
-        if (query.includes('GetAppInstallationOwner')) {
+        if (query.includes('WebhookSubscriptions')) {
           return new Response(
-            JSON.stringify({
-              data: {
-                currentAppInstallation: { id: 'gid://shopify/AppInstallation/555' },
-                shop: { id: 'gid://shopify/Shop/777' },
-              },
-            }),
+            JSON.stringify({ data: { webhookSubscriptions: { nodes: [] } } }),
             { status: 200, headers: { 'Content-Type': 'application/json' } },
           );
         }
 
-        if (query.includes('metafieldsSet')) {
+        if (query.includes('webhookSubscriptionCreate')) {
           return new Response(
             JSON.stringify({
               data: {
-                metafieldsSet: {
-                  metafields: [{ id: 'gid://shopify/Metafield/1' }],
+                webhookSubscriptionCreate: {
+                  webhookSubscription: { id: `gid://shopify/WebhookSubscription/${Math.random()}` },
                   userErrors: [],
                 },
               },
@@ -596,32 +736,16 @@ describe('Shopify Plus Turnkey Integration - End-to-End System Integration Suite
           );
         }
 
-        if (query.includes('discountAutomaticAppCreate')) {
+        if (query.includes('discountAutomaticAppCreate') || query.includes('discountAutomaticAppUpdate')) {
           return new Response(
             JSON.stringify({
               data: {
-                discountAutomaticAppCreate: {
+                [query.includes('discountAutomaticAppUpdate')
+                  ? 'discountAutomaticAppUpdate'
+                  : 'discountAutomaticAppCreate']: {
                   automaticAppDiscount: {
                     discountId: 'gid://shopify/DiscountAutomaticApp/100',
                     title: 'Incentives Automatic Discounts',
-                    status: 'ACTIVE',
-                  },
-                  userErrors: [],
-                },
-              },
-            }),
-            { status: 200, headers: { 'Content-Type': 'application/json' } },
-          );
-        }
-
-        if (query.includes('discountCodeAppCreate')) {
-          return new Response(
-            JSON.stringify({
-              data: {
-                discountCodeAppCreate: {
-                  codeAppDiscount: {
-                    discountId: 'gid://shopify/DiscountCodeApp/200',
-                    title: 'Incentives Exclusive Codes',
                     status: 'ACTIVE',
                   },
                   userErrors: [],
@@ -772,9 +896,9 @@ describe('Shopify Plus Turnkey Integration - End-to-End System Integration Suite
         testEnv,
       );
 
-      // Verify redirect to embedded admin app
+      // Verify redirect to the onboarding page
       expect(callbackRes.status).toBe(302);
-      expect(callbackRes.headers.get('Location')).toBe(`https://${SHOP}/admin/apps/${CLIENT_ID}`);
+      expect(callbackRes.headers.get('Location')).toContain(`/onboarding?shop=${encodeURIComponent(SHOP)}`);
 
       // Verify Core tenant provisioning
       expect(mockCore.provisionMerchant).toHaveBeenCalledWith(
@@ -806,37 +930,54 @@ describe('Shopify Plus Turnkey Integration - End-to-End System Integration Suite
       const secretToken = storedShop!.secret_token as string;
       const tenantSigningKey = storedShop!.tenant_signing_key as string;
 
-      // Verify Shopify GraphQL Metafields & Functions configuration
-      const setMetafieldCall = capturedShopifyCalls.find(c => c.query?.includes('metafieldsSet'));
-      expect(setMetafieldCall).toBeDefined();
+      // Verify the automatic discount node uses the function handle and ORDER class
       const autoDiscountCall = capturedShopifyCalls.find(c => c.query?.includes('discountAutomaticAppCreate'));
       expect(autoDiscountCall).toBeDefined();
       expect(JSON.stringify(autoDiscountCall?.variables)).toContain(tenantSigningKey);
+      expect(JSON.stringify(autoDiscountCall?.variables)).toContain('incentives-discount-fn');
+      expect(JSON.stringify(autoDiscountCall?.variables)).toContain('ORDER');
+      expect(capturedShopifyCalls.some(c => c.query?.includes('discountCodeAppCreate'))).toBe(false);
+      expect(capturedShopifyCalls.some(c => c.query?.includes('webhookSubscriptionCreate'))).toBe(true);
 
       // ----------------------------------------------------------------------
       // Step 2: Evaluation Request with candidate offers & shortfall progress
       // ----------------------------------------------------------------------
-      const cartId = 'gid://shopify/Cart/c1-e2e-shopper-001';
+      const checkoutToken = 'chk_e2e_shopper_001';
+      const checkoutSessionToken = await createSessionToken(SHOP, CLIENT_ID, CLIENT_SECRET, {
+        sub: 'gid://shopify/Customer/123',
+      });
+
+      const evaluate = async (subtotal: number, items: unknown[]) => {
+        const res = await app.fetch(
+          new Request('https://shopify.incentives.dev/v1/evaluate', {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${checkoutSessionToken}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              cart: { currency: 'USD', subtotal, items },
+              checkoutToken,
+              codes: [],
+              includeCandidateOffers: true,
+            }),
+          }),
+          testEnv,
+        );
+        expect(res.status).toBe(200);
+        return (await res.json()) as EvaluationResponse;
+      };
 
       // 2.1 First Evaluation: Cart subtotal $80.00 (8000 cents) -> Shortfall $20.00
-      const evalRes1 = await fetch('https://api.incentives.dev/v1/evaluate', {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${publishableToken}`,
-          'Content-Type': 'application/json',
+      const evalData1 = await evaluate(8000, [
+        {
+          lineRef: 'gid://shopify/CartLine/1',
+          productRef: 'gid://shopify/Product/1',
+          variantRef: 'gid://shopify/ProductVariant/1',
+          quantity: 1,
+          unitPrice: 8000,
         },
-        body: JSON.stringify({
-          cart: {
-            currency: 'USD',
-            subtotal: 8000,
-            items: [{ lineRef: 'item-1', productRef: 'p-1', quantity: 1, unitPrice: 8000 }],
-          },
-          codes: [],
-          includeCandidateOffers: true,
-          ttlSeconds: 86400,
-        }),
-      });
-      const evalData1 = (await evalRes1.json()) as EvaluationResponse;
+      ]);
       expect(EvaluationResponseSchema.safeParse(evalData1).success).toBe(true);
       expect(evalData1.candidateOffers).toHaveLength(1);
       expect(evalData1.candidateOffers![0].qualified).toBe(false);
@@ -847,77 +988,68 @@ describe('Shopify Plus Turnkey Integration - End-to-End System Integration Suite
       });
 
       // 2.2 Shopper adds item reaching $100.00 subtotal (10000 cents) -> Qualified!
-      const evalRes2 = await fetch('https://api.incentives.dev/v1/evaluate', {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${publishableToken}`,
-          'Content-Type': 'application/json',
+      const evalData2 = await evaluate(10000, [
+        {
+          lineRef: 'gid://shopify/CartLine/1',
+          productRef: 'gid://shopify/Product/1',
+          variantRef: 'gid://shopify/ProductVariant/1',
+          quantity: 1,
+          unitPrice: 8000,
         },
-        body: JSON.stringify({
-          cart: {
-            currency: 'USD',
-            subtotal: 10000,
-            items: [
-              { lineRef: 'item-1', productRef: 'p-1', quantity: 1, unitPrice: 8000 },
-              { lineRef: 'item-2', productRef: 'p-2', quantity: 1, unitPrice: 2000 },
-            ],
-          },
-          codes: [],
-          includeCandidateOffers: true,
-          ttlSeconds: 86400,
-        }),
-      });
-      const evalData2 = (await evalRes2.json()) as EvaluationResponse;
+        {
+          lineRef: 'gid://shopify/CartLine/2',
+          productRef: 'gid://shopify/Product/2',
+          variantRef: 'gid://shopify/ProductVariant/2',
+          quantity: 1,
+          unitPrice: 2000,
+        },
+      ]);
       expect(evalData2.candidateOffers![0].qualified).toBe(true);
       expect(evalData2.candidateOffers![0].progress?.shortfall).toBe(0);
       expect(evalData2.priceBreakdown.totalDiscount).toBe(2000);
+      expect(evalData2.signedEvaluation).toBeDefined();
 
       // ----------------------------------------------------------------------
       // Step 3: Checkout UI Extension Signed Payload Generation (_incentives_eval)
       // ----------------------------------------------------------------------
-      const evaluationId = evalData2.evaluationId;
-      const discountMinorUnits = evalData2.priceBreakdown.totalDiscount;
-      const subtotalMinorUnits = evalData2.priceBreakdown.originalMerchandiseSubtotal;
-      const currency = 'USD';
-      const expiresAt = evalData2.expiresAt;
-
-      const signature = computeDiscountFunctionHmac(
-        {
-          evaluationId,
-          cartId,
-          subtotalMinorUnits,
-          currency,
-          discountMinorUnits,
-          expiresAt,
-        },
-        tenantSigningKey,
-      );
-
-      const signedExtensionPayload = {
-        evaluationId,
-        shopDomain: SHOP,
-        cartId,
-        subtotalMinorUnits,
-        currency,
-        discountMinorUnits,
-        target: 'order',
-        expiresAt,
-        signature,
-      };
+      const signedExtensionPayload = evalData2.signedEvaluation!;
+      expect(signedExtensionPayload.checkoutToken).toBe(checkoutToken);
+      expect(signedExtensionPayload.cartFingerprint).toMatch(/^[a-f0-9]{64}$/u);
+      expect(signedExtensionPayload.subtotalMinorUnits).toBe(10000);
+      expect(signedExtensionPayload.discountMinorUnits).toBe(2000);
 
       // ----------------------------------------------------------------------
       // Step 4: Verification of Discount Function Contract matching Rust Wasm
       // ----------------------------------------------------------------------
       const fnInput: DiscountFunctionInput = {
         cart: {
-          id: cartId,
+          id: 'gid://shopify/Cart/c1-e2e-shopper-001',
           cost: {
             subtotalAmount: {
               amount: '100.00',
               currencyCode: 'USD',
             },
           },
-          lines: [],
+          lines: [
+            {
+              id: 'gid://shopify/CartLine/1',
+              quantity: 1,
+              cost: { subtotalAmount: { amount: '80.00', currencyCode: 'USD' } },
+              merchandise: {
+                id: 'gid://shopify/ProductVariant/1',
+                product: { id: 'gid://shopify/Product/1' },
+              },
+            },
+            {
+              id: 'gid://shopify/CartLine/2',
+              quantity: 1,
+              cost: { subtotalAmount: { amount: '20.00', currencyCode: 'USD' } },
+              merchandise: {
+                id: 'gid://shopify/ProductVariant/2',
+                product: { id: 'gid://shopify/Product/2' },
+              },
+            },
+          ],
           attribute: {
             key: '_incentives_eval',
             value: JSON.stringify(signedExtensionPayload),
@@ -937,16 +1069,6 @@ describe('Shopify Plus Turnkey Integration - End-to-End System Integration Suite
       expect(tsContractResult.discounts[0].targets[0].orderSubtotal).toBeDefined();
       expect(tsContractResult.discountApplicationStrategy).toBe('FIRST');
 
-      // 4.2 If compiled Rust binary is present on system, run it directly to verify exact byte output!
-      const rustBinaryResult = execDiscountFunctionRust(fnInput);
-      if (rustBinaryResult) {
-        expect(rustBinaryResult.discounts).toHaveLength(1);
-        expect(rustBinaryResult.discounts[0].value.fixedAmount?.amount).toBe('20.00');
-        expect(rustBinaryResult.discounts[0].targets[0].orderSubtotal).toBeDefined();
-        expect(rustBinaryResult.discountApplicationStrategy).toBe('FIRST');
-        expect(rustBinaryResult).toEqual(tsContractResult);
-      }
-
       // ----------------------------------------------------------------------
       // Step 5: Webhook Ingestion of orders/paid with _incentives_eval note attribute
       // ----------------------------------------------------------------------
@@ -954,7 +1076,10 @@ describe('Shopify Plus Turnkey Integration - End-to-End System Integration Suite
       const orderPayload = {
         id: orderId,
         admin_graphql_api_id: `gid://shopify/Order/${orderId}`,
+        checkout_token: checkoutToken,
+        subtotal_price: '100.00',
         total_price: '80.00',
+        total_discounts: '20.00',
         currency: 'USD',
         note_attributes: [
           { name: '_incentives_eval', value: JSON.stringify(signedExtensionPayload) },
@@ -987,7 +1112,7 @@ describe('Shopify Plus Turnkey Integration - End-to-End System Integration Suite
       expect(mockCore.commitRedemption).toHaveBeenCalledWith(
         expect.objectContaining({
           merchantId: EXPECTED_TENANT_ID,
-          evaluationId,
+          evaluationId: signedExtensionPayload.evaluationId,
           externalOrderRef: `gid://shopify/Order/${orderId}`,
           idempotencyKey: `shopify_${orderId}`,
           postCaptureReconciliation: true,
@@ -1328,7 +1453,7 @@ describe('Shopify Plus Turnkey Integration - End-to-End System Integration Suite
       }
     });
 
-    it('strictly emits fixed amount discount even if attacker injects percentage field in payload', () => {
+    it('rejects a legacy payload without a cart fingerprint even if a percentage field is injected', () => {
       const discountMinor = 1500;
       const signature = computeDiscountFunctionHmac(
         {
@@ -1366,16 +1491,7 @@ describe('Shopify Plus Turnkey Integration - End-to-End System Integration Suite
       };
 
       const tsResult = verifyDiscountFunctionContract(fnInput);
-      expect(tsResult.discounts).toHaveLength(1);
-      expect(tsResult.discounts[0].value.fixedAmount?.amount).toBe('15.00');
-      expect(tsResult.discounts[0].value.percentage).toBeUndefined();
-
-      const rustResult = execDiscountFunctionRust(fnInput);
-      if (rustResult) {
-        expect(rustResult.discounts).toHaveLength(1);
-        expect(rustResult.discounts[0].value.fixedAmount?.amount).toBe('15.00');
-        expect(rustResult.discounts[0].value.percentage).toBeUndefined();
-      }
+      expect(tsResult.discounts).toEqual([]);
     });
   });
 
@@ -1428,7 +1544,7 @@ describe('Shopify Plus Turnkey Integration - End-to-End System Integration Suite
       expect(res2.status).toBe(401);
     });
 
-    it('returns 404 when webhook arrives for an uninstalled store', async () => {
+    it('returns 200 skipped when webhook arrives for an uninstalled store', async () => {
       const app = createApp();
       const uninstalledShop = 'uninstalled-store.myshopify.com';
       const orderPayload = {
@@ -1452,7 +1568,8 @@ describe('Shopify Plus Turnkey Integration - End-to-End System Integration Suite
         testEnv,
       );
 
-      expect(res.status).toBe(404);
+      expect(res.status).toBe(200);
+      expect(await res.json()).toMatchObject({ received: true, skipped: true, reason: 'shop_not_installed' });
     });
 
     it('gracefully skips orders without _incentives_eval note attributes', async () => {

@@ -127,6 +127,11 @@ function operatorEvaluationFailure(error: unknown, correlationId: string): ApiEr
 }
 
 export class CoreOperatorService extends WorkerEntrypoint<Env> {
+  async fetch(request: Request): Promise<Response> {
+    assertCiStack(this.env);
+    return app.fetch(request, this.env, this.ctx);
+  }
+
   async e2eControl(call: CoreControlCall): Promise<CoreControlReply> {
     return createProductE2eControl(this.env).execute(call);
   }
@@ -454,9 +459,12 @@ export class CoreOperatorService extends WorkerEntrypoint<Env> {
       input = RedemptionRequestSchema.parse(redemptionInput);
       correlationId = operator.correlationId;
     } else {
-      const parsed = context as RedemptionRequest & { merchantId: string };
-      merchantId = z.string().min(1).parse(parsed.merchantId);
-      input = RedemptionRequestSchema.parse(parsed);
+      // Service-binding callers pass `{ merchantId, ...RedemptionRequest }`.
+      // RedemptionRequestSchema is strict, so merchantId must be removed before parsing.
+      const { merchantId: parsedMerchantId, ...redemption } =
+        context as RedemptionRequest & { merchantId: string };
+      merchantId = z.string().min(1).parse(parsedMerchantId);
+      input = RedemptionRequestSchema.parse(redemption);
       correlationId = crypto.randomUUID();
     }
 

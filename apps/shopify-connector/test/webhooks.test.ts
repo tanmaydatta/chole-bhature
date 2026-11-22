@@ -439,7 +439,7 @@ describe('Shopify Webhooks Handler & Post-Capture Reconciliation', () => {
       expect(call2.idempotencyKey).toBe('shopify_987654325');
     });
 
-    it('returns 404 when shop domain is not recognized in D1', async () => {
+    it('returns 200 skipped when shop domain is not recognized in D1', async () => {
       const app = createApp();
       const body = JSON.stringify({ id: 111, note_attributes: [{ name: '_incentives_eval', value: 'e1' }] });
       const hmac = computeShopifyWebhookHmac(body, CLIENT_SECRET);
@@ -458,7 +458,9 @@ describe('Shopify Webhooks Handler & Post-Capture Reconciliation', () => {
         testEnv,
       );
 
-      expect(res.status).toBe(404);
+      expect(res.status).toBe(200);
+      expect(await res.json()).toMatchObject({ received: true, skipped: true, reason: 'shop_not_installed' });
+      expect(mockCore.commitRedemption).not.toHaveBeenCalled();
     });
 
     it('returns 400 when request body contains malformed JSON', async () => {
@@ -718,7 +720,7 @@ describe('Shopify Webhooks Handler & Post-Capture Reconciliation', () => {
       const upsertCall = (mockCore.upsertCustomer as any).mock.calls[0];
       // Check customer context, ref, and attributes
       expect(upsertCall[0].permission).toBe('customers:manage');
-      expect(upsertCall[1]).toBe('888999');
+      expect(upsertCall[1]).toBe('gid://shopify/Customer/888999');
       expect(upsertCall[2]).toEqual(expect.objectContaining({
         attributes: expect.objectContaining({
           email: 'vip.shopper@example.com',

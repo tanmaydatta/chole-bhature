@@ -54,18 +54,33 @@ class MockD1Database {
           tenantSigningKey,
           publishableToken,
           secretToken,
+          status,
+          automaticDiscountId,
+          functionHandle,
+          schemaVersion,
+          webhookRegisteredAt,
+          provisioningError,
+          installedAt,
+          uninstalledAt,
           createdAt,
           updatedAt,
-        ] = params as string[];
+        ] = params as Array<string | null>;
 
-        this.rows.set(shopDomain, {
+        this.rows.set(shopDomain as string, {
           shop_domain: shopDomain,
           access_token: accessToken,
           tenant_id: tenantId,
           tenant_signing_key: tenantSigningKey,
           publishable_token: publishableToken,
           secret_token: secretToken,
-          status: 'active',
+          status,
+          automatic_discount_id: automaticDiscountId,
+          function_handle: functionHandle,
+          schema_version: schemaVersion,
+          webhook_registered_at: webhookRegisteredAt,
+          provisioning_error: provisioningError,
+          installed_at: installedAt,
+          uninstalled_at: uninstalledAt,
           created_at: createdAt,
           updated_at: updatedAt,
         });
@@ -139,6 +154,25 @@ describe('Shopify OAuth & Store Provisioning', () => {
           token: isPub ? 'pk_live_shopify_pub_token_1234567890' : 'sk_live_shopify_sec_token_1234567890',
         };
       }),
+      listSchemaDefinitions: vi.fn(async () => ({
+        definitions: [],
+      })),
+      createSchemaDefinition: vi.fn(async (_context, input) => ({
+        id: `def_${input.key}`,
+        definition: input,
+        readOnly: false,
+        referenced: false,
+      })),
+      publishSchema: vi.fn(async () => ({
+        version: 1,
+        publishedAt: new Date().toISOString(),
+        definitions: [
+          { key: 'cart.subtotal', label: 'Cart subtotal', source: 'cart', type: 'number', required: false },
+        ],
+        jsonSchema: {},
+        sample: {},
+        warnings: [],
+      })),
     };
 
     testEnv = {
@@ -147,7 +181,7 @@ describe('Shopify OAuth & Store Provisioning', () => {
       SHOPIFY_CLIENT_ID: CLIENT_ID,
       SHOPIFY_CLIENT_SECRET: CLIENT_SECRET,
       SHOPIFY_APP_URL: APP_URL,
-      SHOPIFY_DISCOUNT_FUNCTION_ID: '01912345-6789-7abc-def0-123456789abc',
+      SHOPIFY_DISCOUNT_FUNCTION_HANDLE: 'incentives-discount-fn',
     };
 
     vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -170,35 +204,23 @@ describe('Shopify OAuth & Store Provisioning', () => {
         const body = typeof init?.body === 'string' ? JSON.parse(init.body) : {};
         const query = body.query || '';
 
-        if (query.includes('GetAppInstallationOwner')) {
+        if (query.includes('WebhookSubscriptions')) {
           return new Response(
             JSON.stringify({
               data: {
-                currentAppInstallation: {
-                  id: 'gid://shopify/AppInstallation/123456',
-                },
-                shop: {
-                  id: 'gid://shopify/Shop/987654',
-                },
+                webhookSubscriptions: { nodes: [] },
               },
             }),
             { status: 200, headers: { 'Content-Type': 'application/json' } },
           );
         }
 
-        if (query.includes('metafieldsSet')) {
+        if (query.includes('webhookSubscriptionCreate')) {
           return new Response(
             JSON.stringify({
               data: {
-                metafieldsSet: {
-                  metafields: [
-                    {
-                      id: 'gid://shopify/Metafield/1',
-                      namespace: '$app:incentives',
-                      key: 'publishable_token',
-                      value: 'pk_live_shopify_pub_token_1234567890',
-                    },
-                  ],
+                webhookSubscriptionCreate: {
+                  webhookSubscription: { id: `gid://shopify/WebhookSubscription/${Math.random()}` },
                   userErrors: [],
                 },
               },
@@ -207,32 +229,16 @@ describe('Shopify OAuth & Store Provisioning', () => {
           );
         }
 
-        if (query.includes('discountAutomaticAppCreate')) {
+        if (query.includes('discountAutomaticAppCreate') || query.includes('discountAutomaticAppUpdate')) {
           return new Response(
             JSON.stringify({
               data: {
-                discountAutomaticAppCreate: {
+                [query.includes('discountAutomaticAppUpdate')
+                  ? 'discountAutomaticAppUpdate'
+                  : 'discountAutomaticAppCreate']: {
                   automaticAppDiscount: {
                     discountId: 'gid://shopify/DiscountAutomaticApp/1',
                     title: 'Incentives Automatic Discounts',
-                    status: 'ACTIVE',
-                  },
-                  userErrors: [],
-                },
-              },
-            }),
-            { status: 200, headers: { 'Content-Type': 'application/json' } },
-          );
-        }
-
-        if (query.includes('discountCodeAppCreate')) {
-          return new Response(
-            JSON.stringify({
-              data: {
-                discountCodeAppCreate: {
-                  codeAppDiscount: {
-                    discountId: 'gid://shopify/DiscountCodeApp/1',
-                    title: 'Incentives Exclusive Codes',
                     status: 'ACTIVE',
                   },
                   userErrors: [],
@@ -399,9 +405,9 @@ describe('Shopify OAuth & Store Provisioning', () => {
         testEnv,
       );
 
-      // Verify response redirects to embedded admin app
+      // Verify response redirects to the onboarding page
       expect(callbackRes.status).toBe(302);
-      expect(callbackRes.headers.get('Location')).toContain(`https://${SHOP}/admin/apps/${CLIENT_ID}`);
+      expect(callbackRes.headers.get('Location')).toContain(`/onboarding?shop=${encodeURIComponent(SHOP)}`);
 
       // Verify token exchange fetch
       const tokenFetch = capturedFetches.find(f => f.url.includes('/admin/oauth/access_token'));
@@ -422,12 +428,11 @@ describe('Shopify OAuth & Store Provisioning', () => {
 
       // Verify Core credential creation (publishable + secret)
       expect(mockCore.createCredential).toHaveBeenCalledTimes(2);
-      const credCalls = (mockCore.createCredential as any).mock.calls;
-      const pubCall = credCalls.find((c: any) => c[1].kind === 'publishable');
-      const secCall = credCalls.find((c: any) => c[1].kind === 'secret');
-      expect(pubCall).toBeDefined();
-      expect(pubCall[1].allowedOrigins).toContain(`https://${SHOP}`);
-      expect(secCall).toBeDefined();
+
+      // Verify baseline schema provisioning
+      expect(mockCore.listSchemaDefinitions).toHaveBeenCalledTimes(1);
+      expect(mockCore.createSchemaDefinition).toHaveBeenCalledTimes(5);
+      expect(mockCore.publishSchema).toHaveBeenCalledTimes(1);
 
       // Verify D1 shop record persistence
       const storeRecord = await mockDb
@@ -444,58 +449,32 @@ describe('Shopify OAuth & Store Provisioning', () => {
       expect(storeRecord?.publishable_token).toBe('pk_live_shopify_pub_token_1234567890');
       expect(storeRecord?.secret_token).toBe('sk_live_shopify_sec_token_1234567890');
       expect(storeRecord?.status).toBe('active');
+      expect(storeRecord?.automatic_discount_id).toBe('gid://shopify/DiscountAutomaticApp/1');
+      expect(storeRecord?.function_handle).toBe('incentives-discount-fn');
 
-      // Verify owner query
-      const ownerFetch = capturedFetches.find(f => {
-        const body = typeof f.options?.body === 'string' ? f.options.body : '';
-        return body.includes('GetAppInstallationOwner');
-      });
-      expect(ownerFetch).toBeDefined();
-
-      // Verify Shopify GraphQL calls for App Metafield
-      const metafieldFetch = capturedFetches.find(f => {
-        const body = typeof f.options?.body === 'string' ? f.options.body : '';
-        return body.includes('metafieldsSet');
-      });
-      expect(metafieldFetch).toBeDefined();
-      expect(metafieldFetch!.options?.headers).toMatchObject({
-        'X-Shopify-Access-Token': 'shpat_permanent_access_token_xyz',
-      });
-      const metafieldBody = JSON.parse(metafieldFetch!.options?.body as string);
-      expect(metafieldBody.variables.metafields[0].ownerId).toBe('gid://shopify/AppInstallation/123456');
-      expect(metafieldBody.variables.metafields[0].namespace).toBe('$app:incentives');
-      expect(metafieldBody.variables.metafields[0].key).toBe('publishable_token');
-      expect(metafieldBody.variables.metafields[0].value).toBe('pk_live_shopify_pub_token_1234567890');
-
-      // Automatic discount registration
+      // Automatic discount registration uses functionHandle and ORDER only
       const autoDiscountFetch = capturedFetches.find(f => {
         const body = typeof f.options?.body === 'string' ? f.options.body : '';
         return body.includes('discountAutomaticAppCreate');
       });
       expect(autoDiscountFetch).toBeDefined();
       const autoDiscountBody = JSON.parse(autoDiscountFetch!.options?.body as string);
-      expect(autoDiscountBody.variables.automaticAppDiscount.discountClasses).toEqual([
-        'ORDER',
-        'PRODUCT',
-        'SHIPPING',
-      ]);
+      expect(autoDiscountBody.variables.automaticAppDiscount.functionHandle).toBe('incentives-discount-fn');
+      expect(autoDiscountBody.variables.automaticAppDiscount.discountClasses).toEqual(['ORDER']);
       expect(autoDiscountBody.variables.automaticAppDiscount.metafields[0].key).toBe('signing-secret');
       expect(autoDiscountBody.variables.automaticAppDiscount.metafields[0].value).toBe(
         storeRecord?.tenant_signing_key,
       );
 
-      // Code discount registration
-      const codeDiscountFetch = capturedFetches.find(f => {
+      // Webhooks are registered, and the obsolete master code node is not created.
+      expect(capturedFetches.some(f => {
+        const body = typeof f.options?.body === 'string' ? f.options.body : '';
+        return body.includes('webhookSubscriptionCreate');
+      })).toBe(true);
+      expect(capturedFetches.some(f => {
         const body = typeof f.options?.body === 'string' ? f.options.body : '';
         return body.includes('discountCodeAppCreate');
-      });
-      expect(codeDiscountFetch).toBeDefined();
-      const codeDiscountBody = JSON.parse(codeDiscountFetch!.options?.body as string);
-      expect(codeDiscountBody.variables.codeAppDiscount.code).toBe('INCENTIVES_APPLIED');
-      expect(codeDiscountBody.variables.codeAppDiscount.metafields[0].key).toBe('signing-secret');
-      expect(codeDiscountBody.variables.codeAppDiscount.metafields[0].value).toBe(
-        storeRecord?.tenant_signing_key,
-      );
+      })).toBe(false);
     });
   });
 
@@ -572,23 +551,19 @@ describe('Shopify OAuth & Store Provisioning', () => {
         const body = typeof init?.body === 'string' ? JSON.parse(init.body) : {};
         const query = body.query || '';
 
-        if (query.includes('GetAppInstallationOwner')) {
+        if (query.includes('WebhookSubscriptions')) {
           return new Response(
-            JSON.stringify({
-              data: {
-                currentAppInstallation: { id: 'gid://shopify/AppInstallation/1' },
-              },
-            }),
+            JSON.stringify({ data: { webhookSubscriptions: { nodes: [] } } }),
             { status: 200, headers: { 'Content-Type': 'application/json' } },
           );
         }
 
-        if (query.includes('metafieldsSet')) {
+        if (query.includes('discountAutomaticAppCreate')) {
           return new Response(
             JSON.stringify({
               data: {
-                metafieldsSet: {
-                  userErrors: [{ field: ['namespace'], message: 'Invalid namespace' }],
+                discountAutomaticAppCreate: {
+                  userErrors: [{ field: ['functionHandle'], message: 'Function not found' }],
                 },
               },
             }),
@@ -607,7 +582,7 @@ describe('Shopify OAuth & Store Provisioning', () => {
           shop: SHOP,
           accessToken: 'shpat_err',
         }),
-      ).rejects.toThrow('Shopify metafieldsSet userErrors: namespace: Invalid namespace');
+      ).rejects.toThrow('Shopify discountAutomaticAppCreate userErrors: functionHandle: Function not found');
     });
   });
 });

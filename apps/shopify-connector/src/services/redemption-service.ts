@@ -1,4 +1,5 @@
 import type { Env } from '../env.js';
+import { decryptToken } from './token-crypto.js';
 
 export interface InstalledShopRecord {
   shop_domain: string;
@@ -8,20 +9,38 @@ export interface InstalledShopRecord {
   publishable_token?: string;
   secret_token?: string;
   status: string;
+  automatic_discount_id?: string;
+  function_handle?: string;
+  schema_version?: number;
 }
 
 export async function findInstalledShop(
   db: D1Database,
   shopDomain: string,
+  env?: Env,
 ): Promise<InstalledShopRecord | null> {
   const query = `
-    SELECT shop_domain, access_token, tenant_id, tenant_signing_key, publishable_token, secret_token, status
+    SELECT shop_domain, access_token, tenant_id, tenant_signing_key, publishable_token,
+           secret_token, status, automatic_discount_id, function_handle, schema_version
     FROM shopify_installed_shops
     WHERE shop_domain = ? AND status = 'active'
     LIMIT 1
   `;
   const result = await db.prepare(query).bind(shopDomain).first<InstalledShopRecord>();
-  return result;
+  if (!result) return null;
+  if (!env) return result;
+
+  return {
+    ...result,
+    access_token: await decryptToken(env, result.access_token),
+    tenant_signing_key: await decryptToken(env, result.tenant_signing_key),
+    ...(result.publishable_token
+      ? { publishable_token: await decryptToken(env, result.publishable_token) }
+      : {}),
+    ...(result.secret_token
+      ? { secret_token: await decryptToken(env, result.secret_token) }
+      : {}),
+  };
 }
 
 export interface IncentivesEvalPayload {
@@ -96,11 +115,13 @@ export async function processOrderPaid(
     };
   }
 
-  const store = await findInstalledShop(env.DB, shopDomain);
+  const store = await findInstalledShop(env.DB, shopDomain, env);
   if (!store) {
-    const error = new Error(`Shop domain not recognized: ${shopDomain}`);
-    (error as { statusCode?: number }).statusCode = 404;
-    throw error;
+    return {
+      received: true,
+      skipped: true,
+      reason: 'shop_not_installed',
+    };
   }
 
   const orderId = order['id'] != null ? String(order['id']) : undefined;
@@ -142,7 +163,7 @@ export async function processOrderCancelled(
   shopDomain: string,
   order: Record<string, unknown>,
 ): Promise<OrderCancelledResult> {
-  const store = await findInstalledShop(env.DB, shopDomain);
+  const store = await findInstalledShop(env.DB, shopDomain, env);
   const orderId = order['id'] as number | string | undefined;
   const idempotencyKey = `shopify_cancel_${orderId ?? crypto.randomUUID()}`;
 
@@ -181,7 +202,7 @@ export async function processRefundCreated(
   shopDomain: string,
   refund: Record<string, unknown>,
 ): Promise<RefundCreateResult> {
-  const store = await findInstalledShop(env.DB, shopDomain);
+  const store = await findInstalledShop(env.DB, shopDomain, env);
   const refundId = refund['id'] as number | string | undefined;
   const orderId = refund['order_id'] as number | string | undefined;
 
@@ -201,6 +222,33 @@ export async function processRefundCreated(
   };
 }
 
+export interface AppUninstalledResult {
+  received: boolean;
+  deactivated: boolean;
+  shopDomain?: string;
+}
+
+export async function processAppUninstalled(
+  env: Env,
+  shopDomain: string,
+): Promise<AppUninstalledResult> {
+  const now = new Date().toISOString();
+  await env.DB.prepare(
+    `UPDATE shopify_installed_shops
+     SET status = 'uninstalled', uninstalled_at = ?, updated_at = ?
+     WHERE shop_domain = ?`,
+  )
+    .bind(now, now, shopDomain)
+    .run();
+
+  return {
+    received: true,
+    deactivated: true,
+    ...(shopDomain ? { shopDomain } : {}),
+  };
+}
+
+
 export interface CustomerUpdateResult {
   received: boolean;
   synced: boolean;
@@ -213,9 +261,14 @@ export async function processCustomerUpdate(
   shopDomain: string,
   customer: Record<string, unknown>,
 ): Promise<CustomerUpdateResult> {
-  const store = await findInstalledShop(env.DB, shopDomain);
-  const customerId = customer['id'] != null ? String(customer['id']) : undefined;
-  const customerRef = customerId ?? (customer['email'] as string | undefined) ?? 'unknown';
+  const store = await findInstalledShop(env.DB, shopDomain, env);
+  const customerGid =
+    typeof customer['admin_graphql_api_id'] === 'string'
+      ? customer['admin_graphql_api_id']
+      : customer['id'] != null
+        ? `gid://shopify/Customer/${String(customer['id'])}`
+        : (customer['email'] as string | undefined);
+  const customerRef = customerGid ?? 'unknown';
 
   if (typeof (env.CORE as Record<string, unknown>)?.['upsertCustomer'] === 'function') {
     const operatorContext = {

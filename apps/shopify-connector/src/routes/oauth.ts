@@ -126,12 +126,21 @@ oauthRoutes.get('/callback', async c => {
   }
 
   // Execute automated store provisioning workflow
-  await provisionStore(c.env, {
-    shop,
-    accessToken,
-  });
+  try {
+    await provisionStore(c.env, {
+      shop,
+      accessToken,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Provisioning failed';
+    const appUrl = c.env.SHOPIFY_APP_URL || new URL(c.req.url).origin;
+    return c.redirect(
+      `${appUrl.replace(/\/$/u, '')}/onboarding?shop=${encodeURIComponent(shop)}&status=error&message=${encodeURIComponent(message)}`,
+      302,
+    );
+  }
 
-  // Clear state cookie and redirect to embedded App Bridge Admin
+  // Clear state cookie and redirect to the connector's onboarding page.
   setCookie(c, 'shopify_oauth_state', '', {
     path: '/',
     secure: true,
@@ -140,6 +149,9 @@ oauthRoutes.get('/callback', async c => {
     maxAge: 0,
   });
 
-  const destination = `https://${shop}/admin/apps/${c.env.SHOPIFY_CLIENT_ID}`;
-  return c.redirect(destination, 302);
+  const appUrl = c.env.SHOPIFY_APP_URL || new URL(c.req.url).origin;
+  return c.redirect(
+    `${appUrl.replace(/\/$/u, '')}/onboarding?shop=${encodeURIComponent(shop)}`,
+    302,
+  );
 });

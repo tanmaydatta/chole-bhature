@@ -6,6 +6,7 @@ import {
   processOrderCancelled,
   processRefundCreated,
   processCustomerUpdate,
+  processAppUninstalled,
 } from '../services/redemption-service.js';
 
 export const webhookRoutes = new Hono<{ Bindings: Env }>();
@@ -57,15 +58,8 @@ webhookRoutes.post('/orders-paid', async c => {
     return c.text('Bad Request: Malformed JSON body', 400);
   }
 
-  try {
-    const result = await processOrderPaid(c.env, shopDomain, payload);
-    return c.json(result, 200);
-  } catch (error) {
-    if ((error as { statusCode?: number })?.statusCode === 404) {
-      return c.text((error as Error).message, 404);
-    }
-    throw error;
-  }
+  const result = await processOrderPaid(c.env, shopDomain, payload);
+  return c.json(result, 200);
 });
 
 webhookRoutes.post('/orders-cancelled', async c => {
@@ -116,5 +110,18 @@ webhookRoutes.post('/customers-update', async c => {
   }
 
   const result = await processCustomerUpdate(c.env, shopDomain, payload);
+  return c.json(result, 200);
+});
+
+webhookRoutes.post('/app-uninstalled', async c => {
+  const { verified, shopDomain } = await verifyWebhookRequest(c);
+  if (!verified) {
+    return c.text('Unauthorized: Invalid HMAC signature', 401);
+  }
+  if (!shopDomain) {
+    return c.text('Bad Request: Missing shop domain', 400);
+  }
+
+  const result = await processAppUninstalled(c.env, shopDomain);
   return c.json(result, 200);
 });

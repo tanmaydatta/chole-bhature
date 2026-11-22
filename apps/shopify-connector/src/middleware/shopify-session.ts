@@ -1,6 +1,7 @@
 import type { MiddlewareHandler } from 'hono';
 import { decode, verify, verifyWithJwks } from 'hono/jwt';
 import type { Env } from '../env.js';
+import { decryptToken } from '../services/token-crypto.js';
 
 export interface ShopifyInstalledShopRecord {
   shop_domain: string;
@@ -119,10 +120,22 @@ export const shopifySessionMiddleware: MiddlewareHandler<ShopifyAdminEnv> = asyn
     return c.json({ error: 'Shop not installed or active' }, 401);
   }
 
+  const decryptedShopRecord: ShopifyInstalledShopRecord = {
+    ...shopRecord,
+    access_token: await decryptToken(c.env, shopRecord.access_token),
+    tenant_signing_key: await decryptToken(c.env, shopRecord.tenant_signing_key),
+    ...(shopRecord.publishable_token
+      ? { publishable_token: await decryptToken(c.env, shopRecord.publishable_token) }
+      : {}),
+    ...(shopRecord.secret_token
+      ? { secret_token: await decryptToken(c.env, shopRecord.secret_token) }
+      : {}),
+  };
+
   c.set('shopifySession', {
     shopDomain,
     tenantId: shopRecord.tenant_id,
-    installedShop: shopRecord,
+    installedShop: decryptedShopRecord,
     jwtPayload: payload,
   });
 

@@ -1,148 +1,86 @@
 import type { OperatorCallContext } from '@incentives/contracts';
 import type { Env } from '../env.js';
+import { createOperatorContext } from './operator-context.js';
+import { ensureShopifyBaselineSchema } from './schema-provisioning.js';
+import {
+  assertNoUserErrors,
+  shopifyGraphQL,
+} from './shopify-graphql.js';
+import { ensureShopifyWebhooks } from './shopify-webhooks.js';
+import { decryptToken, encryptToken } from './token-crypto.js';
+
+export { shopifyGraphQL } from './shopify-graphql.js';
 
 export interface ProvisionStoreOptions {
   shop: string;
   accessToken: string;
-  functionId?: string;
+  functionHandle?: string;
   apiVersion?: string;
 }
 
 export interface ProvisionStoreResult {
   shop: string;
   merchantId: string;
-  publishableToken: string;
-  secretToken: string;
+  publishableToken?: string;
+  secretToken?: string;
   tenantSigningKey: string;
+  automaticDiscountId?: string;
+  schemaVersion?: number;
+  warnings: string[];
+}
+
+interface ExistingShopRow {
+  shop_domain: string;
+  access_token: string;
+  tenant_id: string;
+  tenant_signing_key: string;
+  publishable_token?: string | null;
+  secret_token?: string | null;
+  status: string;
+  automatic_discount_id?: string | null;
+  function_handle?: string | null;
 }
 
 export function generateTenantSigningKey(): string {
   const bytes = new Uint8Array(32);
   crypto.getRandomValues(bytes);
   return Array.from(bytes)
-    .map(b => b.toString(16).padStart(2, '0'))
+    .map(byte => byte.toString(16).padStart(2, '0'))
     .join('');
 }
 
-export async function shopifyGraphQL<T = unknown>(
-  shop: string,
-  accessToken: string,
-  query: string,
-  variables: Record<string, unknown> = {},
-  apiVersion = '2026-07',
-): Promise<{ data?: T; errors?: Array<{ message: string }> }> {
-  const endpoint = `https://${shop}/admin/api/${apiVersion}/graphql.json`;
-  const response = await fetch(endpoint, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Shopify-Access-Token': accessToken,
-    },
-    body: JSON.stringify({ query, variables }),
-  });
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`Shopify GraphQL HTTP error ${response.status}: ${errorText}`);
-  }
-
-  const payload = (await response.json()) as {
-    data?: T;
-    errors?: Array<{ message: string }>;
-  };
-
-  if (payload.errors && payload.errors.length > 0) {
-    const messages = payload.errors.map(e => e.message).join('; ');
-    throw new Error(`Shopify GraphQL execution error: ${messages}`);
-  }
-
-  return payload;
+async function findExistingShop(env: Env, shop: string): Promise<ExistingShopRow | null> {
+  return env.DB.prepare(
+    `SELECT shop_domain, access_token, tenant_id, tenant_signing_key,
+            publishable_token, secret_token, status,
+            automatic_discount_id, function_handle
+     FROM shopify_installed_shops
+     WHERE shop_domain = ?
+     LIMIT 1`,
+  )
+    .bind(shop)
+    .first<ExistingShopRow>();
 }
 
-function assertNoUserErrors(
-  mutationName: string,
-  result: { data?: Record<string, unknown> },
-) {
-  const mutationResult = result.data?.[mutationName] as
-    | { userErrors?: Array<{ field?: string[]; message: string; code?: string }> }
-    | undefined;
-
-  const userErrors = mutationResult?.userErrors;
-  if (userErrors && Array.isArray(userErrors) && userErrors.length > 0) {
-    const details = userErrors
-      .map(e => `${e.field?.join('.') ?? 'general'}: ${e.message}`)
-      .join(', ');
-    throw new Error(`Shopify ${mutationName} userErrors: ${details}`);
-  }
-}
-
-export async function provisionStore(
+async function upsertProvisioningRow(
   env: Env,
-  options: ProvisionStoreOptions,
-): Promise<ProvisionStoreResult> {
-  const { shop, accessToken } = options;
-  const apiVersion = options.apiVersion ?? env.SHOPIFY_API_VERSION ?? '2026-07';
-  const functionId =
-    options.functionId ??
-    env.SHOPIFY_DISCOUNT_FUNCTION_ID ??
-    '00000000-0000-0000-0000-000000000000';
-
-  // 1. Create or resolve dedicated merchant tenant via CORE service binding
-  const tenantId = `shop_${shop.replace(/[^a-zA-Z0-9]/g, '_')}`;
-  const correlationId = crypto.randomUUID();
-  const operatorContext: OperatorCallContext = {
-    correlationId,
-    actorUserId: 'system:shopify-connector',
-    actorKind: 'root',
-    merchantId: tenantId,
-    permission: 'credentials:manage',
-  };
-
-  const provisioningId = `prov_${crypto.randomUUID()}`;
-  const provisionResult = await env.CORE.provisionMerchant(operatorContext, {
-    id: tenantId,
-    name: shop,
-    provisioningId,
-  });
-
-  if (!provisionResult.ok) {
-    // If tenant already exists, handle re-installation/re-authentication idempotently
-    if (provisionResult.error.code !== 'CONFLICT') {
-      throw new Error(
-        `Failed to provision merchant in Core: ${provisionResult.error.message} (${provisionResult.error.code})`,
-      );
-    }
-  }
-
-  if (env.CORE.activateMerchant) {
-    await env.CORE.activateMerchant(operatorContext, {
-      id: tenantId,
-      provisioningId,
-    });
-  }
-
-  // 2. Generate pk_... (publishable token) and sk_... (secret token)
-  const publishableCred = await env.CORE.createCredential(operatorContext, {
-    name: `Shopify Storefront (${shop})`,
-    kind: 'publishable',
-    environment: 'production',
-    scopes: ['evaluations:write', 'schema:read'],
-    allowedOrigins: [`https://${shop}`],
-  });
-  const publishableToken = publishableCred.token;
-
-  const secretCred = await env.CORE.createCredential(operatorContext, {
-    name: `Shopify Backend (${shop})`,
-    kind: 'secret',
-    environment: 'production',
-    scopes: ['evaluations:write', 'redemptions:write', 'customers:write'],
-  });
-  const secretToken = secretCred.token;
-
-  // 3. Generate cryptographically random tenant signing key (HMAC secret for Wasm discount function)
-  const tenantSigningKey = generateTenantSigningKey();
-
-  // 4. Store shop record in D1 shopify_installed_shops table
+  input: {
+    shop: string;
+    accessToken: string;
+    tenantId: string;
+    tenantSigningKey: string;
+    publishableToken?: string | undefined;
+    secretToken?: string | undefined;
+    status: 'provisioning' | 'active' | 'error';
+    automaticDiscountId?: string | undefined;
+    functionHandle?: string | undefined;
+    schemaVersion?: number | undefined;
+    webhookRegisteredAt?: string | undefined;
+    provisioningError?: string | undefined;
+    installedAt?: string | undefined;
+    uninstalledAt?: string | undefined;
+  },
+): Promise<void> {
   const now = new Date().toISOString();
   await env.DB.prepare(
     `INSERT INTO shopify_installed_shops (
@@ -153,179 +91,316 @@ export async function provisionStore(
       publishable_token,
       secret_token,
       status,
+      automatic_discount_id,
+      function_handle,
+      schema_version,
+      webhook_registered_at,
+      provisioning_error,
+      installed_at,
+      uninstalled_at,
       created_at,
       updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(shop_domain) DO UPDATE SET
       access_token = excluded.access_token,
       tenant_id = excluded.tenant_id,
       tenant_signing_key = excluded.tenant_signing_key,
-      publishable_token = excluded.publishable_token,
-      secret_token = excluded.secret_token,
-      status = 'active',
+      publishable_token = COALESCE(excluded.publishable_token, shopify_installed_shops.publishable_token),
+      secret_token = COALESCE(excluded.secret_token, shopify_installed_shops.secret_token),
+      status = excluded.status,
+      automatic_discount_id = COALESCE(excluded.automatic_discount_id, shopify_installed_shops.automatic_discount_id),
+      function_handle = COALESCE(excluded.function_handle, shopify_installed_shops.function_handle),
+      schema_version = COALESCE(excluded.schema_version, shopify_installed_shops.schema_version),
+      webhook_registered_at = COALESCE(excluded.webhook_registered_at, shopify_installed_shops.webhook_registered_at),
+      provisioning_error = excluded.provisioning_error,
+      installed_at = COALESCE(shopify_installed_shops.installed_at, excluded.installed_at),
+      uninstalled_at = excluded.uninstalled_at,
       updated_at = excluded.updated_at`,
   )
     .bind(
-      shop,
-      accessToken,
-      tenantId,
-      tenantSigningKey,
-      publishableToken,
-      secretToken,
+      input.shop,
+      await encryptToken(env, input.accessToken),
+      input.tenantId,
+      await encryptToken(env, input.tenantSigningKey),
+      input.publishableToken === undefined
+        ? null
+        : await encryptToken(env, input.publishableToken),
+      input.secretToken === undefined ? null : await encryptToken(env, input.secretToken),
+      input.status,
+      input.automaticDiscountId ?? null,
+      input.functionHandle ?? null,
+      input.schemaVersion ?? null,
+      input.webhookRegisteredAt ?? null,
+      input.provisioningError ?? null,
+      input.installedAt ?? now,
+      input.uninstalledAt ?? null,
       now,
       now,
     )
     .run();
+}
 
-  // 5. Query App Installation or Shop ID for mandatory ownerId in metafieldsSet
-  const getOwnerQuery = `
-    query GetAppInstallationOwner {
-      currentAppInstallation {
-        id
-      }
-      shop {
-        id
-      }
+async function createCredentials(
+  env: Env,
+  operatorContext: OperatorCallContext,
+  shop: string,
+  existing: ExistingShopRow | null,
+): Promise<{ publishableToken?: string; secretToken?: string; warnings: string[] }> {
+  const warnings: string[] = [];
+  let publishableToken: string | undefined;
+  let secretToken: string | undefined;
+
+  if (existing?.publishable_token) {
+    publishableToken = await decryptToken(env, existing.publishable_token);
+  } else {
+    const credential = await env.CORE.createCredential(operatorContext, {
+      name: `Shopify Storefront (${shop})`,
+      kind: 'publishable',
+      environment: 'production',
+      scopes: ['evaluations:write', 'schema:read'],
+      allowedOrigins: [`https://${shop}`],
+    });
+    publishableToken = credential.token;
+  }
+
+  if (existing?.secret_token) {
+    try {
+      secretToken = await decryptToken(env, existing.secret_token);
+    } catch {
+      warnings.push('Stored Shopify backend credential could not be decrypted; creating a new one.');
     }
-  `;
+  }
+  if (!secretToken) {
+    const credential = await env.CORE.createCredential(operatorContext, {
+      name: `Shopify Backend (${shop})`,
+      kind: 'secret',
+      environment: 'production',
+      scopes: ['evaluations:write', 'redemptions:write', 'customers:write'],
+    });
+    secretToken = credential.token;
+  }
 
-  const ownerRes = await shopifyGraphQL<{
-    currentAppInstallation?: { id: string };
-    shop?: { id: string };
-  }>(shop, accessToken, getOwnerQuery, {}, apiVersion);
+  return { publishableToken, secretToken, warnings };
+}
 
-  const ownerId =
-    ownerRes.data?.currentAppInstallation?.id ??
-    ownerRes.data?.shop?.id ??
-    `gid://shopify/AppInstallation/0`;
-
-  // 6. Register App Metafield ($app:incentives:publishable_token) on Shopify
-  const setMetafieldsMutation = `
-    mutation SetAppMetafield($metafields: [MetafieldsSetInput!]!) {
-      metafieldsSet(metafields: $metafields) {
-        metafields {
-          id
-          namespace
-          key
-          value
-        }
-        userErrors {
-          field
-          message
-          code
-        }
-      }
-    }
-  `;
-
-  const metafieldsRes = await shopifyGraphQL(
-    shop,
-    accessToken,
-    setMetafieldsMutation,
+async function ensureAutomaticDiscountNode(
+  env: Env,
+  input: {
+    shop: string;
+    accessToken: string;
+    functionHandle: string;
+    tenantSigningKey: string;
+    apiVersion: string;
+    existingDiscountId?: string | undefined;
+  },
+): Promise<string> {
+  const metafields = [
     {
-      metafields: [
-        {
-          ownerId,
-          namespace: '$app:incentives',
-          key: 'publishable_token',
-          type: 'single_line_text_field',
-          value: publishableToken,
-        },
-      ],
+      namespace: '$app:incentives',
+      key: 'signing-secret',
+      type: 'single_line_text_field',
+      value: input.tenantSigningKey,
     },
-    apiVersion,
-  );
-  assertNoUserErrors('metafieldsSet', metafieldsRes as { data?: Record<string, unknown> });
+  ];
+  const startsAt = new Date().toISOString();
 
-  // 7. Register Shopify Automatic Discount Function
-  const createAutoDiscountMutation = `
-    mutation CreateAutomaticDiscount($automaticAppDiscount: DiscountAutomaticAppInput!) {
-      discountAutomaticAppCreate(automaticAppDiscount: $automaticAppDiscount) {
-        automaticAppDiscount {
-          discountId
-          title
-          status
+  if (input.existingDiscountId) {
+    const update = await shopifyGraphQL<Record<string, unknown>>(
+      input.shop,
+      input.accessToken,
+      `mutation UpdateAutomaticDiscount(
+        $id: ID!
+        $automaticAppDiscount: DiscountAutomaticAppInput!
+      ) {
+        discountAutomaticAppUpdate(
+          id: $id
+          automaticAppDiscount: $automaticAppDiscount
+        ) {
+          automaticAppDiscount { discountId title status }
+          userErrors { field message code }
         }
-        userErrors {
-          field
-          message
-          code
-        }
-      }
+      }`,
+      {
+        id: input.existingDiscountId,
+        automaticAppDiscount: {
+          title: 'Incentives Automatic Discounts',
+          functionHandle: input.functionHandle,
+          discountClasses: ['ORDER'],
+          startsAt,
+          metafields,
+        },
+      },
+      input.apiVersion,
+    );
+
+    const updateErrors = (
+      update.data?.['discountAutomaticAppUpdate'] as
+        | { userErrors?: Array<{ message: string; code?: string }> }
+        | undefined
+    )?.userErrors;
+    const notFound = updateErrors?.some(error => /not found|does not exist/iu.test(error.message));
+    if (!notFound) {
+      assertNoUserErrors('discountAutomaticAppUpdate', update as { data?: Record<string, unknown> });
+      return input.existingDiscountId;
     }
-  `;
+  }
 
-  const autoDiscountRes = await shopifyGraphQL(
-    shop,
-    accessToken,
-    createAutoDiscountMutation,
+  const created = await shopifyGraphQL<Record<string, unknown>>(
+    input.shop,
+    input.accessToken,
+    `mutation CreateAutomaticDiscount(
+      $automaticAppDiscount: DiscountAutomaticAppInput!
+    ) {
+      discountAutomaticAppCreate(automaticAppDiscount: $automaticAppDiscount) {
+        automaticAppDiscount { discountId title status }
+        userErrors { field message code }
+      }
+    }`,
     {
       automaticAppDiscount: {
         title: 'Incentives Automatic Discounts',
-        functionId,
-        discountClasses: ['ORDER', 'PRODUCT', 'SHIPPING'],
-        startsAt: now,
-        metafields: [
-          {
-            namespace: '$app:incentives',
-            key: 'signing-secret',
-            type: 'single_line_text_field',
-            value: tenantSigningKey,
-          },
-        ],
+        functionHandle: input.functionHandle,
+        discountClasses: ['ORDER'],
+        startsAt,
+        metafields,
       },
     },
-    apiVersion,
+    input.apiVersion,
   );
-  assertNoUserErrors('discountAutomaticAppCreate', autoDiscountRes as { data?: Record<string, unknown> });
+  assertNoUserErrors('discountAutomaticAppCreate', created as { data?: Record<string, unknown> });
 
-  // 8. Register Shopify Master Discount Code Node
-  const createCodeDiscountMutation = `
-    mutation CreateCodeDiscount($codeAppDiscount: DiscountCodeAppInput!) {
-      discountCodeAppCreate(codeAppDiscount: $codeAppDiscount) {
-        codeAppDiscount {
-          discountId
-          title
-          status
-        }
-        userErrors {
-          field
-          message
-          code
-        }
-      }
-    }
-  `;
+  const discountId = (
+    created.data?.['discountAutomaticAppCreate'] as
+      | { automaticAppDiscount?: { discountId?: string } }
+      | undefined
+  )?.automaticAppDiscount?.discountId;
+  if (!discountId) {
+    throw new Error('Shopify discountAutomaticAppCreate returned no discountId');
+  }
+  return discountId;
+}
 
-  const codeDiscountRes = await shopifyGraphQL(
+export async function provisionStore(
+  env: Env,
+  options: ProvisionStoreOptions,
+): Promise<ProvisionStoreResult> {
+  const { shop, accessToken } = options;
+  const apiVersion = options.apiVersion ?? env.SHOPIFY_API_VERSION ?? '2026-07';
+  const functionHandle =
+    options.functionHandle ??
+    env.SHOPIFY_DISCOUNT_FUNCTION_HANDLE ??
+    'incentives-discount-fn';
+  const appUrl = env.SHOPIFY_APP_URL;
+  if (!appUrl) {
+    throw new Error('SHOPIFY_APP_URL is required to register Shopify webhooks');
+  }
+
+  const tenantId = `shop_${shop.replace(/[^a-zA-Z0-9]/g, '_')}`;
+  const correlationId = crypto.randomUUID();
+  const warnings: string[] = [];
+  const existing = await findExistingShop(env, shop);
+  const tenantSigningKey = existing?.tenant_signing_key
+    ? await decryptToken(env, existing.tenant_signing_key)
+    : generateTenantSigningKey();
+
+  await upsertProvisioningRow(env, {
     shop,
     accessToken,
-    createCodeDiscountMutation,
-    {
-      codeAppDiscount: {
-        title: 'Incentives Exclusive Codes',
-        functionId,
-        code: 'INCENTIVES_APPLIED',
-        startsAt: now,
-        metafields: [
-          {
-            namespace: '$app:incentives',
-            key: 'signing-secret',
-            type: 'single_line_text_field',
-            value: tenantSigningKey,
-          },
-        ],
-      },
-    },
-    apiVersion,
-  );
-  assertNoUserErrors('discountCodeAppCreate', codeDiscountRes as { data?: Record<string, unknown> });
-
-  return {
-    shop,
-    merchantId: tenantId,
-    publishableToken,
-    secretToken,
+    tenantId,
     tenantSigningKey,
-  };
+    status: 'provisioning',
+    functionHandle,
+    automaticDiscountId: existing?.automatic_discount_id ?? undefined,
+  });
+
+  try {
+    // 1. Create or reuse the merchant tenant.
+    const provisionContext = createOperatorContext(
+      tenantId,
+      'credentials:manage',
+      correlationId,
+    );
+    const provisioningId = existing ? `prov_reinstall_${crypto.randomUUID()}` : `prov_${crypto.randomUUID()}`;
+    const provisionResult = await env.CORE.provisionMerchant(provisionContext, {
+      id: tenantId,
+      name: shop,
+      provisioningId,
+    });
+    if (!provisionResult.ok && provisionResult.error.code !== 'CONFLICT') {
+      throw new Error(
+        `Failed to provision merchant in Core: ${provisionResult.error.message} (${provisionResult.error.code})`,
+      );
+    }
+    if (env.CORE.activateMerchant) {
+      await env.CORE.activateMerchant(provisionContext, {
+        id: tenantId,
+        provisioningId,
+      });
+    }
+
+    // 2. Reuse or create API credentials. The storefront now authenticates with
+    // Shopify session tokens, so the publishable token is kept only for
+    // compatibility with existing operator tooling.
+    const credentials = await createCredentials(env, provisionContext, shop, existing);
+    warnings.push(...credentials.warnings);
+
+    // 3. Publish the baseline schema required by /v1/evaluate.
+    const schema = await ensureShopifyBaselineSchema(env, tenantId, correlationId);
+
+    // 4. Create or update the single automatic discount node.
+    const automaticDiscountId = await ensureAutomaticDiscountNode(env, {
+      shop,
+      accessToken,
+      functionHandle,
+      tenantSigningKey,
+      apiVersion,
+      existingDiscountId: existing?.automatic_discount_id ?? undefined,
+    });
+
+    // 5. Register webhooks.
+    const webhooks = await ensureShopifyWebhooks(shop, accessToken, appUrl, apiVersion);
+    warnings.push(...webhooks.warnings);
+
+    const now = new Date().toISOString();
+    await upsertProvisioningRow(env, {
+      shop,
+      accessToken,
+      tenantId,
+      tenantSigningKey,
+      publishableToken: credentials.publishableToken,
+      secretToken: credentials.secretToken,
+      status: 'active',
+      automaticDiscountId,
+      functionHandle,
+      schemaVersion: schema.version,
+      webhookRegisteredAt: now,
+      installedAt: now,
+    });
+
+    return {
+      shop,
+      merchantId: tenantId,
+      ...(credentials.publishableToken === undefined
+        ? {}
+        : { publishableToken: credentials.publishableToken }),
+      ...(credentials.secretToken === undefined ? {} : { secretToken: credentials.secretToken }),
+      tenantSigningKey,
+      automaticDiscountId,
+      schemaVersion: schema.version,
+      warnings,
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    await upsertProvisioningRow(env, {
+      shop,
+      accessToken,
+      tenantId,
+      tenantSigningKey,
+      status: 'error',
+      functionHandle,
+      provisioningError: message,
+      automaticDiscountId: existing?.automatic_discount_id ?? undefined,
+    });
+    throw error;
+  }
 }
