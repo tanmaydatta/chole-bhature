@@ -5,7 +5,6 @@ import {
   type EvaluationResponse,
   type SignedEvaluationPayload,
 } from '@incentives/contracts';
-import type { Env } from '../env.js';
 import {
   shopifySessionMiddleware,
   type ShopifyAdminEnv,
@@ -45,18 +44,28 @@ export async function handleEvaluate(c: Context<ShopifyAdminEnv>) {
     (typeof body['checkoutToken'] === 'string' ? body['checkoutToken'] : undefined) ??
     c.req.header('x-shopify-checkout-token') ??
     '';
+  const jwtSub = session.jwtPayload['sub'];
   const customerRef =
-    typeof session.jwtPayload['sub'] === 'string' ? session.jwtPayload['sub'] : undefined;
+    typeof jwtSub === 'string' && jwtSub.startsWith('gid://shopify/Customer/')
+      ? jwtSub
+      : undefined;
 
-  const { checkoutToken: _checkoutToken, cartId: _cartId, ...evaluationBody } = body;
+  const {
+    checkoutToken: _checkoutToken,
+    cartId: _cartId,
+    customerRef: _bodyCustomerRef,
+    previousEvaluationId: rawPreviousEvaluationId,
+    ...evaluationBody
+  } = body;
+  const previousEvaluationId = typeof rawPreviousEvaluationId === 'string'
+    ? rawPreviousEvaluationId
+    : undefined;
 
   let request;
   try {
     request = EvaluationRequestSchema.parse({
       ...evaluationBody,
-      ...(customerRef === undefined || body['customerRef'] !== undefined
-        ? {}
-        : { customerRef }),
+      ...(customerRef === undefined ? {} : { customerRef }),
       context: {
         ...(typeof evaluationBody['context'] === 'object' && evaluationBody['context'] !== null
           ? (evaluationBody['context'] as Record<string, unknown>)
@@ -78,6 +87,24 @@ export async function handleEvaluate(c: Context<ShopifyAdminEnv>) {
     'evaluations:run',
     c.req.header('x-correlation-id') || crypto.randomUUID(),
   );
+  const redemptionContext = createOperatorContext(
+    shopRecord.tenant_id,
+    'redemptions:commit',
+    operatorContext.correlationId,
+  );
+
+  if (
+    previousEvaluationId !== undefined
+    && typeof c.env.CORE.releaseBudgetLeases === 'function'
+  ) {
+    try {
+      await c.env.CORE.releaseBudgetLeases(redemptionContext, {
+        evaluationId: previousEvaluationId,
+      });
+    } catch {
+      // Expired leases are cleaned up lazily; a failed release must not block checkout.
+    }
+  }
 
   let upstream: EvaluationResponse;
   try {
@@ -103,6 +130,43 @@ export async function handleEvaluate(c: Context<ShopifyAdminEnv>) {
   const expiresAt = upstream.expiresAt;
   const checkoutRef = checkoutToken || `checkout:${upstream.evaluationId}`;
 
+  const leaseDecisions = upstream.priceBreakdown.discountAllocations
+    .filter(allocation => allocation.discountMinorUnits > 0)
+    .map(allocation => ({
+      programRef: allocation.programRef,
+      amountMinor: allocation.discountMinorUnits,
+    }));
+
+  let leaseId = '';
+  let leaseExpiresAt = '';
+  if (
+    leaseDecisions.length > 0
+    && typeof c.env.CORE.reserveBudgetLeases === 'function'
+  ) {
+    const reserved = await c.env.CORE.reserveBudgetLeases(redemptionContext, {
+      evaluationId: upstream.evaluationId,
+      decisions: leaseDecisions,
+      ttlSeconds: 900,
+      toleranceBps: 300,
+    });
+    if (!reserved.accepted) {
+      return c.json(
+        {
+          error: 'budget_exhausted',
+          reason: reserved.reason ?? 'budget_exhausted',
+        },
+        409,
+      );
+    }
+    leaseId = upstream.evaluationId;
+    leaseExpiresAt = reserved.leases.reduce(
+      (earliest, lease) => (
+        earliest === '' || lease.expiresAt < earliest ? lease.expiresAt : earliest
+      ),
+      '',
+    );
+  }
+
   // v2 signature:
   // v2:${evaluationId}:${shopDomain}:${checkoutToken}:${cartFingerprint}:${subtotal}:${currency}:${discount}:${leaseId}:${leaseExpiresAt}:${expiresAt}
   const message = [
@@ -114,11 +178,11 @@ export async function handleEvaluate(c: Context<ShopifyAdminEnv>) {
     subtotalMinorUnits,
     currency,
     discountMinorUnits,
-    '',
-    '',
+    leaseId,
+    leaseExpiresAt,
     expiresAt,
   ].join(':');
-  const signature = await computeHmacSha256(shopRecord.tenant_signing_key, message);
+  const signature = await computeHmacSha256Hex(shopRecord.tenant_signing_key, message);
 
   const signedEvaluation: SignedEvaluationPayload = {
     evaluationId: upstream.evaluationId,
@@ -129,6 +193,8 @@ export async function handleEvaluate(c: Context<ShopifyAdminEnv>) {
     subtotalMinorUnits,
     currency,
     discountMinorUnits,
+    ...(leaseId === '' ? {} : { leaseId }),
+    ...(leaseExpiresAt === '' ? {} : { leaseExpiresAt }),
     target: 'order',
     expiresAt,
     signature,

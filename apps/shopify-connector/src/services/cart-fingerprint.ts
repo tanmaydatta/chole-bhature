@@ -24,7 +24,9 @@ export async function computeCartFingerprint(cart: Cart): Promise<string> {
       quantity: line.quantity,
       unitPrice: line.unitPrice,
     }))
-    .sort((left, right) => left.lineRef.localeCompare(right.lineRef));
+    .sort((left, right) => (
+      left.lineRef < right.lineRef ? -1 : left.lineRef > right.lineRef ? 1 : 0
+    ));
 
   const canonical = JSON.stringify({
     currency: cart.currency,

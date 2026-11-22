@@ -2,6 +2,9 @@ import type {
   ApiCredentialCreateInput,
   ApiCredentialCreateResult,
   ApiError,
+  BudgetLeaseReleaseRequest,
+  BudgetLeaseReserveRequest,
+  BudgetLeaseReserveResponse,
   CoreMerchantActivationResult,
   CoreMerchantProvisionResult,
   CustomerPatchRequest,
@@ -11,7 +14,6 @@ import type {
   MerchantActivationRequest,
   MerchantProvisionRequest,
   OperatorCallContext,
-  PublishedSchemaResponse,
   RedemptionRequest,
   RedemptionResponse,
   SchemaDefinitionView,
@@ -49,6 +51,14 @@ export interface CoreServiceBinding {
   ): Promise<SchemaDefinitionView>;
   publishSchema(context: OperatorCallContext): Promise<SchemaPublicationResult>;
   commitRedemption(input: RedemptionRequest & { merchantId: string }): Promise<RedemptionResponse>;
+  reserveBudgetLeases?(
+    context: OperatorCallContext,
+    input: BudgetLeaseReserveRequest,
+  ): Promise<BudgetLeaseReserveResponse>;
+  releaseBudgetLeases?(
+    context: OperatorCallContext,
+    input: BudgetLeaseReleaseRequest,
+  ): Promise<{ released: boolean }>;
   upsertCustomer?(
     context: OperatorCallContext,
     customerRef: string,
@@ -84,5 +94,7 @@ export interface Env {
   TOKEN_ENCRYPTION_KEY?: string;
   /** Additional browser origins allowed to call the storefront evaluation endpoint. */
   CHECKOUT_ORIGINS?: string;
+  /** Optional external operator dashboard URL for the embedded shell link-out. */
+  OPERATOR_DASHBOARD_URL?: string;
   APP_ENV?: string;
 }

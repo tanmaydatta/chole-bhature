@@ -85,6 +85,20 @@ describe('checkout extension utilities', () => {
   it('requires both a positive discount and a server-signed payload', () => {
     expect(hasPositiveDiscount(evaluation())).toBe(false);
     expect(hasPositiveDiscount(evaluation({ signedEvaluation: undefined }))).toBe(false);
+    expect(
+      hasPositiveDiscount(
+        evaluation({
+          signedEvaluation: {
+            evaluationId: 'eval-1',
+            cartId: 'chk-1',
+            subtotalMinorUnits: 5000,
+            currency: 'USD',
+            discountMinorUnits: 1000,
+            signature: 'a'.repeat(64),
+          },
+        }),
+      ),
+    ).toBe(true);
   });
 
   it('detects a rejected code result', () => {

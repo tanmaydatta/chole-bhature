@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import type { CandidateOffer, EvaluationResponse } from '@incentives/contracts';
 import {
+  INCENTIVES_CODE_ATTRIBUTE,
   INCENTIVES_EVAL_ATTRIBUTE,
   buildEvaluationRequest,
   cartChangeFingerprint,
@@ -25,39 +26,54 @@ export function Extension() {
   const [offers, setOffers] = useState<CandidateOffer[]>([]);
   const [code, setCode] = useState('');
   const [appliedCode, setAppliedCode] = useState<string | null>(() => {
-    const raw = attributeValue(api.attributes.value, INCENTIVES_EVAL_ATTRIBUTE);
-    if (!raw) return null;
-    try {
-      const parsed = JSON.parse(raw) as { appliedCode?: unknown };
-      return typeof parsed.appliedCode === 'string' ? parsed.appliedCode : null;
-    } catch {
-      return null;
-    }
+    const raw = attributeValue(api.attributes.value, INCENTIVES_CODE_ATTRIBUTE);
+    return raw && raw.trim().length > 0 ? raw : null;
   });
   const state = useRef({ inFlight, appliedCode });
   state.current = { inFlight, appliedCode };
+  const lastEvaluationId = useRef<string | null>(null);
+  const requestSequence = useRef(0);
 
-  async function clearDiscount(): Promise<void> {
+  async function clearDiscount(): Promise<boolean> {
     try {
-      await api.applyAttributeChange({
+      const result = await api.applyAttributeChange({
         type: 'removeAttribute',
         key: INCENTIVES_EVAL_ATTRIBUTE,
       });
+      if (result.type === 'error') {
+        setError('We could not update the cart discount. You can continue at the current price.');
+        return false;
+      }
+      await api.applyAttributeChange({
+        type: 'removeAttribute',
+        key: INCENTIVES_CODE_ATTRIBUTE,
+      });
+      return true;
     } catch {
-      // The function's signature/expiry checks remain the backstop.
+      setError('We could not update the cart discount. You can continue at the current price.');
+      return false;
     }
   }
 
-  async function writeDiscount(response: EvaluationResponse): Promise<void> {
+  async function writeDiscount(response: EvaluationResponse): Promise<boolean> {
     if (hasPositiveDiscount(response) && response.signedEvaluation) {
-      await api.applyAttributeChange({
-        type: 'updateAttribute',
-        key: INCENTIVES_EVAL_ATTRIBUTE,
-        value: JSON.stringify(response.signedEvaluation),
-      });
-      return;
+      try {
+        const result = await api.applyAttributeChange({
+          type: 'updateAttribute',
+          key: INCENTIVES_EVAL_ATTRIBUTE,
+          value: JSON.stringify(response.signedEvaluation),
+        });
+        if (result.type === 'error') {
+          setError('We could not apply this offer to the cart.');
+          return false;
+        }
+        return true;
+      } catch {
+        setError('We could not apply this offer to the cart.');
+        return false;
+      }
     }
-    await clearDiscount();
+    return clearDiscount();
   }
 
   async function evaluate(codes: readonly string[]): Promise<EvaluationResponse | null> {
@@ -75,6 +91,9 @@ export function Extension() {
     setInFlight(true);
     setError(null);
     setNotice(null);
+    const sequence = ++requestSequence.current;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8_000);
     try {
       const token = await api.sessionToken.get();
       const request = buildEvaluationRequest(
@@ -91,22 +110,45 @@ export function Extension() {
         body: JSON.stringify({
           ...request,
           checkoutToken,
+          previousEvaluationId: lastEvaluationId.current,
         }),
+        signal: controller.signal,
       });
+      if (sequence !== requestSequence.current) return null;
+      if (response.status === 409) {
+        lastEvaluationId.current = null;
+        await clearDiscount();
+        setNotice('This offer is no longer available. You can continue at full price.');
+        return null;
+      }
       if (!response.ok) {
         throw new Error(`Evaluation failed with HTTP ${response.status}`);
       }
 
       const data = (await response.json()) as EvaluationResponse;
+      if (sequence !== requestSequence.current) return null;
+      lastEvaluationId.current = data.evaluationId;
       setOffers(data.candidateOffers ?? []);
-      await writeDiscount(data);
+      const written = await writeDiscount(data);
+      if (!written) {
+        setOffers([]);
+        return null;
+      }
       return data;
-    } catch {
-      setError('We could not check offers right now. You can continue at the current price.');
+    } catch (error) {
+      if (sequence !== requestSequence.current) return null;
+      if (error instanceof Error && error.name === 'AbortError') {
+        setNotice('Checking offers timed out. You can continue at the current price.');
+      } else {
+        setError('We could not check offers right now. You can continue at the current price.');
+      }
       await clearDiscount();
       return null;
     } finally {
-      setInFlight(false);
+      clearTimeout(timeout);
+      if (sequence === requestSequence.current) {
+        setInFlight(false);
+      }
     }
   }
 
@@ -123,7 +165,8 @@ export function Extension() {
 
   useEffect(() => {
     let interceptRunning = false;
-    const unsubscribe = api.buyerJourney.intercept(async ({ canBlockProgress }) => {
+    let dispose: (() => void) | undefined;
+    void api.buyerJourney.intercept(async ({ canBlockProgress }) => {
       if (!canBlockProgress) {
         return { behavior: 'allow', canBlockProgress: false };
       }
@@ -148,10 +191,12 @@ export function Extension() {
       } finally {
         interceptRunning = false;
       }
+    }).then(teardown => {
+      dispose = teardown;
     });
 
     return () => {
-      if (typeof unsubscribe === 'function') unsubscribe();
+      dispose?.();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -162,6 +207,20 @@ export function Extension() {
     const data = await evaluate([normalized]);
     if (!data || !hasPositiveDiscount(data) || rejectedCodeOutcome(data, normalized)) {
       setError(`Promo code “${normalized}” is invalid or does not apply to this cart.`);
+      await api.applyAttributeChange({
+        type: 'removeAttribute',
+        key: INCENTIVES_CODE_ATTRIBUTE,
+      });
+      setAppliedCode(null);
+      return;
+    }
+    const codeWrite = await api.applyAttributeChange({
+      type: 'updateAttribute',
+      key: INCENTIVES_CODE_ATTRIBUTE,
+      value: normalized,
+    });
+    if (codeWrite.type === 'error') {
+      setError('We could not save this promo code.');
       return;
     }
     setAppliedCode(normalized);
@@ -215,7 +274,7 @@ export function Extension() {
             <s-stack key={offer.programRef} direction="inline" justifyContent="space-between" alignItems="center">
               <s-text type="strong">{offer.name}</s-text>
               {offer.estimatedDiscountMinorUnits > 0 && (
-                <s-badge tone="success">
+                <s-badge tone="neutral">
                   Save {formatMoney(offer.estimatedDiscountMinorUnits, subtotal.currencyCode)}
                 </s-badge>
               )}

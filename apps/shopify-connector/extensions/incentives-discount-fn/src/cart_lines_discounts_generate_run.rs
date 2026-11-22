@@ -1,7 +1,7 @@
 use super::schema;
 use hmac::{Hmac, Mac};
 use serde::{Deserialize, Serialize};
-use sha2::Sha256;
+use sha2::{Digest, Sha256};
 use shopify_function::prelude::*;
 use shopify_function::Result;
 
@@ -96,7 +96,7 @@ fn cart_fingerprint(input: &schema::cart_lines_discounts_generate_run::Input) ->
         if quantity <= 0 {
             return None;
         }
-        let line_total = parse_to_minor_units(&line.cost().subtotal_amount().amount().to_string())?;
+        let line_total = parse_to_minor_units(&line.cost().total_amount().amount().to_string())?;
         let unit_price = (line_total + quantity / 2) / quantity;
         let (product_ref, variant_ref) = match line.merchandise() {
             schema::cart_lines_discounts_generate_run::input::cart::lines::Merchandise::ProductVariant(
@@ -117,14 +117,15 @@ fn cart_fingerprint(input: &schema::cart_lines_discounts_generate_run::Input) ->
     }
     lines.sort_by(|left, right| left.line_ref.cmp(&right.line_ref));
 
-    serde_json::to_string(&Fingerprint {
+    let canonical = serde_json::to_string(&Fingerprint {
         currency: input.cart().cost().subtotal_amount().currency_code().to_string(),
         subtotal: parse_to_minor_units(
             &input.cart().cost().subtotal_amount().amount().to_string(),
         )?,
         lines,
     })
-    .ok()
+    .ok()?;
+    Some(hex::encode(Sha256::digest(canonical.as_bytes())))
 }
 
 #[shopify_function]
@@ -258,7 +259,7 @@ mod tests {
     const SECRET: &str = "test-tenant-signing-secret";
 
     fn fingerprint() -> String {
-        serde_json::to_string(&Fingerprint {
+        let canonical = serde_json::to_string(&Fingerprint {
             currency: "USD".to_string(),
             subtotal: 10000,
             lines: vec![FingerprintLine {
@@ -269,7 +270,8 @@ mod tests {
                 unit_price: 10000,
             }],
         })
-        .unwrap()
+        .unwrap();
+        hex::encode(Sha256::digest(canonical.as_bytes()))
     }
 
     fn signature(eval: &serde_json::Value) -> String {
@@ -320,7 +322,8 @@ mod tests {
                     "id": "line-1",
                     "quantity": 1,
                     "cost": {
-                        "subtotalAmount": { "amount": "100.00", "currencyCode": "USD" }
+                        "subtotalAmount": { "amount": "100.00", "currencyCode": "USD" },
+                        "totalAmount": { "amount": "100.00", "currencyCode": "USD" }
                     },
                     "merchandise": {
                         "__typename": "ProductVariant",
@@ -339,6 +342,14 @@ mod tests {
 
     fn run(eval: serde_json::Value) -> shopify_function::Result<schema::CartLinesDiscountsGenerateRunResult> {
         run_function_with_input(cart_lines_discounts_generate_run, &input(&eval).to_string())
+    }
+
+    #[test]
+    fn fingerprint_matches_the_shared_ts_vector() {
+        assert_eq!(
+            fingerprint(),
+            "06e494d2202ed65bf4b8e1ce302b5befbca56e503c4e1cf0a8de60bea029ba0d"
+        );
     }
 
     #[test]

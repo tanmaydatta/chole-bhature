@@ -32,7 +32,12 @@ async function encryptionKey(secret: string): Promise<CryptoKey> {
  */
 export async function encryptToken(env: Env, plaintext: string): Promise<string> {
   const secret = env.TOKEN_ENCRYPTION_KEY?.trim();
-  if (!secret) return plaintext;
+  if (!secret) {
+    if (env.APP_ENV === 'production') {
+      throw new Error('TOKEN_ENCRYPTION_KEY is required in production');
+    }
+    return plaintext;
+  }
 
   const key = await encryptionKey(secret);
   const iv = crypto.getRandomValues(new Uint8Array(12));

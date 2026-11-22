@@ -17,6 +17,10 @@ query Input {
           amount
           currencyCode
         }
+        totalAmount {
+          amount
+          currencyCode
+        }
       }
       merchandise {
         __typename

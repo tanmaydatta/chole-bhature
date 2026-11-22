@@ -5,6 +5,7 @@ import type {
 } from '@incentives/contracts';
 
 export const INCENTIVES_EVAL_ATTRIBUTE = '_incentives_eval';
+export const INCENTIVES_CODE_ATTRIBUTE = '_incentives_code';
 
 export interface ShopifyMoney {
   amount: number;
@@ -75,7 +76,7 @@ export interface ShopifyExtensionApi {
   buyerJourney: {
     intercept(
       callback: (props: { canBlockProgress: boolean }) => InterceptorResult | Promise<InterceptorResult>,
-    ): () => void;
+    ): Promise<() => void>;
   };
 }
 

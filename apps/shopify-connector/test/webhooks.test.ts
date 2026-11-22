@@ -154,6 +154,9 @@ describe('Shopify Webhooks Handler & Post-Capture Reconciliation', () => {
       reverseRedemption: vi.fn(async () => ({
         reversed: true,
       })),
+      refundRedemption: vi.fn(async () => ({
+        refunded: true,
+      })),
       upsertCustomer: vi.fn(async () => ({
         customerRef: '123456',
         attributes: {},
@@ -174,6 +177,7 @@ describe('Shopify Webhooks Handler & Post-Capture Reconciliation', () => {
       {
         evaluationId: 'eval-cart-uuid-001',
         shopDomain: SHOP,
+        cartId: 'chk-webhook-001',
         checkoutToken: 'chk-webhook-001',
         cartFingerprint: 'a'.repeat(64),
         subtotalMinorUnits: 5000,
@@ -195,6 +199,9 @@ describe('Shopify Webhooks Handler & Post-Capture Reconciliation', () => {
       currency: 'USD',
       subtotal_price: '50.00',
       total_discounts: '10.00',
+      discount_applications: [
+        { title: 'Incentives Automatic Discounts', total_allocated_amount: '10.00' },
+      ],
       note_attributes: [
         { name: '_incentives_eval', value: JSON.stringify(validEval()) },
       ],
@@ -346,6 +353,148 @@ describe('Shopify Webhooks Handler & Post-Capture Reconciliation', () => {
         received: true,
         skipped: true,
         reason: 'no_incentives_eval',
+      });
+      expect(mockCore.commitRedemption).not.toHaveBeenCalled();
+    });
+
+    it('skips a tampered signed payload', async () => {
+      const app = createApp();
+      const evalPayload = validEval();
+      evalPayload.signature = 'deadbeef';
+      const orderPayload = paidOrder({
+        id: 987654326,
+        admin_graphql_api_id: 'gid://shopify/Order/987654326',
+        note_attributes: [
+          { name: '_incentives_eval', value: JSON.stringify(evalPayload) },
+        ],
+      });
+      const rawBody = JSON.stringify(orderPayload);
+      const hmac = computeShopifyWebhookHmac(rawBody, CLIENT_SECRET);
+
+      const res = await app.request(
+        '/webhooks/orders-paid',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Shopify-Shop-Domain': SHOP,
+            'X-Shopify-Hmac-Sha256': hmac,
+          },
+          body: rawBody,
+        },
+        testEnv,
+      );
+
+      expect(res.status).toBe(200);
+      expect(await res.json()).toMatchObject({
+        received: true,
+        skipped: true,
+        reason: 'invalid_signature',
+      });
+      expect(mockCore.commitRedemption).not.toHaveBeenCalled();
+    });
+
+    it('skips an expired signed payload', async () => {
+      const app = createApp();
+      const evalPayload = validEval({
+        expiresAt: new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString(),
+      });
+      const orderPayload = paidOrder({
+        id: 987654327,
+        admin_graphql_api_id: 'gid://shopify/Order/987654327',
+        note_attributes: [
+          { name: '_incentives_eval', value: JSON.stringify(evalPayload) },
+        ],
+      });
+      const rawBody = JSON.stringify(orderPayload);
+      const hmac = computeShopifyWebhookHmac(rawBody, CLIENT_SECRET);
+
+      const res = await app.request(
+        '/webhooks/orders-paid',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Shopify-Shop-Domain': SHOP,
+            'X-Shopify-Hmac-Sha256': hmac,
+          },
+          body: rawBody,
+        },
+        testEnv,
+      );
+
+      expect(res.status).toBe(200);
+      expect(await res.json()).toMatchObject({
+        received: true,
+        skipped: true,
+        reason: 'evaluation_expired',
+      });
+      expect(mockCore.commitRedemption).not.toHaveBeenCalled();
+    });
+
+    it('skips when the checkout token does not match the order', async () => {
+      const app = createApp();
+      const orderPayload = paidOrder({
+        id: 987654328,
+        admin_graphql_api_id: 'gid://shopify/Order/987654328',
+        checkout_token: 'different-checkout',
+      });
+      const rawBody = JSON.stringify(orderPayload);
+      const hmac = computeShopifyWebhookHmac(rawBody, CLIENT_SECRET);
+
+      const res = await app.request(
+        '/webhooks/orders-paid',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Shopify-Shop-Domain': SHOP,
+            'X-Shopify-Hmac-Sha256': hmac,
+          },
+          body: rawBody,
+        },
+        testEnv,
+      );
+
+      expect(res.status).toBe(200);
+      expect(await res.json()).toMatchObject({
+        received: true,
+        skipped: true,
+        reason: 'checkout_token_mismatch',
+      });
+      expect(mockCore.commitRedemption).not.toHaveBeenCalled();
+    });
+
+    it('skips when the order did not actually receive the discount', async () => {
+      const app = createApp();
+      const orderPayload = paidOrder({
+        id: 987654329,
+        admin_graphql_api_id: 'gid://shopify/Order/987654329',
+        total_discounts: '0.00',
+        discount_applications: [],
+      });
+      const rawBody = JSON.stringify(orderPayload);
+      const hmac = computeShopifyWebhookHmac(rawBody, CLIENT_SECRET);
+
+      const res = await app.request(
+        '/webhooks/orders-paid',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Shopify-Shop-Domain': SHOP,
+            'X-Shopify-Hmac-Sha256': hmac,
+          },
+          body: rawBody,
+        },
+        testEnv,
+      );
+
+      expect(res.status).toBe(200);
+      expect(await res.json()).toMatchObject({
+        received: true,
+        skipped: true,
+        reason: 'discount_not_applied',
       });
       expect(mockCore.commitRedemption).not.toHaveBeenCalled();
     });
@@ -776,11 +925,9 @@ describe('Shopify Webhooks Handler & Post-Capture Reconciliation', () => {
       expect(upsertCall[1]).toBe('gid://shopify/Customer/888999');
       expect(upsertCall[2]).toEqual(expect.objectContaining({
         attributes: expect.objectContaining({
-          email: 'vip.shopper@example.com',
-          firstName: 'Jane',
-          lastName: 'Doe',
           tags: 'vip, holiday2026',
-          ordersCount: 7,
+          orders_count: 7,
+          total_spent: 650,
         }),
       }));
     });

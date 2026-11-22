@@ -7,7 +7,10 @@ import type { MiddlewareHandler } from 'hono';
 export const shopifyCheckoutCors: MiddlewareHandler = async (c, next) => {
   c.header('Access-Control-Allow-Origin', '*');
   c.header('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  c.header('Access-Control-Allow-Headers', 'Authorization, Content-Type, X-Correlation-Id');
+  c.header(
+    'Access-Control-Allow-Headers',
+    'Authorization, Content-Type, X-Correlation-Id, X-Shopify-Checkout-Token',
+  );
   c.header('Access-Control-Max-Age', '600');
   c.header('Vary', 'Origin');
 

@@ -331,6 +331,39 @@ export const RedemptionRequestSchema = z.object({
   postCaptureReconciliation: z.boolean().optional(),
 }).strict();
 
+export const BudgetLeaseDecisionSchema = z.object({
+  programRef: z.string().min(1),
+  amountMinor: z.number().int().nonnegative(),
+}).strict();
+
+export const BudgetLeaseReserveRequestSchema = z.object({
+  evaluationId: z.string().min(1),
+  decisions: z.array(BudgetLeaseDecisionSchema),
+  ttlSeconds: z.number().int().min(60).max(3_600).optional(),
+  toleranceBps: z.number().int().min(0).max(1_000).optional(),
+}).strict();
+
+export const BudgetLeaseSchema = z.object({
+  leaseId: z.string().min(1),
+  programRef: z.string().min(1),
+  amountMinor: z.number().int().nonnegative(),
+  expiresAt: z.iso.datetime({ offset: true }),
+}).strict();
+
+export const BudgetLeaseReserveResponseSchema = z.object({
+  accepted: z.boolean(),
+  leases: z.array(BudgetLeaseSchema),
+  reason: z.string().min(1).optional(),
+}).strict();
+
+export const BudgetLeaseReleaseRequestSchema = z.object({
+  evaluationId: z.string().min(1),
+}).strict();
+
+export type BudgetLeaseReserveRequest = z.infer<typeof BudgetLeaseReserveRequestSchema>;
+export type BudgetLeaseReserveResponse = z.infer<typeof BudgetLeaseReserveResponseSchema>;
+export type BudgetLeaseReleaseRequest = z.infer<typeof BudgetLeaseReleaseRequestSchema>;
+
 export const RedemptionEntrySchema = z.object({
   programRef: z.string().min(1),
   programRevision: z.number().int().positive(),

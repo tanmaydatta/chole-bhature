@@ -1,3 +1,5 @@
+# Replace with the client ID from the Shopify Partner/Dev Dashboard before
+# running `shopify app deploy`. The Worker uses SHOPIFY_CLIENT_ID at runtime.
 client_id = "REPLACE_WITH_SHOPIFY_CLIENT_ID"
 name = "Incentives"
 application_url = "https://shopify.incentives.dev"

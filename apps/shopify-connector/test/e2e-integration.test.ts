@@ -158,7 +158,9 @@ function canonicalFingerprint(input: DiscountFunctionInput, evalPayload: any): s
   const lines = (input.cart.lines ?? [])
     .map((line: any) => {
       const quantity = Number(line.quantity ?? 1);
-      const lineTotal = parseToMinorUnits(line.cost?.subtotalAmount?.amount ?? '0') ?? 0;
+      const lineTotal = parseToMinorUnits(
+        line.cost?.totalAmount?.amount ?? line.cost?.subtotalAmount?.amount ?? '0',
+      ) ?? 0;
       const unitPrice = Math.round(lineTotal / Math.max(1, quantity));
       return {
         lineRef: String(line.id),
@@ -168,7 +170,9 @@ function canonicalFingerprint(input: DiscountFunctionInput, evalPayload: any): s
         unitPrice,
       };
     })
-    .sort((left: any, right: any) => left.lineRef.localeCompare(right.lineRef));
+    .sort((left: any, right: any) => (
+      left.lineRef < right.lineRef ? -1 : left.lineRef > right.lineRef ? 1 : 0
+    ));
   return crypto
     .createHash('sha256')
     .update(
@@ -348,6 +352,7 @@ class MockD1Database {
           publishableToken,
           secretToken,
           status,
+          provisioningId,
           automaticDiscountId,
           functionHandle,
           schemaVersion,
@@ -367,6 +372,7 @@ class MockD1Database {
           publishable_token: publishableToken,
           secret_token: secretToken,
           status,
+          provisioning_id: provisioningId,
           automatic_discount_id: automaticDiscountId,
           function_handle: functionHandle,
           schema_version: schemaVersion,
@@ -1034,7 +1040,10 @@ describe('Shopify Plus Turnkey Integration - End-to-End System Integration Suite
             {
               id: 'gid://shopify/CartLine/1',
               quantity: 1,
-              cost: { subtotalAmount: { amount: '80.00', currencyCode: 'USD' } },
+              cost: {
+                subtotalAmount: { amount: '80.00', currencyCode: 'USD' },
+                totalAmount: { amount: '80.00', currencyCode: 'USD' },
+              },
               merchandise: {
                 id: 'gid://shopify/ProductVariant/1',
                 product: { id: 'gid://shopify/Product/1' },
@@ -1043,7 +1052,10 @@ describe('Shopify Plus Turnkey Integration - End-to-End System Integration Suite
             {
               id: 'gid://shopify/CartLine/2',
               quantity: 1,
-              cost: { subtotalAmount: { amount: '20.00', currencyCode: 'USD' } },
+              cost: {
+                subtotalAmount: { amount: '20.00', currencyCode: 'USD' },
+                totalAmount: { amount: '20.00', currencyCode: 'USD' },
+              },
               merchandise: {
                 id: 'gid://shopify/ProductVariant/2',
                 product: { id: 'gid://shopify/Product/2' },
@@ -1080,6 +1092,9 @@ describe('Shopify Plus Turnkey Integration - End-to-End System Integration Suite
         subtotal_price: '100.00',
         total_price: '80.00',
         total_discounts: '20.00',
+        discount_applications: [
+          { title: 'Incentives Automatic Discounts', total_allocated_amount: '20.00' },
+        ],
         currency: 'USD',
         note_attributes: [
           { name: '_incentives_eval', value: JSON.stringify(signedExtensionPayload) },
@@ -1549,7 +1564,18 @@ describe('Shopify Plus Turnkey Integration - End-to-End System Integration Suite
       const uninstalledShop = 'uninstalled-store.myshopify.com';
       const orderPayload = {
         id: 999,
-        note_attributes: [{ name: '_incentives_eval', value: '{"evaluationId":"eval-1"}' }],
+        note_attributes: [{
+          name: '_incentives_eval',
+          value: JSON.stringify({
+            evaluationId: 'eval-1',
+            cartId: 'chk-uninstalled',
+            subtotalMinorUnits: 1000,
+            currency: 'USD',
+            discountMinorUnits: 100,
+            expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
+            signature: 'a'.repeat(64),
+          }),
+        }],
       };
       const rawBody = JSON.stringify(orderPayload);
       const hmac = computeShopifyWebhookHmac(rawBody, CLIENT_SECRET);

@@ -1,3 +1,6 @@
+import {
+  SignedEvaluationPayloadSchema,
+} from '@incentives/contracts';
 import { timingSafeEqual } from '@incentives/shopify-connector';
 import type { Env } from '../env.js';
 import { computeHmacSha256Hex, paymentMinorUnits } from './hmac.js';
@@ -78,9 +81,13 @@ export function extractIncentivesEval(
       const trimmed = rawVal.trim();
       if (!trimmed.startsWith('{')) return null;
       try {
-        const parsed = JSON.parse(trimmed) as IncentivesEvalPayload;
-        if (!parsed.evaluationId) return null;
-        return { evaluationId: parsed.evaluationId, raw: parsed };
+        const parsed = JSON.parse(trimmed) as unknown;
+        const validated = SignedEvaluationPayloadSchema.safeParse(parsed);
+        if (!validated.success) return null;
+        return {
+          evaluationId: validated.data.evaluationId,
+          raw: validated.data as IncentivesEvalPayload,
+        };
       } catch {
         return null;
       }
@@ -104,6 +111,8 @@ interface SignedEvaluationCheck {
   ok: boolean;
   reason?: string;
 }
+
+const EVALUATION_EXPIRY_GRACE_MS = 24 * 60 * 60 * 1000;
 
 function signedEvaluationMessage(payload: IncentivesEvalPayload): string {
   const checkoutToken = payload.checkoutToken ?? payload.cartId ?? '';
@@ -140,7 +149,7 @@ async function verifySignedEvaluation(
   }
 
   const expiresAt = Date.parse(payload.expiresAt);
-  if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
+  if (!Number.isFinite(expiresAt) || expiresAt + EVALUATION_EXPIRY_GRACE_MS <= Date.now()) {
     return { ok: false, reason: 'evaluation_expired' };
   }
   if (payload.shopDomain !== shopDomain) {
@@ -169,29 +178,23 @@ async function verifySignedEvaluation(
     return { ok: false, reason: 'checkout_token_mismatch' };
   }
 
-  const orderSubtotal = paymentMinorUnits(
-    order['current_subtotal_price'] ?? order['subtotal_price'],
-  );
-  if (orderSubtotal !== null && orderSubtotal !== payload.subtotalMinorUnits) {
-    return { ok: false, reason: 'subtotal_mismatch' };
-  }
-
   const totalDiscounts = paymentMinorUnits(order['total_discounts']);
-  if (totalDiscounts !== null && totalDiscounts < payload.discountMinorUnits) {
+  if (totalDiscounts === null || totalDiscounts < payload.discountMinorUnits) {
     return { ok: false, reason: 'discount_not_applied' };
   }
 
   const applications = order['discount_applications'];
-  if (Array.isArray(applications)) {
-    const applied = applications.some(application => {
-      if (!application || typeof application !== 'object') return false;
-      const title = (application as { title?: unknown }).title;
-      return title === 'Incentives Automatic Discounts'
-        || title === 'Incentives Discount';
-    });
-    if (!applied) {
-      return { ok: false, reason: 'discount_not_applied' };
-    }
+  if (!Array.isArray(applications)) {
+    return { ok: false, reason: 'discount_not_applied' };
+  }
+  const applied = applications.some(application => {
+    if (!application || typeof application !== 'object') return false;
+    const title = (application as { title?: unknown }).title;
+    return title === 'Incentives Automatic Discounts'
+      || title === 'Incentives Discount';
+  });
+  if (!applied) {
+    return { ok: false, reason: 'discount_not_applied' };
   }
 
   return { ok: true };
@@ -242,18 +245,26 @@ export async function processOrderPaid(
   };
 
   if (typeof env.CORE?.commitRedemption === 'function') {
-    const result = (await env.CORE.commitRedemption(redemptionInput)) as Record<string, unknown>;
-    return {
-      received: true,
-      ...result,
-    };
+    try {
+      const result = (await env.CORE.commitRedemption(redemptionInput)) as Record<string, unknown>;
+      return {
+        received: true,
+        ...result,
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (/not found/iu.test(message)) {
+        return {
+          received: true,
+          skipped: true,
+          reason: 'evaluation_not_found',
+        };
+      }
+      throw error;
+    }
   }
 
-  return {
-    received: true,
-    status: 'committed',
-    idempotencyKey,
-  };
+  throw new Error('Core commitRedemption service binding is unavailable');
 }
 
 export interface OrderCancelledResult {
@@ -269,6 +280,9 @@ export async function processOrderCancelled(
   order: Record<string, unknown>,
 ): Promise<OrderCancelledResult> {
   const store = await findInstalledShop(env.DB, shopDomain, env);
+  if (!store) {
+    return { received: true, cancelled: false, reason: 'shop_not_installed' };
+  }
   const orderId = order['id'] as number | string | undefined;
   const idempotencyKey = `shopify_cancel_${orderId ?? crypto.randomUUID()}`;
 
@@ -276,21 +290,21 @@ export async function processOrderCancelled(
     await ((env.CORE as Record<string, unknown>)['reverseRedemption'] as (arg: unknown) => Promise<unknown>)({
       orderId,
       idempotencyKey,
-      merchantId: store?.tenant_id,
+      merchantId: store.tenant_id,
       cancelledAt: order['cancelled_at'],
       cancelReason: order['cancel_reason'],
     });
-  } else if (typeof (env.CORE as Record<string, unknown>)?.['cancelRedemption'] === 'function') {
-    await ((env.CORE as Record<string, unknown>)['cancelRedemption'] as (arg: unknown) => Promise<unknown>)({
-      orderId,
-      idempotencyKey,
-      merchantId: store?.tenant_id,
-    });
+    return {
+      received: true,
+      cancelled: true,
+      ...(orderId !== undefined ? { orderId } : {}),
+    };
   }
 
   return {
     received: true,
-    cancelled: true,
+    cancelled: false,
+    reason: 'reversal_not_supported',
     ...(orderId !== undefined ? { orderId } : {}),
   };
 }
@@ -308,21 +322,32 @@ export async function processRefundCreated(
   refund: Record<string, unknown>,
 ): Promise<RefundCreateResult> {
   const store = await findInstalledShop(env.DB, shopDomain, env);
+  if (!store) {
+    return { received: true, refunded: false, reason: 'shop_not_installed' };
+  }
   const refundId = refund['id'] as number | string | undefined;
   const orderId = refund['order_id'] as number | string | undefined;
+  const idempotencyKey = `shopify_refund_${refundId ?? crypto.randomUUID()}`;
 
   if (typeof (env.CORE as Record<string, unknown>)?.['refundRedemption'] === 'function') {
     await ((env.CORE as Record<string, unknown>)['refundRedemption'] as (arg: unknown) => Promise<unknown>)({
       refundId,
       orderId,
-      merchantId: store?.tenant_id,
+      idempotencyKey,
+      merchantId: store.tenant_id,
       refundLineItems: refund['refund_line_items'],
     });
+    return {
+      received: true,
+      refunded: true,
+      ...(refundId !== undefined ? { refundId } : {}),
+    };
   }
 
   return {
     received: true,
-    refunded: true,
+    refunded: false,
+    reason: 'reversal_not_supported',
     ...(refundId !== undefined ? { refundId } : {}),
   };
 }
@@ -367,6 +392,9 @@ export async function processCustomerUpdate(
   customer: Record<string, unknown>,
 ): Promise<CustomerUpdateResult> {
   const store = await findInstalledShop(env.DB, shopDomain, env);
+  if (!store) {
+    return { received: true, synced: false, reason: 'shop_not_installed' };
+  }
   const customerGid =
     typeof customer['admin_graphql_api_id'] === 'string'
       ? customer['admin_graphql_api_id']
@@ -375,36 +403,42 @@ export async function processCustomerUpdate(
         : (customer['email'] as string | undefined);
   const customerRef = customerGid ?? 'unknown';
 
-  if (typeof (env.CORE as Record<string, unknown>)?.['upsertCustomer'] === 'function') {
-    const operatorContext = {
-      correlationId: crypto.randomUUID(),
-      actorUserId: 'system:shopify-connector',
-      actorKind: 'root' as const,
-      merchantId: store?.tenant_id ?? `shop_${shopDomain.replace(/[^a-zA-Z0-9]/g, '_')}`,
-      permission: 'customers:manage' as const,
+  if (typeof (env.CORE as Record<string, unknown>)?.['upsertCustomer'] !== 'function') {
+    return {
+      received: true,
+      synced: false,
+      reason: 'customer_sync_not_supported',
+      customerRef,
     };
-
-    const customerPatch = {
-      attributes: {
-        email: customer['email'],
-        firstName: customer['first_name'],
-        lastName: customer['last_name'],
-        tags: customer['tags'],
-        ordersCount: customer['orders_count'],
-        totalSpent: customer['total_spent'],
-      },
-    };
-
-    await ((env.CORE as Record<string, unknown>)['upsertCustomer'] as (
-      ctx: unknown,
-      ref: string,
-      patch: unknown,
-    ) => Promise<unknown>)(operatorContext, customerRef, customerPatch);
   }
+
+  const operatorContext = {
+    correlationId: crypto.randomUUID(),
+    actorUserId: 'system:shopify-connector',
+    actorKind: 'root' as const,
+    merchantId: store.tenant_id,
+    permission: 'customers:manage' as const,
+  };
+
+  const customerPatch = {
+    attributes: {
+      tags: customer['tags'],
+      orders_count: customer['orders_count'],
+      total_spent: typeof customer['total_spent'] === 'string'
+        ? Number.parseFloat(customer['total_spent'])
+        : customer['total_spent'],
+    },
+  };
+
+  await ((env.CORE as Record<string, unknown>)['upsertCustomer'] as (
+    ctx: unknown,
+    ref: string,
+    patch: unknown,
+  ) => Promise<unknown>)(operatorContext, customerRef, customerPatch);
 
   return {
     received: true,
     synced: true,
-    ...(customerRef !== undefined ? { customerRef } : {}),
+    customerRef,
   };
 }

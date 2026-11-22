@@ -37,6 +37,7 @@ interface ExistingShopRow {
   publishable_token?: string | null;
   secret_token?: string | null;
   status: string;
+  provisioning_id?: string | null;
   automatic_discount_id?: string | null;
   function_handle?: string | null;
 }
@@ -52,7 +53,7 @@ export function generateTenantSigningKey(): string {
 async function findExistingShop(env: Env, shop: string): Promise<ExistingShopRow | null> {
   return env.DB.prepare(
     `SELECT shop_domain, access_token, tenant_id, tenant_signing_key,
-            publishable_token, secret_token, status,
+            publishable_token, secret_token, status, provisioning_id,
             automatic_discount_id, function_handle
      FROM shopify_installed_shops
      WHERE shop_domain = ?
@@ -69,6 +70,7 @@ async function upsertProvisioningRow(
     accessToken: string;
     tenantId: string;
     tenantSigningKey: string;
+    provisioningId?: string | undefined;
     publishableToken?: string | undefined;
     secretToken?: string | undefined;
     status: 'provisioning' | 'active' | 'error';
@@ -91,6 +93,7 @@ async function upsertProvisioningRow(
       publishable_token,
       secret_token,
       status,
+      provisioning_id,
       automatic_discount_id,
       function_handle,
       schema_version,
@@ -100,7 +103,7 @@ async function upsertProvisioningRow(
       uninstalled_at,
       created_at,
       updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(shop_domain) DO UPDATE SET
       access_token = excluded.access_token,
       tenant_id = excluded.tenant_id,
@@ -108,6 +111,7 @@ async function upsertProvisioningRow(
       publishable_token = COALESCE(excluded.publishable_token, shopify_installed_shops.publishable_token),
       secret_token = COALESCE(excluded.secret_token, shopify_installed_shops.secret_token),
       status = excluded.status,
+      provisioning_id = COALESCE(excluded.provisioning_id, shopify_installed_shops.provisioning_id),
       automatic_discount_id = COALESCE(excluded.automatic_discount_id, shopify_installed_shops.automatic_discount_id),
       function_handle = COALESCE(excluded.function_handle, shopify_installed_shops.function_handle),
       schema_version = COALESCE(excluded.schema_version, shopify_installed_shops.schema_version),
@@ -127,6 +131,7 @@ async function upsertProvisioningRow(
         : await encryptToken(env, input.publishableToken),
       input.secretToken === undefined ? null : await encryptToken(env, input.secretToken),
       input.status,
+      input.provisioningId ?? null,
       input.automaticDiscountId ?? null,
       input.functionHandle ?? null,
       input.schemaVersion ?? null,
@@ -302,25 +307,27 @@ export async function provisionStore(
   const tenantSigningKey = existing?.tenant_signing_key
     ? await decryptToken(env, existing.tenant_signing_key)
     : generateTenantSigningKey();
+  const provisioningId = existing?.provisioning_id ?? `prov_${tenantId}`;
 
   await upsertProvisioningRow(env, {
     shop,
     accessToken,
     tenantId,
     tenantSigningKey,
+    provisioningId,
     status: 'provisioning',
     functionHandle,
     automaticDiscountId: existing?.automatic_discount_id ?? undefined,
   });
 
   try {
-    // 1. Create or reuse the merchant tenant.
+    // 1. Create or reuse the merchant tenant. The provisioning ID is stable so
+    // a failed activate can be retried without bricking the tenant.
     const provisionContext = createOperatorContext(
       tenantId,
       'credentials:manage',
       correlationId,
     );
-    const provisioningId = existing ? `prov_reinstall_${crypto.randomUUID()}` : `prov_${crypto.randomUUID()}`;
     const provisionResult = await env.CORE.provisionMerchant(provisionContext, {
       id: tenantId,
       name: shop,
@@ -332,17 +339,33 @@ export async function provisionStore(
       );
     }
     if (env.CORE.activateMerchant) {
-      await env.CORE.activateMerchant(provisionContext, {
+      const activation = await env.CORE.activateMerchant(provisionContext, {
         id: tenantId,
         provisioningId,
       });
+      if (!activation.ok) {
+        throw new Error(
+          `Failed to activate merchant in Core: ${activation.error.message} (${activation.error.code})`,
+        );
+      }
     }
 
-    // 2. Reuse or create API credentials. The storefront now authenticates with
-    // Shopify session tokens, so the publishable token is kept only for
-    // compatibility with existing operator tooling.
+    // 2. Reuse or create API credentials. Persist them immediately so a later
+    // failure does not orphan credentials and a retry reuses the same ones.
     const credentials = await createCredentials(env, provisionContext, shop, existing);
     warnings.push(...credentials.warnings);
+    await upsertProvisioningRow(env, {
+      shop,
+      accessToken,
+      tenantId,
+      tenantSigningKey,
+      provisioningId,
+      publishableToken: credentials.publishableToken,
+      secretToken: credentials.secretToken,
+      status: 'provisioning',
+      functionHandle,
+      automaticDiscountId: existing?.automatic_discount_id ?? undefined,
+    });
 
     // 3. Publish the baseline schema required by /v1/evaluate.
     const schema = await ensureShopifyBaselineSchema(env, tenantId, correlationId);
@@ -356,6 +379,18 @@ export async function provisionStore(
       apiVersion,
       existingDiscountId: existing?.automatic_discount_id ?? undefined,
     });
+    await upsertProvisioningRow(env, {
+      shop,
+      accessToken,
+      tenantId,
+      tenantSigningKey,
+      provisioningId,
+      publishableToken: credentials.publishableToken,
+      secretToken: credentials.secretToken,
+      status: 'provisioning',
+      automaticDiscountId,
+      functionHandle,
+    });
 
     // 5. Register webhooks.
     const webhooks = await ensureShopifyWebhooks(shop, accessToken, appUrl, apiVersion);
@@ -367,6 +402,7 @@ export async function provisionStore(
       accessToken,
       tenantId,
       tenantSigningKey,
+      provisioningId,
       publishableToken: credentials.publishableToken,
       secretToken: credentials.secretToken,
       status: 'active',
@@ -396,6 +432,7 @@ export async function provisionStore(
       accessToken,
       tenantId,
       tenantSigningKey,
+      provisioningId,
       status: 'error',
       functionHandle,
       provisioningError: message,

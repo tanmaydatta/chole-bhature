@@ -6,10 +6,7 @@ import {
 interface WebhookSubscriptionNode {
   id: string;
   topic: string;
-  endpoint?: {
-    __typename?: string;
-    callbackUrl?: string;
-  };
+  uri?: string;
 }
 
 interface WebhookSubscriptionList {
@@ -58,10 +55,7 @@ export async function ensureShopifyWebhooks(
         nodes {
           id
           topic
-          endpoint {
-            __typename
-            ... on WebhookHttpEndpoint { callbackUrl }
-          }
+          uri
         }
       }
     }`,
@@ -71,7 +65,7 @@ export async function ensureShopifyWebhooks(
 
   const existing = new Map(
     (listed.data?.webhookSubscriptions.nodes ?? []).map(node => [
-      `${node.topic}:${node.endpoint?.callbackUrl ?? ''}`,
+      `${node.topic}:${node.uri ?? ''}`,
       node,
     ]),
   );
@@ -106,7 +100,7 @@ export async function ensureShopifyWebhooks(
         {
           topic: webhook.topic,
           webhookSubscription: {
-            callbackUrl,
+            uri: callbackUrl,
             format: 'JSON',
           },
         },

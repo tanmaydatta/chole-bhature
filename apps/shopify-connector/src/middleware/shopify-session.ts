@@ -1,5 +1,5 @@
 import type { MiddlewareHandler } from 'hono';
-import { decode, verify, verifyWithJwks } from 'hono/jwt';
+import { verify } from 'hono/jwt';
 import type { Env } from '../env.js';
 import { decryptToken } from '../services/token-crypto.js';
 
@@ -65,38 +65,16 @@ export const shopifySessionMiddleware: MiddlewareHandler<ShopifyAdminEnv> = asyn
     return c.json({ error: 'Unauthorized: Empty session token' }, 401);
   }
 
-  let decodedHeader: { alg?: string; typ?: string; kid?: string };
-  try {
-    const decoded = decode(token);
-    decodedHeader = decoded.header as { alg?: string; typ?: string; kid?: string };
-  } catch {
-    return c.json({ error: 'Unauthorized: Malformed JWT' }, 401);
-  }
-
   let payload: Record<string, unknown>;
   try {
-    if (decodedHeader.alg === 'RS256') {
-      // Shopify JWKS fallback
-      const jwksUri = 'https://cdn.shopify.com/s/javascripts/shopify_tokens.json';
-      payload = (await verifyWithJwks(token, {
-        jwks_uri: jwksUri,
-        allowedAlgorithms: ['RS256'],
-        verification: {
-          aud: c.env.SHOPIFY_CLIENT_ID,
-        },
-      })) as Record<string, unknown>;
-    } else {
-      // Default: HS256 HMAC verification with SHOPIFY_CLIENT_SECRET
-      payload = (await verify(token, c.env.SHOPIFY_CLIENT_SECRET, {
-        alg: 'HS256',
-        aud: c.env.SHOPIFY_CLIENT_ID,
-      })) as Record<string, unknown>;
-    }
-  } catch (err) {
-    return c.json(
-      { error: `Unauthorized: ${(err as Error).message || 'Invalid or expired token'}` },
-      401,
-    );
+    // Shopify App Bridge and checkout session tokens are HS256 JWTs signed
+    // with the app's client secret. Do not accept externally-sourced JWKS keys.
+    payload = (await verify(token, c.env.SHOPIFY_CLIENT_SECRET, {
+      alg: 'HS256',
+      aud: c.env.SHOPIFY_CLIENT_ID,
+    })) as Record<string, unknown>;
+  } catch {
+    return c.json({ error: 'Unauthorized: Invalid or expired token' }, 401);
   }
 
   const destDomain = typeof payload.dest === 'string' ? extractShopDomain(payload.dest) : '';
