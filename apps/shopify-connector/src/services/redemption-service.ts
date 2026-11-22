@@ -287,16 +287,28 @@ export async function processOrderCancelled(
   const idempotencyKey = `shopify_cancel_${orderId ?? crypto.randomUUID()}`;
 
   if (typeof (env.CORE as Record<string, unknown>)?.['reverseRedemption'] === 'function') {
-    await ((env.CORE as Record<string, unknown>)['reverseRedemption'] as (arg: unknown) => Promise<unknown>)({
+    const result = (await ((env.CORE as Record<string, unknown>)['reverseRedemption'] as (
+      arg: unknown,
+    ) => Promise<unknown>)({
       orderId,
       idempotencyKey,
       merchantId: store.tenant_id,
       cancelledAt: order['cancelled_at'],
       cancelReason: order['cancel_reason'],
-    });
+    })) as { reversed?: boolean; reason?: string } | undefined;
+
+    if (result?.reversed === true) {
+      return {
+        received: true,
+        cancelled: true,
+        ...(orderId !== undefined ? { orderId } : {}),
+      };
+    }
+
     return {
       received: true,
-      cancelled: true,
+      cancelled: false,
+      reason: result?.reason ?? 'reversal_not_supported',
       ...(orderId !== undefined ? { orderId } : {}),
     };
   }
@@ -330,16 +342,28 @@ export async function processRefundCreated(
   const idempotencyKey = `shopify_refund_${refundId ?? crypto.randomUUID()}`;
 
   if (typeof (env.CORE as Record<string, unknown>)?.['refundRedemption'] === 'function') {
-    await ((env.CORE as Record<string, unknown>)['refundRedemption'] as (arg: unknown) => Promise<unknown>)({
+    const result = (await ((env.CORE as Record<string, unknown>)['refundRedemption'] as (
+      arg: unknown,
+    ) => Promise<unknown>)({
       refundId,
       orderId,
       idempotencyKey,
       merchantId: store.tenant_id,
       refundLineItems: refund['refund_line_items'],
-    });
+    })) as { refunded?: boolean; reason?: string } | undefined;
+
+    if (result?.refunded === true) {
+      return {
+        received: true,
+        refunded: true,
+        ...(refundId !== undefined ? { refundId } : {}),
+      };
+    }
+
     return {
       received: true,
-      refunded: true,
+      refunded: false,
+      reason: result?.reason ?? 'reversal_not_supported',
       ...(refundId !== undefined ? { refundId } : {}),
     };
   }

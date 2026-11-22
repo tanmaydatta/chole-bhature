@@ -514,7 +514,13 @@ export class CoreOperatorService extends WorkerEntrypoint<Env> {
     reversalInput?: { orderId?: number | string; idempotencyKey?: string },
   ) {
     assertCiStack(this.env);
-    return { received: true, reversed: true };
+    return {
+      received: true,
+      reversed: false,
+      reason: 'reversal_not_supported',
+      orderId: reversalInput?.orderId
+        ?? (context as { orderId?: number | string }).orderId,
+    };
   }
 }
 
