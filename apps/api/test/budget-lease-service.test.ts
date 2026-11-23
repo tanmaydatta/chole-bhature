@@ -77,6 +77,33 @@ describe('budget lease service', () => {
     expect(result.reason).toContain('budget_exhausted');
   });
 
+  it('rejects a lease larger than the budget plus the hard 3% tolerance', async () => {
+    const result = await reserveBudgetLeases(
+      envWith(new LeaseDb(1_000)),
+      'merchant-1',
+      {
+        evaluationId: 'eval-1',
+        decisions: [{ programRef: 'promo-1', amountMinor: 2_000 }],
+      },
+    );
+
+    expect(result.accepted).toBe(false);
+    expect(result.reason).toContain('budget_exhausted');
+  });
+
+  it('rejects any lease when the remaining budget is zero', async () => {
+    const result = await reserveBudgetLeases(
+      envWith(new LeaseDb(0)),
+      'merchant-1',
+      {
+        evaluationId: 'eval-1',
+        decisions: [{ programRef: 'promo-1', amountMinor: 1 }],
+      },
+    );
+
+    expect(result.accepted).toBe(false);
+  });
+
   it('does not require a lease for a program without a monetary budget', async () => {
     const result = await reserveBudgetLeases(
       envWith(new LeaseDb(null)),

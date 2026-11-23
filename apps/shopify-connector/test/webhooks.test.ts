@@ -472,7 +472,7 @@ describe('Shopify Webhooks Handler & Post-Capture Reconciliation', () => {
         admin_graphql_api_id: 'gid://shopify/Order/987654330',
         currency: 'USD',
         presentment_currency: 'EUR',
-        total_discounts: '11.00',
+        total_discounts: '1.00',
         total_discounts_set: {
           presentment_money: { amount: '10.00', currency_code: 'EUR' },
         },

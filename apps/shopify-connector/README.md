@@ -84,5 +84,5 @@ cargo build --manifest-path apps/shopify-connector/extensions/incentives-discoun
 - Full embedded campaign dashboard (the current `/dashboard` page is an App Bridge-verified shell/link-out; there is intentionally no generic secret-token admin proxy).
 - Native discount-code-box support requires syncing promo/affiliate codes into Shopify's code pool.
 - Core cancellation/refund reversal is not yet implemented; the connector reports `reversal_not_supported` instead of claiming success.
-- The Rust function uses a one-day date tolerance because `wasm32-unknown-unknown` has no wall clock; the webhook/Core enforce exact expiry. Budget leases are 15 minutes; the Core decision record lives 24 hours for late/manual payments and reconciles expired decisions with a warning.
+- The Rust function uses a one-day date tolerance because `wasm32-unknown-unknown` has no wall clock. Exact lifecycle: budget leases are 15 minutes; the Core decision record lives 24 hours; the webhook applies a 24-hour grace and reconciles late/expired decisions with a warning.
 - Multi-currency 3-decimal rounding and cart line ID stability need a dev-store validation pass.

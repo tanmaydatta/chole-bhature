@@ -109,7 +109,7 @@ fn previous_day(date: &str) -> Option<String> {
     let year: i32 = parts.next()?.parse().ok()?;
     let month: u32 = parts.next()?.parse().ok()?;
     let day: u32 = parts.next()?.parse().ok()?;
-    if parts.next().is_some() || month == 0 || month > 12 || day == 0
+    if parts.next().is_some() || year <= 0 || month == 0 || month > 12 || day == 0
         || day > days_in_month(year, month)
     {
         return None;

@@ -1244,6 +1244,7 @@ describe('POST /v1/redemptions', () => {
       reconciliationWarning: 'DECISION_EXPIRED',
     });
 
+
     const tampered = await evaluate();
     await env.DB.prepare(`
       UPDATE evaluation_decisions SET decisions_json = '[]'
@@ -1271,6 +1272,30 @@ describe('POST /v1/redemptions', () => {
       externalOrderRef: 'tampered-pricing-order',
       idempotencyKey: 'tampered-pricing-key',
     }), 409, 'VERSION_CONFLICT');
+    expect(await env.DB.prepare('SELECT COUNT(*) AS count FROM redemptions').first())
+      .toEqual({ count: 0 });
+  });
+
+  test('reconciles a program paused between evaluation and payment', async () => {
+    await seedProgram(automaticPromo('paused-at-payment'));
+    const evaluation = await evaluate();
+    await env.DB.prepare(`
+      UPDATE programs SET status = 'paused'
+      WHERE merchant_id = ?1 AND external_ref = 'paused-at-payment'
+    `).bind(SEEDED_MERCHANT_ID).run();
+
+    const response = await redeemRaw({
+      evaluationId: evaluation.evaluationId,
+      externalOrderRef: 'paused-order-reconciled',
+      idempotencyKey: 'paused-key-reconciled',
+      postCaptureReconciliation: true,
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      status: 'committed',
+      reconciliationWarning: 'PROGRAM_UNAVAILABLE',
+    });
     expect(await env.DB.prepare('SELECT COUNT(*) AS count FROM redemptions').first())
       .toEqual({ count: 0 });
   });

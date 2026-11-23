@@ -267,6 +267,30 @@ describe('Embedded Operator Dashboard Admin Bridge & Session Tokens', () => {
       expect(res.status).toBe(401);
     });
 
+    it('accepts a case-insensitive Bearer prefix', async () => {
+      const token = await createSessionToken();
+      const res = await app.fetch(
+        new Request('https://shopify.incentives.dev/admin/session', {
+          method: 'GET',
+          headers: { Authorization: `bearer ${token}` },
+        }),
+        testEnv,
+      );
+      expect(res.status).toBe(200);
+    });
+
+    it('returns 500 when Shopify credentials are not configured', async () => {
+      const token = await createSessionToken();
+      const res = await app.fetch(
+        new Request('https://shopify.incentives.dev/admin/session', {
+          method: 'GET',
+          headers: { Authorization: `Bearer ${token}` },
+        }),
+        { ...testEnv, SHOPIFY_CLIENT_ID: '' },
+      );
+      expect(res.status).toBe(500);
+    });
+
     it('invalid JWT format returns HTTP 401', async () => {
       const res = await app.fetch(
         new Request('https://shopify.incentives.dev/admin/session', {
