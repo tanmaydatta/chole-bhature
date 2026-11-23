@@ -1051,6 +1051,38 @@ describe('POST /v1/redemptions', () => {
     expect(retry).toEqual(first);
   });
 
+  test('commits with POST_CAPTURE_OVERSPEND reconciliationWarning instead of 409 when postCaptureReconciliation is true', async () => {
+    await seedProgram(automaticPromo('post-capture-exhaustion', { usageCap: 1 }));
+    const [firstEvaluation, exhaustedEvaluation] = await Promise.all([
+      evaluate(),
+      evaluate(),
+    ]);
+    await redeem({
+      evaluationId: firstEvaluation.evaluationId,
+      externalOrderRef: 'post-cap-first-order',
+      idempotencyKey: 'post-cap-first-key',
+    });
+
+    const request = {
+      evaluationId: exhaustedEvaluation.evaluationId,
+      externalOrderRef: 'post-cap-exhausted-order',
+      idempotencyKey: 'post-cap-exhausted-key',
+      postCaptureReconciliation: true,
+    };
+
+    const response = await redeem(request);
+    expect(response.status).toBe('committed');
+    expect(response.reconciliationWarning).toBe('POST_CAPTURE_OVERSPEND');
+    expect(response.idempotencyKey).toBe('post-cap-exhausted-key');
+    expect(response.externalOrderRef).toBe('post-cap-exhausted-order');
+
+    // Exact retry
+    const retry = await redeem(request);
+    expect(retry.status).toBe('committed');
+    expect(retry.reconciliationWarning).toBe('POST_CAPTURE_OVERSPEND');
+    expect(retry.redemptionId).toBe(response.redemptionId);
+  });
+
   test('revalidates every selected active revision and reward rule before committing', async () => {
     await seedProgram(codedPromo('unchanged-child', 'UNCHANGED', { priority: 20 }));
     await seedProgram(codedPromo('changed-child', 'CHANGED', { priority: 10 }));
@@ -1200,6 +1232,19 @@ describe('POST /v1/redemptions', () => {
       idempotencyKey: 'expired-key',
     }), 410, 'DECISION_EXPIRED');
 
+    const reconciled = await redeemRaw({
+      evaluationId: expired.evaluationId,
+      externalOrderRef: 'expired-order-reconciled',
+      idempotencyKey: 'expired-key-reconciled',
+      postCaptureReconciliation: true,
+    });
+    expect(reconciled.status).toBe(200);
+    expect(await reconciled.json()).toMatchObject({
+      status: 'committed',
+      reconciliationWarning: 'DECISION_EXPIRED',
+    });
+
+
     const tampered = await evaluate();
     await env.DB.prepare(`
       UPDATE evaluation_decisions SET decisions_json = '[]'
@@ -1227,6 +1272,30 @@ describe('POST /v1/redemptions', () => {
       externalOrderRef: 'tampered-pricing-order',
       idempotencyKey: 'tampered-pricing-key',
     }), 409, 'VERSION_CONFLICT');
+    expect(await env.DB.prepare('SELECT COUNT(*) AS count FROM redemptions').first())
+      .toEqual({ count: 0 });
+  });
+
+  test('reconciles a program paused between evaluation and payment', async () => {
+    await seedProgram(automaticPromo('paused-at-payment'));
+    const evaluation = await evaluate();
+    await env.DB.prepare(`
+      UPDATE programs SET status = 'paused'
+      WHERE merchant_id = ?1 AND external_ref = 'paused-at-payment'
+    `).bind(SEEDED_MERCHANT_ID).run();
+
+    const response = await redeemRaw({
+      evaluationId: evaluation.evaluationId,
+      externalOrderRef: 'paused-order-reconciled',
+      idempotencyKey: 'paused-key-reconciled',
+      postCaptureReconciliation: true,
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      status: 'committed',
+      reconciliationWarning: 'PROGRAM_UNAVAILABLE',
+    });
     expect(await env.DB.prepare('SELECT COUNT(*) AS count FROM redemptions').first())
       .toEqual({ count: 0 });
   });

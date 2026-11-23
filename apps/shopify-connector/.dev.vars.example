@@ -1,0 +1,10 @@
+# Copy to .dev.vars for `wrangler dev`.
+# `wrangler.toml` sets APP_ENV=production so a deployed Worker fails closed
+# without TOKEN_ENCRYPTION_KEY. Local dev overrides it here.
+APP_ENV=local
+SHOPIFY_CLIENT_SECRET=replace-with-shopify-app-client-secret
+# Generate with: openssl rand -hex 32
+TOKEN_ENCRYPTION_KEY=replace-with-64-hex-character-key
+# Optional
+# SHOPIFY_DISCOUNT_FUNCTION_HANDLE=incentives-discount-fn
+# SHOPIFY_APP_URL=https://your-connector-host.example.com

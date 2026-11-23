@@ -1,0 +1,22 @@
+api_version = "2026-10"
+
+[[extensions]]
+name = "incentives-discount-fn"
+handle = "incentives-discount-fn"
+type = "function"
+title = "Incentives Discount Function"
+description = "Incentives discount function evaluating signed cart tokens"
+
+[[extensions.targeting]]
+target = "cart.lines.discounts.generate.run"
+input_query = "src/cart_lines_discounts_generate_run.graphql"
+export = "cart_lines_discounts_generate_run"
+
+[extensions.build]
+command = "cargo build --target=wasm32-unknown-unknown --release"
+path = "target/wasm32-unknown-unknown/release/incentives-discount-fn.wasm"
+watch = ["src/**/*.rs"]
+
+[extensions.ui.paths]
+create = "/"
+details = "/"

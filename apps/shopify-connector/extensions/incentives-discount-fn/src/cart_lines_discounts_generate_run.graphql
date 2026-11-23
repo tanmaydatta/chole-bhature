@@ -1,0 +1,47 @@
+query Input {
+  cart {
+    attribute(key: "_incentives_eval") {
+      value
+    }
+    cost {
+      subtotalAmount {
+        amount
+        currencyCode
+      }
+    }
+    lines {
+      id
+      quantity
+      cost {
+        subtotalAmount {
+          amount
+          currencyCode
+        }
+        totalAmount {
+          amount
+          currencyCode
+        }
+      }
+      merchandise {
+        __typename
+        ... on ProductVariant {
+          id
+          product {
+            id
+          }
+        }
+      }
+    }
+  }
+  discount {
+    discountClasses
+    metafield(namespace: "$app:incentives", key: "signing-secret") {
+      value
+    }
+  }
+  shop {
+    localTime {
+      date
+    }
+  }
+}

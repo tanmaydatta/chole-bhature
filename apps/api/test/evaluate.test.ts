@@ -819,9 +819,12 @@ describe('POST /v1/evaluate', () => {
     expect(stored.customer_version).toBeNull();
   });
 
-  test('returns CUSTOMER_NOT_FOUND for a supplied unknown customer', async () => {
-    const error = await expectError(await evaluateRaw(baseRequest), 404, 'CUSTOMER_NOT_FOUND');
-    expect(error.error.retryable).toBe(false);
+  test('evaluates unknown customer gracefully with empty attributes', async () => {
+    const response = await evaluateRaw(baseRequest);
+    expect(response.status).toBe(200);
+    const result = EvaluationResponseSchema.parse(await response.json());
+    expect(result.customerRef).toBe(baseRequest.customerRef);
+    expect(result.customerVersion).toBe(1);
   });
 
   test.each([

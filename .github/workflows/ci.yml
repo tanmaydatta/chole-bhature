@@ -38,6 +38,36 @@ jobs:
           sudo apt-get install -y expect
       - run: pnpm test
 
+  shopify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 11.14.0
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @incentives/contracts build
+      - run: pnpm --filter @incentives/shopify-connector build
+      - run: pnpm --filter @incentives/shopify-app build
+      - run: pnpm --filter @incentives/shopify-app test
+      - run: pnpm --filter @incentives/checkout-offers-ui test
+      - run: pnpm --filter @incentives/checkout-offers-ui build
+      - name: Rust discount function tests
+        run: cargo test --manifest-path apps/shopify-connector/extensions/incentives-discount-fn/Cargo.toml
+      - name: Build Shopify function wasm
+        run: cargo build --manifest-path apps/shopify-connector/extensions/incentives-discount-fn/Cargo.toml --target wasm32-unknown-unknown --release
+      - name: Verify Shopify function export
+        run: |
+          node -e "const fs=require('fs'); const m=new WebAssembly.Module(fs.readFileSync('apps/shopify-connector/extensions/incentives-discount-fn/target/wasm32-unknown-unknown/release/incentives-discount-fn.wasm')); const names=WebAssembly.Module.exports(m).map(e=>e.name); if (!names.includes('cart_lines_discounts_generate_run')) { console.error(names); process.exit(1); }"
+
   local-e2e:
     # PR synchronize events run on every push; external forks keep baseline verify only.
     if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository

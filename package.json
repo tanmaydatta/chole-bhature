@@ -3,9 +3,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "pnpm -r build",
+    "build": "pnpm -r --workspace-concurrency=1 build",
     "cloud-e2e:build-artifact": "node scripts/cloud-e2e/build-artifact.mjs",
-    "test": "pnpm -r test && node --test scripts/staging-vault-to-env.test.mjs scripts/staging-secret-transfer.test.mjs",
+    "test": "pnpm -r --workspace-concurrency=1 test && node --test scripts/staging-vault-to-env.test.mjs scripts/staging-secret-transfer.test.mjs",
     "test:e2e": "pnpm --filter @incentives/e2e test:e2e",
     "e2e:local": "E2E_TARGET=local pnpm --filter @incentives/e2e exec playwright test",
     "e2e:local:preauth": "pnpm --filter @incentives/e2e test:preauth",

@@ -1,0 +1,29 @@
+{
+  "name": "@incentives/shopify-app",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": "./dist/app.js",
+  "types": "./dist/app.d.ts",
+  "scripts": {
+    "build:dependencies": "pnpm --filter @incentives/contracts --filter @incentives/shopify-connector build",
+    "prebuild": "pnpm run build:dependencies",
+    "build": "tsc -p tsconfig.json",
+    "pretest": "pnpm run build:dependencies",
+    "test": "vitest run",
+    "lint": "oxlint src"
+  },
+  "dependencies": {
+    "@incentives/contracts": "workspace:*",
+    "@incentives/shopify-connector": "workspace:*",
+    "hono": "^4.12.30",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260717.1",
+    "oxlint": "^1.69.0",
+    "typescript": "~6.0.2",
+    "vitest": "^4.1.10",
+    "wrangler": "^4.112.0"
+  }
+}

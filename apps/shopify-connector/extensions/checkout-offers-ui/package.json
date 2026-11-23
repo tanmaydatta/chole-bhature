@@ -1,0 +1,21 @@
+{
+  "name": "@incentives/checkout-offers-ui",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "lint": "oxlint src test"
+  },
+  "dependencies": {
+    "@incentives/contracts": "workspace:*",
+    "@shopify/ui-extensions": "2026.10.0",
+    "preact": "^10.29.8"
+  },
+  "devDependencies": {
+    "oxlint": "^1.69.0",
+    "typescript": "~6.0.2",
+    "vitest": "^4.1.10"
+  }
+}

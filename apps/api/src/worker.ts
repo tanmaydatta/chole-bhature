@@ -3,8 +3,13 @@ import {
   ApiCredentialCreateResultSchema,
   ApiCredentialViewSchema,
   ApiErrorSchema,
+  BudgetLeaseReleaseRequestSchema,
+  BudgetLeaseReserveRequestSchema,
+  BudgetLeaseReserveResponseSchema,
   CoreMerchantActivationResultSchema,
   CoreMerchantProvisionResultSchema,
+  type BudgetLeaseReleaseRequest,
+  type BudgetLeaseReserveRequest,
   CustomerPatchRequestSchema,
   CustomerRecordSchema,
   EvaluationRequestSchema,
@@ -23,6 +28,7 @@ import {
   ProgramLifecycleSchema,
   ProgramPublicationResultSchema,
   PromoProgramSchema,
+  RedemptionRequestSchema,
   SchemaDefinitionImpactPreviewSchema,
   SchemaDefinitionViewSchema,
   SchemaDefinitionsResponseSchema,
@@ -39,6 +45,7 @@ import {
   type E2eTenantIdentity,
   type E2eInspectionQuery,
   type PromoProgram,
+  type RedemptionRequest,
   type VariableDefinition,
 } from '@incentives/contracts';
 import { z } from 'zod';
@@ -87,6 +94,13 @@ import {
 import { createProductE2eLifecycle } from './services/e2e-lifecycle.js';
 import { inspectProductE2eRun } from './services/e2e-inspection.js';
 import { createEvaluationService } from './services/evaluation-service.js';
+import { createRedemptionService } from './services/redemption-service.js';
+import {
+  releaseBudgetLeases as deleteBudgetLeases,
+  reserveBudgetLeases,
+} from './services/budget-lease-service.js';
+import { parseRedemptionCommitInput } from './services/redemption-input.js';
+import { createD1AtomicRedemptionCoordinator } from './redemption/d1-atomic-redemption-coordinator.js';
 
 function coreMerchantFailure(error: unknown) {
   if (error instanceof MerchantIdentityConflictError) {
@@ -123,6 +137,11 @@ function operatorEvaluationFailure(error: unknown, correlationId: string): ApiEr
 }
 
 export class CoreOperatorService extends WorkerEntrypoint<Env> {
+  async fetch(request: Request): Promise<Response> {
+    assertCiStack(this.env);
+    return app.fetch(request, this.env, this.ctx);
+  }
+
   async e2eControl(call: CoreControlCall): Promise<CoreControlReply> {
     return createProductE2eControl(this.env).execute(call);
   }
@@ -430,6 +449,100 @@ export class CoreOperatorService extends WorkerEntrypoint<Env> {
       OperatorCallContextSchema.parse(context),
       z.string().min(1).parse(externalRef),
     ));
+  }
+
+  async commitRedemption(
+    context: OperatorCallContext | (RedemptionRequest & { merchantId: string }),
+    redemptionInput?: RedemptionRequest,
+  ) {
+    assertCiStack(this.env);
+    let merchantId: string;
+    let input: RedemptionRequest;
+    let correlationId: string;
+
+    if (redemptionInput !== undefined) {
+      const operator = requireOperatorContext(
+        OperatorCallContextSchema.parse(context),
+        'redemptions:commit',
+      );
+      merchantId = operator.merchantId;
+      input = RedemptionRequestSchema.parse(redemptionInput);
+      correlationId = operator.correlationId;
+    } else {
+      const parsed = parseRedemptionCommitInput(context);
+      merchantId = parsed.merchantId;
+      input = parsed.input;
+      correlationId = crypto.randomUUID();
+    }
+
+    const repositories = createRepositories(this.env);
+    const coordinator = createD1AtomicRedemptionCoordinator(this.env);
+    const service = createRedemptionService(repositories, coordinator, this.env);
+    const result = await service.redeem(merchantId, input, correlationId);
+    await deleteBudgetLeases(this.env, merchantId, input.evaluationId);
+    return result;
+  }
+
+  async reserveBudgetLeases(context: OperatorCallContext, input: BudgetLeaseReserveRequest) {
+    assertCiStack(this.env);
+    const operator = requireOperatorContext(
+      OperatorCallContextSchema.parse(context),
+      'redemptions:commit',
+    );
+    return BudgetLeaseReserveResponseSchema.parse(
+      await reserveBudgetLeases(
+        this.env,
+        operator.merchantId,
+        BudgetLeaseReserveRequestSchema.parse(input),
+      ),
+    );
+  }
+
+  async releaseBudgetLeases(context: OperatorCallContext, input: BudgetLeaseReleaseRequest) {
+    assertCiStack(this.env);
+    const operator = requireOperatorContext(
+      OperatorCallContextSchema.parse(context),
+      'redemptions:commit',
+    );
+    const request = BudgetLeaseReleaseRequestSchema.parse(input);
+    await deleteBudgetLeases(this.env, operator.merchantId, request.evaluationId);
+    return { released: true };
+  }
+
+  async refundRedemption(
+    context: OperatorCallContext | {
+      merchantId?: string;
+      orderId?: number | string;
+      refundId?: number | string;
+      idempotencyKey?: string;
+      refundLineItems?: unknown;
+    },
+    refundInput?: { orderId?: number | string; refundId?: number | string; idempotencyKey?: string },
+  ) {
+    assertCiStack(this.env);
+    return {
+      received: true,
+      refunded: false,
+      reason: 'reversal_not_supported',
+      orderId: refundInput?.orderId
+        ?? (context as { orderId?: number | string }).orderId,
+      refundId: refundInput?.refundId
+        ?? (context as { refundId?: number | string }).refundId,
+    };
+  }
+
+  async reverseRedemption(
+    context: OperatorCallContext | { merchantId?: string; orderId?: number | string; idempotencyKey?: string },
+    reversalInput?: { orderId?: number | string; idempotencyKey?: string },
+  ) {
+    assertCiStack(this.env);
+    return {
+      received: true,
+      reversed: false,
+      reason: 'reversal_not_supported',
+      orderId: reversalInput?.orderId
+        ?? (context as { orderId?: number | string }).orderId,
+    };
   }
 }
 
