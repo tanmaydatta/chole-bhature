@@ -7,7 +7,6 @@ preview_urls = false
 [vars]
 APP_ENV = "production"
 SHOPIFY_CLIENT_ID = "shopify-test-client-id"
-SHOPIFY_CLIENT_SECRET = "shopify-test-client-secret"
 SHOPIFY_APP_URL = "https://shopify.incentives.dev"
 
 [[d1_databases]]

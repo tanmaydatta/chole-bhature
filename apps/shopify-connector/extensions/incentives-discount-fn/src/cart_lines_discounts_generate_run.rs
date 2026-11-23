@@ -89,6 +89,46 @@ fn verify_signature(secret: &str, message: &str, signature: &str) -> bool {
     mac.verify_slice(&signature).is_ok()
 }
 
+fn is_leap_year(year: i32) -> bool {
+    (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
+}
+
+fn days_in_month(year: i32, month: u32) -> u32 {
+    match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 => if is_leap_year(year) { 29 } else { 28 },
+        _ => 0,
+    }
+}
+
+/// Parses YYYY-MM-DD and subtracts one calendar day. Used to give the
+/// date-granularity expiry a one-day tolerance for shop-local timezones.
+fn previous_day(date: &str) -> Option<String> {
+    let mut parts = date.split('-');
+    let year: i32 = parts.next()?.parse().ok()?;
+    let month: u32 = parts.next()?.parse().ok()?;
+    let day: u32 = parts.next()?.parse().ok()?;
+    if parts.next().is_some() || month == 0 || month > 12 || day == 0
+        || day > days_in_month(year, month)
+    {
+        return None;
+    }
+
+    let (mut year, mut month, mut day) = (year, month, day);
+    if day > 1 {
+        day -= 1;
+    } else if month > 1 {
+        month -= 1;
+        day = days_in_month(year, month);
+    } else {
+        year -= 1;
+        month = 12;
+        day = 31;
+    }
+    Some(format!("{year:04}-{month:02}-{day:02}"))
+}
+
 fn cart_fingerprint(input: &schema::cart_lines_discounts_generate_run::Input) -> Option<String> {
     let mut lines = Vec::new();
     for line in input.cart().lines() {
@@ -172,11 +212,12 @@ fn cart_lines_discounts_generate_run(
         return Ok(schema::CartLinesDiscountsGenerateRunResult { operations: vec![] });
     }
 
-    // Day-level expiry guard. Exact expiry is enforced again by the webhook/commit
-    // path; the function has no wall clock on wasm32-unknown-unknown.
+    // Day-level expiry guard with a one-day tolerance. Exact expiry is enforced
+    // again by the webhook/Core; shop-local dates can be a day ahead of UTC.
     let today = input.shop().local_time().date().to_string();
+    let earliest_allowed = previous_day(&today).unwrap_or_else(|| today.clone());
     let expiry_date = eval.expires_at.split('T').next().unwrap_or("");
-    if expiry_date.is_empty() || expiry_date < today.as_str() {
+    if expiry_date.is_empty() || expiry_date < earliest_allowed.as_str() {
         return Ok(schema::CartLinesDiscountsGenerateRunResult { operations: vec![] });
     }
 
@@ -402,6 +443,24 @@ mod tests {
         let sig = signature(&eval);
         eval["signature"] = json!(sig);
         assert!(run(eval).unwrap().operations.is_empty());
+    }
+
+    #[test]
+    fn allows_expiry_one_day_behind_shop_local_date() {
+        let mut eval = valid_payload();
+        eval["expiresAt"] = json!("2026-11-22T23:15:00Z");
+        let sig = signature(&eval);
+        eval["signature"] = json!(sig);
+
+        let mut value = input(&eval);
+        value["shop"]["localTime"]["date"] = json!("2026-11-23");
+        let result = run_function_with_input(
+            cart_lines_discounts_generate_run,
+            &value.to_string(),
+        )
+        .unwrap();
+
+        assert_eq!(result.operations.len(), 1);
     }
 
     #[test]

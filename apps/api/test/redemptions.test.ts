@@ -1232,6 +1232,18 @@ describe('POST /v1/redemptions', () => {
       idempotencyKey: 'expired-key',
     }), 410, 'DECISION_EXPIRED');
 
+    const reconciled = await redeemRaw({
+      evaluationId: expired.evaluationId,
+      externalOrderRef: 'expired-order-reconciled',
+      idempotencyKey: 'expired-key-reconciled',
+      postCaptureReconciliation: true,
+    });
+    expect(reconciled.status).toBe(200);
+    expect(await reconciled.json()).toMatchObject({
+      status: 'committed',
+      reconciliationWarning: 'DECISION_EXPIRED',
+    });
+
     const tampered = await evaluate();
     await env.DB.prepare(`
       UPDATE evaluation_decisions SET decisions_json = '[]'

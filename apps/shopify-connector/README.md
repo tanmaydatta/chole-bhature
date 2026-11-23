@@ -26,6 +26,10 @@ Cloudflare Worker that turns a Shopify Plus custom app into a client of the ince
 | `SHOPIFY_API_VERSION` | var | Defaults to `2026-07` |
 | `OPERATOR_DASHBOARD_URL` | var | Optional link-out from the embedded shell |
 
+The checkout extension reads `VITE_INCENTIVES_API_URL` at build time. Set it
+before `shopify app deploy` for staging/production; it defaults to
+`https://shopify.incentives.dev`.
+
 ```bash
 wrangler d1 migrations apply shopify-connector-dev
 wrangler secret put SHOPIFY_CLIENT_SECRET
@@ -61,7 +65,7 @@ The function handle in `shopify.extension.toml` must match
 - Checkout requests authenticate with a Shopify session token (`aud`, `exp`, `dest`/`iss` checked, D1 status checked).
 - The signed payload includes the shop domain, checkout token, cart fingerprint, subtotal, currency, discount, and expiry.
 - The function fails closed on any HMAC, expiry, subtotal, currency, or fingerprint mismatch.
-- Redemption is idempotent by `shopify_<order.id>` and verifies the order's checkout token, total discounts, and discount application.
+- Redemption is idempotent by `shopify_<order.id>` and verifies the order's total discounts and discount application. A checkout-token mismatch is recorded as a reconciliation warning rather than silently skipped.
 - Budget leases are short-lived and expired lazily; commit deletes the lease.
 
 ## Local checks
@@ -77,8 +81,8 @@ cargo build --manifest-path apps/shopify-connector/extensions/incentives-discoun
 
 ## Known follow-ups
 
-- Full embedded campaign dashboard (the current `/dashboard` page is an App Bridge-verified shell/link-out).
+- Full embedded campaign dashboard (the current `/dashboard` page is an App Bridge-verified shell/link-out; there is intentionally no generic secret-token admin proxy).
 - Native discount-code-box support requires syncing promo/affiliate codes into Shopify's code pool.
 - Core cancellation/refund reversal is not yet implemented; the connector reports `reversal_not_supported` instead of claiming success.
-- The Rust function uses a day-level expiry guard because `wasm32-unknown-unknown` has no wall clock; the webhook applies a 24-hour grace and commit is the final authority.
+- The Rust function uses a one-day date tolerance because `wasm32-unknown-unknown` has no wall clock; the webhook/Core enforce exact expiry. Budget leases are 15 minutes; the Core decision record lives 24 hours for late/manual payments and reconciles expired decisions with a warning.
 - Multi-currency 3-decimal rounding and cart line ID stability need a dev-store validation pass.

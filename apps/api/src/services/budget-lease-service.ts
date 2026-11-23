@@ -125,10 +125,7 @@ export async function reserveBudgetLeases(
     }
 
     const totalBudget = budget.budget_remaining + budget.committed_spend;
-    const tolerance = Math.max(
-      decision.amountMinor,
-      Math.floor((totalBudget * toleranceBps) / 10_000),
-    );
+    const tolerance = Math.floor((totalBudget * toleranceBps) / 10_000);
     const active = await activeLeaseTotal(env, merchantId, decision.programRef, now);
     if (decision.amountMinor > budget.budget_remaining + tolerance - active) {
       await releaseBudgetLeases(env, merchantId, request.evaluationId);

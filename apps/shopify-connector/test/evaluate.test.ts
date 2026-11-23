@@ -211,7 +211,7 @@ describe('Storefront evaluation route', () => {
     expect(mockCore.evaluate).toHaveBeenCalledTimes(1);
     const [, forwarded] = (mockCore.evaluate as ReturnType<typeof vi.fn>).mock.calls[0];
     expect(forwarded.customerRef).toBe('gid://shopify/Customer/777');
-    expect(forwarded.ttlSeconds).toBe(900);
+    expect(forwarded.ttlSeconds).toBe(86_400);
     expect(forwarded.includeCandidateOffers).toBe(true);
     expect(forwarded.context.channel).toBe('shopify_checkout');
 

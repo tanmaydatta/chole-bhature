@@ -92,6 +92,32 @@ export function createRedemptionService(
           throw new RedemptionUnavailableError('atomic_redemption');
         });
 
+        const reconciledResponse = (warning: string) => {
+          const selected = evaluation.decisions.filter(
+            decision => decision.outcome === 'qualified' && decision.commitRequired,
+          );
+          const reconciledKey = request.idempotencyKey.replace(/[^a-zA-Z0-9_-]/g, '_');
+          return RedemptionResponseSchema.parse({
+            redemptionId: `redemption_reconciled_${reconciledKey}`,
+            evaluationId: request.evaluationId,
+            externalOrderRef: request.externalOrderRef,
+            idempotencyKey: request.idempotencyKey,
+            status: 'committed',
+            entries: selected.map(decision => ({
+              programRef: decision.programRef,
+              programRevision: decision.programRevision,
+              rewardRuleRef: decision.rewardRuleRef,
+              effects: decision.effects,
+            })),
+            priceBreakdown: evaluation.priceBreakdown
+              ?? calculateMerchandisePriceBreakdown(
+                evaluation.request.cart,
+                evaluation.decisions,
+              ),
+            reconciliationWarning: warning,
+          });
+        };
+
         switch (result.kind) {
           case 'committed':
           case 'exact_retry':
@@ -111,29 +137,14 @@ export function createRedemptionService(
             throw new VersionConflictError();
           case 'exhausted':
             if (request.postCaptureReconciliation) {
-              const selected = evaluation.decisions.filter(
-                decision => decision.outcome === 'qualified' && decision.commitRequired,
-              );
-              const reconciledKey = request.idempotencyKey.replace(/[^a-zA-Z0-9_-]/g, '_');
-              return RedemptionResponseSchema.parse({
-                redemptionId: `redemption_reconciled_${reconciledKey}`,
+              console.error('Post-capture redemption reconciliation', {
+                reason: 'POST_CAPTURE_OVERSPEND',
+                merchantId,
                 evaluationId: request.evaluationId,
                 externalOrderRef: request.externalOrderRef,
                 idempotencyKey: request.idempotencyKey,
-                status: 'committed',
-                entries: selected.map(decision => ({
-                  programRef: decision.programRef,
-                  programRevision: decision.programRevision,
-                  rewardRuleRef: decision.rewardRuleRef,
-                  effects: decision.effects,
-                })),
-                priceBreakdown: evaluation.priceBreakdown
-                  ?? calculateMerchandisePriceBreakdown(
-                    evaluation.request.cart,
-                    evaluation.decisions,
-                  ),
-                reconciliationWarning: 'POST_CAPTURE_OVERSPEND',
               });
+              return reconciledResponse('POST_CAPTURE_OVERSPEND');
             }
             throw new ExhaustedError(result.reasonCode);
           case 'unavailable':
@@ -143,38 +154,35 @@ export function createRedemptionService(
               case 'NOTHING_TO_COMMIT':
                 throw new NothingToCommitError();
               case 'DECISION_EXPIRED':
-                throw new DecisionExpiredError();
+              case 'PROGRAM_UNAVAILABLE':
+                if (request.postCaptureReconciliation) {
+                  console.error('Post-capture redemption reconciliation', {
+                    reason: result.code,
+                    merchantId,
+                    evaluationId: request.evaluationId,
+                    externalOrderRef: request.externalOrderRef,
+                    idempotencyKey: request.idempotencyKey,
+                  });
+                  return reconciledResponse(result.code);
+                }
+                if (result.code === 'DECISION_EXPIRED') {
+                  throw new DecisionExpiredError();
+                }
+                throw new VersionConflictError('The selected program version is unavailable');
               case 'INVALID_DECISION':
                 throw new VersionConflictError('The evaluation decision is invalid');
-              case 'PROGRAM_UNAVAILABLE':
-                throw new VersionConflictError('The selected program version is unavailable');
               case 'USAGE_CAP_EXHAUSTED':
               case 'PER_CUSTOMER_CAP_EXHAUSTED':
               case 'BUDGET_EXHAUSTED':
                 if (request.postCaptureReconciliation) {
-                  const selected = evaluation.decisions.filter(
-                    decision => decision.outcome === 'qualified' && decision.commitRequired,
-                  );
-                  const reconciledKey = request.idempotencyKey.replace(/[^a-zA-Z0-9_-]/g, '_');
-                  return RedemptionResponseSchema.parse({
-                    redemptionId: `redemption_reconciled_${reconciledKey}`,
+                  console.error('Post-capture redemption reconciliation', {
+                    reason: result.code,
+                    merchantId,
                     evaluationId: request.evaluationId,
                     externalOrderRef: request.externalOrderRef,
                     idempotencyKey: request.idempotencyKey,
-                    status: 'committed',
-                    entries: selected.map(decision => ({
-                      programRef: decision.programRef,
-                      programRevision: decision.programRevision,
-                      rewardRuleRef: decision.rewardRuleRef,
-                      effects: decision.effects,
-                    })),
-                    priceBreakdown: evaluation.priceBreakdown
-                      ?? calculateMerchandisePriceBreakdown(
-                        evaluation.request.cart,
-                        evaluation.decisions,
-                      ),
-                    reconciliationWarning: 'POST_CAPTURE_OVERSPEND',
                   });
+                  return reconciledResponse('POST_CAPTURE_OVERSPEND');
                 }
                 throw new ExhaustedError(result.code);
             }

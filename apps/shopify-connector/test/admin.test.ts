@@ -383,169 +383,18 @@ describe('Embedded Operator Dashboard Admin Bridge & Session Tokens', () => {
     });
   });
 
-  describe('Core API Service Binding Proxy (/dashboard/proxy/*)', () => {
-    it('forwards GET request to Core API via Service Binding with tenant context', async () => {
+  describe('Admin proxy removal', () => {
+    it('does not expose a generic secret-token proxy', async () => {
       const token = await createSessionToken();
-      const res = await app.fetch(
-        new Request('https://shopify.incentives.dev/admin/dashboard/proxy/v1/programs?active=true', {
-          method: 'GET',
-          headers: {
-            Authorization: `Bearer ${token}`,
-            'X-Correlation-ID': 'test-corr-id-123',
-          },
-        }),
-        testEnv,
-      );
-
-      expect(res.status).toBe(200);
-      const json = await res.json() as Record<string, unknown>;
-      expect(json).toEqual({
-        programs: [{ id: 'prog_1', name: 'VIP Tier Discount' }],
-      });
-
-      expect(mockCore.fetch).toHaveBeenCalledTimes(1);
-      const forwardedReq = (mockCore.fetch as ReturnType<typeof vi.fn>).mock.calls[0][0] as Request;
-      const forwardedUrl = new URL(forwardedReq.url);
-      expect(forwardedUrl.pathname).toBe('/v1/programs');
-      expect(forwardedUrl.search).toBe('?active=true');
-      expect(forwardedReq.headers.get('x-tenant-id')).toBe(TENANT_ID);
-      expect(forwardedReq.headers.get('x-merchant-id')).toBe(TENANT_ID);
-      expect(forwardedReq.headers.get('authorization')).toBe(`Bearer ${SECRET_TOKEN}`);
-      expect(forwardedReq.headers.get('x-correlation-id')).toBe('test-corr-id-123');
-    });
-
-    it('forwards POST request with body to Core API via Service Binding', async () => {
-      const token = await createSessionToken();
-      const payload = { name: 'Holiday Sale', discountBasisPoints: 1500 };
-
-      const res = await app.fetch(
-        new Request('https://shopify.incentives.dev/admin/dashboard/proxy/v1/campaigns', {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${token}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(payload),
-        }),
-        testEnv,
-      );
-
-      expect(res.status).toBe(201);
-      const json = await res.json() as { created: boolean; data: typeof payload };
-      expect(json.created).toBe(true);
-      expect(json.data).toEqual(payload);
-
-      expect(mockCore.fetch).toHaveBeenCalledTimes(1);
-      const forwardedReq = (mockCore.fetch as ReturnType<typeof vi.fn>).mock.calls[0][0] as Request;
-      expect(forwardedReq.method).toBe('POST');
-      expect(forwardedReq.headers.get('x-tenant-id')).toBe(TENANT_ID);
-      const forwardedBody = await forwardedReq.json();
-      expect(forwardedBody).toEqual(payload);
-    });
-
-    it('returns HTTP 503 if Core API service binding is missing or fails', async () => {
-      const token = await createSessionToken();
-      const envWithoutCore = {
-        ...testEnv,
-        CORE: {
-          ...mockCore,
-          fetch: vi.fn().mockRejectedValue(new Error('Core API service binding down')),
-        },
-      };
-
       const res = await app.fetch(
         new Request('https://shopify.incentives.dev/admin/dashboard/proxy/v1/programs', {
           method: 'GET',
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        }),
-        envWithoutCore,
-      );
-
-      expect(res.status).toBe(503);
-    });
-
-    it('proxies HTTP 204 No Content response from Core API without error', async () => {
-      const token = await createSessionToken();
-      const envWith204 = {
-        ...testEnv,
-        CORE: {
-          ...mockCore,
-          fetch: vi.fn().mockResolvedValue(new Response(null, { status: 204 })),
-        },
-      };
-
-      const res = await app.fetch(
-        new Request('https://shopify.incentives.dev/admin/dashboard/proxy/v1/programs/123', {
-          method: 'DELETE',
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        }),
-        envWith204,
-      );
-
-      expect(res.status).toBe(204);
-      expect(res.body).toBeNull();
-    });
-
-    it('case-insensitive bearer prefix authenticates successfully', async () => {
-      const token = await createSessionToken();
-      const res = await app.fetch(
-        new Request('https://shopify.incentives.dev/admin/session', {
-          method: 'GET',
-          headers: {
-            authorization: `bearer ${token}`,
-          },
+          headers: { Authorization: `Bearer ${token}` },
         }),
         testEnv,
       );
-
-      expect(res.status).toBe(200);
-    });
-
-    it('divergent dest and iss domains returns HTTP 401', async () => {
-      const token = await createSessionToken({
-        dest: 'https://attacker.myshopify.com',
-        iss: 'https://victim.myshopify.com/admin',
-      });
-
-      const res = await app.fetch(
-        new Request('https://shopify.incentives.dev/admin/session', {
-          method: 'GET',
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        }),
-        testEnv,
-      );
-
-      expect(res.status).toBe(401);
-      const json = await res.json() as Record<string, unknown>;
-      expect(json.error).toMatch(/mismatch/i);
-    });
-
-    it('missing SHOPIFY_CLIENT_ID or SHOPIFY_CLIENT_SECRET returns HTTP 500', async () => {
-      const token = await createSessionToken();
-      const misconfiguredEnv = {
-        ...testEnv,
-        SHOPIFY_CLIENT_ID: '',
-      };
-
-      const res = await app.fetch(
-        new Request('https://shopify.incentives.dev/admin/session', {
-          method: 'GET',
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        }),
-        misconfiguredEnv,
-      );
-
-      expect(res.status).toBe(500);
-      const json = await res.json() as Record<string, unknown>;
-      expect(json.error).toMatch(/Missing Shopify credentials/i);
+      expect(res.status).toBe(404);
     });
   });
+
 });

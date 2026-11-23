@@ -14,7 +14,7 @@ import { computeHmacSha256Hex } from '../services/hmac.js';
 import { createOperatorContext } from '../services/operator-context.js';
 import { shopifyCheckoutCors } from '../middleware/cors.js';
 
-const SHOPIFY_EVALUATION_TTL_SECONDS = 900;
+const SHOPIFY_EVALUATION_TTL_SECONDS = 86_400;
 
 export async function computeHmacSha256(secret: string, message: string): Promise<string> {
   return computeHmacSha256Hex(secret, message);

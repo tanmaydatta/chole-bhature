@@ -68,7 +68,7 @@ Use the **Bogus Gateway** / test payment mode.
 - [ ] `_incentives_eval` attribute appears on the cart.
 - [ ] The function applies the expected discount.
 - [ ] Pay: order is created and `orders/paid` is delivered.
-- [ ] Connector logs `status: committed`; Core budget decreases once.
+- [ ] Connector responds with `status: committed`; Core budget decreases once.
 - [ ] Re-deliver `orders/paid` with `shopify app webhook trigger --topic orders/paid`: no double-spend.
 - [ ] Change the cart quantity before paying: discount is re-evaluated or removed; no stale discount is applied.
 - [ ] Force budget exhaustion: offer is removed, a notice is shown, and full-price payment is still possible.

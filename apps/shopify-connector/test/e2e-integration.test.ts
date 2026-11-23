@@ -933,7 +933,6 @@ describe('Shopify Plus Turnkey Integration - End-to-End System Integration Suite
       expect(storedShop!.tenant_signing_key).toBeDefined();
 
       const publishableToken = storedShop!.publishable_token as string;
-      const secretToken = storedShop!.secret_token as string;
       const tenantSigningKey = storedShop!.tenant_signing_key as string;
 
       // Verify the automatic discount node uses the function handle and ORDER class
@@ -1255,7 +1254,7 @@ describe('Shopify Plus Turnkey Integration - End-to-End System Integration Suite
         status: 'active',
       });
 
-      // 8.2 GET /admin/dashboard/proxy/v1/programs (Forwarded to Core API)
+      // 8.2 The generic secret-token proxy is intentionally absent.
       const proxyRes = await app.request(
         '/admin/dashboard/proxy/v1/programs',
         {
@@ -1267,17 +1266,7 @@ describe('Shopify Plus Turnkey Integration - End-to-End System Integration Suite
         testEnv,
       );
 
-      expect(proxyRes.status).toBe(200);
-      const proxyJson = await proxyRes.json();
-      expect(proxyJson.programs).toHaveLength(1);
-      expect(proxyJson.programs[0].name).toBe('Spend $100 Get $20 Off VIP Tier');
-
-      // Verify proxy headers passed to Core fetch
-      expect(mockCore.fetch).toHaveBeenCalledTimes(1);
-      const coreReq = (mockCore.fetch as any).mock.calls[0][0] as Request;
-      expect(coreReq.headers.get('x-tenant-id')).toBe(EXPECTED_TENANT_ID);
-      expect(coreReq.headers.get('x-merchant-id')).toBe(EXPECTED_TENANT_ID);
-      expect(coreReq.headers.get('authorization')).toBe(`Bearer ${secretToken}`);
+      expect(proxyRes.status).toBe(404);
     });
   });
 

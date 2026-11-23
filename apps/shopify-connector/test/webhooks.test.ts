@@ -465,6 +465,49 @@ describe('Shopify Webhooks Handler & Post-Capture Reconciliation', () => {
       expect(mockCore.commitRedemption).toHaveBeenCalledTimes(1);
     });
 
+    it('uses presentment currency and presentment discount amounts for multi-currency orders', async () => {
+      const app = createApp();
+      const orderPayload = paidOrder({
+        id: 987654330,
+        admin_graphql_api_id: 'gid://shopify/Order/987654330',
+        currency: 'USD',
+        presentment_currency: 'EUR',
+        total_discounts: '11.00',
+        total_discounts_set: {
+          presentment_money: { amount: '10.00', currency_code: 'EUR' },
+        },
+        note_attributes: [
+          {
+            name: '_incentives_eval',
+            value: JSON.stringify(validEval({ currency: 'EUR' })),
+          },
+        ],
+      });
+      const rawBody = JSON.stringify(orderPayload);
+      const hmac = computeShopifyWebhookHmac(rawBody, CLIENT_SECRET);
+
+      const res = await app.request(
+        '/webhooks/orders-paid',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Shopify-Shop-Domain': SHOP,
+            'X-Shopify-Hmac-Sha256': hmac,
+          },
+          body: rawBody,
+        },
+        testEnv,
+      );
+
+      expect(res.status).toBe(200);
+      expect(await res.json()).toMatchObject({
+        received: true,
+        status: 'committed',
+      });
+      expect(mockCore.commitRedemption).toHaveBeenCalledTimes(1);
+    });
+
     it('skips when the order did not actually receive the discount', async () => {
       const app = createApp();
       const orderPayload = paidOrder({
@@ -836,6 +879,44 @@ describe('Shopify Webhooks Handler & Post-Capture Reconciliation', () => {
       expect(data.received).toBe(true);
       expect(data.refunded).toBe(true);
       expect(data.refundId).toBe(777666);
+    });
+
+    it('returns refunded:false when Core reversal is not supported', async () => {
+      (mockCore.refundRedemption as any).mockResolvedValueOnce({
+        received: true,
+        refunded: false,
+        reason: 'reversal_not_supported',
+      });
+      const app = createApp();
+      const refundPayload = {
+        id: 777667,
+        order_id: 987654321,
+        refund_line_items: [{ line_item_id: 111, quantity: 1, subtotal: '20.00' }],
+      };
+      const rawBody = JSON.stringify(refundPayload);
+      const hmac = computeShopifyWebhookHmac(rawBody, CLIENT_SECRET);
+
+      const res = await app.request(
+        '/webhooks/refunds-create',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Shopify-Shop-Domain': SHOP,
+            'X-Shopify-Hmac-Sha256': hmac,
+          },
+          body: rawBody,
+        },
+        testEnv,
+      );
+
+      expect(res.status).toBe(200);
+      expect(await res.json()).toMatchObject({
+        received: true,
+        refunded: false,
+        reason: 'reversal_not_supported',
+        refundId: 777667,
+      });
     });
 
     it('returns 400 when request body contains malformed JSON', async () => {

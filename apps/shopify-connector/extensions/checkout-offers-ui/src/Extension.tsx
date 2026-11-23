@@ -12,7 +12,9 @@ import {
   type ShopifyAttribute,
 } from './extension-utils.js';
 
-const API_BASE_URL = 'https://shopify.incentives.dev';
+const API_BASE_URL = (
+  import.meta.env.VITE_INCENTIVES_API_URL ?? 'https://shopify.incentives.dev'
+).replace(/\/$/u, '');
 
 function attributeValue(attributes: readonly ShopifyAttribute[], key: string): string | undefined {
   return attributes.find(attribute => attribute.key === key)?.value;
