@@ -5,7 +5,11 @@ import type {
   EvaluationResponse,
   IncentiveDecision,
 } from '@incentives/contracts';
-import { calculateMerchandisePriceBreakdown } from '@incentives/engine';
+import {
+  calculateMerchandisePriceBreakdown,
+  selectCodedDecisionCombination,
+  type ConflictCandidate,
+} from '@incentives/engine';
 
 export type DemoCustomerMode = 'new' | 'regular' | 'vip';
 
@@ -14,9 +18,8 @@ export interface DemoCustomer {
   ref: string;
   label: string;
   description: string;
-  tags: string;
+  vip: boolean;
   ordersCount: number;
-  totalSpent: number;
 }
 
 export const DEMO_CUSTOMERS: Record<DemoCustomerMode, DemoCustomer> = {
@@ -24,28 +27,25 @@ export const DEMO_CUSTOMERS: Record<DemoCustomerMode, DemoCustomer> = {
     mode: 'new',
     ref: 'demo_customer_new',
     label: 'New customer',
-    description: 'First order · no tags',
-    tags: '',
+    description: 'First order',
+    vip: false,
     ordersCount: 0,
-    totalSpent: 0,
   },
   regular: {
     mode: 'regular',
     ref: 'demo_customer_regular',
     label: 'Regular',
-    description: '3 orders · ₹4,500 lifetime',
-    tags: '',
+    description: '3 orders',
+    vip: false,
     ordersCount: 3,
-    totalSpent: 450_000,
   },
   vip: {
     mode: 'vip',
     ref: 'demo_customer_vip',
     label: 'VIP',
-    description: '8 orders · vip tag',
-    tags: 'vip',
+    description: 'VIP tag',
+    vip: true,
     ordersCount: 8,
-    totalSpent: 1_200_000,
   },
 };
 
@@ -61,6 +61,8 @@ export interface MenuItem {
 }
 
 export const CURRENCY = 'INR';
+export const MAX_LINE_QUANTITY = 20;
+export const DEMO_DELIVERY_FEE_MINOR = 3_900;
 
 export const MENU: MenuItem[] = [
   {
@@ -143,22 +145,37 @@ export function menuById(id: string): MenuItem | undefined {
   return MENU.find(item => item.id === id);
 }
 
-export function cartFromItems(
-  items: readonly { itemId: string; quantity: number }[],
-): Cart {
-  const lines = items
-    .map(item => {
-      const menu = menuById(item.itemId);
-      if (!menu || item.quantity <= 0) return null;
-      return {
-        lineRef: menu.id,
-        productRef: menu.productRef,
-        variantRef: `${menu.id}-regular`,
-        quantity: item.quantity,
-        unitPrice: menu.priceMinor,
-      };
-    })
-    .filter((line): line is NonNullable<typeof line> => line !== null);
+export class InvalidCartError extends Error {}
+
+export interface CartLineInput {
+  itemId: string;
+  quantity: number;
+}
+
+export function cartFromItems(items: readonly CartLineInput[]): Cart {
+  if (items.length === 0) throw new InvalidCartError('Cart is empty');
+
+  const seen = new Set<string>();
+  const lines = items.map(item => {
+    const menu = menuById(item.itemId);
+    if (!menu) throw new InvalidCartError(`Unknown menu item: ${item.itemId}`);
+    if (seen.has(item.itemId)) throw new InvalidCartError(`Duplicate menu item: ${item.itemId}`);
+    seen.add(item.itemId);
+    if (
+      !Number.isInteger(item.quantity)
+      || item.quantity < 1
+      || item.quantity > MAX_LINE_QUANTITY
+    ) {
+      throw new InvalidCartError(`Invalid quantity for ${item.itemId}`);
+    }
+    return {
+      lineRef: menu.id,
+      productRef: menu.productRef,
+      variantRef: `${menu.id}-regular`,
+      quantity: item.quantity,
+      unitPrice: menu.priceMinor,
+    };
+  });
 
   return {
     currency: CURRENCY,
@@ -176,36 +193,49 @@ export function requestFor(
     cart,
     customerRef: customer.ref,
     codes: codes.filter(code => code.trim().length > 0),
-    context: { channel: 'demo_store' },
     includeCandidateOffers: true,
     ttlSeconds: 3_600,
   };
 }
 
+type Effects = IncentiveDecision['effects'];
+
 interface OfferDefinition {
   programRef: string;
   name: string;
+  autoApply: boolean;
   code?: string;
+  /** Core sorts descending: highest priority qualified auto offer wins. */
   priority: number;
+  stackable: boolean;
   qualified: (cart: Cart, customer: DemoCustomer) => boolean;
-  effects: IncentiveDecision['effects'];
+  effects: Effects;
   progressTarget?: number;
   locked?: (customer: DemoCustomer) => boolean;
 }
 
-const AUTO_OFFERS: readonly OfferDefinition[] = [
+export const AUTO_OFFERS: readonly OfferDefinition[] = [
   {
-    programRef: 'vip-15',
-    name: 'VIP 15% off',
-    priority: 5,
-    qualified: (_cart, customer) => customer.tags.split(',').includes('vip'),
-    effects: [{ type: 'order_discount', calculation: 'percent', basisPoints: 1_500 }],
-    locked: customer => !customer.tags.split(',').includes('vip'),
+    // ₹200 beats the 20% cap of ₹150 once the basket reaches ₹999.
+    programRef: 'big-basket',
+    name: 'Big basket ₹200 off',
+    autoApply: true,
+    priority: 110,
+    stackable: false,
+    qualified: cart => cart.subtotal >= 99_900,
+    effects: [{
+      type: 'order_discount',
+      calculation: 'fixed',
+      amount: { currency: CURRENCY, minorUnits: 20_000 },
+    }],
+    progressTarget: 99_900,
   },
   {
     programRef: 'feast-20',
     name: 'Feast 20% off',
-    priority: 10,
+    autoApply: true,
+    priority: 100,
+    stackable: false,
     qualified: cart => cart.subtotal >= 49_900,
     effects: [{
       type: 'order_discount',
@@ -216,25 +246,21 @@ const AUTO_OFFERS: readonly OfferDefinition[] = [
     progressTarget: 49_900,
   },
   {
-    programRef: 'big-basket',
-    name: 'Big basket ₹200 off',
-    priority: 15,
-    qualified: cart => cart.subtotal >= 99_900,
-    effects: [{ type: 'order_discount', calculation: 'fixed', amount: { currency: CURRENCY, minorUnits: 20_000 } }],
-    progressTarget: 99_900,
-  },
-  {
-    programRef: 'free-delivery',
-    name: 'Free delivery',
-    priority: 20,
-    qualified: cart => cart.subtotal >= 19_900,
-    effects: [{ type: 'free_shipping' }],
-    progressTarget: 19_900,
+    programRef: 'vip-15',
+    name: 'VIP 15% off',
+    autoApply: true,
+    priority: 90,
+    stackable: false,
+    qualified: (_cart, customer) => customer.vip,
+    effects: [{ type: 'order_discount', calculation: 'percent', basisPoints: 1_500 }],
+    locked: customer => !customer.vip,
   },
   {
     programRef: 'paneer-15',
     name: '15% off Paneer Tikka',
-    priority: 30,
+    autoApply: true,
+    priority: 80,
+    stackable: false,
     qualified: cart => cart.items.some(item => item.productRef === 'paneer-tikka'),
     effects: [{
       type: 'line_item_discount',
@@ -243,47 +269,97 @@ const AUTO_OFFERS: readonly OfferDefinition[] = [
       basisPoints: 1_500,
     }],
   },
+  {
+    programRef: 'free-delivery',
+    name: 'Free delivery',
+    autoApply: true,
+    priority: 10,
+    stackable: false,
+    qualified: cart => cart.subtotal >= 19_900,
+    effects: [{ type: 'free_shipping' }],
+    progressTarget: 19_900,
+  },
 ];
 
-const CODE_OFFERS: readonly OfferDefinition[] = [
+export const CODE_OFFERS: readonly OfferDefinition[] = [
   {
     programRef: 'welcome-50',
     name: 'Welcome ₹50 off',
+    autoApply: false,
     code: 'WELCOME50',
-    priority: 1,
+    priority: 50,
+    stackable: true,
     qualified: (_cart, customer) => customer.ordersCount === 0,
-    effects: [{ type: 'order_discount', calculation: 'fixed', amount: { currency: CURRENCY, minorUnits: 5_000 } }],
+    effects: [{
+      type: 'order_discount',
+      calculation: 'fixed',
+      amount: { currency: CURRENCY, minorUnits: 5_000 },
+    }],
   },
   {
     programRef: 'feast-10-code',
     name: 'Feast 10% code',
+    autoApply: false,
     code: 'FEAST10',
-    priority: 2,
+    priority: 40,
+    stackable: true,
     qualified: () => true,
     effects: [{ type: 'order_discount', calculation: 'percent', basisPoints: 1_000 }],
   },
 ];
 
-function decisionFor(
-  offer: OfferDefinition,
-  rewardRuleRef: string,
-): IncentiveDecision {
+/** Shared with the UI so offer names never fall back to raw program refs. */
+export const OFFER_NAMES: Readonly<Record<string, string>> = Object.freeze(
+  Object.fromEntries(
+    [...AUTO_OFFERS, ...CODE_OFFERS].map(offer => [offer.programRef, offer.name]),
+  ),
+);
+
+const ALL_OFFERS = [...AUTO_OFFERS, ...CODE_OFFERS];
+
+function offerByRef(programRef: string): OfferDefinition | undefined {
+  return ALL_OFFERS.find(offer => offer.programRef === programRef);
+}
+
+function compareOfferRank(left: OfferDefinition, right: OfferDefinition): number {
+  if (left.priority !== right.priority) return right.priority - left.priority;
+  if (left.programRef < right.programRef) return -1;
+  if (left.programRef > right.programRef) return 1;
+  return 0;
+}
+
+function decisionFor(offer: OfferDefinition): IncentiveDecision {
   return {
     programRef: offer.programRef,
     programRevision: 1,
     programType: 'promo',
     outcome: 'qualified',
-    rewardRuleRef,
+    rewardRuleRef: `${offer.programRef}-rule`,
     effects: offer.effects,
     reasonCodes: ['QUALIFIED'],
     commitRequired: true,
   };
 }
 
-function discountFor(
-  cart: Cart,
-  effects: IncentiveDecision['effects'],
-): number {
+function conflictCandidate(offer: OfferDefinition): ConflictCandidate {
+  return {
+    ...decisionFor(offer),
+    programType: 'promo',
+    priority: offer.priority,
+    stackable: offer.stackable,
+  };
+}
+
+function stripRanking(candidate: ConflictCandidate): IncentiveDecision {
+  const {
+    priority: _priority,
+    stackable: _stackable,
+    ...decision
+  } = candidate;
+  return decision;
+}
+
+function discountFor(cart: Cart, effects: Effects): number {
   const decision: IncentiveDecision = {
     programRef: 'estimate',
     programRevision: 1,
@@ -302,31 +378,26 @@ function discountFor(
 }
 
 function candidateOffers(cart: Cart, customer: DemoCustomer): CandidateOffer[] {
-  const offers: CandidateOffer[] = [];
-  for (const offer of AUTO_OFFERS) {
-    const qualified = offer.qualified(cart, customer);
-    const locked = offer.locked?.(customer) ?? false;
-    if (qualified) {
-      offers.push({
+  return AUTO_OFFERS.map(offer => {
+    if (offer.qualified(cart, customer)) {
+      return {
         programRef: offer.programRef,
         name: offer.name,
         qualified: true,
         estimatedDiscountMinorUnits: discountFor(cart, offer.effects),
-      });
-      continue;
+      };
     }
-    if (locked) {
-      offers.push({
+    if (offer.locked?.(customer) ?? false) {
+      return {
         programRef: offer.programRef,
         name: offer.name,
         qualified: false,
         estimatedDiscountMinorUnits: 0,
-      });
-      continue;
+      };
     }
     if (offer.progressTarget !== undefined && cart.subtotal < offer.progressTarget) {
       const targetCart: Cart = { ...cart, subtotal: offer.progressTarget };
-      offers.push({
+      return {
         programRef: offer.programRef,
         name: offer.name,
         qualified: false,
@@ -336,17 +407,23 @@ function candidateOffers(cart: Cart, customer: DemoCustomer): CandidateOffer[] {
           target: offer.progressTarget,
           shortfall: offer.progressTarget - cart.subtotal,
         },
-      });
-      continue;
+      };
     }
-    offers.push({
+    return {
       programRef: offer.programRef,
       name: offer.name,
       qualified: false,
       estimatedDiscountMinorUnits: 0,
-    });
-  }
-  return offers;
+    };
+  });
+}
+
+interface CodeOutcome {
+  code: string;
+  normalizedCode: string;
+  outcome: 'selected' | 'invalid_code' | 'not_qualified' | 'combination_rejected';
+  programRef?: string;
+  reasonCodes: string[];
 }
 
 export function evaluateDemo(input: {
@@ -355,75 +432,101 @@ export function evaluateDemo(input: {
   codes?: readonly string[];
 }): EvaluationResponse {
   const { cart, customer } = input;
-  const codes = (input.codes ?? []).map(code => code.trim().toUpperCase()).filter(Boolean);
-  const decisions: IncentiveDecision[] = [];
+  const codes = [...new Set(
+    (input.codes ?? []).map(code => code.trim().toUpperCase()).filter(Boolean),
+  )];
+  const candidateOffersForCart = candidateOffers(cart, customer);
 
-  for (const offer of AUTO_OFFERS) {
-    if (!offer.qualified(cart, customer)) continue;
-    decisions.push(decisionFor(offer, `${offer.programRef}-rule`));
-  }
+  let decisions: IncentiveDecision[] = [];
+  let codeResults: CodeOutcome[] = [];
 
-  const codeResults: NonNullable<EvaluationResponse['codeResults']> = [];
-  for (const code of codes) {
-    const offer = CODE_OFFERS.find(candidate => candidate.code === code);
-    if (!offer) {
-      codeResults.push({
-        code,
-        normalizedCode: code,
-        outcome: 'invalid_code',
-        reasonCodes: ['INVALID_PROMO_CODE'],
-      });
-      continue;
-    }
-    if (!offer.qualified(cart, customer)) {
-      codeResults.push({
-        code,
-        normalizedCode: code,
-        outcome: 'not_qualified',
-        programRef: offer.programRef,
-        reasonCodes: ['CUSTOMER_NOT_QUALIFIED'],
-      });
-      continue;
-    }
-    decisions.push(decisionFor(offer, `${offer.programRef}-rule`));
-    codeResults.push({
-      code,
-      normalizedCode: code,
-      outcome: 'selected',
-      programRef: offer.programRef,
-      reasonCodes: ['QUALIFIED'],
+  if (codes.length === 0) {
+    // Core automatic mode: exactly one qualified auto-apply offer, highest priority first.
+    const winner = AUTO_OFFERS
+      .filter(offer => offer.qualified(cart, customer))
+      .sort(compareOfferRank)[0];
+    if (winner) decisions = [decisionFor(winner)];
+  } else {
+    // Core coded mode: only coded programs compete; auto offers are paused.
+    const evaluated = codes.map(code => {
+      const offer = CODE_OFFERS.find(candidate => candidate.code === code);
+      if (!offer) return { code, offer: null, qualified: false };
+      return { code, offer, qualified: offer.qualified(cart, customer) };
+    });
+    const qualified = evaluated.flatMap(entry => (
+      entry.qualified && entry.offer ? [entry.offer] : []
+    ));
+    const selection = selectCodedDecisionCombination(
+      qualified.map(conflictCandidate),
+    );
+    const rejected = new Set(selection.rejectedProgramRefs);
+    decisions = selection.decisions.map(stripRanking);
+    codeResults = evaluated.map(entry => {
+      if (entry.offer === null) {
+        return {
+          code: entry.code,
+          normalizedCode: entry.code,
+          outcome: 'invalid_code',
+          reasonCodes: ['INVALID_PROMO_CODE'],
+        };
+      }
+      if (!entry.qualified) {
+        return {
+          code: entry.code,
+          normalizedCode: entry.code,
+          outcome: 'not_qualified',
+          programRef: entry.offer.programRef,
+          reasonCodes: ['CUSTOMER_NOT_QUALIFIED'],
+        };
+      }
+      if (rejected.has(entry.offer.programRef)) {
+        return {
+          code: entry.code,
+          normalizedCode: entry.code,
+          outcome: 'combination_rejected',
+          programRef: entry.offer.programRef,
+          reasonCodes: ['COMBINATION_REJECTED'],
+        };
+      }
+      return {
+        code: entry.code,
+        normalizedCode: entry.code,
+        outcome: 'selected',
+        programRef: entry.offer.programRef,
+        reasonCodes: ['QUALIFIED'],
+      };
     });
   }
 
-  const deduped = decisions.filter(
-    (decision, index, all) => all.findIndex(candidate => candidate.programRef === decision.programRef) === index,
-  );
-  const priceBreakdown = calculateMerchandisePriceBreakdown(cart, deduped);
   return {
     evaluationId: `demo_eval_${crypto.randomUUID()}`,
     customerRef: customer.ref,
     schemaVersion: 1,
     expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
-    decisions: deduped,
-    priceBreakdown,
-    ...(codeResults.length > 0 ? { codeResults } : {}),
-    candidateOffers: candidateOffers(cart, customer),
+    decisions,
+    priceBreakdown: calculateMerchandisePriceBreakdown(cart, decisions),
+    codeResults,
+    candidateOffers: candidateOffersForCart,
   };
 }
 
-export function deliveryFeeMinor(
-  cart: Cart,
-  evaluation: EvaluationResponse,
-): number {
-  const free = evaluation.decisions.some(decision =>
+/**
+ * Delivery is only waived when the platform returned a qualified `free_shipping`
+ * decision. A code replaces auto offers, so applying a code can bring the fee back.
+ */
+export function deliveryFeeMinor(evaluation: EvaluationResponse): number {
+  const freeShipping = evaluation.decisions.some(decision => (
     decision.outcome === 'qualified'
-    && decision.effects.some(effect => effect.type === 'free_shipping'),
-  );
-  if (free) return 0;
-  return cart.subtotal >= 19_900 ? 0 : 3_900;
+    && decision.effects.some(effect => effect.type === 'free_shipping')
+  ));
+  return freeShipping ? 0 : DEMO_DELIVERY_FEE_MINOR;
+}
+
+export function offerName(programRef: string): string {
+  return OFFER_NAMES[programRef] ?? offerByRef(programRef)?.name ?? programRef;
 }
 
 export const DEMO_CODE_HINTS = [
   { code: 'WELCOME50', label: 'New customers · ₹50 off' },
-  { code: 'FEAST10', label: '10% off any order' },
+  { code: 'FEAST10', label: '10% off, replaces auto offers' },
 ] as const;

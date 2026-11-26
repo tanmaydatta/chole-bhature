@@ -1,0 +1,281 @@
+{
+  "variables": [
+    {
+      "key": "customer.is_vip",
+      "label": "VIP customer",
+      "source": "customer",
+      "type": "boolean",
+      "required": false,
+      "description": "Set by the demo seed for the VIP customer profile."
+    },
+    {
+      "key": "customer.orders_count",
+      "label": "Orders count",
+      "source": "customer",
+      "type": "number",
+      "required": false,
+      "description": "Used by the new-customer welcome code."
+    }
+  ],
+  "customers": [
+    {
+      "ref": "demo_customer_new",
+      "attributes": { "orders_count": 0, "is_vip": false }
+    },
+    {
+      "ref": "demo_customer_regular",
+      "attributes": { "orders_count": 3, "is_vip": false }
+    },
+    {
+      "ref": "demo_customer_vip",
+      "attributes": { "orders_count": 8, "is_vip": true }
+    }
+  ],
+  "programs": [
+    {
+      "id": "big-basket",
+      "type": "promo",
+      "name": "Big basket ₹200 off",
+      "status": "draft",
+      "autoApply": true,
+      "stackable": false,
+      "priority": 110,
+      "eligibility": {
+        "match": "ALL",
+        "conditions": [
+          { "id": "subtotal-999", "variable": "cart.subtotal", "operator": "gte", "value": 99900 }
+        ]
+      },
+      "rewardRules": [
+        {
+          "id": "big-basket-rule",
+          "name": "₹200 off",
+          "conditions": {
+            "match": "ALL",
+            "conditions": [
+              { "id": "positive-cart", "variable": "cart.subtotal", "operator": "gte", "value": 0 }
+            ]
+          },
+          "reward": {
+            "type": "order_discount",
+            "calculation": "fixed",
+            "amount": { "currency": "INR", "minorUnits": 20000 }
+          }
+        }
+      ],
+      "budget": { "currency": "INR", "minorUnits": 10000000 },
+      "usageCap": 10000,
+      "perCustomerCap": 1000
+    },
+    {
+      "id": "feast-20",
+      "type": "promo",
+      "name": "Feast 20% off",
+      "status": "draft",
+      "autoApply": true,
+      "stackable": false,
+      "priority": 100,
+      "eligibility": {
+        "match": "ALL",
+        "conditions": [
+          { "id": "subtotal-499", "variable": "cart.subtotal", "operator": "gte", "value": 49900 }
+        ]
+      },
+      "rewardRules": [
+        {
+          "id": "feast-20-rule",
+          "name": "20% off, up to ₹150",
+          "conditions": {
+            "match": "ALL",
+            "conditions": [
+              { "id": "positive-cart", "variable": "cart.subtotal", "operator": "gte", "value": 0 }
+            ]
+          },
+          "reward": {
+            "type": "order_discount",
+            "calculation": "percent",
+            "basisPoints": 2000,
+            "maximumDiscountAmount": { "currency": "INR", "minorUnits": 15000 }
+          }
+        }
+      ],
+      "budget": { "currency": "INR", "minorUnits": 10000000 },
+      "usageCap": 10000,
+      "perCustomerCap": 1000
+    },
+    {
+      "id": "vip-15",
+      "type": "promo",
+      "name": "VIP 15% off",
+      "status": "draft",
+      "autoApply": true,
+      "stackable": false,
+      "priority": 90,
+      "eligibility": {
+        "match": "ALL",
+        "conditions": [
+          { "id": "is-vip", "variable": "customer.is_vip", "operator": "eq", "value": true }
+        ]
+      },
+      "rewardRules": [
+        {
+          "id": "vip-15-rule",
+          "name": "15% off",
+          "conditions": {
+            "match": "ALL",
+            "conditions": [
+              { "id": "positive-cart", "variable": "cart.subtotal", "operator": "gte", "value": 0 }
+            ]
+          },
+          "reward": {
+            "type": "order_discount",
+            "calculation": "percent",
+            "basisPoints": 1500
+          }
+        }
+      ],
+      "budget": { "currency": "INR", "minorUnits": 10000000 },
+      "usageCap": 10000,
+      "perCustomerCap": 1000
+    },
+    {
+      "id": "paneer-15",
+      "type": "promo",
+      "name": "15% off Paneer Tikka",
+      "status": "draft",
+      "autoApply": true,
+      "stackable": false,
+      "priority": 80,
+      "eligibility": {
+        "match": "ALL",
+        "conditions": [
+          { "id": "has-paneer", "variable": "line_item.product_ref", "operator": "eq", "value": "paneer-tikka" }
+        ]
+      },
+      "rewardRules": [
+        {
+          "id": "paneer-15-rule",
+          "name": "15% off Paneer Tikka",
+          "conditions": {
+            "match": "ALL",
+            "conditions": [
+              { "id": "positive-cart", "variable": "cart.subtotal", "operator": "gte", "value": 0 }
+            ]
+          },
+          "reward": {
+            "type": "line_item_discount",
+            "productRef": "paneer-tikka",
+            "calculation": "percent",
+            "basisPoints": 1500
+          }
+        }
+      ],
+      "budget": { "currency": "INR", "minorUnits": 10000000 },
+      "usageCap": 10000,
+      "perCustomerCap": 1000
+    },
+    {
+      "id": "free-delivery",
+      "type": "promo",
+      "name": "Free delivery",
+      "status": "draft",
+      "autoApply": true,
+      "stackable": false,
+      "priority": 10,
+      "eligibility": {
+        "match": "ALL",
+        "conditions": [
+          { "id": "subtotal-199", "variable": "cart.subtotal", "operator": "gte", "value": 19900 }
+        ]
+      },
+      "rewardRules": [
+        {
+          "id": "free-delivery-rule",
+          "name": "Free delivery",
+          "conditions": {
+            "match": "ALL",
+            "conditions": [
+              { "id": "positive-cart", "variable": "cart.subtotal", "operator": "gte", "value": 0 }
+            ]
+          },
+          "reward": { "type": "free_shipping" }
+        }
+      ],
+      "budget": { "currency": "INR", "minorUnits": 10000000 },
+      "usageCap": 10000,
+      "perCustomerCap": 1000
+    },
+    {
+      "id": "welcome-50",
+      "type": "promo",
+      "name": "Welcome ₹50 off",
+      "status": "draft",
+      "autoApply": false,
+      "code": "WELCOME50",
+      "stackable": true,
+      "priority": 50,
+      "eligibility": {
+        "match": "ALL",
+        "conditions": [
+          { "id": "first-order", "variable": "customer.orders_count", "operator": "eq", "value": 0 }
+        ]
+      },
+      "rewardRules": [
+        {
+          "id": "welcome-50-rule",
+          "name": "₹50 off",
+          "conditions": {
+            "match": "ALL",
+            "conditions": [
+              { "id": "positive-cart", "variable": "cart.subtotal", "operator": "gte", "value": 0 }
+            ]
+          },
+          "reward": {
+            "type": "order_discount",
+            "calculation": "fixed",
+            "amount": { "currency": "INR", "minorUnits": 5000 }
+          }
+        }
+      ],
+      "budget": { "currency": "INR", "minorUnits": 10000000 },
+      "usageCap": 10000,
+      "perCustomerCap": 1000
+    },
+    {
+      "id": "feast-10-code",
+      "type": "promo",
+      "name": "Feast 10% code",
+      "status": "draft",
+      "autoApply": false,
+      "code": "FEAST10",
+      "stackable": true,
+      "priority": 40,
+      "eligibility": {
+        "match": "ALL",
+        "conditions": [
+          { "id": "positive-cart", "variable": "cart.subtotal", "operator": "gte", "value": 0 }
+        ]
+      },
+      "rewardRules": [
+        {
+          "id": "feast-10-code-rule",
+          "name": "10% off",
+          "conditions": {
+            "match": "ALL",
+            "conditions": [
+              { "id": "positive-cart", "variable": "cart.subtotal", "operator": "gte", "value": 0 }
+            ]
+          },
+          "reward": {
+            "type": "order_discount",
+            "calculation": "percent",
+            "basisPoints": 1000
+          }
+        }
+      ],
+      "budget": { "currency": "INR", "minorUnits": 10000000 },
+      "usageCap": 10000,
+      "perCustomerCap": 1000
+    }
+  ]
+}

@@ -1,31 +1,30 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { CandidateOffer, EvaluationResponse, RedemptionResponse } from '@incentives/contracts';
+import type { EvaluationResponse } from '@incentives/contracts';
 import {
   checkoutCart,
   evaluateCart,
   loadBootstrap,
-  resetDemo,
   type BootstrapData,
-  type CartLineInput,
+  type CheckoutResult,
 } from './lib/api.js';
 import { formatINR } from './lib/format.js';
 import {
   DEMO_CUSTOMERS,
   MENU,
+  MAX_LINE_QUANTITY,
   type DemoCustomerMode,
   type MenuItem,
 } from './shared/demo.js';
+import {
+  buildOffersView,
+  type CandidateOfferView,
+  type OffersView,
+} from './shared/offers.js';
 import './styles.css';
 
 type View = 'menu' | 'checkout' | 'confirmation';
 
-interface Confirmation {
-  orderId: string;
-  deliveryFeeMinor: number;
-  redemption: RedemptionResponse;
-}
-
-function cartLines(cart: Record<string, number>): CartLineInput[] {
+function cartLines(cart: Record<string, number>) {
   return Object.entries(cart)
     .filter(([, quantity]) => quantity > 0)
     .map(([itemId, quantity]) => ({ itemId, quantity }));
@@ -39,44 +38,88 @@ function cartSubtotal(cart: Record<string, number>, menu: MenuItem[]): number {
   return menu.reduce((sum, item) => sum + item.priceMinor * (cart[item.id] ?? 0), 0);
 }
 
-function offerNote(offer: CandidateOffer): string {
-  if (offer.qualified) return 'Applied automatically';
-  if (offer.programRef === 'vip-15') return 'VIP customers only';
-  if (offer.programRef === 'paneer-15') return 'Add Paneer Tikka to unlock';
-  if (offer.progress) {
-    return `Add ${formatINR(offer.progress.shortfall)} more to unlock`;
-  }
-  return 'Not available for this cart';
+function modeLabel(mode: 'core' | 'local'): string {
+  return mode === 'core' ? 'Core API' : 'Local evaluator';
 }
 
-function OfferRow({ offer }: { offer: CandidateOffer }) {
-  const progress = offer.progress;
+function CandidateRow({ candidate }: { candidate: CandidateOfferView }) {
+  const progress = candidate.progress;
   const percent = progress && progress.target > 0
     ? Math.min(100, Math.round((progress.current / progress.target) * 100))
     : 0;
 
   return (
-    <div className="offer">
+    <div className={`offer status-${candidate.status}`}>
       <div className="offer-row">
-        <span className="offer-name">{offer.name}</span>
-        <span className={`offer-status ${offer.qualified ? '' : 'locked'}`}>
-          {offer.qualified
-            ? offer.estimatedDiscountMinorUnits > 0
-              ? `Save ${formatINR(offer.estimatedDiscountMinorUnits)}`
-              : 'Applied'
-            : 'Locked'}
+        <span className="offer-name">{candidate.name}</span>
+        <span className={`offer-status ${candidate.status === 'locked' ? 'locked' : ''}`}>
+          {candidate.status === 'available' ? 'Eligible' : 'Locked'}
         </span>
       </div>
       {progress ? (
         <>
-          <div className="progress" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent}>
+          <div
+            className="progress"
+            role="progressbar"
+            aria-label={`${candidate.name} progress`}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={percent}
+          >
             <span style={{ width: `${percent}%` }} />
           </div>
-          <span className="offer-note">{offerNote(offer)}</span>
+          <span className="offer-note">
+            Add {formatINR(progress.shortfall)} more to unlock
+          </span>
         </>
       ) : (
-        <span className="offer-note">{offerNote(offer)}</span>
+        <span className="offer-note">{candidate.note}</span>
       )}
+    </div>
+  );
+}
+
+function OfferList({ view }: { view: OffersView }) {
+  if (
+    view.applied.length === 0
+    && view.codes.length === 0
+    && view.candidates.length === 0
+  ) {
+    return <span className="offer-note">Add items to see eligible offers.</span>;
+  }
+
+  return (
+    <div className="offer-list">
+      {view.applied.map(offer => (
+        <div className="offer applied" key={offer.programRef}>
+          <div className="offer-row">
+            <span className="offer-name">{offer.name}</span>
+            <span className="offer-status">
+              {offer.freeShipping
+                ? 'Free delivery'
+                : `Save ${formatINR(offer.savingsMinorUnits)}`}
+            </span>
+          </div>
+        </div>
+      ))}
+      {view.codes.map(code => (
+        <div className={`offer ${code.applied ? 'applied' : 'rejected'}`} key={code.normalizedCode}>
+          <div className="offer-row">
+            <span className="offer-name">Code {code.code}</span>
+            <span className={`offer-status ${code.applied ? '' : 'locked'}`}>
+              {code.applied
+                ? code.savingsMinorUnits > 0
+                  ? `Applied · ${formatINR(code.savingsMinorUnits)} off`
+                  : 'Applied'
+                : code.label}
+            </span>
+          </div>
+          {!code.applied && <span className="offer-note">{code.label}</span>}
+        </div>
+      ))}
+      {view.candidates.map(candidate => (
+        <CandidateRow key={candidate.programRef} candidate={candidate} />
+      ))}
     </div>
   );
 }
@@ -92,6 +135,7 @@ function MenuCard({
   onAdd: () => void;
   onRemove: () => void;
 }) {
+  const atMax = quantity >= MAX_LINE_QUANTITY;
   return (
     <article className="menu-card">
       <div className="menu-card-top">
@@ -108,7 +152,14 @@ function MenuCard({
           <div className="stepper" aria-label={`${item.name} quantity`}>
             <button type="button" onClick={onRemove} aria-label={`Remove one ${item.name}`}>−</button>
             <span>{quantity}</span>
-            <button type="button" onClick={onAdd} aria-label={`Add one ${item.name}`}>+</button>
+            <button
+              type="button"
+              onClick={onAdd}
+              disabled={atMax}
+              aria-label={atMax ? `${item.name} quantity limit reached` : `Add one ${item.name}`}
+            >
+              +
+            </button>
           </div>
         ) : (
           <button className="add-button" type="button" onClick={onAdd}>Add</button>
@@ -139,57 +190,70 @@ function Totals({
   );
 }
 
-function CartPanel({
-  cart,
-  menu,
-  evaluation,
-  deliveryFee,
-  loading,
-  error,
-  codeInput,
-  codeError,
-  appliedCode,
-  onCodeInput,
-  onApplyCode,
-  onClearCode,
-  onAdd,
-  onRemove,
-  onCheckout,
-  onReset,
-  open = false,
-}: {
+interface CartPanelProps {
   cart: Record<string, number>;
   menu: MenuItem[];
-  evaluation: EvaluationResponse | null;
-  deliveryFee: number;
+  view: OffersView | null;
+  offsets: { subtotal: number; discount: number; delivery: number; total: number };
   loading: boolean;
   error: string | null;
   codeInput: string;
   codeError: string | null;
   appliedCode: string | null;
+  checkingCode: boolean;
+  canCheckout: boolean;
   onCodeInput: (value: string) => void;
   onApplyCode: () => void;
   onClearCode: () => void;
   onAdd: (itemId: string) => void;
   onRemove: (itemId: string) => void;
   onCheckout: () => void;
-  onReset: () => void;
-  open?: boolean;
-}) {
+  onStartOver: () => void;
+  onClose?: () => void;
+}
+
+function CartPanel({
+  cart,
+  menu,
+  view,
+  offsets,
+  loading,
+  error,
+  codeInput,
+  codeError,
+  appliedCode,
+  checkingCode,
+  canCheckout,
+  onCodeInput,
+  onApplyCode,
+  onClearCode,
+  onAdd,
+  onRemove,
+  onCheckout,
+  onStartOver,
+  onClose,
+}: CartPanelProps) {
   const lines = cartLines(cart);
-  const subtotal = evaluation?.priceBreakdown.originalMerchandiseSubtotal ?? cartSubtotal(cart, menu);
-  const discount = evaluation?.priceBreakdown.totalDiscount ?? 0;
-  const total = Math.max(0, subtotal - discount + deliveryFee);
-  const offers = evaluation?.candidateOffers ?? [];
+  const count = itemCount(cart);
+  const codesActive = (view?.codes.length ?? 0) > 0;
 
   return (
-    <aside className={`cart-panel${open ? ' open' : ''}`} aria-label="Cart">
+    <aside
+      className={onClose ? 'cart-panel open' : 'cart-panel'}
+      aria-label="Cart"
+      {...(onClose ? { role: 'dialog', 'aria-modal': true } : {})}
+    >
       <div className="cart-head">
         <div>
           <h2>Your thali</h2>
-          <p>{itemCount(cart)} {itemCount(cart) === 1 ? 'item' : 'items'} · demo checkout</p>
+          <p>{count} {count === 1 ? 'item' : 'items'} · demo checkout</p>
         </div>
-        <button className="text-button" type="button" onClick={onReset}>Reset demo</button>
+        <div className="cart-head-actions">
+          {onClose && (
+            <button className="ghost-button" type="button" onClick={onClose} autoFocus>Close</button>
+          )}
+          <button className="text-button" type="button" onClick={onStartOver}>Start over</button>
+        </div>
       </div>
 
       {lines.length === 0 ? (
@@ -202,6 +266,7 @@ function CartPanel({
           {lines.map(line => {
             const item = menu.find(candidate => candidate.id === line.itemId);
             if (!item) return null;
+            const atMax = line.quantity >= MAX_LINE_QUANTITY;
             return (
               <div className="cart-line" key={line.itemId}>
                 <span className="cart-line-name">{item.emoji} {item.name}</span>
@@ -210,7 +275,14 @@ function CartPanel({
                 <div className="stepper" aria-label={`${item.name} quantity`}>
                   <button type="button" onClick={() => onRemove(item.id)} aria-label={`Remove one ${item.name}`}>−</button>
                   <span>{line.quantity}</span>
-                  <button type="button" onClick={() => onAdd(item.id)} aria-label={`Add one ${item.name}`}>+</button>
+                  <button
+                    type="button"
+                    onClick={() => onAdd(item.id)}
+                    disabled={atMax}
+                    aria-label={atMax ? `${item.name} quantity limit reached` : `Add one ${item.name}`}
+                  >
+                    +
+                  </button>
                 </div>
               </div>
             );
@@ -220,14 +292,18 @@ function CartPanel({
 
       <div className="offer-panel">
         <h3 className="offer-panel-title">Offers for this thali</h3>
-        <div className="offer-list">
-          {loading && <span className="loading-note">Checking offers…</span>}
-          {error && <div className="error-banner">{error}</div>}
-          {!loading && !error && offers.length === 0 && (
-            <span className="offer-note">Add items to see eligible offers.</span>
-          )}
-          {offers.map(offer => <OfferRow key={offer.programRef} offer={offer} />)}
-        </div>
+        {loading && <span className="loading-note">Checking offers…</span>}
+        {error && <div className="error-banner">{error}</div>}
+        {!loading && !error && !view && (
+          <span className="offer-note">Add items to see eligible offers.</span>
+        )}
+        {!loading && !error && view && <OfferList view={view} />}
+
+        {codesActive && (
+          <p className="offer-note code-mode-note">
+            A code replaces auto-apply offers. Remove it to let them apply again.
+          </p>
+        )}
 
         {appliedCode ? (
           <div className="applied-code">
@@ -236,7 +312,7 @@ function CartPanel({
           </div>
         ) : (
           <>
-            <div className="code-form" style={{ marginTop: 12 }}>
+            <div className="code-form">
               <input
                 className="code-input"
                 aria-label="Promo code"
@@ -250,8 +326,13 @@ function CartPanel({
                   }
                 }}
               />
-              <button className="code-apply" type="button" onClick={onApplyCode} disabled={loading || codeInput.trim().length === 0}>
-                Apply
+              <button
+                className="code-apply"
+                type="button"
+                onClick={onApplyCode}
+                disabled={checkingCode || codeInput.trim().length === 0}
+              >
+                {checkingCode ? 'Checking…' : 'Apply'}
               </button>
             </div>
             <div className="code-hints">
@@ -264,46 +345,54 @@ function CartPanel({
       </div>
 
       {lines.length > 0 && (
-        <>
-          <Totals subtotal={subtotal} discount={discount} delivery={deliveryFee} total={total} />
-          <button className="primary-button" type="button" onClick={onCheckout} disabled={loading}>
-            {loading ? 'Updating…' : `Checkout · ${formatINR(total)}`}
+        <div className="cart-actions">
+          <Totals {...offsets} />
+          <button
+            className="primary-button"
+            type="button"
+            onClick={onCheckout}
+            disabled={loading || !canCheckout}
+          >
+            {loading ? 'Updating…' : `Checkout · ${formatINR(offsets.total)}`}
           </button>
-        </>
+        </div>
       )}
     </aside>
   );
 }
 
 function CheckoutView({
-  cart,
   menu,
-  evaluation,
-  deliveryFee,
+  cart,
+  view,
+  offsets,
   loading,
   error,
+  canCheckout,
   onBack,
   onPlaceOrder,
 }: {
-  cart: Record<string, number>;
   menu: MenuItem[];
-  evaluation: EvaluationResponse | null;
-  deliveryFee: number;
+  cart: Record<string, number>;
+  view: OffersView | null;
+  offsets: { subtotal: number; discount: number; delivery: number; total: number };
   loading: boolean;
   error: string | null;
+  canCheckout: boolean;
   onBack: () => void;
   onPlaceOrder: () => void;
 }) {
-  const subtotal = evaluation?.priceBreakdown.originalMerchandiseSubtotal ?? cartSubtotal(cart, menu);
-  const discount = evaluation?.priceBreakdown.totalDiscount ?? 0;
-  const total = Math.max(0, subtotal - discount + deliveryFee);
   const lines = cartLines(cart);
+  const appliedCodes = (view?.codes ?? []).filter(code => code.applied);
 
   return (
     <main className="checkout-page">
       <section className="checkout-card">
         <h1>Review your order</h1>
-        <p>This is a product demo. No payment is taken; the platform evaluates the cart, applies the offer, and commits a redemption.</p>
+        <p>
+          This is a product demo. No payment is taken; the platform evaluates the
+          cart, applies the offer, and commits a redemption.
+        </p>
 
         <div className="checkout-section">
           <h2>Your thali</h2>
@@ -323,27 +412,63 @@ function CheckoutView({
 
         <div className="checkout-section">
           <h2>Applied offers</h2>
-          <div className="offer-list">
-            {(evaluation?.candidateOffers ?? []).filter(offer => offer.qualified).map(offer => (
-              <OfferRow key={offer.programRef} offer={offer} />
-            ))}
-            {(evaluation?.candidateOffers ?? []).every(offer => !offer.qualified) && (
-              <span className="offer-note">No public offer applies yet. You can still place the demo order.</span>
-            )}
-          </div>
+          {view === null || (view.applied.length === 0 && appliedCodes.length === 0) ? (
+            <span className="offer-note">
+              No offer is applied to this order. You can still place the demo order.
+            </span>
+          ) : (
+            <div className="offer-list">
+              {view.applied.map(offer => (
+                <div className="offer applied" key={offer.programRef}>
+                  <div className="offer-row">
+                    <span className="offer-name">{offer.name}</span>
+                    <span className="offer-status">
+                      {offer.freeShipping
+                        ? 'Free delivery'
+                        : `Save ${formatINR(offer.savingsMinorUnits)}`}
+                    </span>
+                  </div>
+                </div>
+              ))}
+              {appliedCodes.map(code => (
+                <div className="offer applied" key={code.normalizedCode}>
+                  <div className="offer-row">
+                    <span className="offer-name">Code {code.code}</span>
+                    <span className="offer-status">
+                      {code.savingsMinorUnits > 0
+                        ? `Applied · ${formatINR(code.savingsMinorUnits)} off`
+                        : 'Applied'}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+          {appliedCodes.length > 0 && (
+            <p className="offer-note code-mode-note">
+              Auto-apply offers are paused while a code is active.
+            </p>
+          )}
         </div>
 
         <div className="checkout-section">
-          <Totals subtotal={subtotal} discount={discount} delivery={deliveryFee} total={total} />
+          <Totals {...offsets} />
         </div>
 
         {error && <div className="error-banner" style={{ marginTop: 16 }}>{error}</div>}
 
         <div className="checkout-actions">
-          <button className="primary-button" type="button" onClick={onPlaceOrder} disabled={loading || lines.length === 0}>
-            {loading ? 'Placing order…' : `Place demo order · ${formatINR(total)}`}
+          <button
+            className="primary-button"
+            type="button"
+            onClick={onPlaceOrder}
+            disabled={loading || !canCheckout}
+          >
+            {loading ? 'Placing order…' : `Place demo order · ${formatINR(offsets.total)}`}
           </button>
-          <button className="ghost-button" type="button" onClick={onBack} disabled={loading}>Back to menu</button>
+          <button className="ghost-button" type="button" onClick={onBack} disabled={loading}>
+            Back to menu
+          </button>
         </div>
       </section>
     </main>
@@ -355,27 +480,34 @@ function ConfirmationView({
   currency,
   onBack,
 }: {
-  confirmation: Confirmation;
+  confirmation: CheckoutResult;
   currency: string;
   onBack: () => void;
 }) {
-  const { redemption, deliveryFeeMinor } = confirmation;
+  const { redemption, deliveryFeeMinor: delivery } = confirmation;
   const { priceBreakdown } = redemption;
-  const total = priceBreakdown.discountedMerchandiseSubtotal + deliveryFeeMinor;
+  const total = priceBreakdown.discountedMerchandiseSubtotal + delivery;
+
   return (
     <main className="checkout-page">
       <section className="checkout-card">
         <div className="confirmation-mark" aria-hidden="true">✓</div>
         <h1 style={{ marginTop: 18 }}>Order confirmed</h1>
-        <p>Your demo order is placed. The redemption was committed against the evaluation.</p>
-        <div className="confirmation-id">Order: {confirmation.orderId}<br />Redemption: {redemption.redemptionId}</div>
+        <p>
+          Your demo order is placed. The redemption was committed against the
+          evaluation, using the {modeLabel(confirmation.mode)}.
+        </p>
+        <div className="confirmation-id">
+          Order: {confirmation.orderId}<br />
+          Redemption: {redemption.redemptionId}
+        </div>
 
         <div className="checkout-section">
           <h2>Savings</h2>
           <Totals
             subtotal={priceBreakdown.originalMerchandiseSubtotal}
             discount={priceBreakdown.totalDiscount}
-            delivery={deliveryFeeMinor}
+            delivery={delivery}
             total={total}
           />
           <p className="offer-note" style={{ marginTop: 12 }}>
@@ -398,27 +530,45 @@ export default function App() {
   const [appliedCode, setAppliedCode] = useState<string | null>(null);
   const [codeInput, setCodeInput] = useState('');
   const [codeError, setCodeError] = useState<string | null>(null);
+  const [checkingCode, setCheckingCode] = useState(false);
   const [evaluation, setEvaluation] = useState<EvaluationResponse | null>(null);
   const [deliveryFee, setDeliveryFee] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [view, setView] = useState<View>('menu');
-  const [confirmation, setConfirmation] = useState<Confirmation | null>(null);
+  const [confirmation, setConfirmation] = useState<CheckoutResult | null>(null);
   const [cartOpen, setCartOpen] = useState(false);
 
   const menu = bootstrap?.menu ?? MENU;
+  const mode = bootstrap?.mode ?? 'local';
   const customers = bootstrap?.customers ?? Object.values(DEMO_CUSTOMERS).map(customer => ({
     mode: customer.mode,
     label: customer.label,
     description: customer.description,
   }));
+  const checkoutEnabled = bootstrap?.checkoutEnabled ?? true;
+  const coreReady = bootstrap?.coreReady ?? true;
 
   const lines = useMemo(() => cartLines(cart), [cart]);
-  const cartKey = useMemo(() => JSON.stringify({ lines, customerMode, appliedCode }), [lines, customerMode, appliedCode]);
-  const totalItems = itemCount(cart);
-  const subtotal = evaluation?.priceBreakdown.originalMerchandiseSubtotal ?? cartSubtotal(cart, menu);
+  const cartKey = useMemo(
+    () => JSON.stringify({ lines, customerMode, appliedCode }),
+    [lines, customerMode, appliedCode],
+  );
+  const count = itemCount(cart);
+  const subtotal = evaluation?.priceBreakdown.originalMerchandiseSubtotal
+    ?? cartSubtotal(cart, menu);
   const discount = evaluation?.priceBreakdown.totalDiscount ?? 0;
   const total = Math.max(0, subtotal - discount + deliveryFee);
+  const offsets = { subtotal, discount, delivery: deliveryFee, total };
+  const offersView = useMemo(
+    () => (evaluation === null ? null : buildOffersView(evaluation)),
+    [evaluation],
+  );
+  const canCheckout = lines.length > 0
+    && !loading
+    && !error
+    && checkoutEnabled
+    && coreReady;
 
   useEffect(() => {
     void loadBootstrap().then(setBootstrap).catch(() => {
@@ -432,7 +582,10 @@ export default function App() {
         })),
         codeHints: [],
         currency: 'INR',
-        coreMode: false,
+        mode: 'local',
+        coreReady: true,
+        missingConfig: [],
+        checkoutEnabled: true,
       });
     });
   }, []);
@@ -456,6 +609,8 @@ export default function App() {
       })
       .catch((cause: unknown) => {
         if (!active) return;
+        setEvaluation(null);
+        setDeliveryFee(0);
         setError(cause instanceof Error ? cause.message : 'Offers are unavailable right now.');
       })
       .finally(() => {
@@ -468,14 +623,38 @@ export default function App() {
 
   useEffect(() => {
     if (!appliedCode || !evaluation?.codeResults) return;
-    const selected = evaluation.codeResults.some(
-      result => result.normalizedCode === appliedCode && result.outcome === 'selected',
+    const result = evaluation.codeResults.find(
+      candidate => candidate.normalizedCode === appliedCode,
     );
-    if (!selected) setAppliedCode(null);
+    if (!result || result.outcome === 'selected') return;
+    setAppliedCode(null);
+    setCodeError(
+      result.outcome === 'not_qualified'
+        ? `${appliedCode} no longer applies to this order.`
+        : `${appliedCode} could not be applied.`,
+    );
   }, [appliedCode, evaluation]);
 
+  useEffect(() => {
+    if (!cartOpen) return;
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') setCartOpen(false);
+    }
+    window.addEventListener('keydown', onKeyDown);
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      document.body.style.overflow = previous;
+    };
+  }, [cartOpen]);
+
   function add(itemId: string) {
-    setCart(current => ({ ...current, [itemId]: (current[itemId] ?? 0) + 1 }));
+    setCart(current => {
+      const quantity = current[itemId] ?? 0;
+      if (quantity >= MAX_LINE_QUANTITY) return current;
+      return { ...current, [itemId]: quantity + 1 };
+    });
   }
 
   function remove(itemId: string) {
@@ -489,14 +668,22 @@ export default function App() {
 
   async function applyCode() {
     const code = codeInput.trim().toUpperCase();
-    if (!code) return;
+    if (!code || checkingCode) return;
     setCodeError(null);
+    setCheckingCode(true);
     try {
       const result = await evaluateCart(cartLines(cart), customerMode, [code]);
-      const codeResult = result.evaluation.codeResults?.find(candidate => candidate.normalizedCode === code);
+      const codeResult = result.evaluation.codeResults?.find(
+        candidate => candidate.normalizedCode === code,
+      );
       if (codeResult?.outcome === 'selected') {
         setAppliedCode(code);
         setCodeInput('');
+        setEvaluation(result.evaluation);
+        setDeliveryFee(result.deliveryFeeMinor);
+        setError(null);
+      } else if (codeResult?.outcome === 'combination_rejected') {
+        setCodeError('That code cannot be combined with another code.');
       } else if (codeResult?.outcome === 'not_qualified') {
         setCodeError('This code is valid but your customer profile is not eligible.');
       } else {
@@ -504,15 +691,21 @@ export default function App() {
       }
     } catch (cause) {
       setCodeError(cause instanceof Error ? cause.message : 'Could not validate that code.');
+    } finally {
+      setCheckingCode(false);
     }
   }
 
   async function placeOrder() {
-    if (cartLines(cart).length === 0) return;
+    if (!canCheckout) return;
     setLoading(true);
     setError(null);
     try {
-      const result = await checkoutCart(cartLines(cart), customerMode, appliedCode ? [appliedCode] : []);
+      const result = await checkoutCart(
+        cartLines(cart),
+        customerMode,
+        appliedCode ? [appliedCode] : [],
+      );
       setConfirmation(result);
       setView('confirmation');
       setCartOpen(false);
@@ -523,20 +716,21 @@ export default function App() {
     }
   }
 
-  async function reset() {
-    await resetDemo().catch(() => undefined);
+  function startOver() {
     setCart({});
     setAppliedCode(null);
     setCodeInput('');
     setCodeError(null);
     setEvaluation(null);
+    setDeliveryFee(0);
     setConfirmation(null);
     setView('menu');
     setError(null);
+    setCartOpen(false);
   }
 
-  function changeCustomer(mode: DemoCustomerMode) {
-    setCustomerMode(mode);
+  function changeCustomer(next: DemoCustomerMode) {
+    setCustomerMode(next);
     setAppliedCode(null);
     setCodeError(null);
   }
@@ -544,12 +738,13 @@ export default function App() {
   if (view === 'checkout') {
     return (
       <CheckoutView
-        cart={cart}
         menu={menu}
-        evaluation={evaluation}
-        deliveryFee={deliveryFee}
+        cart={cart}
+        view={offersView}
+        offsets={offsets}
         loading={loading}
         error={error}
+        canCheckout={canCheckout}
         onBack={() => setView('menu')}
         onPlaceOrder={() => void placeOrder()}
       />
@@ -561,17 +756,15 @@ export default function App() {
       <ConfirmationView
         confirmation={confirmation}
         currency={evaluation?.priceBreakdown.currency ?? 'INR'}
-        onBack={() => {
-          setView('menu');
-          setConfirmation(null);
-          setCart({});
-          setAppliedCode(null);
-        }}
+        onBack={startOver}
       />
     );
   }
 
   const categories = [...new Set(menu.map(item => item.category))];
+  const configProblem = !coreReady
+    ? `Core mode is missing ${bootstrap?.missingConfig.join(', ') || 'configuration'}. The storefront will not fall back silently.`
+    : null;
 
   return (
     <div className="app-shell">
@@ -584,7 +777,14 @@ export default function App() {
           </div>
         </div>
         <div className="top-actions">
-          <span className="demo-badge">Demo store</span>
+          <span
+            className={`demo-badge ${mode}`}
+            title={mode === 'core'
+              ? 'Orders are evaluated and redeemed through the incentives API'
+              : 'Orders are evaluated by the bundled local evaluator'}
+          >
+            {modeLabel(mode)}
+          </span>
           <select
             className="customer-select"
             aria-label="Demo customer"
@@ -592,7 +792,9 @@ export default function App() {
             onChange={event => changeCustomer(event.target.value as DemoCustomerMode)}
           >
             {customers.map(customer => (
-              <option key={customer.mode} value={customer.mode}>{customer.label} — {customer.description}</option>
+              <option key={customer.mode} value={customer.mode}>
+                {customer.label} — {customer.description}
+              </option>
             ))}
           </select>
         </div>
@@ -603,62 +805,78 @@ export default function App() {
           <div>
             <span className="hero-chip">🪔 Today’s feast</span>
             <h1>Big plates.<br />Bigger savings.</h1>
-            <p>Add your favourites, watch the offers unlock in the cart, and try a code. The platform evaluates every cart against live promo rules, budgets, and customer targeting.</p>
+            <p>
+              {mode === 'core'
+                ? 'Every cart is evaluated by the incentives API: one auto-apply offer wins, a code replaces auto offers, and budgets are enforced before checkout.'
+                : 'The local evaluator mirrors the incentives API rules: one auto-apply offer wins and a code replaces auto offers. Set DEMO_MODE=core to evaluate against the real API.'}
+            </p>
           </div>
           <div className="hero-offer">
             <strong>20% off</strong>
-            <span>on orders above ₹499.<br />Free delivery above ₹199.</span>
+            <span>on ₹499+ (up to ₹150).<br />Free delivery on ₹199+.</span>
           </div>
         </section>
 
+        {configProblem && <div className="error-banner config-banner">{configProblem}</div>}
+        {!checkoutEnabled && (
+          <div className="error-banner config-banner">
+            Checkout is disabled for this deployment.
+          </div>
+        )}
+
         <div className="layout">
           <main className="menu">
-            {categories.map(category => (
-              <section className="menu-section" key={category}>
-                <div className="section-title">
-                  <h2>{category}</h2>
-                  <span>{menu.filter(item => item.category === category).length} items</span>
-                </div>
-                <div className="menu-grid">
-                  {menu.filter(item => item.category === category).map(item => (
-                    <MenuCard
-                      key={item.id}
-                      item={item}
-                      quantity={cart[item.id] ?? 0}
-                      onAdd={() => add(item.id)}
-                      onRemove={() => remove(item.id)}
-                    />
-                  ))}
-                </div>
-              </section>
-            ))}
+            {categories.map(category => {
+              const items = menu.filter(item => item.category === category);
+              return (
+                <section className="menu-section" key={category}>
+                  <div className="section-title">
+                    <h2>{category}</h2>
+                    <span>{items.length} {items.length === 1 ? 'item' : 'items'}</span>
+                  </div>
+                  <div className="menu-grid">
+                    {items.map(item => (
+                      <MenuCard
+                        key={item.id}
+                        item={item}
+                        quantity={cart[item.id] ?? 0}
+                        onAdd={() => add(item.id)}
+                        onRemove={() => remove(item.id)}
+                      />
+                    ))}
+                  </div>
+                </section>
+              );
+            })}
           </main>
 
           <CartPanel
             cart={cart}
             menu={menu}
-            evaluation={evaluation}
-            deliveryFee={deliveryFee}
+            view={offersView}
+            offsets={offsets}
             loading={loading}
             error={error}
             codeInput={codeInput}
             codeError={codeError}
             appliedCode={appliedCode}
+            checkingCode={checkingCode}
+            canCheckout={canCheckout}
             onCodeInput={setCodeInput}
             onApplyCode={() => void applyCode()}
-            onClearCode={() => setAppliedCode(null)}
+            onClearCode={() => { setAppliedCode(null); setCodeError(null); }}
             onAdd={add}
             onRemove={remove}
             onCheckout={() => setView('checkout')}
-            onReset={() => void reset()}
+            onStartOver={startOver}
           />
         </div>
       </div>
 
-      {totalItems > 0 && (
+      {count > 0 && (
         <div className="mobile-cart-bar">
           <div>
-            <strong>{totalItems} {totalItems === 1 ? 'item' : 'items'} · {formatINR(total)}</strong>
+            <strong>{count} {count === 1 ? 'item' : 'items'} · {formatINR(total)}</strong>
             <span>{discount > 0 ? `You saved ${formatINR(discount)}` : 'Offers update in cart'}</span>
           </div>
           <button type="button" onClick={() => setCartOpen(true)}>View cart</button>
@@ -667,25 +885,33 @@ export default function App() {
 
       {cartOpen && (
         <>
-          <div className="mobile-backdrop open" onClick={() => setCartOpen(false)} aria-hidden="true" />
+          <button
+            type="button"
+            className="mobile-backdrop open"
+            aria-label="Close cart"
+            tabIndex={-1}
+            onClick={() => setCartOpen(false)}
+          />
           <CartPanel
-            open
             cart={cart}
             menu={menu}
-            evaluation={evaluation}
-            deliveryFee={deliveryFee}
+            view={offersView}
+            offsets={offsets}
             loading={loading}
             error={error}
             codeInput={codeInput}
             codeError={codeError}
             appliedCode={appliedCode}
+            checkingCode={checkingCode}
+            canCheckout={canCheckout}
             onCodeInput={setCodeInput}
             onApplyCode={() => void applyCode()}
-            onClearCode={() => setAppliedCode(null)}
+            onClearCode={() => { setAppliedCode(null); setCodeError(null); }}
             onAdd={add}
             onRemove={remove}
             onCheckout={() => { setCartOpen(false); setView('checkout'); }}
-            onReset={() => void reset()}
+            onStartOver={startOver}
+            onClose={() => setCartOpen(false)}
           />
         </>
       )}

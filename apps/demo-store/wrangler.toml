@@ -9,10 +9,20 @@ not_found_handling = "single-page-application"
 run_worker_first = ["/api/*"]
 
 [vars]
-DEMO_TENANT_ID = "demo_chole_bhature"
-DEMO_USE_CORE = "false"
+DEMO_MODE = "local"
+DEMO_CHECKOUT_ENABLED = "true"
 
-[[services]]
-binding = "CORE"
-service = "incentives-api"
-entrypoint = "CoreOperatorService"
+# To evaluate against the real incentives API instead of the bundled evaluator:
+#
+#   [vars]
+#   DEMO_MODE = "core"
+#   DEMO_CORE_URL = "https://api.example.com"
+#   CORE_PUBLISHABLE_KEY = "pk_..."
+#
+# and store the secret credential out of band:
+#
+#   pnpm exec wrangler secret put CORE_SECRET_KEY
+#
+# The secret key must belong to a budget-limited demo merchant. The BFF is
+# intentionally unauthenticated: anyone with the demo URL can commit a
+# redemption against that merchant.
