@@ -17,6 +17,7 @@ target/
 !.env.staging.example
 *.local
 .dev.vars
+**/.wrangler/
 .pnpm-store/
 tests/e2e/.runs/
 tests/e2e/test-results/
