@@ -575,6 +575,7 @@ export default function App() {
   );
   const canCheckout = lines.length > 0
     && !loading
+    && !checkingCode
     && !error
     && checkoutEnabled
     && coreReady;
@@ -696,6 +697,8 @@ export default function App() {
   }
 
   function add(itemId: string) {
+    codeRequestId.current += 1;
+    setCheckingCode(false);
     setCart(current => {
       const quantity = current[itemId] ?? 0;
       if (quantity >= MAX_LINE_QUANTITY) return current;
@@ -704,6 +707,8 @@ export default function App() {
   }
 
   function remove(itemId: string) {
+    codeRequestId.current += 1;
+    setCheckingCode(false);
     setCart(current => {
       const quantity = (current[itemId] ?? 0) - 1;
       const next = { ...current, [itemId]: Math.max(0, quantity) };

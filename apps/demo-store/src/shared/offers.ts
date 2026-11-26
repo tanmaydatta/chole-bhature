@@ -50,7 +50,7 @@ function candidateNote(offer: CandidateOffer, codedMode: boolean): string {
   if (offer.qualified) {
     return codedMode
       ? 'Auto offers pause while a code is active'
-      : 'Eligible — a higher-priority offer is applied';
+      : 'A higher-priority offer is applied';
   }
   if (offer.programRef === 'vip-15') return 'VIP customers only';
   if (offer.programRef === 'paneer-15') return 'Add Paneer Tikka to unlock';
