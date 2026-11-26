@@ -119,7 +119,7 @@ pnpm --filter @incentives/demo-store lint
 ## Deploy
 
 `wrangler.toml` serves the Vite build through Cloudflare static assets and the
-BFF through the Worker.
+BFF through the Worker. It deploys to the `demo.wastd.dev` custom domain.
 
 ```bash
 pnpm --filter @incentives/demo-store build
