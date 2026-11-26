@@ -24,7 +24,7 @@ export interface CodeOfferView {
 export interface CandidateOfferView {
   programRef: string;
   name: string;
-  status: 'available' | 'progress' | 'locked';
+  status: 'paused' | 'outranked' | 'progress' | 'locked';
   estimatedDiscountMinorUnits: number;
   progress?: CandidateOffer['progress'];
   note: string;
@@ -111,7 +111,9 @@ export function buildOffersView(evaluation: EvaluationResponse): OffersView {
       programRef: offer.programRef,
       name: offer.name,
       status: offer.qualified
-        ? 'available'
+        ? codedMode
+          ? 'paused'
+          : 'outranked'
         : offer.progress
           ? 'progress'
           : 'locked',

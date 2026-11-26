@@ -68,10 +68,12 @@ node apps/demo-store/seed/seed.mjs
 ```
 
 The operator session decides which merchant is seeded, so use a demo merchant.
-The script creates missing variables, publishes the schema, upserts the demo
-customers, and publishes the programs. It is idempotent. `pnpm --filter
+The script creates missing variables, publishes a pending draft schema, upserts
+the demo customers, and publishes inactive programs. It is idempotent, so a
+rerun does not try to republish a published schema. `pnpm --filter
 @incentives/demo-store test` validates the fixture against the contracts and
-against the local evaluator's offer table, so the two cannot drift silently.
+compares its rewards, eligibility, stackability, and customer attributes with
+the local evaluator's offer table, so the two cannot drift silently.
 
 Then issue:
 

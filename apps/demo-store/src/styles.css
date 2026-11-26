@@ -39,6 +39,7 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   background: var(--green); color: #fff; font-size: 24px;
   box-shadow: 0 8px 18px rgba(31, 77, 58, 0.24);
 }
+.brand > div:last-child { min-width: 0; }
 .brand-name { font-family: Georgia, "Times New Roman", serif; font-size: 21px; font-weight: 700; letter-spacing: -0.02em; }
 .brand-sub { margin: 2px 0 0; font-size: 11px; color: var(--muted); letter-spacing: 0.08em; text-transform: uppercase; }
 .top-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
@@ -69,11 +70,13 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 }
 .hero h1 { margin: 0; font-family: Georgia, "Times New Roman", serif; font-size: clamp(30px, 4vw, 46px); line-height: 1.02; letter-spacing: -0.03em; }
 .hero p { margin: 12px 0 0; max-width: 620px; color: rgba(255, 255, 255, 0.78); font-size: 14px; line-height: 1.65; }
+.hero-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
 .hero-chip {
-  display: inline-flex; align-items: center; gap: 8px; margin-bottom: 14px;
+  display: inline-flex; align-items: center; gap: 8px;
   border: 1px solid rgba(255, 255, 255, 0.26); background: rgba(255, 255, 255, 0.12);
   border-radius: 999px; padding: 7px 11px; font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
 }
+.mode-chip { background: rgba(255, 221, 167, 0.18); border-color: rgba(255, 221, 167, 0.4); }
 .hero-offer {
   min-width: 210px; padding: 18px; border-radius: 18px;
   background: rgba(255, 253, 249, 0.12); border: 1px solid rgba(255, 255, 255, 0.24);
@@ -214,9 +217,15 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   .hero { grid-template-columns: 1fr; padding: 22px; }
   .hero-offer { display: none; }
   .menu-grid { grid-template-columns: 1fr; }
-  .topbar { padding: 12px 16px; }
-  .brand-name { font-size: 18px; }
+  .topbar { padding: 10px 14px; gap: 8px; }
+  .brand { flex: 1 1 auto; min-width: 0; gap: 8px; }
+  .brand-mark { width: 36px; height: 36px; border-radius: 12px; font-size: 20px; }
+  .brand-name {
+    max-width: 150px; font-size: 14px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .brand-sub { display: none; }
   .demo-badge { display: none; }
-  .top-actions { gap: 6px; }
-  .customer-select { max-width: 210px; text-overflow: ellipsis; }
+  .top-actions { flex: 0 0 auto; gap: 6px; }
+  .customer-select { max-width: 172px; padding: 8px 9px; font-size: 12px; text-overflow: ellipsis; }
 }

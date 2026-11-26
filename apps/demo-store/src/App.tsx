@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { EvaluationResponse } from '@incentives/contracts';
 import {
   checkoutCart,
@@ -42,6 +42,13 @@ function modeLabel(mode: 'core' | 'local'): string {
   return mode === 'core' ? 'Core API' : 'Local evaluator';
 }
 
+const CANDIDATE_STATUS_LABEL: Record<CandidateOfferView['status'], string> = {
+  paused: 'Paused',
+  outranked: 'Outranked',
+  progress: 'Locked',
+  locked: 'Locked',
+};
+
 function CandidateRow({ candidate }: { candidate: CandidateOfferView }) {
   const progress = candidate.progress;
   const percent = progress && progress.target > 0
@@ -53,7 +60,7 @@ function CandidateRow({ candidate }: { candidate: CandidateOfferView }) {
       <div className="offer-row">
         <span className="offer-name">{candidate.name}</span>
         <span className={`offer-status ${candidate.status === 'locked' ? 'locked' : ''}`}>
-          {candidate.status === 'available' ? 'Eligible' : 'Locked'}
+          {CANDIDATE_STATUS_LABEL[candidate.status]}
         </span>
       </div>
       {progress ? (
@@ -538,6 +545,8 @@ export default function App() {
   const [view, setView] = useState<View>('menu');
   const [confirmation, setConfirmation] = useState<CheckoutResult | null>(null);
   const [cartOpen, setCartOpen] = useState(false);
+  const cartButtonRef = useRef<HTMLButtonElement | null>(null);
+  const codeRequestId = useRef(0);
 
   const menu = bootstrap?.menu ?? MENU;
   const mode = bootstrap?.mode ?? 'local';
@@ -637,9 +646,41 @@ export default function App() {
 
   useEffect(() => {
     if (!cartOpen) return;
-    function onKeyDown(event: KeyboardEvent) {
-      if (event.key === 'Escape') setCartOpen(false);
+    const panel = document.querySelector<HTMLElement>('.cart-panel.open');
+
+    function focusableElements(): HTMLElement[] {
+      if (!panel) return [];
+      return [...panel.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), input:not([disabled]), select:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])',
+      )].filter(element => element.offsetParent !== null);
     }
+
+    function closeAndRestore() {
+      setCartOpen(false);
+      window.requestAnimationFrame(() => cartButtonRef.current?.focus());
+    }
+
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        closeAndRestore();
+        return;
+      }
+      if (event.key !== 'Tab') return;
+      const items = focusableElements();
+      if (items.length === 0) return;
+      const first = items[0];
+      const last = items[items.length - 1];
+      if (first === undefined || last === undefined) return;
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    }
+
     window.addEventListener('keydown', onKeyDown);
     const previous = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
@@ -648,6 +689,11 @@ export default function App() {
       document.body.style.overflow = previous;
     };
   }, [cartOpen]);
+
+  function closeCart() {
+    setCartOpen(false);
+    window.requestAnimationFrame(() => cartButtonRef.current?.focus());
+  }
 
   function add(itemId: string) {
     setCart(current => {
@@ -669,10 +715,16 @@ export default function App() {
   async function applyCode() {
     const code = codeInput.trim().toUpperCase();
     if (!code || checkingCode) return;
+    if (cartLines(cart).length === 0) {
+      setCodeError('Add items before applying a code.');
+      return;
+    }
+    const requestId = ++codeRequestId.current;
     setCodeError(null);
     setCheckingCode(true);
     try {
       const result = await evaluateCart(cartLines(cart), customerMode, [code]);
+      if (requestId !== codeRequestId.current) return;
       const codeResult = result.evaluation.codeResults?.find(
         candidate => candidate.normalizedCode === code,
       );
@@ -690,9 +742,11 @@ export default function App() {
         setCodeError(`Code ${code} is invalid or does not apply to this cart.`);
       }
     } catch (cause) {
-      setCodeError(cause instanceof Error ? cause.message : 'Could not validate that code.');
+      if (requestId === codeRequestId.current) {
+        setCodeError(cause instanceof Error ? cause.message : 'Could not validate that code.');
+      }
     } finally {
-      setCheckingCode(false);
+      if (requestId === codeRequestId.current) setCheckingCode(false);
     }
   }
 
@@ -717,6 +771,8 @@ export default function App() {
   }
 
   function startOver() {
+    codeRequestId.current += 1;
+    setCheckingCode(false);
     setCart({});
     setAppliedCode(null);
     setCodeInput('');
@@ -730,6 +786,8 @@ export default function App() {
   }
 
   function changeCustomer(next: DemoCustomerMode) {
+    codeRequestId.current += 1;
+    setCheckingCode(false);
     setCustomerMode(next);
     setAppliedCode(null);
     setCodeError(null);
@@ -768,7 +826,7 @@ export default function App() {
 
   return (
     <div className="app-shell">
-      <header className="topbar">
+      <header className="topbar" inert={cartOpen}>
         <div className="brand">
           <div className="brand-mark" aria-hidden="true">🫓</div>
           <div>
@@ -788,22 +846,26 @@ export default function App() {
           <select
             className="customer-select"
             aria-label="Demo customer"
+            title={customers.find(customer => customer.mode === customerMode)?.description}
             value={customerMode}
             onChange={event => changeCustomer(event.target.value as DemoCustomerMode)}
           >
             {customers.map(customer => (
               <option key={customer.mode} value={customer.mode}>
-                {customer.label} — {customer.description}
+                {customer.label}
               </option>
             ))}
           </select>
         </div>
       </header>
 
-      <div className="page">
+      <div className="page" inert={cartOpen}>
         <section className="hero">
           <div>
-            <span className="hero-chip">🪔 Today’s feast</span>
+            <div className="hero-chips">
+              <span className="hero-chip">🪔 Today’s feast</span>
+              <span className="hero-chip mode-chip">{modeLabel(mode)}</span>
+            </div>
             <h1>Big plates.<br />Bigger savings.</h1>
             <p>
               {mode === 'core'
@@ -812,8 +874,8 @@ export default function App() {
             </p>
           </div>
           <div className="hero-offer">
-            <strong>20% off</strong>
-            <span>on ₹499+ (up to ₹150).<br />Free delivery on ₹199+.</span>
+            <strong>Up to 20% off</strong>
+            <span>on ₹499+ (max ₹150).<br />Free delivery when it wins.</span>
           </div>
         </section>
 
@@ -874,12 +936,14 @@ export default function App() {
       </div>
 
       {count > 0 && (
-        <div className="mobile-cart-bar">
+        <div className="mobile-cart-bar" inert={cartOpen}>
           <div>
             <strong>{count} {count === 1 ? 'item' : 'items'} · {formatINR(total)}</strong>
             <span>{discount > 0 ? `You saved ${formatINR(discount)}` : 'Offers update in cart'}</span>
           </div>
-          <button type="button" onClick={() => setCartOpen(true)}>View cart</button>
+          <button ref={cartButtonRef} type="button" onClick={() => setCartOpen(true)}>
+            View cart
+          </button>
         </div>
       )}
 
@@ -890,7 +954,7 @@ export default function App() {
             className="mobile-backdrop open"
             aria-label="Close cart"
             tabIndex={-1}
-            onClick={() => setCartOpen(false)}
+            onClick={closeCart}
           />
           <CartPanel
             cart={cart}
@@ -911,7 +975,7 @@ export default function App() {
             onRemove={remove}
             onCheckout={() => { setCartOpen(false); setView('checkout'); }}
             onStartOver={startOver}
-            onClose={() => setCartOpen(false)}
+            onClose={closeCart}
           />
         </>
       )}

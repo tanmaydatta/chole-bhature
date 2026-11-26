@@ -31,7 +31,7 @@ describe('offers view', () => {
     });
     expect(view.applied[0]?.savingsMinorUnits).toBe(view.totalSavingsMinorUnits);
     expect(view.candidates.find(offer => offer.programRef === 'paneer-15')?.status)
-      .toBe('available');
+      .toBe('outranked');
     expect(view.candidates.find(offer => offer.programRef === 'big-basket')?.status)
       .toBe('progress');
   });
@@ -85,8 +85,10 @@ describe('offers view', () => {
       applied: false,
       label: 'Code not recognised',
     });
-    expect(view.candidates.find(offer => offer.programRef === 'feast-20')?.note)
-      .toBe('Auto offers pause while a code is active');
+    expect(view.candidates.find(offer => offer.programRef === 'feast-20')).toMatchObject({
+      status: 'paused',
+      note: 'Auto offers pause while a code is active',
+    });
   });
 
   it('labels locked VIP offers', () => {
