@@ -1,0 +1,33 @@
+{
+  "name": "@incentives/demo-store",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "dev:worker": "wrangler dev --port 8788",
+    "build": "tsc -p tsconfig.json --noEmit && vite build",
+    "test": "vitest run",
+    "lint": "oxlint src worker test",
+    "deploy": "wrangler deploy"
+  },
+  "dependencies": {
+    "@incentives/contracts": "workspace:*",
+    "@incentives/engine": "workspace:*",
+    "hono": "^4.12.30",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260717.1",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.2",
+    "oxlint": "^1.69.0",
+    "typescript": "~6.0.2",
+    "vite": "^8.1.0",
+    "vitest": "^4.1.10",
+    "wrangler": "^4.112.0"
+  }
+}

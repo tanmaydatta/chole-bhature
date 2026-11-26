@@ -1,0 +1,18 @@
+name = "incentives-demo-store"
+main = "worker/index.ts"
+compatibility_date = "2026-07-18"
+
+[assets]
+directory = "./dist"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+run_worker_first = ["/api/*"]
+
+[vars]
+DEMO_TENANT_ID = "demo_chole_bhature"
+DEMO_USE_CORE = "false"
+
+[[services]]
+binding = "CORE"
+service = "incentives-api"
+entrypoint = "CoreOperatorService"
